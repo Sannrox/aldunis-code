@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { InteractionMode, ProviderEvent } from "./provider.ts";
+import type { InteractionMode, ProviderEvent, ProviderId } from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 1;
 export const MAX_THREADS_PER_PROJECT = 200;
@@ -21,6 +21,7 @@ export interface Thread {
   projectId: string;
   title: string;
   worktree: string;
+  provider: ProviderId;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,7 +70,7 @@ export interface Activity {
 export interface ProviderSessionReference {
   schemaVersion: 1;
   threadId: string;
-  provider: "claude-code";
+  provider: ProviderId;
   sessionId: string;
   model: string | null;
   profileId?: string;
@@ -307,6 +308,7 @@ export class LocalStateStore {
     worktree: string;
     prompt: string;
     mode: InteractionMode;
+    provider: ProviderId;
     threadId?: string;
   }): Promise<{ thread: Thread; turn: Turn }> {
     const projection = await this.load();
@@ -330,14 +332,27 @@ export class LocalStateStore {
     if (input.threadId && (!existing || existing.projectId !== input.projectId)) {
       throw new LocalStateError("The selected conversation is not available.", 404);
     }
+    if (existing) {
+      const providerSession = projection.providerSessions.find(
+        (session) => session.threadId === existing.id,
+      );
+      const existingProvider = existing.provider ?? providerSession?.provider ?? "claude-code";
+      if (existingProvider && existingProvider !== input.provider) {
+        throw new LocalStateError(
+          `This conversation belongs to ${existingProvider} and cannot switch providers.`,
+          409,
+        );
+      }
+    }
     const thread: Thread = existing
-      ? { ...existing, updatedAt: now }
+      ? { ...existing, provider: existing.provider ?? input.provider, updatedAt: now }
       : {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
           id: randomUUID(),
           projectId: input.projectId,
           title: input.prompt.slice(0, 80),
           worktree: input.worktree,
+          provider: input.provider,
           createdAt: now,
           updatedAt: now,
         };
@@ -390,6 +405,7 @@ export class LocalStateStore {
   async recordProviderEvent(
     threadId: string,
     turnId: string,
+    provider: ProviderId,
     event: ProviderEvent,
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
@@ -424,14 +440,14 @@ export class LocalStateStore {
     }
     if (event.kind === "session_started" || event.kind === "turn_completed") {
       const current = (await this.load()).providerSessions.find(
-        (item) => item.threadId === threadId && item.provider === "claude-code",
+        (item) => item.threadId === threadId && item.provider === provider,
       );
       await this.#append({
         type: "provider_session_saved",
         providerSession: {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
           threadId,
-          provider: "claude-code",
+          provider,
           sessionId: event.sessionId,
           model: event.kind === "session_started" ? event.model : current?.model ?? null,
           ...(providerBinding?.profileId ?? current?.profileId

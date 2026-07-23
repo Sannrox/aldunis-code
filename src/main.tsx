@@ -70,6 +70,21 @@ interface ProviderCapabilities {
     imageTypes: string[];
   };
 }
+type ProviderId = "claude-code" | "codex-cli";
+type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+interface ProviderDiscovery {
+  id: ProviderId;
+  installed: boolean;
+  authenticated?: boolean;
+  version?: string | null;
+  models?: Array<{
+    id: string;
+    displayName: string;
+    isDefault: boolean;
+    reasoningEfforts: ReasoningEffort[];
+    defaultReasoningEffort: ReasoningEffort;
+  }>;
+}
 type ProfileProbeKind = "availability" | "version" | "authentication" | "models";
 interface ProfileProbe {
   state: "unknown" | "refreshing" | "ready" | "unavailable";
@@ -1205,6 +1220,18 @@ function Conversation({
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const lastAttentionState = useRef<string | null>(null);
+  const [provider, setProvider] = useState<ProviderId>("claude-code");
+  const [providers, setProviders] = useState<ProviderDiscovery[]>([]);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  useEffect(() => {
+    void fetch("/api/providers/discover", { method: "POST" })
+      .then((response) => response.json())
+      .then((body: { providers?: ProviderDiscovery[] }) => setProviders(body.providers ?? []))
+      .catch(() => setProviders([{ id: "claude-code", installed: true }]));
+  }, []);
+  const codex = providers.find((item) => item.id === "codex-cli");
+  const selectedCodexModel = codex?.models?.find((item) => item.id === model);
+  const providerName = provider === "codex-cli" ? "Codex CLI" : "Claude Code";
   useEffect(() => {
     if (!profiles.some((profile) => profile.id === profileId)) {
       setProfileId(profiles[0]?.id ?? "");
@@ -1227,7 +1254,11 @@ function Conversation({
     setThreadId(conversation?.id ?? null);
     setCheckpoint(null);
     setRewindPreview(null);
-  }, [conversation?.id, repository?.projectId]);
+    setMessages([]);
+    setProviderEvents([]);
+    setProviderState("idle");
+    setRunId(null);
+  }, [conversation?.id, repository?.projectId, provider]);
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
@@ -1237,7 +1268,7 @@ function Conversation({
       if (!active) return;
       if (!response.ok) throw new Error("Conversation history could not be restored.");
       const projection = await response.json() as {
-        threads: Array<{ id: string; projectId: string; updatedAt: string }>;
+        threads: Array<{ id: string; projectId: string; provider?: ProviderId; updatedAt: string }>;
         turns: Array<{
           id: string;
           threadId: string;
@@ -1247,13 +1278,18 @@ function Conversation({
           createdAt: string;
         }>;
         messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
-        providerSessions: Array<{ threadId: string; sessionId: string }>;
+        providerSessions: Array<{ threadId: string; provider?: ProviderId; sessionId: string }>;
       };
       const thread = conversation
         ? projection.threads.find((item) => item.id === conversation.id && item.projectId === repository.projectId)
         : null;
       if (!thread) {
         setHistoryRestored(true);
+        return;
+      }
+      const threadProvider = thread.provider ?? "claude-code";
+      if (threadProvider !== provider) {
+        setProvider(threadProvider);
         return;
       }
       const turns = projection.turns
@@ -1265,7 +1301,10 @@ function Conversation({
         return;
       }
       setThreadId(thread.id);
-      setSessionId(projection.providerSessions.find((item) => item.threadId === thread.id)?.sessionId ?? null);
+      setSessionId(projection.providerSessions.find((item) => (
+        item.threadId === thread.id
+        && (item.provider ?? "claude-code") === provider
+      ))?.sessionId ?? null);
       setRunId(
         latest.providerRunId && (
           latest.status === "active"
@@ -1356,7 +1395,7 @@ function Conversation({
       if (timer) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [conversation?.id, notificationsEnabled, repository?.projectId]);
+  }, [conversation?.id, notificationsEnabled, provider, repository?.projectId]);
   useEffect(() => {
     void fetch("/api/provider/capabilities", {
       method: "POST",
@@ -1430,7 +1469,14 @@ function Conversation({
   };
   const send = async () => {
     const value = draft.trim();
-    if (!value || !repository || !worktree || !profileId || runActive || !historyRestored) return;
+    if (
+      !value
+      || !repository
+      || !worktree
+      || (provider === "claude-code" && !profileId)
+      || runActive
+      || !historyRestored
+    ) return;
     const turnMode = mode;
     setMessages((current) => [...current, { text: value, mode: turnMode }]);
     setDraft("");
@@ -1462,20 +1508,24 @@ function Conversation({
           attachments: sentAttachments,
           profileId,
           model,
+          provider,
+          reasoningEffort: provider === "codex-cli" && model !== "default"
+            ? reasoningEffort
+            : undefined,
           elementReferences: sentElementReferences.map(({ screenshot: _screenshot, ...reference }) => reference),
         }),
       });
       createdThreadId = response.headers.get("x-thread-id");
       if (!response.ok) {
         const body = await response.json() as { error?: string };
-        throw new Error(body.error ?? "Claude Code could not start.");
+        throw new Error(body.error ?? `${providerName} could not start.`);
       }
       const activeRunId = response.headers.get("x-provider-run-id");
       setRunId(activeRunId);
       setThreadId(createdThreadId);
       activeTurnId = response.headers.get("x-turn-id");
       setProviderState("streaming");
-      if (!response.body) throw new Error("Claude Code returned no event stream.");
+      if (!response.body) throw new Error(`${providerName} returned no event stream.`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1533,7 +1583,7 @@ function Conversation({
       setElementReferences(sentElementReferences);
       setProviderEvents((current) => [...current, {
         kind: "failed",
-        message: error instanceof Error ? error.message : "Claude Code failed.",
+        message: error instanceof Error ? error.message : `${providerName} failed.`,
       }]);
       setProviderState("failed");
     } finally {
@@ -1656,8 +1706,8 @@ function Conversation({
     .at(-1);
   const stateCopy: Record<ProviderState, string> = {
     idle: repository ? "Ready" : "Open a repository to start",
-    starting: "Starting Claude Code…",
-    streaming: "Claude Code is working…",
+    starting: `Starting ${providerName}…`,
+    streaming: `${providerName} is working…`,
     waiting_for_approval: "Waiting for your approval…",
     cancelling: "Cancelling…",
     completed: "Turn completed",
@@ -1728,7 +1778,7 @@ function Conversation({
           <article className="assistant-message provider-response" aria-live="polite">
             <span className="claude-avatar">C</span>
             <div>
-              <header><strong>Claude</strong><span className="model">Claude Code</span><time>now</time></header>
+              <header><strong>{provider === "codex-cli" ? "Codex" : "Claude"}</strong><span className="model">{providerName}</span><time>now</time></header>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
@@ -1897,21 +1947,31 @@ function Conversation({
             }}
             placeholder={!historyRestored
               ? "Restoring conversation session…"
-              : !profileId
+              : provider === "claude-code" && !profileId
               ? "Configure a Claude profile first…"
               : worktree
-              ? `${modeCopy[mode].label} Claude… Type @ for files or / for commands`
+              ? `${modeCopy[mode].label} ${providerName}… Type @ for files or / for commands`
               : "Open a repository with an available worktree…"}
-            aria-label="Message Claude"
+            aria-label={`Message ${providerName}`}
             aria-autocomplete="list"
-            disabled={!worktree || !profileId || runActive || !historyRestored}
+            disabled={!worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
           />
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <footer>
             <div className="provider-selectors">
               <span className="provider-symbol">C</span>
-              {profiles.length > 0 ? (
+              <label>
+                <span className="sr-only">Provider</span>
+                <select aria-label="Provider" value={provider} onChange={(event) => {
+                  setProvider(event.target.value as ProviderId);
+                  setModel("default");
+                }} disabled={runActive}>
+                  <option value="claude-code">Claude Code</option>
+                  <option value="codex-cli" disabled={!codex?.installed || !codex?.authenticated}>Codex CLI</option>
+                </select>
+              </label>
+              {provider === "claude-code" && profiles.length > 0 ? (
                 <>
                   <label>
                     <span className="sr-only">Claude profile</span>
@@ -1926,12 +1986,37 @@ function Conversation({
                     </select>
                   </label>
                 </>
-              ) : <button className="configure-profile" onClick={onOpenProfiles}>Configure Claude</button>}
+              ) : provider === "claude-code"
+                ? <button className="configure-profile" onClick={onOpenProfiles}>Configure Claude</button>
+                : (
+                  <>
+                    <label>
+                      <span className="sr-only">Codex model</span>
+                      <select aria-label="Codex model" value={model} onChange={(event) => {
+                        const next = event.target.value;
+                        setModel(next);
+                        const found = codex?.models?.find((item) => item.id === next);
+                        if (found) setReasoningEffort(found.defaultReasoningEffort);
+                      }} disabled={runActive}>
+                        <option value="default">Default model</option>
+                        {codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}
+                      </select>
+                    </label>
+                    {model !== "default" && (
+                      <label>
+                        <span className="sr-only">Reasoning effort</span>
+                        <select aria-label="Reasoning effort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)} disabled={runActive}>
+                          {(selectedCodexModel?.reasoningEfforts ?? ["low", "medium", "high", "xhigh"]).map((effort) => <option value={effort} key={effort}>{effort}</option>)}
+                        </select>
+                      </label>
+                    )}
+                  </>
+                )}
               <span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span>
             </div>
             {runId
-              ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
-              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || !profileId || runActive || !historyRestored} aria-label="Send message">↑</button>}
+              ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel ${providerName}`}>■</button>
+              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored} aria-label="Send message">↑</button>}
           </footer>
         </div>
         <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
