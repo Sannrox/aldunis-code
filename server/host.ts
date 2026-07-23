@@ -20,6 +20,12 @@ import {
 } from "./repository.ts";
 import { LocalStateError, LocalStateStore } from "./state.ts";
 import {
+  CLAUDE_MODEL_ALIASES,
+  ClaudeProfileStore,
+  ProfileError,
+  type ProfileProbeKind,
+} from "./profiles.ts";
+import {
   composePrompt,
   resolveContextAttachments,
   searchRepositoryFiles,
@@ -60,6 +66,10 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isLoopbackOrigin(request: IncomingMessage): boolean {
   const origin = request.headers.origin;
   if (!origin) return true;
@@ -97,6 +107,7 @@ async function handleApi(
   provider: ClaudeCodeAdapter,
   permissions: PermissionBroker,
   state: LocalStateStore,
+  profiles: ClaudeProfileStore,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -173,6 +184,75 @@ async function handleApi(
       });
       return true;
     }
+    if (route === "/api/provider/profiles/list") {
+      sendJson(response, 200, { profiles: await profiles.list() });
+      return true;
+    }
+    if (route === "/api/provider/profiles/save") {
+      const body = await readJson(request) as {
+        id?: unknown;
+        name?: unknown;
+        binaryPath?: unknown;
+        homePath?: unknown;
+        environment?: unknown;
+      };
+      const environment = Array.isArray(body.environment)
+        ? body.environment.map((value) => {
+            if (
+              !isRecord(value)
+              || typeof value.name !== "string"
+              || typeof value.sensitive !== "boolean"
+              || (value.value !== undefined && typeof value.value !== "string")
+              || (value.valueSet !== undefined && typeof value.valueSet !== "boolean")
+            ) {
+              throw new ProfileError("Profile environment variables must be valid.");
+            }
+            return {
+              name: value.name,
+              sensitive: value.sensitive,
+              ...(typeof value.value === "string" ? { value: value.value } : {}),
+              ...(typeof value.valueSet === "boolean" ? { valueSet: value.valueSet } : {}),
+            };
+          })
+        : undefined;
+      if (
+        (body.id !== undefined && typeof body.id !== "string")
+        || typeof body.name !== "string"
+        || (body.binaryPath !== undefined && typeof body.binaryPath !== "string")
+        || (body.homePath !== undefined && typeof body.homePath !== "string")
+        || (body.environment !== undefined && !Array.isArray(body.environment))
+      ) {
+        throw new ProfileError("A valid Claude profile is required.");
+      }
+      sendJson(response, 200, await profiles.save({
+        ...(typeof body.id === "string" ? { id: body.id } : {}),
+        name: body.name,
+        ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
+        ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
+        ...(environment ? { environment } : {}),
+      }));
+      return true;
+    }
+    if (route === "/api/provider/profiles/delete") {
+      const body = await readJson(request) as { id?: unknown };
+      if (typeof body.id !== "string") throw new ProfileError("A Claude profile is required.");
+      await profiles.delete(body.id);
+      sendJson(response, 200, { status: "deleted" });
+      return true;
+    }
+    if (route === "/api/provider/profiles/refresh") {
+      const body = await readJson(request) as { id?: unknown; kind?: unknown };
+      const kinds: ProfileProbeKind[] = ["availability", "version", "authentication", "models"];
+      if (
+        typeof body.id !== "string"
+        || typeof body.kind !== "string"
+        || !kinds.includes(body.kind as ProfileProbeKind)
+      ) {
+        throw new ProfileError("A profile and refresh kind are required.");
+      }
+      sendJson(response, 200, await profiles.refresh(body.id, body.kind as ProfileProbeKind));
+      return true;
+    }
     if (route === "/api/provider/runs") {
       const body = await readJson(request) as {
         root?: unknown;
@@ -184,6 +264,8 @@ async function handleApi(
         threadId?: unknown;
         mode?: unknown;
         attachments?: unknown;
+        profileId?: unknown;
+        model?: unknown;
       };
       if (
         typeof body.root !== "string"
@@ -200,8 +282,13 @@ async function handleApi(
           !Array.isArray(body.attachments)
           || body.attachments.some((path) => typeof path !== "string")
         ))
+        || typeof body.profileId !== "string"
+        || typeof body.model !== "string"
+        || !CLAUDE_MODEL_ALIASES.includes(body.model)
       ) {
-        throw new RepositoryError("A repository, worktree, prompt, and interaction mode are required.");
+        throw new RepositoryError(
+          "A repository, worktree, prompt, interaction mode, Claude profile, and model are required.",
+        );
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
@@ -215,6 +302,19 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const profile = await profiles.runtime(body.profileId);
+      const previousSession = typeof body.threadId === "string"
+        ? projection.providerSessions.find((session) => session.threadId === body.threadId)
+        : undefined;
+      if (
+        previousSession?.continuationKey
+        && previousSession.continuationKey !== profile.continuationKey
+      ) {
+        throw new ProfileError(
+          "This thread can only continue with a Claude profile using the same Claude home.",
+          409,
+        );
+      }
       const persisted = await state.startTurn({
         projectId: project.id,
         worktree: context.worktree,
@@ -235,6 +335,11 @@ async function handleApi(
           approvalUrl,
           mode,
           body.resumeSessionId,
+          {
+            executable: profile.executable,
+            environment: profile.environment,
+            model: body.model,
+          },
         );
       } catch (error) {
         await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, {
@@ -242,7 +347,7 @@ async function handleApi(
           message: error instanceof ProviderProtocolError
             ? error.message
             : "The provider could not be started.",
-        });
+        }, { profileId: profile.profile.id, continuationKey: profile.continuationKey });
         throw error;
       }
       response.writeHead(200, {
@@ -255,7 +360,12 @@ async function handleApi(
       });
       for await (const event of run.events) {
         try {
-          await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, event);
+          await state.recordProviderEvent(
+            persisted.thread.id,
+            persisted.turn.id,
+            event,
+            { profileId: profile.profile.id, continuationKey: profile.continuationKey },
+          );
         } catch {
           provider.cancel(run.id);
           response.write(`${JSON.stringify({
@@ -365,12 +475,14 @@ async function handleApi(
     const status = error instanceof RepositoryError
       || error instanceof PermissionError
       || error instanceof LocalStateError
+      || error instanceof ProfileError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
       || error instanceof ProviderProtocolError
       || error instanceof PermissionError
       || error instanceof LocalStateError
+      || error instanceof ProfileError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -405,11 +517,12 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, d
 export function createLocalHost(
   dist = fileURLToPath(new URL("../dist", import.meta.url)),
   state = new LocalStateStore(),
+  profiles = new ClaudeProfileStore(state.directory),
 ) {
   const permissions = new PermissionBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   return createServer(async (request, response) => {
-    if (await handleApi(request, response, provider, permissions, state)) return;
+    if (await handleApi(request, response, provider, permissions, state, profiles)) return;
     await serveStatic(request, response, dist);
   });
 }
