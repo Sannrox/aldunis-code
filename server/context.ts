@@ -26,6 +26,14 @@ export interface ContextAttachment {
   content?: string;
 }
 
+export interface ContextElementReference {
+  selector: string;
+  tag: string;
+  role?: string | null;
+  name?: string | null;
+  text?: string | null;
+}
+
 function relativeFilePath(worktree: string, input: string): string {
   const normalized = input.replaceAll("\\", "/").replace(/^\.?\//, "");
   if (!normalized || normalized.includes("\0") || isAbsolute(input)) {
@@ -120,11 +128,25 @@ export async function resolveContextAttachments(
   }));
 }
 
-export function composePrompt(prompt: string, attachments: ContextAttachment[]): string {
-  if (attachments.length === 0) return prompt;
+function escapeContext(value: string, limit: number): string {
+  return value.slice(0, limit)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+export function composePrompt(
+  prompt: string,
+  attachments: ContextAttachment[],
+  elementReferences: ContextElementReference[] = [],
+): string {
+  if (attachments.length === 0 && elementReferences.length === 0) return prompt;
   const context = attachments.map((attachment) => attachment.kind === "text"
     ? `<file path="${attachment.path}">\n${attachment.content}\n</file>`
     : `<image path="${attachment.path}" media-type="${attachment.mediaType}" size="${attachment.size}" />`
-  ).join("\n\n");
+  ).concat(elementReferences.slice(0, 3).map((reference) => (
+    `<visible-element selector="${escapeContext(reference.selector, 240)}" tag="${escapeContext(reference.tag, 32)}" role="${escapeContext(reference.role ?? "", 80)}" name="${escapeContext(reference.name ?? "", 240)}">${escapeContext(reference.text ?? "", 500)}</visible-element>`
+  ))).join("\n\n");
   return `${prompt}\n\n<aldunis-local-context>\n${context}\n</aldunis-local-context>`;
 }
