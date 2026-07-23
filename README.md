@@ -66,5 +66,20 @@ completed or interrupted Claude session can be resumed with its provider
 session ID. Unknown protocol events and unsupported Claude Code major versions
 fail closed with a visible conversation state.
 
+## Local history
+
+Projects, conversations, turns, messages, typed tool activity, and Claude Code
+session references are stored as a versioned local event log. The default path
+is `$XDG_STATE_HOME/aldunis-code/events.v1.jsonl` (or
+`~/.local/state/aldunis-code/events.v1.jsonl`). Set
+`ALDUNIS_CODE_STATE_DIR` to use another local state directory.
+
+Every event is appended in sequence and synchronized before it is projected.
+Startup rebuilds projections from the log; corrupt, unordered, or incompatible
+history stops with an explicit error rather than resetting data. Project
+deletion and retention compact the log atomically so removed prompts and
+activity are not left behind. Provider credentials, environment variables,
+tool inputs, and tool outputs are not part of the persistence schema.
+
 Read [AGENTS.md](AGENTS.md), [the architecture](docs/architecture.md), and
 [the work lifecycle](docs/work-lifecycle.md) before changing a boundary.
