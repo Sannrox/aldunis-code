@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture Code Decision"
+  short_description: "Record durable Aldunis Code architecture decisions"
+  default_prompt: "Use -code-decision to preserve this accepted Aldunis Code decision."

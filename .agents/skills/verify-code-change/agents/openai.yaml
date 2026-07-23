@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify Code Change"
+  short_description: "Verify Aldunis Code changes before shipment"
+  default_prompt: "Use -code-change to verify this Aldunis Code change."
