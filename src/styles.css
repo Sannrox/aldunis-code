@@ -120,15 +120,6 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .context { color: #55575f; font: .52rem "DM Mono", monospace; }
 .send { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 7px; background: var(--acid); color: #11130d; font-size: 1rem; font-weight: 600; }
 .send:disabled { background: #303238; color: #65676e; cursor: default; }
-.cancel-run { display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid #8e554d; border-radius: 7px; background: #38221f; color: #e0a29a; font-size: .7rem; }
-.cancel-run:disabled { opacity: .55; cursor: default; }
-.provider-copy { white-space: pre-wrap; }
-.tool-activity { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; margin: 8px 0; padding: 9px 10px; border: 1px solid #303238; border-radius: 7px; background: #15161a; color: #a9abb1; font-size: .65rem; }
-.tool-activity svg { width: 14px; color: #d49a74; }
-.tool-activity small { max-width: 150px; overflow: hidden; color: #5f6169; font: .52rem "DM Mono", monospace; text-overflow: ellipsis; }
-.tool-activity.failed { border-color: #5e3834; }
-.provider-error { margin: 12px 0; padding: 10px 12px; border-left: 2px solid #c96f65; background: rgba(201,111,101,.08); color: #dba29c; font-size: .7rem; line-height: 1.5; }
-.provider-state { color: #777981 !important; font: .6rem "DM Mono", monospace !important; }
 .disclaimer { margin: 8px 0 0; color: #4e5057; font: .52rem "DM Mono", monospace; text-align: center; }
 .domain-page { position: relative; overflow: auto; flex: 1; padding: clamp(70px, 10vh, 120px) clamp(34px, 7vw, 110px); background: radial-gradient(circle at 80% 12%, var(--glow), transparent 30%), linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px), #0d0e11; background-size: auto, 100% 48px, auto; }
 .domain-page.sekai { --tone: #7dd8cb; --glow: rgba(74,173,164,.15); }
