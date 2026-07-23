@@ -6,6 +6,7 @@ import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
+import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { PermissionBroker, PermissionError } from "./permission.ts";
 import {
   canonicalizeRepositoryRoot,
@@ -280,6 +281,28 @@ async function handleApi(
         },
         body.decision,
       ));
+      return true;
+    }
+    if (route === "/api/changes") {
+      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
+        throw new RepositoryError("A repository and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, { files: await listChangedFiles(context.worktree) });
+      return true;
+    }
+    if (route === "/api/changes/diff") {
+      const body = await readJson(request) as { root?: unknown; worktree?: unknown; path?: unknown };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.path !== "string"
+      ) {
+        throw new RepositoryError("A repository, worktree, and changed file are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, await readFileDiff(context.worktree, body.path));
       return true;
     }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);

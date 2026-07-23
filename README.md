@@ -66,6 +66,12 @@ completed or interrupted Claude session can be resumed with its provider
 session ID. Unknown protocol events and unsupported Claude Code major versions
 fail closed with a visible conversation state.
 
+Use **Changed files** to inspect the active worktree without exposing a
+terminal. Added, modified, deleted, renamed, binary, and oversized files have
+explicit states. Text patches stay constrained to the selected worktree;
+binary content and patches larger than 256 KiB are not rendered. The view is
+read-only and never stages, rewrites, or discards user work.
+
 ## Local history
 
 Projects, conversations, turns, messages, typed tool activity, and Claude Code
