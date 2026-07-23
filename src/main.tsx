@@ -7,6 +7,7 @@ type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 interface RepositoryMetadata {
   name: string;
   root: string;
+  selectedWorktree: string;
   worktrees: Array<{
     path: string;
     head: string | null;
@@ -14,6 +15,15 @@ interface RepositoryMetadata {
     state: WorktreeState;
   }>;
 }
+type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
+type ProviderEvent =
+  | { kind: "session_started"; sessionId: string; model: string | null }
+  | { kind: "assistant_text"; text: string }
+  | { kind: "tool_started"; toolCallId: string; name: string }
+  | { kind: "tool_finished"; toolCallId: string; failed: boolean }
+  | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
+  | { kind: "cancelled" }
+  | { kind: "failed"; message: string };
 type IconName =
   | "code"
   | "branch"
@@ -254,11 +264,103 @@ function Conversation({
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
-  const send = () => {
+  const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
+  const [providerState, setProviderState] = useState<ProviderState>("idle");
+  const [runId, setRunId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const worktree = repository?.worktrees.find((item) => (
+    item.path === repository.selectedWorktree
+    && (item.state === "available" || item.state === "detached")
+  )) ?? null;
+  const send = async () => {
     const value = draft.trim();
-    if (!value) return;
+    if (!value || !repository || !worktree || providerState === "starting" || providerState === "streaming") return;
     setMessages((current) => [...current, value]);
     setDraft("");
+    setProviderEvents([]);
+    setProviderState("starting");
+    setRunId(null);
+    try {
+      const response = await fetch("/api/provider/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: worktree.path,
+          prompt: value,
+          resumeSessionId: sessionId ?? undefined,
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json() as { error?: string };
+        throw new Error(body.error ?? "Claude Code could not start.");
+      }
+      const activeRunId = response.headers.get("x-provider-run-id");
+      setRunId(activeRunId);
+      setProviderState("streaming");
+      if (!response.body) throw new Error("Claude Code returned no event stream.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const result = await reader.read();
+        buffer += decoder.decode(result.value, { stream: !result.done });
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          if (line) {
+            const event = JSON.parse(line) as ProviderEvent;
+            setProviderEvents((current) => [...current, event]);
+            if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
+            if (event.kind === "turn_completed") setProviderState("completed");
+            if (event.kind === "cancelled") setProviderState("cancelled");
+            if (event.kind === "failed") setProviderState("failed");
+          }
+          newline = buffer.indexOf("\n");
+        }
+        if (result.done) break;
+      }
+    } catch (error) {
+      setProviderEvents((current) => [...current, {
+        kind: "failed",
+        message: error instanceof Error ? error.message : "Claude Code failed.",
+      }]);
+      setProviderState("failed");
+    } finally {
+      setRunId(null);
+    }
+  };
+  const cancel = async () => {
+    if (!runId) return;
+    setProviderState("cancelling");
+    try {
+      const response = await fetch(`/api/provider/runs/${runId}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error("The provider run could not be cancelled.");
+    } catch (error) {
+      setProviderEvents((current) => [...current, {
+        kind: "failed",
+        message: error instanceof Error ? error.message : "Cancellation failed.",
+      }]);
+      setProviderState("failed");
+    }
+  };
+  const assistantText = providerEvents
+    .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
+    .map((event) => event.text)
+    .join("\n");
+  const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
+  const failure = providerEvents
+    .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
+    .at(-1);
+  const stateCopy: Record<ProviderState, string> = {
+    idle: repository ? "Ready" : "Open a repository to start",
+    starting: "Starting Claude Code…",
+    streaming: "Claude Code is working…",
+    cancelling: "Cancelling…",
+    completed: "Turn completed",
+    cancelled: "Turn cancelled · send another prompt to resume",
+    failed: "Provider stopped · send another prompt to resume",
   };
   return (
     <main className="conversation">
@@ -296,16 +398,39 @@ function Conversation({
             <span className="avatar">RK</span><div><header><strong>You</strong><time>now</time></header><p>{message}</p></div>
           </article>
         ))}
+        {(providerState !== "idle" || providerEvents.length > 0) && (
+          <article className="assistant-message provider-response" aria-live="polite">
+            <span className="claude-avatar">C</span>
+            <div>
+              <header><strong>Claude</strong><span className="model">Claude Code</span><time>now</time></header>
+              {(providerState === "starting" || providerState === "streaming" || providerState === "cancelling") && (
+                <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
+              )}
+              {assistantText && <p className="provider-copy">{assistantText}</p>}
+              {toolEvents.map((event, index) => (
+                <div className={`tool-activity ${event.kind === "tool_finished" && event.failed ? "failed" : ""}`} key={`${event.toolCallId}-${event.kind}-${index}`}>
+                  <Icon name="settings" />
+                  <span>{event.kind === "tool_started" ? `${event.name} requested` : event.failed ? "Tool failed" : "Tool finished"}</span>
+                  <small>{event.toolCallId}</small>
+                </div>
+              ))}
+              {failure && <div className="provider-error" role="alert">{failure.message}</div>}
+              {(providerState === "completed" || providerState === "cancelled") && <p className="provider-state">{stateCopy[providerState]}</p>}
+            </div>
+          </article>
+        )}
       </section>
       <section className="composer-wrap">
         <div className="composer">
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }}} placeholder="Ask Claude about this worktree…" aria-label="Message Claude" />
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }}} placeholder={worktree ? "Ask Claude about this worktree…" : "Open a repository with an available worktree…"} aria-label="Message Claude" disabled={!worktree || providerState === "starting" || providerState === "streaming" || providerState === "cancelling"} />
           <footer>
-            <div><button className="model-select"><span className="provider-symbol">C</span> Claude Sonnet <span>⌄</span></button><span className="context">42% context</span></div>
-            <button className="send" onClick={send} disabled={!draft.trim()} aria-label="Send message">↑</button>
+            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · plan mode</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
+            {runId
+              ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
+              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree} aria-label="Send message">↑</button>}
           </footer>
         </div>
-        <p className="disclaimer">Prototype only · Claude Code is not connected · Enter to send, Shift + Enter for newline</p>
+        <p className="disclaimer">Claude uses local credentials · tools run in plan mode · Enter to send, Shift + Enter for newline</p>
       </section>
     </main>
   );
