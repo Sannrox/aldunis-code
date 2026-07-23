@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   acpAllowOnceOption,
+  acpPromptRequest,
   acpSessionRequest,
+  isOptionalKiroNotification,
   normalizeAcpNotification,
 } from "./acp-provider.ts";
 import {
@@ -66,6 +68,18 @@ test("adapter manifests reject unknown fields, traversal, interpreters, and inco
   assert.throws(
     () => parseProviderAdapterManifest(manifest({
       executable: { names: ["example-agent"], arguments: ["--eval=code"] },
+    })),
+    /option flags only/,
+  );
+  assert.throws(
+    () => parseProviderAdapterManifest(manifest({
+      executable: { names: ["example-agent"], arguments: ["../script"] },
+    })),
+    /option flags only/,
+  );
+  assert.throws(
+    () => parseProviderAdapterManifest(manifest({
+      executable: { names: ["rm"], arguments: ["-rf", "src"] },
     })),
     /option flags only/,
   );
@@ -314,6 +328,105 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
     }),
     /Unsupported ACP session update/,
   );
+});
+
+test("the shipped Kiro adapter is declarative, direct-only, and schema-valid", async () => {
+  const raw = await readFile(
+    new URL("../provider-adapters/kiro-cli.json", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseProviderAdapterManifest(JSON.parse(raw));
+  const reviewedDigest = (
+    await readFile(new URL("../provider-adapters/kiro-cli.sha256", import.meta.url), "utf8")
+  ).trim();
+  assert.equal(parsed.id, "dev.kiro.cli");
+  assert.deepEqual(parsed.executable, {
+    names: ["kiro-cli", "kiro-cli.exe"],
+    arguments: ["acp"],
+  });
+  assert.deepEqual(parsed.environment, [
+    { name: "HOME", required: false, sensitive: true },
+    { name: "KIRO_HOME", required: false, sensitive: true },
+    { name: "USERPROFILE", required: false, sensitive: true },
+    { name: "XDG_RUNTIME_DIR", required: false, sensitive: true },
+  ]);
+  assert.equal(parsed.capabilities.tools, true);
+  assert.equal(parsed.capabilities.sessionResume, true);
+  assert.equal(adapterDigest(parsed), reviewedDigest);
+  assert.equal(raw.includes("--trust-all-tools"), false);
+  assert.equal(raw.includes("--trust-tools"), false);
+  assert.equal(raw.includes("KIRO_API_KEY"), false);
+});
+
+test("Kiro optional notifications are capability-isolated from core ACP events", () => {
+  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
+    jsonrpc: "2.0",
+    method: "_kiro.dev/compaction/status",
+    params: { status: "started" },
+  }), true);
+  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "_kiro.dev/commands/options",
+    params: {},
+  }), false);
+  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
+    jsonrpc: "2.0",
+    method: "unknown/extension",
+    params: {},
+  }), false);
+  assert.equal(isOptionalKiroNotification("example.acp-agent", {
+    jsonrpc: "2.0",
+    method: "_kiro.dev/compaction/status",
+    params: { status: "started" },
+  }), false);
+});
+
+test("Kiro session notifications normalize without exposing the wire shape", () => {
+  assert.deepEqual(normalizeAcpNotification({
+    jsonrpc: "2.0",
+    method: "session/notification",
+    params: {
+      sessionId: "kiro-session",
+      update: {
+        type: "AgentMessageChunk",
+        content: { type: "text", text: "hello from Kiro" },
+      },
+    },
+  }), [{ kind: "assistant_text", text: "hello from Kiro" }]);
+  assert.deepEqual(normalizeAcpNotification({
+    jsonrpc: "2.0",
+    method: "session/notification",
+    params: {
+      sessionId: "kiro-session",
+      update: { type: "TurnEnd" },
+    },
+  }), []);
+  assert.throws(() => normalizeAcpNotification({
+    jsonrpc: "2.0",
+    method: "session/notification",
+    params: {
+      sessionId: "kiro-session",
+      update: { type: "UnknownKiroUpdate" },
+    },
+  }), /malformed session update/);
+});
+
+test("Kiro prompts use its documented content field without changing standard ACP", () => {
+  assert.deepEqual(acpPromptRequest("dev.kiro.cli", "session-1", "hello"), {
+    method: "session/prompt",
+    params: {
+      sessionId: "session-1",
+      content: [{ type: "text", text: "hello" }],
+    },
+  });
+  assert.deepEqual(acpPromptRequest("example.acp-agent", "session-2", "hello"), {
+    method: "session/prompt",
+    params: {
+      sessionId: "session-2",
+      prompt: [{ type: "text", text: "hello" }],
+    },
+  });
 });
 
 test("ACP echoes opaque allow-once IDs and resumes only when both sides support it", () => {
