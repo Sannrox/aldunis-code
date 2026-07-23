@@ -1,0 +1,4 @@
+interface:
+  display_name: "Route Aldunis Code Work"
+  short_description: "Route work across Aldunis Code and its product boundaries"
+  default_prompt: "Use -code-work to route and shape this Aldunis Code request."

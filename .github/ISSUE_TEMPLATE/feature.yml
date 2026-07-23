@@ -1,0 +1,34 @@
+name: Feature
+description: Propose one observable Aldunis Code outcome.
+title: ""
+labels: ["status:triage", "type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What developer or operator problem exists?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Observable outcome
+      description: What will be visibly different when this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance evidence
+      description: List concrete checks that prove the outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Boundaries and dependencies
+      description: Name provider, filesystem, Sekai Chisei, Tenkai, or Aldunis dependencies and non-goals.
+    validations:
+      required: true
+

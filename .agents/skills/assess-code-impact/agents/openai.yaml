@@ -1,0 +1,4 @@
+interface:
+  display_name: "Assess Code Impact"
+  short_description: "Assess Aldunis Code product and security impact"
+  default_prompt: "Use -code-impact to map the impact of this Aldunis Code change."
