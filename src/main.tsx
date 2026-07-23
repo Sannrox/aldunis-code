@@ -16,6 +16,18 @@ interface RepositoryMetadata {
     state: WorktreeState;
   }>;
 }
+type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
+interface ChangedFile {
+  path: string;
+  previousPath: string | null;
+  state: ChangeState;
+  additions: number | null;
+  deletions: number | null;
+}
+interface FileDiff extends ChangedFile {
+  patch: string | null;
+  message: string | null;
+}
 type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
 type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -111,9 +123,13 @@ function ProductRail({ product, onChange }: { product: Product; onChange: (produ
 function CodeSidebar({
   repository,
   onOpenRepository,
+  changes,
+  onShowChanges,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
+  changes: ChangedFile[];
+  onShowChanges: () => void;
 }) {
   return (
     <aside className="context-sidebar">
@@ -135,7 +151,9 @@ function CodeSidebar({
       <div className="sidebar-actions">
         <button><Icon name="search" /> Search <kbd>⌘ K</kbd></button>
         <button><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
-        <button><Icon name="diff" /> Changed files <span className="change-count">8</span></button>
+        <button onClick={onShowChanges} disabled={!repository}>
+          <Icon name="diff" /> Changed files <span className="change-count">{repository ? changes.length : "—"}</span>
+        </button>
       </div>
       {repository && (
         <div className="worktree-list" aria-label="Repository worktrees">
@@ -166,6 +184,97 @@ function CodeSidebar({
       </div>
       <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
     </aside>
+  );
+}
+
+function ChangesPanel({
+  repository,
+  files,
+  loading,
+  error,
+  onClose,
+  onRefresh,
+}: {
+  repository: RepositoryMetadata;
+  files: ChangedFile[];
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
+  const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [diffError, setDiffError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selected || !files.some((file) => file.path === selected)) {
+      setSelected(files[0]?.path ?? null);
+    }
+  }, [files, selected]);
+  useEffect(() => {
+    if (!selected) {
+      setDiff(null);
+      return;
+    }
+    let active = true;
+    setDiff(null);
+    setDiffError(null);
+    void fetch("/api/changes/diff", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        root: repository.root,
+        worktree: repository.selectedWorktree,
+        path: selected,
+      }),
+    }).then(async (response) => {
+      const body = await response.json() as FileDiff | { error?: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "Diff could not be read.");
+      if (active) setDiff(body as FileDiff);
+    }).catch((cause) => {
+      if (active) setDiffError(cause instanceof Error ? cause.message : "Diff could not be read.");
+    });
+    return () => { active = false; };
+  }, [repository, selected]);
+  return (
+    <section
+      className="changes-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Changes for active conversation"
+      onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}
+    >
+      <header>
+        <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
+        <div><button onClick={onRefresh}>Refresh</button><button autoFocus onClick={onClose} aria-label="Close changed files">×</button></div>
+      </header>
+      <div className="changes-body">
+        <nav aria-label="Changed files">
+          {loading && <p className="changes-note">Inspecting worktree…</p>}
+          {error && <p className="changes-error" role="alert">{error}</p>}
+          {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
+          {files.map((file) => (
+            <button
+              className={selected === file.path ? "active" : ""}
+              onClick={() => setSelected(file.path)}
+              aria-current={selected === file.path}
+              key={file.path}
+            >
+              <span className={`change-state ${file.state}`}>{file.state}</span>
+              <span><strong>{file.path}</strong>{file.previousPath && <small>from {file.previousPath}</small>}</span>
+              <small className="change-lines">{file.additions === null ? "—" : `+${file.additions}`} {file.deletions === null ? "—" : `−${file.deletions}`}</small>
+            </button>
+          ))}
+        </nav>
+        <div className="diff-view" tabIndex={0} aria-label={selected ? `Diff for ${selected}` : "File diff"}>
+          {diffError && <p className="changes-error" role="alert">{diffError}</p>}
+          {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
+          {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
+          {diff?.patch && <pre>{diff.patch.split("\n").map((line, index) => (
+            <span className={line.startsWith("+") && !line.startsWith("+++") ? "addition" : line.startsWith("-") && !line.startsWith("---") ? "deletion" : "context"} key={index}>{line || " "}</span>
+          ))}</pre>}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -274,9 +383,23 @@ function DomainPage({ product }: { product: Exclude<Product, "code"> }) {
 function Conversation({
   repository,
   onOpenRepository,
+  changes,
+  changesLoading,
+  changesError,
+  changesOpen,
+  onShowChanges,
+  onHideChanges,
+  onRefreshChanges,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
+  changes: ChangedFile[];
+  changesLoading: boolean;
+  changesError: string | null;
+  changesOpen: boolean;
+  onShowChanges: () => void;
+  onHideChanges: () => void;
+  onRefreshChanges: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
@@ -453,7 +576,9 @@ function Conversation({
           <button className="mobile-project" onClick={onOpenRepository} aria-label={repository ? `Change repository, current ${repository.name}` : "Open repository"}>
             <Icon name="branch" />
           </button>
-          <button><Icon name="diff" /><span>8 changes</span></button>
+          <button onClick={onShowChanges} disabled={!repository} aria-label={repository ? `Review ${changes.length} changed files` : "Review changed files"}>
+            <Icon name="diff" /><span>{changes.length} changes</span>
+          </button>
           <button className="ghost">•••</button>
         </div>
       </header>
@@ -538,7 +663,73 @@ function Conversation({
         </div>
         <p className="disclaimer">Claude uses local credentials · mutating tools require one scoped approval · Enter to send, Shift + Enter for newline</p>
       </section>
+      {changesOpen && repository && (
+        <ChangesPanel
+          repository={repository}
+          files={changes}
+          loading={changesLoading}
+          error={changesError}
+          onClose={onHideChanges}
+          onRefresh={onRefreshChanges}
+        />
+      )}
     </main>
+  );
+}
+
+function CodeWorkbench({
+  repository,
+  onOpenRepository,
+}: {
+  repository: RepositoryMetadata | null;
+  onOpenRepository: () => void;
+}) {
+  const [changes, setChanges] = useState<ChangedFile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const refresh = async () => {
+    if (!repository) {
+      setChanges([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/changes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
+      });
+      const body = await response.json() as { files?: ChangedFile[]; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
+      setChanges(body.files ?? []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Changed files could not be inspected.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { void refresh(); }, [repository]);
+  const show = () => {
+    setOpen(true);
+    void refresh();
+  };
+  return (
+    <>
+      <CodeSidebar repository={repository} onOpenRepository={onOpenRepository} changes={changes} onShowChanges={show} />
+      <Conversation
+        repository={repository}
+        onOpenRepository={onOpenRepository}
+        changes={changes}
+        changesLoading={loading}
+        changesError={error}
+        changesOpen={open}
+        onShowChanges={show}
+        onHideChanges={() => setOpen(false)}
+        onRefreshChanges={refresh}
+      />
+    </>
   );
 }
 
@@ -572,7 +763,7 @@ function App() {
     }
   };
   const content = useMemo(() => product === "code"
-    ? <><CodeSidebar repository={repository} onOpenRepository={showRepositoryDialog} /><Conversation repository={repository} onOpenRepository={showRepositoryDialog} /></>
+    ? <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} />
     : <DomainPage product={product} />, [product, repository]);
   return (
     <div className="app">
