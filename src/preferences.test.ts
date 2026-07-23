@@ -23,3 +23,11 @@ test("preferences response rejects missing and incompatible payloads", () => {
     recovered: false,
   }), null);
 });
+
+test("preferences response migrates the version-one worktree limit default", () => {
+  const { managedWorktreeLimit: _managedWorktreeLimit, ...legacy } = DEFAULT_PREFERENCES;
+  assert.equal(readPreferencesResponse({
+    preferences: legacy,
+    recovered: false,
+  })?.preferences.managedWorktreeLimit, 10);
+});
