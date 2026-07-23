@@ -2,25 +2,19 @@
 
 ## Decision
 
-Aldunis Code should remain loopback-only by default. A future remote workbench
-may be reached through an explicitly launched SSH local forward, but the remote
-host must still bind only to its own loopback interface and authenticate the
-paired Aldunis Code client at the application layer.
+Aldunis Code remains loopback-only by default. Maintainer direction recorded
+on issue #32 accepts one proof-key-bound application authentication protocol
+over two explicitly launched transports:
 
-This is a research recommendation, not implementation approval. Do not add a
-public listener, private-network listener, pairing endpoint, or SSH launcher
-until a repository Discussion accepts the trust boundary and protocol. Direct
-browser connections to an arbitrary remote HTTP endpoint are a no-go.
+- Tailscale Serve HTTPS/WSS is the recommended iPad and remote transport.
+- A specifically selected private LAN address may be exposed only through an
+  HTTPS listener with explicitly supplied certificate and key files.
 
-The first admissible design has three parts:
-
-1. The desktop application owns the connection and starts an inspectable SSH
-   process using the user's existing SSH configuration and host verification.
-2. The SSH process forwards an ephemeral local port to an Aldunis Code host
-   bound to loopback on the remote machine.
-3. A versioned Aldunis Code protocol authenticates a previously paired client,
-   authorizes each operation, and carries normalized workbench events. SSH
-   supplies transport security; it does not replace application authorization.
+Neither mode changes the normal local listener. Remote startup creates a
+separate authenticated server, and plaintext browser access fails
+closed. Pairing creation, device listing, and revocation remain local host CLI
+operations; remote device sessions cannot administer access. Desktop-managed
+SSH may later reuse the same application protocol.
 
 The remote host remains part of Aldunis Code, not a new hosted service. A
 separate network service boundary is justified only if Aldunis later needs
@@ -33,8 +27,9 @@ response design.
 | Model | Reachability and transport | Authentication and browser behavior | Recommendation |
 | --- | --- | --- | --- |
 | Loopback-only | The UI and host run on one device. No network listener exists. | Existing same-device boundary; origin checks and application permissions still apply. | Keep as the default and recovery path. It cannot reach a remote repository. |
-| SSH-forwarded loopback | The remote host binds to `127.0.0.1`; an explicit SSH local forward exposes it on an ephemeral loopback port on the client. SSH authenticates the machines and encrypts the tunnel. | The desktop connects to a local origin, avoiding an insecure remote origin and HTTPS-to-HTTP mixed-content failure. Application-level client authentication is still required. | Preferred first remote transport. Reuse mature SSH host verification and credentials; do not parse or copy private keys. |
-| Private-network endpoint | The host listens on a VPN, overlay, or LAN address. The network limits reachability but does not establish user, device, or action authority. | Requires TLS, application authentication, origin allowlisting, revocation, and exposure hardening. A compromised network member can probe the service. | Not an authentication strategy. Consider only after the same application protocol is proven over SSH and a Discussion accepts network-listener operations. |
+| SSH-forwarded loopback | The remote host binds to `127.0.0.1`; an explicit SSH local forward exposes it on an ephemeral loopback port on the client. | Application-level client authentication is still required. | Future transport over the shared protocol. Reuse existing SSH host verification and credentials. |
+| Tailscale Serve | The authenticated server remains on loopback while Tailscale provides a Tailnet-reachable HTTPS/WSS endpoint. | Tailnet controls reachability and TLS transport; proof-key-bound Aldunis sessions control application authority. | Recommended initial iPad and remote transport. |
+| Private LAN endpoint | The authenticated HTTPS server binds to one selected private address using explicitly supplied certificate and key files. | TLS provides confidentiality and a secure browser context; application authentication, exact origin checks, expiry, and revocation remain required. | Explicit trusted-LAN mode only; never bind implicitly to all interfaces or fall back to plaintext. |
 | Public HTTPS endpoint | The host or a gateway is Internet-reachable with TLS and a stable name. | Requires trusted certificates, `https`/`wss`, strict origin validation, rate limits, proof-of-possession credentials, tenant-safe routing, and an operated revocation plane. | No-go for the workbench host. Revisit only behind a separately owned gateway or relay with a complete service threat model. |
 
 Private-network location must not grant implicit trust. Browser WebSocket
@@ -203,15 +198,14 @@ not reinterpret existing local projects as remote projects. Rollback removes
 the remote connection capability while leaving each remote host's repository
 and event store intact and recoverable through that host.
 
-## Required follow-up before implementation
+## Accepted implementation boundary
 
-The explicit no-go is: **do not implement pairing, an SSH launcher, a
-private-network listener, or a public endpoint from this Issue.**
+The explicit no-go is: **do not add a public listener, treat LAN or Tailnet
+membership as application authority, or weaken proof-key-bound remote
+sessions.**
 
-Open and accept an architecture/security Discussion that fixes the execution
-authority, pairing transcript, device-key storage, revocation semantics,
-approval binding, protocol compatibility, and remote-host recovery model.
-After that decision, use separate dependency-ordered Issues for:
+The accepted direction on issue #32 fixes the initial transport, pairing,
+device-key, revocation, and approval boundary. Follow-up work may add:
 
 1. a versioned authenticated remote-workbench protocol and adversarial
    fixtures, without a network listener;
@@ -223,8 +217,8 @@ After that decision, use separate dependency-ordered Issues for:
 5. signed remote-host packaging, compatibility testing, update guidance, and
    rollback evidence.
 
-A private-network or HTTPS transport needs a later Discussion and must reuse
-the proven application protocol rather than weakening it.
+Every later transport must reuse the application protocol rather than
+weakening it.
 
 [NIST SP 800-207]: https://csrc.nist.gov/pubs/sp/800/207/final
 [RFC 6455]: https://www.rfc-editor.org/rfc/rfc6455

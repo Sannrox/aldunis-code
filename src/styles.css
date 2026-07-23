@@ -539,6 +539,18 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .delivery-form { grid-template-columns: 1fr; }
   .preferences-form { grid-template-columns: 1fr; }
 }
+.approval-context { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin: 10px 0; }
+.approval-context div { min-width: 0; }
+.approval-context dt { color: #777a72; font: .5rem "DM Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.approval-context dd { overflow: hidden; margin: 2px 0 0; color: #c8cac3; font: .56rem "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.remote-pairing-error { width: min(520px, calc(100% - 40px)); margin: 20vh auto; padding: 28px; border: 1px solid #5e3834; border-radius: 12px; background: #15161a; }
+.remote-pairing-error h1 { margin: 0 0 12px; font: 400 2rem "Newsreader", serif; }
+.remote-pairing-error p { color: #dba29c; }
+
+@media (max-width: 680px) {
+  .approval-context { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .conversation-scroll > article, .domain-page > * { animation: arrive .4s both; }
   .conversation-scroll > article:nth-of-type(2), .domain-page > :nth-child(3) { animation-delay: .07s; }
