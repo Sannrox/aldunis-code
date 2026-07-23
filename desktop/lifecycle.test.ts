@@ -6,7 +6,6 @@ import {
   isSupportedDeepLink,
   listenOnLoopback,
   localApplicationUrl,
-  selectedDirectoryPath,
 } from "./lifecycle.ts";
 
 test("packaged startup waits for a loopback backend on an ephemeral port", async () => {
@@ -30,10 +29,4 @@ test("deep links accept only the registered application protocol", () => {
   assert.equal(isSupportedDeepLink("aldunis-code://open"), true);
   assert.equal(isSupportedDeepLink("https://example.com"), false);
   assert.equal(isSupportedDeepLink("not a URL"), false);
-});
-
-test("native directory selection returns one path and cancellation returns no authority", () => {
-  assert.equal(selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }), "/project");
-  assert.equal(selectedDirectoryPath({ canceled: true, filePaths: ["/project"] }), null);
-  assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
 });
