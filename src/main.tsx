@@ -28,6 +28,16 @@ interface FileDiff extends ChangedFile {
   patch: string | null;
   message: string | null;
 }
+interface ProviderCapabilities {
+  provider: "claude-code";
+  commands: Array<{ name: string; description: string }>;
+  attachments: {
+    maxCount: number;
+    textMaxBytes: number;
+    imageMaxBytes: number;
+    imageTypes: string[];
+  };
+}
 type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
 type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -411,10 +421,25 @@ function Conversation({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [conversationId] = useState(() => crypto.randomUUID());
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Array<{ value: string; detail: string }>>([]);
+  const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(null);
   useEffect(() => {
     setSessionId(null);
     setThreadId(null);
   }, [repository?.projectId]);
+  useEffect(() => {
+    void fetch("/api/provider/capabilities", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).then(async (response) => {
+      if (response.ok) setCapabilities(await response.json() as ProviderCapabilities);
+    });
+  }, []);
   const worktree = repository?.worktrees.find((item) => (
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
@@ -427,12 +452,63 @@ function Conversation({
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
     build: { label: "Build", authority: "Mutations require approval" },
   };
+  useEffect(() => {
+    const token = draft.slice(0, draft.length).match(/(?:^|\s)([@/])([^\s]*)$/);
+    if (!token || !worktree || !repository) {
+      setSuggestionMode(null);
+      setSuggestions([]);
+      return;
+    }
+    const [, prefix, query] = token;
+    setSuggestionIndex(0);
+    if (prefix === "/") {
+      setSuggestionMode("commands");
+      setSuggestions((capabilities?.commands ?? [])
+        .filter((command) => command.name.slice(1).includes(query.toLocaleLowerCase()))
+        .map((command) => ({ value: command.name, detail: command.description })));
+      return;
+    }
+    setSuggestionMode("files");
+    const controller = new AbortController();
+    void fetch("/api/context/files", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query }),
+      signal: controller.signal,
+    }).then(async (response) => {
+      const body = await response.json() as { files?: string[]; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Repository files could not be searched.");
+      setSuggestions((body.files ?? []).map((path) => ({ value: path, detail: "Local repository file" })));
+    }).catch((error) => {
+      if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
+    });
+    return () => controller.abort();
+  }, [capabilities, draft, repository, worktree]);
+  const selectSuggestion = (value: string) => {
+    if (suggestionMode === "files") {
+      if (!attachments.includes(value)) {
+        if (attachments.length >= (capabilities?.attachments.maxCount ?? 8)) {
+          setContextError(`Attach at most ${capabilities?.attachments.maxCount ?? 8} files.`);
+          return;
+        }
+        setAttachments((current) => [...current, value]);
+      }
+      setDraft((current) => current.replace(/(?:^|\s)@[^\s]*$/, (match) => match.startsWith(" ") ? " " : ""));
+    } else {
+      setDraft((current) => current.replace(/(?:^|\s)\/[^\s]*$/, (match) => `${match.startsWith(" ") ? " " : ""}${value} `));
+    }
+    setContextError(null);
+    setSuggestionMode(null);
+    setSuggestions([]);
+  };
   const send = async () => {
     const value = draft.trim();
     if (!value || !repository || !worktree || runActive) return;
     const turnMode = mode;
     setMessages((current) => [...current, { text: value, mode: turnMode }]);
     setDraft("");
+    const sentAttachments = attachments;
+    setAttachments([]);
     setProviderEvents([]);
     setProviderState("starting");
     setRunId(null);
@@ -449,6 +525,7 @@ function Conversation({
           projectId: repository.projectId,
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
+          attachments: sentAttachments,
         }),
       });
       if (!response.ok) {
@@ -506,6 +583,7 @@ function Conversation({
         if (result.done) break;
       }
     } catch (error) {
+      setAttachments(sentAttachments);
       setProviderEvents((current) => [...current, {
         kind: "failed",
         message: error instanceof Error ? error.message : "Claude Code failed.",
@@ -683,7 +761,68 @@ function Conversation({
           <p aria-live="polite">{modeCopy[mode].authority}{runActive ? " · locked for active turn" : ""}</p>
         </fieldset>
         <div className="composer">
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }}} placeholder={worktree ? `${modeCopy[mode].label} Claude about this worktree…` : "Open a repository with an available worktree…"} aria-label="Message Claude" disabled={!worktree || runActive} />
+          {attachments.length > 0 && (
+            <div className="context-chips" aria-label="Attached local context">
+              {attachments.map((path) => (
+                <span key={path}>@{path}<button onClick={() => setAttachments((current) => current.filter((item) => item !== path))} aria-label={`Remove ${path}`}>×</button></span>
+              ))}
+            </div>
+          )}
+          {suggestionMode && (
+            <div className="composer-suggestions" role="listbox" aria-label={suggestionMode === "files" ? "Repository files" : "Provider commands"}>
+              {suggestions.length === 0
+                ? <p>No matching {suggestionMode === "files" ? "files" : "commands"}.</p>
+                : suggestions.map((suggestion, index) => (
+                  <button
+                    className={index === suggestionIndex ? "active" : ""}
+                    key={suggestion.value}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => selectSuggestion(suggestion.value)}
+                    role="option"
+                    aria-selected={index === suggestionIndex}
+                  >
+                    <strong>{suggestionMode === "files" ? "@" : ""}{suggestion.value}</strong>
+                    <small>{suggestion.detail}</small>
+                  </button>
+                ))}
+            </div>
+          )}
+          <textarea
+            value={draft}
+            spellCheck
+            onChange={(event) => setDraft(event.target.value)}
+            onPaste={() => setContextError(null)}
+            onKeyDown={(event) => {
+              if (suggestionMode && suggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                event.preventDefault();
+                setSuggestionIndex((current) => (
+                  event.key === "ArrowDown"
+                    ? (current + 1) % suggestions.length
+                    : (current - 1 + suggestions.length) % suggestions.length
+                ));
+                return;
+              }
+              if (suggestionMode && suggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
+                event.preventDefault();
+                selectSuggestion(suggestions[suggestionIndex].value);
+                return;
+              }
+              if (event.key === "Escape" && suggestionMode) {
+                event.preventDefault();
+                setSuggestionMode(null);
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+            placeholder={worktree ? `${modeCopy[mode].label} Claude… Type @ for files or / for commands` : "Open a repository with an available worktree…"}
+            aria-label="Message Claude"
+            aria-autocomplete="list"
+            disabled={!worktree || runActive}
+          />
+          {contextError && <div className="context-error" role="alert">{contextError}</div>}
           <footer>
             <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · {modeCopy[mode].label}</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
             {runId
@@ -691,7 +830,7 @@ function Conversation({
               : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || runActive} aria-label="Send message">↑</button>}
           </footer>
         </div>
-        <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · Claude uses local credentials · Enter to send, Shift + Enter for newline</p>
+        <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
       </section>
       {changesOpen && repository && (
         <ChangesPanel

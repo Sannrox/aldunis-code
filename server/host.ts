@@ -19,6 +19,11 @@ import {
   RepositoryError,
 } from "./repository.ts";
 import { LocalStateError, LocalStateStore } from "./state.ts";
+import {
+  composePrompt,
+  resolveContextAttachments,
+  searchRepositoryFiles,
+} from "./context.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 16 * 1024;
@@ -145,6 +150,29 @@ async function handleApi(
       sendJson(response, 200, { status: "compacted" });
       return true;
     }
+    if (route === "/api/provider/capabilities") {
+      sendJson(response, 200, provider.capabilities());
+      return true;
+    }
+    if (route === "/api/context/files") {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        query?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.query !== "string"
+      ) {
+        throw new RepositoryError("A repository, worktree, and file query are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, {
+        files: await searchRepositoryFiles(context.worktree, body.query),
+      });
+      return true;
+    }
     if (route === "/api/provider/runs") {
       const body = await readJson(request) as {
         root?: unknown;
@@ -155,6 +183,7 @@ async function handleApi(
         projectId?: unknown;
         threadId?: unknown;
         mode?: unknown;
+        attachments?: unknown;
       };
       if (
         typeof body.root !== "string"
@@ -167,11 +196,20 @@ async function handleApi(
         || (body.projectId !== undefined && typeof body.projectId !== "string")
         || (body.threadId !== undefined && typeof body.threadId !== "string")
         || !["ask", "plan", "build"].includes(body.mode as string)
+        || (body.attachments !== undefined && (
+          !Array.isArray(body.attachments)
+          || body.attachments.some((path) => typeof path !== "string")
+        ))
       ) {
         throw new RepositoryError("A repository, worktree, prompt, and interaction mode are required.");
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
+      const attachments = await resolveContextAttachments(
+        context.worktree,
+        (body.attachments ?? []) as string[],
+      );
+      const providerPrompt = composePrompt(body.prompt.trim(), attachments);
       const projection = await state.load();
       const project = typeof body.projectId === "string"
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
@@ -193,7 +231,7 @@ async function handleApi(
           context.root,
           context.worktree,
           body.conversationId,
-          body.prompt.trim(),
+          providerPrompt,
           approvalUrl,
           mode,
           body.resumeSessionId,
