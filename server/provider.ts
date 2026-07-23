@@ -29,6 +29,21 @@ export type ProviderEvent =
 
 export class ProviderProtocolError extends Error {}
 
+export type ProviderId = "claude-code" | "codex-cli";
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export interface ProviderStartOptions {
+  repository: string;
+  worktree: string;
+  conversationId: string;
+  prompt: string;
+  approvalUrl: string;
+  resumeSessionId?: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
+  mode: InteractionMode;
+}
+
 export function modeArguments(mode: InteractionMode, help: string): string[] {
   const supportsTools = /--tools <tools\.\.\.>/.test(help);
   const permissionModes = help.match(/--permission-mode <mode>[\s\S]*?\(choices: ([^)]+)\)/)?.[1] ?? "";

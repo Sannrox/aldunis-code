@@ -50,6 +50,7 @@ const MUTATING_TOOLS = new Set([
 const SECRET_KEYS = /(?:authorization|cookie|credential|password|secret|token|api[_-]?key)/i;
 const CONTENT_KEYS = /(?:content|new_string|old_string|patch|replacement)/i;
 const MAX_DETAIL_LENGTH = 180;
+export const MAX_APPROVAL_PATHS = 50;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -97,14 +98,26 @@ export function isMutatingTool(toolName: string): boolean {
 
 export function describeMutation(toolName: string, inputValue: unknown): ApprovalScope {
   const input = record(inputValue);
-  const targetKeys = ["file_path", "path", "notebook_path", "command"];
+  const targetKeys = ["file_path", "path", "notebook_path", "command", "host"];
   const targetEntry = targetKeys
     .map((key) => [key, displayValue(key, input[key])] as const)
     .find(([, value]) => value);
-  const details = Object.entries(input)
-    .filter(([key]) => !targetKeys.includes(key))
-    .slice(0, 4)
-    .map(([key, value]) => `${key}: ${displayValue(key, value) ?? "[hidden]"}`);
+  const paths = Array.isArray(input.paths)
+    ? [
+      ...input.paths.slice(0, MAX_APPROVAL_PATHS)
+        .map((path) => `path: ${displayValue("path", path) ?? "[hidden]"}`),
+      ...(input.paths.length > MAX_APPROVAL_PATHS
+        ? [`paths omitted: ${input.paths.length - MAX_APPROVAL_PATHS}`]
+        : []),
+    ]
+    : [];
+  const details = [
+    ...paths,
+    ...Object.entries(input)
+      .filter(([key]) => !targetKeys.includes(key) && key !== "paths")
+      .slice(0, 4)
+      .map(([key, value]) => `${key}: ${displayValue(key, value) ?? "[hidden]"}`),
+  ];
   const summaries: Record<string, string> = {
     Bash: "Run a command",
     Edit: "Edit a file",
@@ -113,7 +126,9 @@ export function describeMutation(toolName: string, inputValue: unknown): Approva
     Write: "Write a file",
   };
   return {
-    summary: summaries[toolName] ?? `Run ${toolName}`,
+    summary: toolName === "Bash" && typeof input.host === "string"
+      ? "Allow network access"
+      : summaries[toolName] ?? `Run ${toolName}`,
     target: targetEntry ? `${targetEntry[0]}: ${targetEntry[1]}` : "Target provided by Claude Code",
     details,
   };
@@ -128,6 +143,7 @@ export class PermissionError extends Error {
 export class PermissionBroker {
   readonly #approvals = new Map<string, PendingApproval>();
   readonly #tokens = new Map<string, string>();
+  readonly #resolving = new Set<string>();
 
   constructor(private readonly timeoutMs = 5 * 60_000) {}
 
@@ -198,6 +214,19 @@ export class PermissionBroker {
     return approval.decision;
   }
 
+  async awaitRegisteredDecision(
+    runId: string,
+    token: string,
+    approvalId: string,
+  ): Promise<PermissionDecision> {
+    this.#assertToken(runId, token);
+    const approval = this.#approvals.get(approvalId);
+    if (!approval || approval.runId !== runId) {
+      return { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
+    }
+    return approval.decision;
+  }
+
   decide(
     id: string,
     context: {
@@ -227,9 +256,74 @@ export class PermissionBroker {
     return this.#snapshot(approval);
   }
 
+  async decideAfter(
+    id: string,
+    context: {
+      runId: string;
+      conversationId: string;
+      repository: string;
+      worktree: string;
+      toolCallId: string;
+    },
+    decision: "allow_once" | "deny",
+    beforeResolve: (snapshot: ApprovalSnapshot) => Promise<void>,
+  ): Promise<ApprovalSnapshot> {
+    const approval = this.#approvals.get(id);
+    if (!approval) throw new PermissionError("The approval request does not exist.", 404);
+    if (
+      approval.runId !== context.runId
+      || approval.conversationId !== context.conversationId
+      || approval.repository !== context.repository
+      || approval.worktree !== context.worktree
+      || approval.toolCallId !== context.toolCallId
+    ) {
+      throw new PermissionError("The approval request is bound to a different context.", 403);
+    }
+    if (approval.state !== "pending" || this.#resolving.has(id)) {
+      throw new PermissionError("The approval request has already been resolved.", 409);
+    }
+    this.#resolving.add(id);
+    const nextState = decision === "allow_once" ? "allowed_once" : "denied";
+    approval.state = nextState;
+    clearTimeout(approval.timer);
+    try {
+      await beforeResolve(this.#snapshot(approval));
+      if (approval.state !== nextState) {
+        throw new PermissionError("The approval request closed before it could be released.", 409);
+      }
+      if (nextState === "allowed_once") {
+        approval.resolve({ behavior: "allow", updatedInput: approval.originalInput });
+      } else {
+        approval.resolve({ behavior: "deny", message: "The local action was denied." });
+      }
+      return this.#snapshot(approval);
+    } catch (error) {
+      if (approval.state === nextState) {
+        approval.state = "provider_failed";
+        approval.resolve({
+          behavior: "deny",
+          message: "Aldunis Code could not persist the approval decision.",
+        });
+      }
+      throw error;
+    } finally {
+      this.#resolving.delete(id);
+    }
+  }
+
   closeRun(runId: string, state: Extract<ApprovalState, "cancelled" | "provider_failed">): void {
     for (const approval of this.#approvals.values()) {
-      if (approval.runId === runId && approval.state === "pending") this.#finish(approval, state);
+      if (approval.runId !== runId) continue;
+      if (this.#resolving.has(approval.id)) {
+        approval.state = state;
+        clearTimeout(approval.timer);
+        approval.resolve({
+          behavior: "deny",
+          message: `Aldunis Code closed the approval request (${state.replace("_", " ")}).`,
+        });
+      } else if (approval.state === "pending") {
+        this.#finish(approval, state);
+      }
     }
     this.#tokens.delete(runId);
   }
