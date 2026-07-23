@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { LocalStateError, LocalStateStore } from "./state.ts";
+import { LocalStateError, LocalStateStore, MAX_THREADS_PER_PROJECT } from "./state.ts";
 
 async function fixtureStore(): Promise<{ directory: string; store: LocalStateStore }> {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
@@ -52,6 +52,79 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
+test("attention states and provider run identity survive reload", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Change the fixture",
+    mode: "build",
+  });
+  await store.bindProviderRun(turn.id, "run-1");
+  await store.recordProviderEvent(thread.id, turn.id, {
+    kind: "approval_pending",
+    id: "approval-1",
+    runId: "run-1",
+    conversationId: "conversation-1",
+    repository: "/fixture",
+    worktree: "/fixture",
+    toolCallId: "tool-1",
+    toolName: "Write",
+    scope: { summary: "Write a file", target: "fixture.ts", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  let rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.turns[0].status, "waiting_for_approval");
+  assert.equal(rebuilt.turns[0].providerRunId, "run-1");
+
+  await store.recordProviderEvent(thread.id, turn.id, {
+    kind: "approval_resolved",
+    id: "approval-1",
+    state: "allowed_once",
+  });
+  rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.turns[0].status, "active");
+});
+
+test("host restart marks orphaned active and approval turns interrupted", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Keep running",
+    mode: "ask",
+  });
+  const second = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Wait for approval",
+    mode: "build",
+    threadId: first.thread.id,
+  });
+  await store.recordProviderEvent(second.thread.id, second.turn.id, {
+    kind: "approval_pending",
+    id: "approval-1",
+    runId: "run-1",
+    conversationId: "conversation-1",
+    repository: "/fixture",
+    worktree: "/fixture",
+    toolCallId: "tool-1",
+    toolName: "Write",
+    scope: { summary: "Write a file", target: "fixture.ts", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+
+  const restarted = new LocalStateStore(directory);
+  await restarted.recoverInterruptedTurns();
+  const projection = await restarted.load();
+  assert.deepEqual(projection.turns.map((turn) => turn.status), ["interrupted", "interrupted"]);
+  assert.ok(projection.turns.every((turn) => turn.completedAt));
+});
+
 test("concurrent writes remain strictly ordered and crash-safe", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -69,6 +142,28 @@ test("concurrent writes remain strictly ordered and crash-safe", async () => {
   assert.equal(projection.threads.length, 12);
   assert.equal(projection.turns.length, 12);
   assert.equal(projection.messages.length, 12);
+});
+
+test("new conversations stop at the bounded per-project retention limit", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  for (let index = 0; index < MAX_THREADS_PER_PROJECT; index += 1) {
+    await store.startTurn({
+      projectId: "project-1",
+      worktree: "/fixture",
+      prompt: `Turn ${index}`,
+      mode: "ask",
+    });
+  }
+  await assert.rejects(
+    () => store.startTurn({
+      projectId: "project-1",
+      worktree: "/fixture",
+      prompt: "One too many",
+      mode: "ask",
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 429,
+  );
 });
 
 test("corruption and incompatible schemas fail visibly without discarding history", async () => {
