@@ -18,22 +18,23 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     worktree: "/fixture",
     prompt: "Inspect the change",
     mode: "plan",
+    provider: "claude-code",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "session_started",
     sessionId: "session-1",
     model: "sonnet",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "assistant_text",
     text: "The change is safe.",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "tool_started",
     toolCallId: "tool-1",
     name: "Read",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "turn_completed",
     sessionId: "session-1",
     costUsd: 0.01,
@@ -60,9 +61,10 @@ test("attention states and provider run identity survive reload", async () => {
     worktree: "/fixture",
     prompt: "Change the fixture",
     mode: "build",
+    provider: "claude-code",
   });
   await store.bindProviderRun(turn.id, "run-1");
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "approval_pending",
     id: "approval-1",
     runId: "run-1",
@@ -79,7 +81,7 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "waiting_for_approval");
   assert.equal(rebuilt.turns[0].providerRunId, "run-1");
 
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "approval_resolved",
     id: "approval-1",
     state: "allowed_once",
@@ -96,6 +98,7 @@ test("host restart marks orphaned active and approval turns interrupted", async 
     worktree: "/fixture",
     prompt: "Keep running",
     mode: "ask",
+    provider: "claude-code",
   });
   const second = await store.startTurn({
     projectId: "project-1",
@@ -103,8 +106,9 @@ test("host restart marks orphaned active and approval turns interrupted", async 
     prompt: "Wait for approval",
     mode: "build",
     threadId: first.thread.id,
+    provider: "claude-code",
   });
-  await store.recordProviderEvent(second.thread.id, second.turn.id, {
+  await store.recordProviderEvent(second.thread.id, second.turn.id, "claude-code", {
     kind: "approval_pending",
     id: "approval-1",
     runId: "run-1",
@@ -133,6 +137,7 @@ test("concurrent writes remain strictly ordered and crash-safe", async () => {
     worktree: "/fixture",
     prompt: `Turn ${index}`,
     mode: "ask",
+    provider: "claude-code",
   })));
 
   const projection = await new LocalStateStore(directory).load();
@@ -194,6 +199,7 @@ test("project deletion and retention physically remove sensitive conversation da
     worktree: "/fixture",
     prompt: "secret prompt sentinel",
     mode: "build",
+    provider: "claude-code",
   });
   await deleted.store.deleteProject("project-1");
   assert.deepEqual(await deleted.store.load(), {
@@ -216,6 +222,7 @@ test("project deletion and retention physically remove sensitive conversation da
     worktree: "/fixture",
     prompt: "expired sensitive prompt",
     mode: "build",
+    provider: "claude-code",
   });
   await retained.store.enforceRetention(new Date(Date.now() + 60_000));
   const projection = await retained.store.load();
@@ -232,13 +239,14 @@ test("only allowlisted provider fields are persisted", async () => {
     worktree: "/fixture",
     prompt: "safe prompt",
     mode: "ask",
+    provider: "claude-code",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "tool_started",
     toolCallId: "tool-1",
     name: "Read",
   });
-  await store.recordProviderEvent(thread.id, turn.id, {
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "failed",
     message: "credential=raw-secret-value",
   });
@@ -299,4 +307,32 @@ test("checkpoint states rebuild and are removed with their conversation", async 
   await store.deleteProject("project-1");
   assert.equal((await store.load()).checkpoints.length, 0);
   assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"), false);
+});
+
+test("an existing conversation cannot silently switch provider state", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Start with Codex",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "session_started",
+    sessionId: "codex-thread",
+    model: "gpt-5.6",
+  });
+  await assert.rejects(
+    () => store.startTurn({
+      projectId: "project-1",
+      worktree: "/fixture",
+      prompt: "Switch provider",
+      mode: "build",
+      threadId: thread.id,
+      provider: "claude-code",
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
 });

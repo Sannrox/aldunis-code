@@ -38,6 +38,39 @@ test("mutation scopes retain targets while redacting sensitive values", () => {
   assert.equal(scope.details.some((detail) => detail.includes("[redacted]")), true);
 });
 
+test("multi-file mutation scopes expose bounded paths without file contents", () => {
+  assert.deepEqual(describeMutation("Edit", {
+    path: "src/first.ts",
+    paths: ["src/first.ts", "src/second.ts"],
+    patch: "private source text",
+  }), {
+    summary: "Edit a file",
+    target: "path: src/first.ts",
+    details: ["path: src/first.ts", "path: src/second.ts", "patch: [content redacted]"],
+  });
+});
+
+test("network approval scopes display destination and protocol", () => {
+  assert.deepEqual(describeMutation("Bash", {
+    host: "api.example.test",
+    protocol: "https",
+    reason: "Fetch metadata",
+  }), {
+    summary: "Allow network access",
+    target: "host: api.example.test",
+    details: ["protocol: https", "reason: Fetch metadata"],
+  });
+});
+
+test("multi-file approval display is bounded with an explicit omitted count", () => {
+  const scope = describeMutation("Edit", {
+    path: "src/0.ts",
+    paths: Array.from({ length: 52 }, (_, index) => `src/${index}.ts`),
+  });
+  assert.equal(scope.details.length, 51);
+  assert.equal(scope.details.at(-1), "paths omitted: 2");
+});
+
 test("allow-once is bound to one exact call and cannot be replayed", async () => {
   const broker = new PermissionBroker();
   const token = broker.createRunToken(context.runId);
@@ -51,6 +84,84 @@ test("allow-once is bound to one exact call and cannot be replayed", async () =>
     () => broker.decide(approval.id, decisionContext(), "allow_once"),
     (error: unknown) => error instanceof PermissionError && error.status === 409,
   );
+});
+
+test("identical concurrent callbacks await their exact registered approval", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const first = broker.register(context);
+  const secondContext = { ...context, toolCallId: "tool-2" };
+  const second = broker.register(secondContext);
+  assert.ok(first);
+  assert.ok(second);
+
+  const firstWaiting = broker.awaitRegisteredDecision(context.runId, token, first.id);
+  const secondWaiting = broker.awaitRegisteredDecision(context.runId, token, second.id);
+  assert.equal(broker.decide(first.id, decisionContext(), "allow_once").state, "allowed_once");
+  assert.deepEqual(await firstWaiting, { behavior: "allow", updatedInput: context.toolInput });
+
+  assert.equal(
+    broker.decide(second.id, decisionContext(secondContext), "deny").state,
+    "denied",
+  );
+  assert.equal((await secondWaiting).behavior, "deny");
+});
+
+test("approval persistence completes before the provider is released", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const approval = broker.register(context);
+  assert.ok(approval);
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
+  let persisted = false;
+  const deciding = broker.decideAfter(
+    approval.id,
+    decisionContext(),
+    "allow_once",
+    async () => {
+      persisted = true;
+    },
+  );
+  assert.equal(persisted, true);
+  assert.equal((await deciding).state, "allowed_once");
+  assert.deepEqual(await waiting, { behavior: "allow", updatedInput: context.toolInput });
+});
+
+test("approval persistence failure denies the provider action", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const approval = broker.register(context);
+  assert.ok(approval);
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
+  await assert.rejects(
+    () => broker.decideAfter(approval.id, decisionContext(), "allow_once", async () => {
+      throw new Error("fixture persistence failure");
+    }),
+    /fixture persistence failure/,
+  );
+  assert.equal((await waiting).behavior, "deny");
+  assert.equal(broker.approvalFor(context.runId, context.toolCallId)?.state, "provider_failed");
+});
+
+test("run cancellation revokes an approval while persistence is in flight", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const approval = broker.register(context);
+  assert.ok(approval);
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
+  let finishPersistence!: () => void;
+  const persistence = new Promise<void>((resolve) => { finishPersistence = resolve; });
+  const deciding = broker.decideAfter(
+    approval.id,
+    decisionContext(),
+    "allow_once",
+    () => persistence,
+  );
+  broker.closeRun(context.runId, "cancelled");
+  finishPersistence();
+  await assert.rejects(deciding, /closed before it could be released/);
+  assert.equal((await waiting).behavior, "deny");
+  assert.equal(broker.approvalFor(context.runId, context.toolCallId)?.state, "cancelled");
 });
 
 test("deny, cancellation, expiry, and provider failure resolve fail-closed", async () => {

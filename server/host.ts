@@ -8,8 +8,11 @@ import { fileURLToPath } from "node:url";
 import {
   ClaudeCodeAdapter,
   type InteractionMode,
+  type ProviderId,
   ProviderProtocolError,
+  type ReasoningEffort,
 } from "./provider.ts";
+import { CodexCliAdapter } from "./codex-provider.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery.ts";
 import { PermissionBroker, PermissionError } from "./permission.ts";
@@ -127,6 +130,7 @@ async function handleApi(
   request: IncomingMessage,
   response: ServerResponse,
   provider: ClaudeCodeAdapter,
+  codex: CodexCliAdapter,
   permissions: PermissionBroker,
   delivery: DeliveryBroker,
   state: LocalStateStore,
@@ -148,6 +152,22 @@ async function handleApi(
   }
 
   try {
+    if (route === "/api/providers/discover") {
+      const codexReadiness = await codex.readiness().catch(() => ({
+        id: "codex-cli" as const,
+        installed: false,
+        authenticated: false,
+        version: null,
+        models: [],
+      }));
+      sendJson(response, 200, {
+        providers: [
+          { id: "claude-code", installed: true },
+          codexReadiness,
+        ],
+      });
+      return true;
+    }
     if (route === "/api/repositories/open") {
       const body = await readJson(request) as { path?: unknown };
       if (typeof body.path !== "string") {
@@ -573,7 +593,11 @@ async function handleApi(
         profileId?: unknown;
         model?: unknown;
         elementReferences?: unknown;
+        provider?: unknown;
+        reasoningEffort?: unknown;
       };
+      const providerId = (body.provider ?? "claude-code") as ProviderId;
+      const reasoningEfforts = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
       if (
         typeof body.root !== "string"
         || typeof body.worktree !== "string"
@@ -589,9 +613,12 @@ async function handleApi(
           !Array.isArray(body.attachments)
           || body.attachments.some((path) => typeof path !== "string")
         ))
-        || typeof body.profileId !== "string"
+        || (providerId !== "claude-code" && providerId !== "codex-cli")
+        || (providerId === "claude-code" && typeof body.profileId !== "string")
         || typeof body.model !== "string"
-        || !CLAUDE_MODEL_ALIASES.includes(body.model)
+        || (providerId === "claude-code" && !CLAUDE_MODEL_ALIASES.includes(body.model))
+        || (body.reasoningEffort !== undefined
+          && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
         || (body.elementReferences !== undefined && (
           !Array.isArray(body.elementReferences)
           || body.elementReferences.length > 3
@@ -604,7 +631,7 @@ async function handleApi(
         ))
       ) {
         throw new RepositoryError(
-          "A repository, worktree, prompt, interaction mode, Claude profile, and model are required.",
+          "A repository, worktree, prompt, interaction mode, provider, and model are required.",
         );
       }
       const mode = body.mode as InteractionMode;
@@ -629,16 +656,31 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
-      const profile = await profiles.runtime(body.profileId);
+      const profile = providerId === "claude-code"
+        ? await profiles.runtime(body.profileId as string)
+        : null;
       const previousSession = typeof body.threadId === "string"
-        ? projection.providerSessions.find((session) => session.threadId === body.threadId)
+        ? projection.providerSessions.find(
+          (session) => session.threadId === body.threadId && session.provider === providerId,
+        )
         : undefined;
       if (
+        profile
+        &&
         previousSession?.continuationKey
         && previousSession.continuationKey !== profile.continuationKey
       ) {
         throw new ProfileError(
           "This thread can only continue with a Claude profile using the same Claude home.",
+          409,
+        );
+      }
+      if (
+        body.resumeSessionId !== undefined
+        && (!previousSession || body.resumeSessionId !== previousSession.sessionId)
+      ) {
+        throw new LocalStateError(
+          "The provider session does not belong to the selected conversation.",
           409,
         );
       }
@@ -656,6 +698,7 @@ async function handleApi(
         worktree: context.worktree,
         prompt: body.prompt.trim(),
         mode,
+        provider: providerId,
         threadId: body.threadId,
       });
       const checkpointId = randomUUID();
@@ -711,27 +754,39 @@ async function handleApi(
       const approvalUrl = `http://127.0.0.1:${port}/api/provider/permissions/request`;
       let run;
       try {
-        run = await provider.start(
-          context.root,
-          context.worktree,
-          body.conversationId,
-          providerPrompt,
-          approvalUrl,
-          mode,
-          body.resumeSessionId,
-          {
-            executable: profile.executable,
-            environment: profile.environment,
-            model: body.model,
-          },
-        );
+        run = providerId === "codex-cli"
+          ? await codex.start({
+            repository: context.root,
+            worktree: context.worktree,
+            conversationId: body.conversationId,
+            prompt: providerPrompt,
+            approvalUrl,
+            mode,
+            resumeSessionId: body.resumeSessionId,
+            model: body.model === "default" ? undefined : body.model,
+            reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+          })
+          : await provider.start(
+            context.root,
+            context.worktree,
+            body.conversationId,
+            providerPrompt,
+            approvalUrl,
+            mode,
+            body.resumeSessionId,
+            {
+              executable: profile!.executable,
+              environment: profile!.environment,
+              model: body.model,
+            },
+          );
       } catch (error) {
-        await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, {
+        await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
           kind: "failed",
           message: error instanceof ProviderProtocolError
             ? error.message
             : "The provider could not be started.",
-        }, { profileId: profile.profile.id, continuationKey: profile.continuationKey });
+        }, profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined);
         const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
         if (checkpoint && checkpoint.state === "baseline") {
           await state.saveCheckpoint({
@@ -760,11 +815,13 @@ async function handleApi(
           await state.recordProviderEvent(
             persisted.thread.id,
             persisted.turn.id,
+            providerId,
             event,
-            { profileId: profile.profile.id, continuationKey: profile.continuationKey },
+            profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined,
           );
         } catch {
-          provider.cancel(run.id);
+          if (providerId === "codex-cli") codex.cancel(run.id);
+          else provider.cancel(run.id);
           response.write(`${JSON.stringify({
             kind: "failed",
             message: "Local history could not be updated. The provider run was stopped.",
@@ -882,7 +939,7 @@ async function handleApi(
       ) {
         throw new PermissionError("A complete scoped approval decision is required.");
       }
-      sendJson(response, 200, permissions.decide(
+      const decided = await permissions.decideAfter(
         approvalMatch[1],
         {
           runId: body.runId,
@@ -892,7 +949,24 @@ async function handleApi(
           toolCallId: body.toolCallId,
         },
         body.decision,
-      ));
+        async (resolution) => {
+          const projection = await state.load();
+          const turn = projection.turns.find((item) => item.providerRunId === body.runId);
+          const thread = turn
+            ? projection.threads.find((item) => item.id === turn.threadId)
+            : undefined;
+          if (!turn || !thread) {
+            throw new LocalStateError("The provider turn is missing from local history.", 404);
+          }
+          await state.recordProviderEvent(
+            thread.id,
+            turn.id,
+            thread.provider ?? "claude-code",
+            { kind: "approval_resolved", id: resolution.id, state: resolution.state },
+          );
+        },
+      );
+      sendJson(response, 200, decided);
       return true;
     }
     if (route === "/api/changes") {
@@ -1035,7 +1109,7 @@ async function handleApi(
     }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
-      if (!provider.cancel(cancelMatch[1])) {
+      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1])) {
         throw new RepositoryError("The provider run is no longer active.", 404);
       }
       sendJson(response, 202, { status: "cancelling" });
@@ -1097,6 +1171,7 @@ export function createLocalHost(
   const permissions = new PermissionBroker();
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
+  const codex = new CodexCliAdapter("codex", permissions);
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const recovery = state.recoverInterruptedTurns();
@@ -1107,6 +1182,7 @@ export function createLocalHost(
         request,
         response,
         provider,
+        codex,
         permissions,
         delivery,
         state,

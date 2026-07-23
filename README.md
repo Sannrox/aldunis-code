@@ -77,10 +77,12 @@ npm run check
 npm run build
 ```
 
-After opening a repository or linked worktree, send a prompt to start a Claude
-Code session attached to that explicitly selected worktree. Provider
-credentials stay in Claude Code's
-supported local credential store and are never returned to the browser.
+After opening a repository or linked worktree, choose Claude Code or an
+authenticated Codex CLI and send a prompt to start a provider session attached
+to that explicitly selected worktree. Codex discovery reports its local
+authentication readiness, version, models, and supported reasoning efforts.
+Provider credentials remain in each CLI's supported local credential store and
+are never returned to the browser.
 
 ## Claude profiles
 
@@ -105,6 +107,14 @@ completed or interrupted Claude session can be resumed with its provider
 session ID. Unknown protocol events and unsupported Claude Code major versions
 fail closed with a visible conversation state.
 
+Codex uses the same Ask, Plan, and Build authority boundary. Build-mode network
+and file mutations pause for one explicit scoped approval; command sandbox
+escapes are declined because the current app-server protocol cannot confine
+them to the selected worktree. Ask and
+Plan decline mutations. Persisted conversations and provider session IDs remain
+bound to their original provider, and unknown Codex protocol activity fails
+closed.
+
 Use **Changed files** to inspect the active worktree without exposing a
 terminal. Added, modified, deleted, renamed, binary, and oversized files have
 explicit states. Text patches stay constrained to the selected worktree;
@@ -113,7 +123,7 @@ read-only and never stages, rewrites, or discards user work.
 
 ## Local history
 
-Projects, conversations, turns, messages, typed tool activity, and Claude Code
+Projects, conversations, turns, messages, typed tool activity, and provider
 session references are stored as a versioned local event log. The default path
 is `$XDG_STATE_HOME/aldunis-code/events.v1.jsonl` (or
 `~/.local/state/aldunis-code/events.v1.jsonl`). Set
