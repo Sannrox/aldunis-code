@@ -18,18 +18,22 @@ button { border: 0; cursor: pointer; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--acid); outline-offset: -2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; border: 0; clip: rect(0,0,0,0); white-space: nowrap; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
-.app { display: flex; width: 100vw; height: 100vh; background: #0b0c0f; }
-.product-rail { position: relative; z-index: 3; display: flex; width: 72px; flex: 0 0 72px; align-items: center; flex-direction: column; border-right: 1px solid var(--line); background: #0a0b0d; }
-.aldunis-mark { display: grid; width: 39px; height: 39px; margin: 17px 0 28px; place-items: center; border: 1px solid #44464e; border-radius: 12px; background: linear-gradient(145deg, #23252a, #111216); color: var(--acid); font: 500 1.3rem "Newsreader", serif; box-shadow: inset 0 1px rgba(255,255,255,.06); }
-.rail-products { display: flex; width: 100%; flex-direction: column; gap: 7px; }
-.rail-products button, .rail-settings { position: relative; display: flex; height: 52px; align-items: center; justify-content: center; flex-direction: column; gap: 3px; background: transparent; color: #686a73; font-size: .56rem; letter-spacing: .04em; }
-.rail-products button::before { position: absolute; left: 0; width: 2px; height: 0; border-radius: 0 2px 2px 0; background: var(--acid); content: ""; transition: height .18s; }
-.rail-products button:hover { color: #bebfc4; }
-.rail-products button.active { color: #f0f0eb; }
-.rail-products button.active::before { height: 26px; }
-.rail-products button.active svg { color: var(--acid); }
-.rail-products button span { text-transform: uppercase; }
-.rail-settings { margin-top: auto; margin-bottom: 16px; }
+.app { display: flex; width: 100vw; height: 100vh; flex-direction: column; background: #0b0c0f; }
+.page-header { position: relative; z-index: 4; display: flex; height: 58px; flex: 0 0 58px; align-items: center; gap: 13px; padding: 0 16px; border-bottom: 1px solid var(--line); background: #0a0b0d; }
+.aldunis-mark { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid #44464e; border-radius: 10px; background: linear-gradient(145deg, #23252a, #111216); color: var(--acid); font: 500 1.15rem "Newsreader", serif; box-shadow: inset 0 1px rgba(255,255,255,.06); }
+.page-selector { display: flex; align-items: center; gap: 10px; }
+.page-selector > span:first-child { color: #6f7179; font: 500 .56rem "DM Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
+.page-selector-current { position: relative; display: flex; height: 36px; align-items: center; gap: 8px; padding: 0 9px; border: 1px solid #34363c; border-radius: 8px; background: #17181c; }
+.page-selector-current > svg:first-child { width: 15px; color: var(--acid); }
+.page-selector-current > svg:last-child { width: 12px; color: #74767e; transform: rotate(90deg); pointer-events: none; }
+.page-selector select { min-width: 210px; border: 0; outline: 0; appearance: none; background: transparent; color: #e4e4df; font-size: .72rem; font-weight: 500; cursor: pointer; }
+.page-selector-current:has(select:focus-visible) { outline: 2px solid var(--acid); outline-offset: 1px; }
+.page-settings { display: flex; height: 34px; margin-left: auto; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #303238; border-radius: 7px; background: #17181c; color: #a6a8ae; font-size: .67rem; }
+.page-settings:hover { color: #e5e5e1; }
+.page-settings svg { width: 15px; }
+.app-content { display: flex; min-width: 0; min-height: 0; flex: 1; }
+.code-page { display: contents; }
+.code-page[hidden] { display: none; }
 .context-sidebar { display: flex; width: 286px; flex: 0 0 286px; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel); }
 .context-sidebar > header { display: flex; height: 74px; padding: 0 16px 0 18px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .context-sidebar > header div { display: flex; flex-direction: column; gap: 5px; }
@@ -363,27 +367,27 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .domain-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 680px) {
-  body { overflow: auto; }
-  .app { min-height: 100vh; height: auto; }
-  .product-rail { position: fixed; right: 0; bottom: 0; left: 0; width: 100%; height: 62px; flex-direction: row; border-top: 1px solid var(--line); border-right: 0; }
-  .aldunis-mark, .rail-settings { display: none; }
-  .rail-products { flex-direction: row; height: 100%; }
-  .rail-products button { flex: 1; height: 100%; }
-  .rail-products button::before { top: 0; left: 50%; width: 0; height: 2px; transform: translateX(-50%); transition: width .18s; }
-  .rail-products button.active::before { width: 28px; height: 2px; }
+  .page-header { padding: 0 10px; gap: 8px; }
+  .aldunis-mark { width: 32px; height: 32px; flex-basis: 32px; }
+  .page-selector { min-width: 0; flex: 1; }
+  .page-selector > span:first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .page-selector-current { min-width: 0; width: 100%; }
+  .page-selector select { min-width: 0; width: 100%; }
+  .page-settings { width: 34px; flex: 0 0 34px; justify-content: center; padding: 0; }
+  .page-settings span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .context-sidebar { display: none; }
-  .conversation { min-height: calc(100vh - 62px); padding-bottom: 62px; }
+  .conversation { min-height: 0; }
   .conversation-header { padding: 0 14px; }
   .header-actions .mobile-project { display: flex; }
   .header-actions button span { display: none; }
   .conversation-scroll { width: calc(100% - 28px); }
-  .composer-wrap { position: fixed; bottom: 62px; padding: 18px 14px 10px; }
-  .domain-page { min-height: 100vh; padding: 58px 22px 100px; }
+  .composer-wrap { padding: 18px 14px 10px; }
+  .domain-page { min-height: 0; padding: 58px 22px 100px; }
   .domain-orbit { top: 36px; right: 20px; width: 100px; height: 100px; }
   .domain-page h1 { font-size: clamp(3rem, 15vw, 5rem); }
   .domain-grid { grid-template-columns: 1fr; }
-  .changes-panel { position: fixed; bottom: 62px; }
-  .preview-panel { position: fixed; bottom: 62px; }
+  .changes-panel { position: fixed; top: 58px; bottom: 0; }
+  .preview-panel { position: fixed; top: 58px; bottom: 0; }
   .preview-panel > header { padding: 0 14px; }
   .preview-policy { align-items: flex-start; padding: 9px 14px; flex-direction: column; gap: 4px; }
   .preview-workspace { grid-template-columns: 1fr; grid-template-rows: 42px minmax(300px, 1fr) auto; }

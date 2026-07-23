@@ -1,4 +1,4 @@
-import { FormEvent, StrictMode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -191,7 +191,7 @@ const sessions = [
   { title: "Refine worktree discovery", branch: "codex/8-worktrees", age: "2h" },
 ];
 
-function ProductRail({
+function PageHeader({
   product,
   onChange,
   onSettings,
@@ -200,25 +200,31 @@ function ProductRail({
   onChange: (product: Product) => void;
   onSettings: () => void;
 }) {
+  const current = nav.find((item) => item.id === product)!;
   return (
-    <aside className="product-rail" aria-label="Products">
-      <button className="aldunis-mark" aria-label="Aldunis home">A</button>
-      <div className="rail-products">
-        {nav.map((item) => (
-          <button
-            className={product === item.id ? "active" : ""}
-            onClick={() => onChange(item.id)}
-            aria-label={item.label}
-            aria-current={product === item.id ? "page" : undefined}
-            key={item.id}
+    <header className="page-header">
+      <span className="aldunis-mark" aria-hidden="true">A</span>
+      <label className="page-selector">
+        <span>Page</span>
+        <span className="page-selector-current">
+          <Icon name={current.icon} />
+          <select
+            value={product}
+            onChange={(event) => onChange(event.target.value as Product)}
+            aria-label="Current page"
           >
-            <Icon name={item.icon} />
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-      <button className="rail-settings" aria-label="Claude profile settings" onClick={onSettings}><Icon name="settings" /></button>
-    </aside>
+            {nav.map((item) => (
+              <option value={item.id} key={item.id}>{item.label} — {item.detail}</option>
+            ))}
+          </select>
+          <Icon name="chevron" />
+        </span>
+      </label>
+      <button className="page-settings" aria-label="Claude profile settings" onClick={onSettings}>
+        <Icon name="settings" />
+        <span>Provider settings</span>
+      </button>
+    </header>
   );
 }
 
@@ -1793,13 +1799,15 @@ function App() {
       setRepositoryBusy(false);
     }
   };
-  const content = useMemo(() => product === "code"
-    ? <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} />
-    : <DomainPage product={product} />, [product, repository, profiles]);
   return (
     <div className="app">
-      <ProductRail product={product} onChange={setProduct} onSettings={() => setProfileDialog(true)} />
-      {content}
+      <PageHeader product={product} onChange={setProduct} onSettings={() => setProfileDialog(true)} />
+      <div className="app-content">
+        <div className="code-page" hidden={product !== "code"}>
+          <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} />
+        </div>
+        {product !== "code" && <DomainPage product={product} />}
+      </div>
       <RepositoryDialog
         open={repositoryDialog}
         busy={repositoryBusy}
