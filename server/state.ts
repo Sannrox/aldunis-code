@@ -99,6 +99,29 @@ export interface TurnCheckpoint {
   updatedAt: string;
 }
 
+export type AnnotationResolution = "unresolved" | "resolved";
+export type AnnotationScope = "file" | "line";
+
+export interface DiffAnnotation {
+  schemaVersion: 1;
+  id: string;
+  threadId: string;
+  checkpointId: string | null;
+  diffIdentity: string;
+  path: string;
+  previousPath: string | null;
+  targetState: "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
+  scope: AnnotationScope;
+  side: "addition" | "deletion" | "context" | null;
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+  capturedContext: string;
+  resolution: AnnotationResolution;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StateProjection {
   schemaVersion: 1;
   sequence: number;
@@ -109,6 +132,7 @@ export interface StateProjection {
   activities: Activity[];
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
+  annotations: DiffAnnotation[];
 }
 
 type StateEvent =
@@ -118,7 +142,8 @@ type StateEvent =
   | { type: "message_saved"; message: Message }
   | { type: "activity_saved"; activity: Activity }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
-  | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint };
+  | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
+  | { type: "annotation_saved"; annotation: DiffAnnotation };
 
 interface EventEnvelope {
   schemaVersion: 1;
@@ -145,6 +170,7 @@ function emptyProjection(): StateProjection {
     activities: [],
     providerSessions: [],
     checkpoints: [],
+    annotations: [],
   };
 }
 
@@ -179,6 +205,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     else projection.providerSessions[index] = event.providerSession;
   } else if (event.type === "checkpoint_saved") {
     replaceById(projection.checkpoints, event.checkpoint);
+  } else if (event.type === "annotation_saved") {
+    replaceById(projection.annotations, event.annotation);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -215,6 +243,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     activity_saved: "activity",
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
+    annotation_saved: "annotation",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -508,6 +537,32 @@ export class LocalStateStore {
     return saved;
   }
 
+  async saveAnnotation(
+    annotation: Omit<DiffAnnotation, "schemaVersion" | "updatedAt">,
+  ): Promise<DiffAnnotation> {
+    const thread = (await this.load()).threads.find((item) => item.id === annotation.threadId);
+    if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
+    const saved: DiffAnnotation = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      ...annotation,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.#append({ type: "annotation_saved", annotation: saved });
+    return saved;
+  }
+
+  async setAnnotationResolution(
+    annotationId: string,
+    threadId: string,
+    resolution: AnnotationResolution,
+  ): Promise<DiffAnnotation> {
+    const annotation = (await this.load()).annotations.find(
+      (item) => item.id === annotationId && item.threadId === threadId,
+    );
+    if (!annotation) throw new LocalStateError("The annotation is unavailable.", 404);
+    return this.saveAnnotation({ ...annotation, resolution });
+  }
+
   async supersedeCompletedCheckpoints(
     threadId: string,
     worktree: string,
@@ -545,6 +600,9 @@ export class LocalStateStore {
       projection.checkpoints = projection.checkpoints.filter(
         (checkpoint) => !threadIds.has(checkpoint.threadId),
       );
+      projection.annotations = projection.annotations.filter(
+        (annotation) => !threadIds.has(annotation.threadId),
+      );
     });
   }
 
@@ -568,6 +626,9 @@ export class LocalStateStore {
       projection.checkpoints = projection.checkpoints.filter(
         (checkpoint) => !expiredThreads.has(checkpoint.threadId),
       );
+      projection.annotations = projection.annotations.filter(
+        (annotation) => !expiredThreads.has(annotation.threadId),
+      );
     });
   }
 
@@ -589,6 +650,10 @@ export class LocalStateStore {
         ...next.checkpoints.map((checkpoint): StateEvent => ({
           type: "checkpoint_saved",
           checkpoint,
+        })),
+        ...next.annotations.map((annotation): StateEvent => ({
+          type: "annotation_saved",
+          annotation,
         })),
       ];
       const rebuilt = emptyProjection();

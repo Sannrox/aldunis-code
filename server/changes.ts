@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { isAbsolute, relative, resolve, sep } from "node:path";
@@ -18,8 +19,62 @@ export interface ChangedFile {
 }
 
 export interface FileDiff extends ChangedFile {
+  identity: string;
+  lines: DiffLine[];
   patch: string | null;
   message: string | null;
+}
+
+export interface DiffLine {
+  index: number;
+  side: "context" | "addition" | "deletion" | "metadata";
+  oldLine: number | null;
+  newLine: number | null;
+  content: string;
+}
+
+function parseDiffLines(patch: string | null): DiffLine[] {
+  if (!patch) return [];
+  let oldLine: number | null = null;
+  let newLine: number | null = null;
+  return patch.split("\n").map((content, index): DiffLine => {
+    const hunk = content.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      return { index, side: "metadata", oldLine: null, newLine: null, content };
+    }
+    if (oldLine === null || newLine === null || content.startsWith("\\ No newline")) {
+      return { index, side: "metadata", oldLine: null, newLine: null, content };
+    }
+    if (content.startsWith("+") && !content.startsWith("+++")) {
+      const line = { index, side: "addition" as const, oldLine: null, newLine, content };
+      newLine += 1;
+      return line;
+    }
+    if (content.startsWith("-") && !content.startsWith("---")) {
+      const line = { index, side: "deletion" as const, oldLine, newLine: null, content };
+      oldLine += 1;
+      return line;
+    }
+    const line = { index, side: "context" as const, oldLine, newLine, content };
+    oldLine += 1;
+    newLine += 1;
+    return line;
+  });
+}
+
+function finalizeDiff(change: ChangedFile, patch: string | null, message: string | null): FileDiff {
+  const identity = createHash("sha256")
+    .update(JSON.stringify({
+      path: change.path,
+      previousPath: change.previousPath,
+      state: change.state,
+      patch,
+      message,
+    }))
+    .digest("hex");
+  return { ...change, identity, lines: parseDiffLines(patch), patch, message };
 }
 
 function git(worktree: string, args: string[], maxBuffer = 4 * 1024 * 1024) {
@@ -161,21 +216,23 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
   const path = safeRelativePath(worktree, requestedPath);
   const change = (await listChangedFiles(worktree)).find((item) => item.path === path);
   if (!change) throw new RepositoryError("The selected file is no longer changed.", 404);
-  if (change.state === "binary") return { ...change, patch: null, message: "Binary content is not rendered." };
+  if (change.state === "binary") {
+    return finalizeDiff(change, null, "Binary content is not rendered.");
+  }
   if (change.state === "oversized") {
-    return { ...change, patch: null, message: `Diff exceeds the ${MAX_DIFF_BYTES / 1024} KiB review limit.` };
+    return finalizeDiff(change, null, `Diff exceeds the ${MAX_DIFF_BYTES / 1024} KiB review limit.`);
   }
   if (change.state === "renamed" && change.previousPath) {
-    return {
-      ...change,
-      patch: [
+    return finalizeDiff(
+      change,
+      [
         `diff --git a/${change.previousPath} b/${path}`,
         "similarity index 100%",
         `rename from ${change.previousPath}`,
         `rename to ${path}`,
       ].join("\n"),
-      message: null,
-    };
+      null,
+    );
   }
   if (change.state === "added") {
     const content = await readFile(resolve(worktree, path), "utf8");
@@ -188,8 +245,12 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
       `@@ -0,0 +1,${lines.length} @@`,
       ...lines.map((line) => `+${line}`),
     ].join("\n");
-    return { ...change, patch, message: null };
+    return finalizeDiff(change, patch, null);
   }
   const result = await git(worktree, ["diff", "--no-ext-diff", "--unified=3", "HEAD", "--", path], MAX_DIFF_BYTES * 2);
-  return { ...change, patch: result.stdout, message: result.stdout ? null : "No textual diff is available." };
+  return finalizeDiff(
+    change,
+    result.stdout || null,
+    result.stdout ? null : "No textual diff is available.",
+  );
 }
