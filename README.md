@@ -34,6 +34,21 @@ npm start
 
 Open `http://127.0.0.1:4174`.
 
+To run the desktop shell locally:
+
+```sh
+npm run desktop
+```
+
+The desktop shell waits for an ephemeral loopback host before showing its
+window, enforces one application instance, and gives the renderer no ambient
+Node.js or filesystem authority. Supported systems, application-data
+locations, signing, notarization, provenance, update channels, rollback, and
+compromised-release response are defined in
+[the desktop distribution design](docs/desktop-distribution.md). Packaging
+with `npm run package:desktop` creates local test artifacts only; public
+distribution requires the signed native-platform evidence documented there.
+
 The host refuses non-loopback addresses. To use the Vite development server,
 run the API host and Vite in separate terminals:
 
