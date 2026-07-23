@@ -234,6 +234,7 @@ test("project deletion and retention physically remove sensitive conversation da
     providerSessions: [],
     checkpoints: [],
     annotations: [],
+    forks: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -399,4 +400,90 @@ test("an existing conversation cannot silently switch provider state", async () 
     }),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
+});
+
+test("cross-provider fork previews and persists only allowlisted conversation context", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Inspect the boundary",
+    mode: "plan",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "session_started",
+    sessionId: "native-secret-session",
+    model: "sonnet",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "tool_started",
+    toolCallId: "raw-tool-call",
+    name: "Read",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "The boundary is explicit.",
+  });
+
+  const preview = await store.previewFork(thread.id);
+  assert.deepEqual(preview.messages.map((message) => message.text), [
+    "Inspect the boundary",
+    "The boundary is explicit.",
+  ]);
+  assert.equal(preview.prompt.includes("native-secret-session"), false);
+  assert.equal(preview.prompt.includes("raw-tool-call"), false);
+  assert.equal(preview.files.length, 0);
+  assert.equal(preview.summaries.length, 0);
+
+  const sourceBefore = structuredClone((await store.load()).threads[0]);
+  const created = await store.createFork({
+    sourceThreadId: thread.id,
+    provider: "codex-cli",
+    profileId: null,
+    model: "default",
+    worktree: "/fixture",
+    expectedDigest: preview.digest,
+  });
+  assert.equal(created.thread.parentThreadId, thread.id);
+  assert.equal(created.thread.provider, "codex-cli");
+  assert.equal(created.fork.status, "pending");
+  assert.equal(await store.pendingForkPrompt(created.thread.id), preview.prompt);
+  assert.deepEqual((await store.load()).threads[0], sourceBefore);
+
+  await store.markForkStarted(created.thread.id);
+  assert.equal(await store.pendingForkPrompt(created.thread.id), null);
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.forks[0].status, "started");
+});
+
+test("cross-provider fork fails closed when reviewed context changes", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Initial context",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const preview = await store.previewFork(thread.id);
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "Context changed.",
+  });
+  await assert.rejects(
+    () => store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/fixture",
+      expectedDigest: preview.digest,
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
+  assert.equal((await store.load()).forks.length, 0);
+  assert.equal((await store.load()).threads.length, 1);
 });

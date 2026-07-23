@@ -483,6 +483,72 @@ async function handleApi(
       sendJson(response, 200, await state.load());
       return true;
     }
+    if (route === "/api/forks/preview") {
+      const body = await readJson(request) as { sourceThreadId?: unknown };
+      if (typeof body.sourceThreadId !== "string") {
+        throw new LocalStateError("A source conversation is required.", 400);
+      }
+      const preview = await state.previewFork(body.sourceThreadId);
+      if (preview.byteCount > 64 * 1024) {
+        throw new LocalStateError("The source context exceeds the 64 KiB fork limit.", 413);
+      }
+      sendJson(response, 200, preview);
+      return true;
+    }
+    if (route === "/api/forks/create") {
+      const body = await readJson(request) as {
+        sourceThreadId?: unknown;
+        provider?: unknown;
+        profileId?: unknown;
+        model?: unknown;
+        expectedDigest?: unknown;
+      };
+      if (
+        typeof body.sourceThreadId !== "string"
+        || (body.provider !== "claude-code" && body.provider !== "codex-cli")
+        || typeof body.model !== "string"
+        || !body.model
+        || typeof body.expectedDigest !== "string"
+        || (body.provider === "claude-code" && typeof body.profileId !== "string")
+        || (body.provider === "codex-cli" && body.profileId !== null)
+      ) {
+        throw new LocalStateError(
+          "A source conversation, destination provider, profile, model, and reviewed context size are required.",
+          400,
+        );
+      }
+      const projection = await state.load();
+      const source = projection.threads.find((thread) => thread.id === body.sourceThreadId);
+      const project = source
+        ? projection.projects.find((candidate) => candidate.id === source.projectId)
+        : undefined;
+      if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
+      await selectedWorktree(project.root, source.worktree);
+      if (body.provider === "claude-code") {
+        if (!CLAUDE_MODEL_ALIASES.includes(body.model)) {
+          throw new ProfileError("The selected Claude model is unavailable.", 409);
+        }
+        await profiles.runtime(body.profileId as string);
+      } else {
+        const readiness = await codex.readiness();
+        if (!readiness.installed || !readiness.authenticated) {
+          throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
+        }
+        if (body.model !== "default" && !readiness.models.some((model) => model.id === body.model)) {
+          throw new ProviderProtocolError("The selected Codex model is unavailable.");
+        }
+      }
+      const created = await state.createFork({
+        sourceThreadId: source.id,
+        provider: body.provider,
+        profileId: body.profileId as string | null,
+        model: body.model,
+        worktree: source.worktree,
+        expectedDigest: body.expectedDigest,
+      });
+      sendJson(response, 201, created);
+      return true;
+    }
     if (route === "/api/state/search") {
       const body = await readJson(request) as { query?: unknown };
       if (typeof body.query !== "string") throw new LocalStateError("A search query is required.", 400);
@@ -952,6 +1018,25 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const pendingFork = typeof body.threadId === "string"
+        ? projection.forks.find((fork) => (
+            fork.destinationThreadId === body.threadId && fork.status === "pending"
+          ))
+        : undefined;
+      if (
+        pendingFork
+        && (
+          pendingFork.provider !== providerId
+          || pendingFork.model !== body.model
+          || pendingFork.profileId !== (providerId === "claude-code" ? body.profileId : null)
+          || pendingFork.worktree !== context.worktree
+        )
+      ) {
+        throw new LocalStateError(
+          "The destination provider, profile, model, or worktree changed after the fork was reviewed.",
+          409,
+        );
+      }
       const profile = providerId === "claude-code"
         ? await profiles.runtime(body.profileId as string)
         : null;
@@ -1007,6 +1092,10 @@ async function handleApi(
         provider: providerId,
         threadId: body.threadId,
       });
+      const forkPrompt = await state.pendingForkPrompt(persisted.thread.id);
+      const effectiveProviderPrompt = forkPrompt
+        ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
+        : providerPrompt;
       const checkpointId = randomUUID();
       const checkpointCreatedAt = new Date().toISOString();
       let baselineIdentity: string | null = null;
@@ -1068,7 +1157,7 @@ async function handleApi(
             repository: context.root,
             worktree: context.worktree,
             conversationId: body.conversationId,
-            prompt: providerPrompt,
+            prompt: effectiveProviderPrompt,
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
@@ -1095,7 +1184,7 @@ async function handleApi(
             context.root,
             context.worktree,
             body.conversationId,
-            providerPrompt,
+            effectiveProviderPrompt,
             await approvalUrl,
             mode,
             body.resumeSessionId,
@@ -1126,6 +1215,7 @@ async function handleApi(
       }
       try {
         await state.bindProviderRun(persisted.turn.id, run.id);
+        await state.markForkStarted(persisted.thread.id);
       } catch (error) {
         if (providerId === "codex-cli") codex.cancel(run.id);
         else if (isDeclarativeAdapter) {
