@@ -6,7 +6,6 @@ import { clampSplitPercent, normalizeSplitWorkspaceState } from "./split-workspa
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
 type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
-type WorktreeRecovery = "available" | "moved" | "missing" | "inaccessible";
 interface RepositoryMetadata {
   projectId: string;
   name: string;
@@ -17,28 +16,7 @@ interface RepositoryMetadata {
     head: string | null;
     branch: string | null;
     state: WorktreeState;
-    ownership: "aldunis" | "user";
-    recovery: WorktreeRecovery;
-    originalPath: string | null;
   }>;
-}
-interface WorktreeCreationPlan {
-  id: string;
-  action: "create";
-  repository: string;
-  base: string;
-  baseRevision: string;
-  branch: string;
-  path: string;
-  expiresAt: string;
-}
-interface WorktreeRemovalPlan {
-  id: string;
-  action: "remove";
-  repository: string;
-  branch: string;
-  path: string;
-  expiresAt: string;
 }
 interface ThreadMetadata {
   id: string;
@@ -351,8 +329,6 @@ function CodeSidebar({
   onOpenConversation,
   onOpenBeside,
   onNewConversation,
-  onSelectWorktree,
-  onManageWorktrees,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
@@ -367,8 +343,6 @@ function CodeSidebar({
   onOpenConversation: (id: string) => void;
   onOpenBeside: (id: string) => void;
   onNewConversation: () => void;
-  onSelectWorktree: (path: string) => void;
-  onManageWorktrees: (path?: string) => void;
 }) {
   return (
     <aside className="context-sidebar">
@@ -391,7 +365,7 @@ function CodeSidebar({
         <button onClick={onOpenPalette}><Icon name="spark" /> Commands <kbd>⌘ K</kbd></button>
         <button onClick={onSearch}><Icon name="search" /> Thread search</button>
         <button onClick={onBrowseFiles} disabled={!repository}><Icon name="search" /> Browse files</button>
-        <button onClick={() => onManageWorktrees()} disabled={!repository}><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
+        <button><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
         <button onClick={onShowChanges} disabled={!repository}>
           <Icon name="diff" /> Changed files <span className="change-count">{repository ? changes.length : "—"}</span>
         </button>
@@ -399,24 +373,13 @@ function CodeSidebar({
       {repository && (
         <div className="worktree-list" aria-label="Repository worktrees">
           {repository.worktrees.map((worktree) => (
-            <div className={repository.selectedWorktree === worktree.path ? "selected" : ""} key={worktree.path}>
+            <div key={worktree.path}>
               <span className={`worktree-state ${worktree.state}`} aria-hidden="true" />
-              <button
-                className="worktree-select"
-                onClick={() => onSelectWorktree(worktree.path)}
-                disabled={worktree.state === "missing" || worktree.state === "inaccessible"}
-                aria-current={repository.selectedWorktree === worktree.path ? "true" : undefined}
-              >
+              <span>
                 <strong>{worktree.branch ?? "Detached HEAD"}</strong>
                 <small>{worktree.path}</small>
-              </button>
-              <button
-                className="worktree-manage"
-                onClick={() => onManageWorktrees(worktree.path)}
-                aria-label={`Manage ${worktree.branch ?? worktree.path}`}
-              >
-                {worktree.ownership === "aldunis" ? worktree.recovery : "user"}
-              </button>
+              </span>
+              <em>{worktree.state}</em>
             </div>
           ))}
         </div>
@@ -738,150 +701,6 @@ function RepositoryDialog({
             </button>
           </footer>
         </form>
-      </section>
-    </div>
-  );
-}
-
-function WorktreeDialog({
-  repository,
-  selectedPath,
-  onClose,
-  onChanged,
-}: {
-  repository: RepositoryMetadata | null;
-  selectedPath: string | null;
-  onClose: () => void;
-  onChanged: (repository: RepositoryMetadata) => void;
-}) {
-  const selected = repository?.worktrees.find((worktree) => worktree.path === selectedPath) ?? null;
-  const [base, setBase] = useState("main");
-  const [branch, setBranch] = useState("");
-  const [path, setPath] = useState("");
-  const [plan, setPlan] = useState<WorktreeCreationPlan | WorktreeRemovalPlan | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const open = repository !== null && selectedPath !== undefined;
-  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
-  useEffect(() => {
-    setPlan(null);
-    setError(null);
-    setBranch("");
-    setPath("");
-    setBase(repository?.worktrees.find((worktree) => worktree.path === repository.root)?.branch ?? "main");
-  }, [repository?.root, selectedPath]);
-  if (!repository) return null;
-
-  const request = async (route: string, body: unknown) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(route, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const result = await response.json() as RepositoryMetadata | WorktreeCreationPlan | WorktreeRemovalPlan | { error?: string };
-      if (!response.ok) throw new Error("error" in result ? result.error : "The worktree operation failed.");
-      return result;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The worktree operation failed.");
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const previewCreate = async (event: FormEvent) => {
-    event.preventDefault();
-    const result = await request("/api/worktrees/create/preview", {
-      root: repository.root,
-      base,
-      branch,
-      ...(path.trim() ? { path } : {}),
-    });
-    if (result && "action" in result && result.action === "create") setPlan(result);
-  };
-  const previewRemove = async () => {
-    if (!selected) return;
-    const result = await request("/api/worktrees/remove/preview", {
-      root: repository.root,
-      path: selected.path,
-    });
-    if (result && "action" in result && result.action === "remove") setPlan(result);
-  };
-  const confirm = async () => {
-    if (!plan) return;
-    if (plan.action === "create") {
-      const result = await request("/api/worktrees/create", { planId: plan.id, confirm: true });
-      if (result && "worktrees" in result) {
-        onChanged(result);
-        onClose();
-      }
-      return;
-    }
-    const result = await request("/api/worktrees/remove", { planId: plan.id, confirm: true });
-    if (!result) return;
-    const refreshed = await request("/api/repositories/open", { path: repository.root });
-    if (refreshed && "worktrees" in refreshed) onChanged(refreshed);
-    onClose();
-  };
-
-  return (
-    <div className="dialog-backdrop" onKeyDown={onKeyDown} onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !busy) onClose();
-    }}>
-      <section ref={dialogRef} className="repository-dialog worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-dialog-title" tabIndex={-1}>
-        <p className="eyebrow">Isolated conversation workspace</p>
-        <h2 id="worktree-dialog-title">{selected ? "Manage worktree" : "Create worktree"}</h2>
-        {selected ? (
-          <>
-            <dl className="worktree-details">
-              <div><dt>Repository</dt><dd>{repository.root}</dd></div>
-              <div><dt>Worktree</dt><dd>{selected.path}</dd></div>
-              <div><dt>Branch</dt><dd>{selected.branch ?? "Detached HEAD"}</dd></div>
-              <div><dt>Ownership</dt><dd>{selected.ownership === "aldunis" ? `Aldunis · ${selected.recovery}` : "User-created"}</dd></div>
-            </dl>
-            {selected.ownership === "user" && <p>This worktree remains selectable, but Aldunis Code does not claim or remove it.</p>}
-            {selected.ownership === "aldunis" && !plan && (
-              <button className="danger worktree-remove" onClick={() => void previewRemove()} disabled={busy || selected.recovery !== "available"}>
-                {busy ? "Inspecting…" : "Preview worktree removal"}
-              </button>
-            )}
-          </>
-        ) : (
-          <form onSubmit={previewCreate}>
-            <label htmlFor="worktree-base">Base revision</label>
-            <input id="worktree-base" data-dialog-initial-focus value={base} onChange={(event) => { setBase(event.target.value); setPlan(null); }} disabled={busy} />
-            <label htmlFor="worktree-branch">New branch</label>
-            <input id="worktree-branch" value={branch} onChange={(event) => { setBranch(event.target.value); setPlan(null); }} placeholder="codex/26-isolated-worktree" disabled={busy} />
-            <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
-            <input id="worktree-path" value={path} onChange={(event) => { setPath(event.target.value); setPlan(null); }} placeholder="Managed application path" disabled={busy} />
-            {!plan && <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !base.trim() || !branch.trim()}>{busy ? "Validating…" : "Preview creation"}</button></footer>}
-          </form>
-        )}
-        {plan && (
-          <section className="worktree-approval" aria-label={`Approve worktree ${plan.action}`}>
-            <strong>{plan.action === "create" ? "Create this isolated worktree once?" : "Remove this worktree checkout once?"}</strong>
-            <dl>
-              <div><dt>Repository</dt><dd>{plan.repository}</dd></div>
-              {plan.action === "create" && <div><dt>Base</dt><dd>{plan.base} · {plan.baseRevision}</dd></div>}
-              <div><dt>Branch</dt><dd>{plan.branch}</dd></div>
-              <div><dt>Path</dt><dd>{plan.path}</dd></div>
-            </dl>
-            <p>{plan.action === "create"
-              ? "Approval is single-use. The conversation will be bound to the canonical result."
-              : "Only the clean checkout is removed. The branch, commits, remotes, and conversation history remain."}</p>
-            <footer>
-              <button onClick={() => setPlan(null)} disabled={busy}>Back</button>
-              <button className={plan.action === "remove" ? "danger" : "primary"} onClick={() => void confirm()} disabled={busy}>
-                {busy ? "Revalidating…" : "Approve once"}
-              </button>
-            </footer>
-          </section>
-        )}
-        {error && <div className="repository-error" role="alert">{error}</div>}
-        {selected && !plan && <footer><button onClick={onClose}>Close</button></footer>}
       </section>
     </div>
   );
@@ -1344,7 +1163,6 @@ function Conversation({
   onClosePane,
   onConversationAvailable,
   onOpenRepository,
-  onManageWorktrees,
   changes,
   changesLoading,
   changesError,
@@ -1366,7 +1184,6 @@ function Conversation({
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
   onOpenRepository: () => void;
-  onManageWorktrees: () => void;
   changes: ChangedFile[];
   changesLoading: boolean;
   changesError: string | null;
@@ -1441,7 +1258,7 @@ function Conversation({
     setProviderEvents([]);
     setProviderState("idle");
     setRunId(null);
-  }, [conversation?.id, repository?.projectId, repository?.selectedWorktree, provider]);
+  }, [conversation?.id, repository?.projectId, provider]);
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
@@ -1451,7 +1268,7 @@ function Conversation({
       if (!active) return;
       if (!response.ok) throw new Error("Conversation history could not be restored.");
       const projection = await response.json() as {
-        threads: Array<{ id: string; projectId: string; worktree: string; provider?: ProviderId; updatedAt: string }>;
+        threads: Array<{ id: string; projectId: string; provider?: ProviderId; updatedAt: string }>;
         turns: Array<{
           id: string;
           threadId: string;
@@ -1464,11 +1281,7 @@ function Conversation({
         providerSessions: Array<{ threadId: string; provider?: ProviderId; sessionId: string }>;
       };
       const thread = conversation
-        ? projection.threads.find((item) => (
-            item.id === conversation.id
-            && item.projectId === repository.projectId
-            && item.worktree === repository.selectedWorktree
-          ))
+        ? projection.threads.find((item) => item.id === conversation.id && item.projectId === repository.projectId)
         : null;
       if (!thread) {
         setHistoryRestored(true);
@@ -1582,7 +1395,7 @@ function Conversation({
       if (timer) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [conversation?.id, notificationsEnabled, provider, repository?.projectId, repository?.selectedWorktree]);
+  }, [conversation?.id, notificationsEnabled, provider, repository?.projectId]);
   useEffect(() => {
     void fetch("/api/provider/capabilities", {
       method: "POST",
@@ -1596,7 +1409,6 @@ function Conversation({
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
   )) ?? null;
-  const conversationBranch = worktree?.branch ?? "Detached HEAD";
   const runActive = providerState === "starting"
     || providerState === "streaming"
     || providerState === "waiting_for_approval"
@@ -1908,19 +1720,14 @@ function Conversation({
         <div className="conversation-identity">
           <span className="pane-label">{pane} pane</span>
           <span className="breadcrumb">
-            {repository?.name ?? "No project"} <b>/</b> {worktree?.branch ?? "detached"} <b>/</b> {providerName} · {profileId ? profiles.find((profile) => profile.id === profileId)?.name : "no profile"} · {model} · direct · {mode} · {stateCopy[providerState]}
+            {repository?.name ?? "No project"} <b>/</b> {worktree?.branch ?? "detached"} <b>/</b> Claude Code · {profileId ? profiles.find((profile) => profile.id === profileId)?.name : "no profile"} · {model} · direct · {mode} · {stateCopy[providerState]}
           </span>
           <h1>{conversation?.title ?? "New conversation"}</h1>
-          <small className="conversation-binding">
-            {repository && worktree ? `${repository.root} · ${worktree.path} · ${conversationBranch}` : "No available worktree"}
-          </small>
+          <small>{worktree?.path ?? "No available worktree"}</small>
         </div>
         <div className="header-actions">
           <button className="mobile-project" onClick={onOpenRepository} aria-label={repository ? `Change repository, current ${repository.name}` : "Open repository"}>
             <Icon name="branch" />
-          </button>
-          <button className="mobile-worktrees" onClick={onManageWorktrees} disabled={!repository} aria-label="Create isolated conversation worktree">
-            <Icon name="plus" />
           </button>
           <button onClick={onShowChanges} disabled={!repository} aria-label={repository ? `Review ${changes.length} changed files` : "Review changed files"}>
             <Icon name="diff" /><span>{changes.length} changes</span>
@@ -2271,7 +2078,6 @@ function PaneConversation({
   onConversationAvailable,
   showChangesSignal,
   showFilesSignal,
-  onManageWorktrees,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -2285,7 +2091,6 @@ function PaneConversation({
   onConversationAvailable?: (id: string) => void;
   showChangesSignal: number;
   showFilesSignal: number;
-  onManageWorktrees: (path?: string) => void;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -2327,7 +2132,6 @@ function PaneConversation({
       onClosePane={onClosePane}
       onConversationAvailable={onConversationAvailable}
       onOpenRepository={onOpenRepository}
-      onManageWorktrees={() => onManageWorktrees()}
       changes={changes}
       changesLoading={changesLoading}
       changesError={changesError}
@@ -2351,8 +2155,6 @@ function CodeWorkbench({
   onOpenProfiles,
   onSearch,
   onOpenPalette,
-  onSelectWorktree,
-  onManageWorktrees,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
@@ -2360,8 +2162,6 @@ function CodeWorkbench({
   onOpenProfiles: () => void;
   onSearch: () => void;
   onOpenPalette: () => void;
-  onSelectWorktree: (path: string) => void;
-  onManageWorktrees: (path?: string) => void;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
@@ -2544,8 +2344,6 @@ function CodeWorkbench({
         }}
         onSearch={onSearch}
         onOpenPalette={onOpenPalette}
-        onSelectWorktree={onSelectWorktree}
-        onManageWorktrees={onManageWorktrees}
       />
       <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace">
         {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
@@ -2577,7 +2375,7 @@ function CodeWorkbench({
                   primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
                   setPrimaryId(id);
                 }} />
-              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onOpenBeside={() => openBeside()} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
@@ -2605,7 +2403,7 @@ function CodeWorkbench({
               <div className="conversation-pane secondary-pane" tabIndex={-1} ref={secondaryPaneReference} onFocusCapture={() => setActivePane("secondary")}>
                 {!secondary && !secondaryId.startsWith("new:")
                   ? <MissingConversation pane="secondary" conversations={conversations.filter((item) => item.id !== primaryId)} onReplace={setSecondaryId} onClose={() => setSecondaryId(null)} />
-                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");
@@ -2827,8 +2625,6 @@ function PreferencesDialog({
         <label>Zoom<select value={draft.zoom} onChange={(event) => update("zoom", Number(event.target.value) as Preferences["zoom"])}>{[0.8, 0.9, 1, 1.1, 1.2].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</select></label>
         <label>Reduced motion<select value={draft.reducedMotion} onChange={(event) => update("reducedMotion", event.target.value as Preferences["reducedMotion"])}><option value="system">Follow system</option><option value="reduce">Reduce</option><option value="no-preference">Allow motion</option></select></label>
         <label>Command palette<select value={draft.commandPaletteShortcut} onChange={(event) => update("commandPaletteShortcut", event.target.value as Preferences["commandPaletteShortcut"])}><option value="mod+k">⌘/Ctrl K</option><option value="mod+shift+p">⌘/Ctrl Shift P</option></select></label>
-        <label>Managed worktree limit<select value={draft.managedWorktreeLimit ?? "unlimited"} onChange={(event) => update("managedWorktreeLimit", event.target.value === "unlimited" ? null : Number(event.target.value))}><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value="unlimited">Unlimited</option></select></label>
-        <p className="preference-note">The limit applies only to Aldunis-created worktrees. Reaching it blocks creation until an eligible checkout is explicitly removed or the limit is raised.</p>
         <p className="search-scope">Shortcuts are exclusive: selecting one command-palette binding releases the other, preventing conflicts.</p>
         <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Saving…" : "Save preferences"}</button></footer>
       </form>
@@ -2871,8 +2667,6 @@ function App() {
   const [product, setProduct] = useState<Product>("code");
   const [repository, setRepository] = useState<RepositoryMetadata | null>(null);
   const [repositoryDialog, setRepositoryDialog] = useState(false);
-  const [worktreeDialog, setWorktreeDialog] = useState(false);
-  const [managedWorktreePath, setManagedWorktreePath] = useState<string | null>(null);
   const [repositoryBusy, setRepositoryBusy] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
@@ -2954,20 +2748,7 @@ function App() {
       <PageHeader product={product} onChange={setProduct} onSettings={() => setPreferencesOpen(true)} />
       <div className="app-content">
         <div className="code-page" hidden={product !== "code"}>
-          <CodeWorkbench
-            key={repository?.projectId ?? "no-project"}
-            repository={repository}
-            onOpenRepository={showRepositoryDialog}
-            profiles={profiles}
-            onOpenProfiles={() => setProfileDialog(true)}
-            onSearch={() => setSearchOpen(true)}
-            onOpenPalette={() => setPaletteOpen(true)}
-            onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
-            onManageWorktrees={(path) => {
-              setManagedWorktreePath(path ?? null);
-              setWorktreeDialog(true);
-            }}
-          />
+          <CodeWorkbench key={repository?.projectId ?? "no-project"} repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} onSearch={() => setSearchOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         </div>
         {product !== "code" && <DomainPage product={product} />}
       </div>
@@ -2978,17 +2759,6 @@ function App() {
         onClose={() => setRepositoryDialog(false)}
         onSubmit={openRepository}
       />
-      {worktreeDialog && (
-        <WorktreeDialog
-          repository={repository}
-          selectedPath={managedWorktreePath}
-          onClose={() => setWorktreeDialog(false)}
-          onChanged={(next) => {
-            setRepository(next);
-            void loadThreads();
-          }}
-        />
-      )}
       <ProfileSettingsDialog
         open={profileDialog}
         profiles={profiles}

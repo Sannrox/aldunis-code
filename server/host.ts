@@ -44,7 +44,6 @@ import {
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
-import { WorktreeManager } from "./worktrees.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -138,7 +137,6 @@ async function handleApi(
   profiles: ClaudeProfileStore,
   previews: PreviewManager,
   preferences: PreferencesStore,
-  worktrees: WorktreeManager,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -176,7 +174,6 @@ async function handleApi(
         throw new RepositoryError("A repository path is required.");
       }
       const repository = await openRepository(body.path);
-      repository.worktrees = await worktrees.list(repository.root);
       const projection = await state.load();
       const existing = projection.projects.find((project) => project.root === repository.root);
       const project = await state.saveProject({
@@ -185,97 +182,6 @@ async function handleApi(
         root: repository.root,
       });
       sendJson(response, 200, { ...repository, projectId: project.id });
-      return true;
-    }
-    if (route === "/api/worktrees/create/preview") {
-      const body = await readJson(request) as {
-        root?: unknown;
-        base?: unknown;
-        branch?: unknown;
-        path?: unknown;
-      };
-      if (
-        typeof body.root !== "string"
-        || typeof body.base !== "string"
-        || typeof body.branch !== "string"
-        || (body.path !== undefined && typeof body.path !== "string")
-      ) {
-        throw new RepositoryError("A repository, base revision, and new branch are required.");
-      }
-      const { preferences: currentPreferences } = await preferences.load();
-      sendJson(response, 200, await worktrees.previewCreate({
-        repository: body.root,
-        base: body.base,
-        branch: body.branch,
-        ...(typeof body.path === "string" ? { path: body.path } : {}),
-        limit: currentPreferences.managedWorktreeLimit,
-      }));
-      return true;
-    }
-    if (route === "/api/worktrees/create") {
-      const body = await readJson(request) as { planId?: unknown; confirm?: unknown };
-      if (typeof body.planId !== "string" || body.confirm !== true) {
-        throw new RepositoryError("A complete scoped worktree approval is required.");
-      }
-      const { preferences: currentPreferences } = await preferences.load();
-      const created = await worktrees.create(body.planId, currentPreferences.managedWorktreeLimit);
-      const repository = await openRepository(created.repository);
-      repository.worktrees = await worktrees.list(created.repository);
-      const projection = await state.load();
-      const project = projection.projects.find((candidate) => candidate.root === created.repository);
-      sendJson(response, 200, {
-        ...repository,
-        projectId: project?.id,
-        selectedWorktree: created.path,
-      });
-      return true;
-    }
-    if (route === "/api/worktrees/remove/preview") {
-      const body = await readJson(request) as { root?: unknown; path?: unknown };
-      if (typeof body.root !== "string" || typeof body.path !== "string") {
-        throw new RepositoryError("A repository and managed worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.path);
-      const projection = await state.load();
-      if (projection.threads.some((thread) => thread.worktree === context.worktree)) {
-        throw new RepositoryError(
-          "A conversation is still bound to this worktree. Conversation deletion never removes worktrees; remove or retain that history first.",
-          409,
-        );
-      }
-      sendJson(response, 200, await worktrees.previewRemove(context.root, context.worktree));
-      return true;
-    }
-    if (route === "/api/worktrees/remove") {
-      const body = await readJson(request) as { planId?: unknown; confirm?: unknown };
-      if (typeof body.planId !== "string" || body.confirm !== true) {
-        throw new RepositoryError("A complete scoped worktree removal approval is required.");
-      }
-      const plan = worktrees.removalPlan(body.planId);
-      const projection = await state.load();
-      const project = projection.projects.find((candidate) => candidate.root === plan.repository);
-      let projectLockAcquired = false;
-      try {
-        if (project && activeCheckpointProjects.has(project.id)) {
-          throw new LocalStateError("Wait for the active conversation operation before removing its worktree.", 409);
-        }
-        if (project) {
-          activeCheckpointProjects.add(project.id);
-          projectLockAcquired = true;
-        }
-        const current = await state.load();
-        if (current.threads.some((thread) => thread.worktree === plan.path)) {
-          throw new RepositoryError(
-            "A conversation became bound to this worktree after preview. Removal was cancelled.",
-            409,
-          );
-        }
-        await worktrees.remove(body.planId);
-      } finally {
-        if (project && projectLockAcquired) activeCheckpointProjects.delete(project.id);
-        worktrees.discardPlan(body.planId);
-      }
-      sendJson(response, 200, { status: "removed" });
       return true;
     }
     if (route === "/api/state/load") {
@@ -1268,7 +1174,6 @@ export function createLocalHost(
   const codex = new CodexCliAdapter("codex", permissions);
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
-  const worktrees = new WorktreeManager(state.directory);
   const recovery = state.recoverInterruptedTurns();
   return createServer(async (request, response) => {
     await recovery;
@@ -1284,7 +1189,6 @@ export function createLocalHost(
         profiles,
         previews,
         preferences,
-        worktrees,
       )
     ) return;
     await serveStatic(request, response, dist);
