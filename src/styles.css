@@ -606,7 +606,9 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .conversation-header > div:first-child { min-width: 0; overflow: hidden; }
   .conversation-header .breadcrumb, .conversation-header h1 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .conversation-header h1 { margin-top: 5px; }
-  .conversation-identity small { margin-top: 2px; }
+  .conversation-identity small { margin-top: 2px; font-size: .65rem; }
+  .pane-label { font-size: .6rem; }
+  .breadcrumb { font-size: .65rem; }
   .header-actions { min-width: 0; overflow-x: auto; flex: 0 0 auto; justify-content: flex-end; gap: 6px; scrollbar-width: thin; }
   .header-actions button { flex: 0 0 32px; width: 32px; padding: 0; justify-content: center; }
   .header-actions .mobile-project, .header-actions .mobile-worktrees { display: flex; }
@@ -614,6 +616,14 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .conversation-scroll { width: calc(100% - 28px); }
   .conversation-empty { margin-top: 34px; padding: 20px 16px; }
   .composer-wrap { padding: 18px 14px 10px; }
+  .mode-picker { gap: 8px; }
+  .mode-picker label span { padding: 7px 9px; font-size: .65rem; }
+  .mode-picker > p { font-size: .65rem; }
+  .composer textarea { font-size: .75rem; }
+  .composer footer > div { min-width: 0; gap: 8px; }
+  .provider-selectors { min-width: 0; flex: 1; }
+  .provider-selectors select { min-width: 0; padding-right: 18px; font-size: .65rem; }
+  .disclaimer { font-size: .62rem; line-height: 1.45; }
   .domain-page { min-height: 0; padding: 58px 22px 100px; }
   .domain-orbit { top: 36px; right: 20px; width: 100px; height: 100px; }
   .domain-page h1 { font-size: clamp(3rem, 15vw, 5rem); }
