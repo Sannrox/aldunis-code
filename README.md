@@ -137,3 +137,5 @@ provider output.
 
 Read [AGENTS.md](AGENTS.md), [the architecture](docs/architecture.md), and
 [the work lifecycle](docs/work-lifecycle.md) before changing a boundary.
+Checkpoint safeguards and interrupted-operation recovery are described in
+[workspace checkpoints](docs/workspace-checkpoints.md).
