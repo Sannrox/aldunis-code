@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
@@ -12,6 +13,7 @@ import {
   openRepository,
   RepositoryError,
 } from "./repository.ts";
+import { LocalStateError, LocalStateStore } from "./state.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 16 * 1024;
@@ -84,6 +86,7 @@ async function handleApi(
   response: ServerResponse,
   provider: ClaudeCodeAdapter,
   permissions: PermissionBroker,
+  state: LocalStateStore,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -104,7 +107,37 @@ async function handleApi(
       if (typeof body.path !== "string") {
         throw new RepositoryError("A repository path is required.");
       }
-      sendJson(response, 200, await openRepository(body.path));
+      const repository = await openRepository(body.path);
+      const projection = await state.load();
+      const existing = projection.projects.find((project) => project.root === repository.root);
+      const project = await state.saveProject({
+        id: existing?.id ?? randomUUID(),
+        name: repository.name,
+        root: repository.root,
+      });
+      sendJson(response, 200, { ...repository, projectId: project.id });
+      return true;
+    }
+    if (route === "/api/state/load") {
+      sendJson(response, 200, await state.load());
+      return true;
+    }
+    if (route === "/api/state/projects/delete") {
+      const body = await readJson(request) as { projectId?: unknown };
+      if (typeof body.projectId !== "string") {
+        throw new RepositoryError("A project is required.");
+      }
+      await state.deleteProject(body.projectId);
+      sendJson(response, 200, { status: "deleted" });
+      return true;
+    }
+    if (route === "/api/state/retention") {
+      const body = await readJson(request) as { olderThan?: unknown };
+      if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
+        throw new RepositoryError("A valid retention cutoff is required.");
+      }
+      await state.enforceRetention(new Date(body.olderThan));
+      sendJson(response, 200, { status: "compacted" });
       return true;
     }
     if (route === "/api/provider/runs") {
@@ -114,6 +147,8 @@ async function handleApi(
         prompt?: unknown;
         conversationId?: unknown;
         resumeSessionId?: unknown;
+        projectId?: unknown;
+        threadId?: unknown;
       };
       if (
         typeof body.root !== "string"
@@ -123,28 +158,67 @@ async function handleApi(
         || typeof body.conversationId !== "string"
         || !body.conversationId
         || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
+        || (body.projectId !== undefined && typeof body.projectId !== "string")
+        || (body.threadId !== undefined && typeof body.threadId !== "string")
       ) {
         throw new RepositoryError("A repository, worktree, and prompt are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
+      const projection = await state.load();
+      const project = typeof body.projectId === "string"
+        ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
+        : projection.projects.find((item) => item.root === context.root);
+      if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const persisted = await state.startTurn({
+        projectId: project.id,
+        worktree: context.worktree,
+        prompt: body.prompt.trim(),
+        threadId: body.threadId,
+      });
       const port = request.socket.localPort;
       if (!port) throw new RepositoryError("The local permission broker is unavailable.", 503);
       const approvalUrl = `http://127.0.0.1:${port}/api/provider/permissions/request`;
-      const run = await provider.start(
-        context.root,
-        context.worktree,
-        body.conversationId,
-        body.prompt.trim(),
-        approvalUrl,
-        body.resumeSessionId,
-      );
+      let run;
+      try {
+        run = await provider.start(
+          context.root,
+          context.worktree,
+          body.conversationId,
+          body.prompt.trim(),
+          approvalUrl,
+          body.resumeSessionId,
+        );
+      } catch (error) {
+        await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, {
+          kind: "failed",
+          message: error instanceof ProviderProtocolError
+            ? error.message
+            : "The provider could not be started.",
+        });
+        throw error;
+      }
       response.writeHead(200, {
         "content-type": "application/x-ndjson; charset=utf-8",
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",
         "x-provider-run-id": run.id,
+        "x-thread-id": persisted.thread.id,
+        "x-turn-id": persisted.turn.id,
       });
-      for await (const event of run.events) response.write(`${JSON.stringify(event)}\n`);
+      for await (const event of run.events) {
+        try {
+          await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, event);
+        } catch {
+          provider.cancel(run.id);
+          response.write(`${JSON.stringify({
+            kind: "failed",
+            message: "Local history could not be updated. The provider run was stopped.",
+          })}\n`);
+          response.end();
+          return true;
+        }
+        response.write(`${JSON.stringify(event)}\n`);
+      }
       response.end();
       return true;
     }
@@ -218,12 +292,15 @@ async function handleApi(
     }
     sendJson(response, 404, { error: "API route not found." });
   } catch (error) {
-    const status = error instanceof RepositoryError || error instanceof PermissionError
+    const status = error instanceof RepositoryError
+      || error instanceof PermissionError
+      || error instanceof LocalStateError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
       || error instanceof ProviderProtocolError
       || error instanceof PermissionError
+      || error instanceof LocalStateError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -255,11 +332,14 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, d
   createReadStream(filePath).pipe(response);
 }
 
-export function createLocalHost(dist = fileURLToPath(new URL("../dist", import.meta.url))) {
+export function createLocalHost(
+  dist = fileURLToPath(new URL("../dist", import.meta.url)),
+  state = new LocalStateStore(),
+) {
   const permissions = new PermissionBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   return createServer(async (request, response) => {
-    if (await handleApi(request, response, provider, permissions)) return;
+    if (await handleApi(request, response, provider, permissions, state)) return;
     await serveStatic(request, response, dist);
   });
 }
