@@ -57,6 +57,12 @@ npm run host -- --port 4175
 npm run dev
 ```
 
+Remote workbench access is not implemented. The
+[authenticated remote workbench recommendation](docs/remote-workbench.md)
+keeps loopback as the default, recommends an explicitly launched SSH forward
+as the first admissible transport, and records the Discussion and security
+evidence required before implementation.
+
 Use **Open repository** in the sidebar and enter an absolute local path. The
 host resolves symlinks, finds the canonical Git root, and returns normalized
 repository and worktree metadata. Browser code receives no filesystem handle.
