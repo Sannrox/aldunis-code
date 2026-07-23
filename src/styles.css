@@ -138,6 +138,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .header-actions .ghost { width: 32px; padding: 0; justify-content: center; }
 .header-actions .mobile-project, .header-actions .mobile-worktrees { display: none; width: 32px; padding: 0; justify-content: center; }
 .conversation-scroll { overflow-y: auto; width: min(780px, calc(100% - 56px)); margin: 0 auto; padding: 26px 0 210px; scrollbar-width: thin; }
+.conversation-empty { width: min(480px, 100%); margin: clamp(44px, 12vh, 120px) auto 0; padding: 24px; border: 1px solid #303238; border-radius: 10px; background: rgba(21,22,26,.82); text-align: center; }
+.conversation-empty > span { color: var(--acid); font: .52rem "DM Mono", monospace; letter-spacing: .1em; text-transform: uppercase; }
+.conversation-empty h2 { margin: 10px 0 7px; font: 400 1.55rem "Newsreader", serif; }
+.conversation-empty p { margin: 0 auto; max-width: 380px; color: #858791; font-size: .7rem; line-height: 1.6; }
+.conversation-empty button { margin-top: 18px; min-height: 34px; padding: 0 12px; border: 1px solid var(--acid); border-radius: 6px; background: var(--acid); color: #11130d; font-size: .65rem; font-weight: 600; }
 .date-rule { display: flex; align-items: center; gap: 12px; margin: 2px 0 27px; color: #55575f; font: .58rem "DM Mono", monospace; text-transform: uppercase; }
 .date-rule::before, .date-rule::after { height: 1px; flex: 1; background: #23252a; content: ""; }
 .user-message, .assistant-message { display: grid; grid-template-columns: 31px 1fr; gap: 13px; margin-bottom: 31px; }
@@ -581,13 +586,17 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .page-settings span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .context-sidebar { display: none; }
   .conversation { min-height: 0; }
-  .conversation-header { padding: 0 14px; }
+  .conversation-header { height: auto; min-height: 112px; flex: 0 0 auto; align-items: stretch; padding: 10px 14px 8px; flex-direction: column; gap: 8px; }
   .conversation-header > div:first-child { min-width: 0; overflow: hidden; }
   .conversation-header .breadcrumb, .conversation-header h1 { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .header-actions { flex: 0 0 auto; gap: 6px; }
+  .conversation-header h1 { margin-top: 5px; }
+  .conversation-identity small { margin-top: 2px; }
+  .header-actions { min-width: 0; overflow-x: auto; flex: 0 0 auto; justify-content: flex-end; gap: 6px; scrollbar-width: thin; }
+  .header-actions button { flex: 0 0 32px; width: 32px; padding: 0; justify-content: center; }
   .header-actions .mobile-project, .header-actions .mobile-worktrees { display: flex; }
   .header-actions button span { display: none; }
   .conversation-scroll { width: calc(100% - 28px); }
+  .conversation-empty { margin-top: 34px; padding: 20px 16px; }
   .composer-wrap { padding: 18px 14px 10px; }
   .domain-page { min-height: 0; padding: 58px 22px 100px; }
   .domain-orbit { top: 36px; right: 20px; width: 100px; height: 100px; }
