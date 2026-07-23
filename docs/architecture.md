@@ -29,6 +29,13 @@ The browser never receives provider credentials or unrestricted filesystem
 access. The local host binds to loopback by default and resolves every
 repository operation against an explicitly opened root.
 
+Remote workbench access is not an exception to the loopback default. The
+[remote workbench recommendation](remote-workbench.md) permits only a future,
+explicitly launched SSH-forwarded design after an architecture/security
+Discussion accepts its pairing, approval, revocation, and recovery boundaries.
+Direct remote HTTP, private-network trust, and a public workbench listener are
+not approved.
+
 ## Ownership
 
 | Concern | Authority |
