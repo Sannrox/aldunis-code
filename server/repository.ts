@@ -18,6 +18,7 @@ export interface WorktreeMetadata {
 export interface RepositoryMetadata {
   name: string;
   root: string;
+  selectedWorktree: string;
   worktrees: WorktreeMetadata[];
 }
 
@@ -134,6 +135,7 @@ export async function openRepository(input: string): Promise<RepositoryMetadata>
   return {
     name: root.split(sep).filter(Boolean).at(-1) ?? root,
     root,
+    selectedWorktree: root,
     worktrees,
   };
 }
