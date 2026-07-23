@@ -2268,6 +2268,26 @@ function Conversation({
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
+  const conversationEmpty = messages.length === 0
+    && providerEvents.length === 0
+    && providerState === "idle";
+  const emptyState = !repository
+    ? {
+        title: "Open a repository to begin",
+        detail: "Choose an explicit local root before starting a provider conversation.",
+        action: <button onClick={onOpenRepository}>Open repository</button>,
+      }
+    : provider === "claude-code" && !profileId
+      ? {
+          title: "Configure Claude Code to begin",
+          detail: "Add a local Claude profile, then return here to describe the task.",
+          action: <button onClick={onOpenProfiles}>Configure Claude</button>,
+        }
+      : {
+          title: "What do you want to work on?",
+          detail: "Describe the outcome in the composer. Aldunis Code will keep the conversation bound to this worktree.",
+          action: null,
+        };
   const stateCopy: Record<ProviderState, string> = {
     idle: repository ? "Ready" : "Open a repository to start",
     starting: `Starting ${providerName}…`,
@@ -2320,24 +2340,16 @@ function Conversation({
         </div>
       </header>
       <section className="conversation-scroll">
-        <div className="date-rule"><span>Today</span></div>
-        <article className="user-message">
-          <span className="avatar">RK</span>
-          <div><header><strong>You</strong><time>14:32</time></header><p>Design the permission flow for Claude Code. Keep every mutating tool explicit and don’t add a terminal.</p></div>
-        </article>
-        <article className="assistant-message">
-          <span className="claude-avatar">C</span>
-          <div>
-            <header><strong>Claude</strong><span className="model">Sonnet 4</span><time>14:33</time></header>
-            <p>I’ll map the provider events into a small permission state machine, then keep approval decisions local to the active worktree.</p>
-            <div className="thinking"><span /><span>Inspecting repository boundaries</span><small>2.4s</small></div>
-            <div className="file-card">
-              <header><span className="file-icon">TS</span><strong>src/providers/permissions.ts</strong><small>proposed</small></header>
-              <pre><span>+ export type Approval =</span>{"\n"}<b>+   | {"{ kind: \"once\"; toolCallId: string }"}</b>{"\n"}<span>+   | {"{ kind: \"deny\"; reason?: string }"};</span></pre>
-            </div>
-            <p>The durable rule path should be a separate issue because it expands approval authority beyond one action.</p>
-          </div>
-        </article>
+        {conversationEmpty
+          ? (
+            <section className="conversation-empty" aria-labelledby={`${pane}-empty-title`}>
+              <span>New conversation</span>
+              <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
+              <p>{emptyState.detail}</p>
+              {emptyState.action}
+            </section>
+          )
+          : <div className="date-rule"><span>Today</span></div>}
         {messages.map((message, index) => (
           <article className="user-message" key={`${message.text}-${index}`}>
             <span className="avatar">RK</span><div><header><strong>You</strong><span className={`turn-mode ${message.mode}`}>{modeCopy[message.mode].label}</span><time>now</time></header><p>{message.text}</p></div>
