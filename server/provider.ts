@@ -155,6 +155,22 @@ export interface ProviderRun {
   events: AsyncIterable<ProviderEvent>;
 }
 
+export interface ProviderCommand {
+  name: string;
+  description: string;
+}
+
+export interface ProviderCapabilities {
+  provider: "claude-code";
+  commands: ProviderCommand[];
+  attachments: {
+    maxCount: number;
+    textMaxBytes: number;
+    imageMaxBytes: number;
+    imageTypes: string[];
+  };
+}
+
 interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
   cancelled: boolean;
@@ -168,6 +184,23 @@ export class ClaudeCodeAdapter {
     private readonly executable = "claude",
     private readonly permissions = new PermissionBroker(),
   ) {}
+
+  capabilities(): ProviderCapabilities {
+    return {
+      provider: "claude-code",
+      commands: [
+        { name: "/compact", description: "Compact the current Claude session context" },
+        { name: "/cost", description: "Show Claude Code usage for the session" },
+        { name: "/help", description: "Show supported Claude Code commands" },
+      ],
+      attachments: {
+        maxCount: 8,
+        textMaxBytes: 64 * 1024,
+        imageMaxBytes: 2 * 1024 * 1024,
+        imageTypes: ["image/gif", "image/jpeg", "image/png", "image/webp"],
+      },
+    };
+  }
 
   async start(
     repository: string,
