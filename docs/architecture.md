@@ -60,6 +60,9 @@ through a versioned authenticated contract.
   Aldunis-owned environment secrets but never deletes Claude-owned credentials
   or configuration directories.
 - A repository root is explicit; paths are canonicalized and constrained to it.
+- Conversation worktrees are coordinated by the local host through a
+  [typed preview-and-approve boundary](decisions/managed-conversation-worktrees.md);
+  providers cannot silently create or rebind them.
 - Tool calls are typed, rendered before approval, and audited locally without
   storing secrets.
 - Approval scope is no broader than one described action unless the user

@@ -15,6 +15,7 @@ test("preferences are versioned, persisted atomically, and survive restart", asy
       zoom: 1.1,
     });
     assert.equal(saved.theme, "light");
+    assert.equal(saved.managedWorktreeLimit, 10);
     const restarted = await new PreferencesStore(directory).load();
     assert.deepEqual(restarted, { preferences: saved, recovered: false });
     assert.equal((await readFile(join(directory, "preferences.v1.json"), "utf8")).includes("\"schemaVersion\": 1"), true);
@@ -35,6 +36,21 @@ test("invalid preferences recover visibly to safe defaults", async () => {
       () => new PreferencesStore(directory).save({ ...DEFAULT_PREFERENCES, zoom: 4 }),
       /invalid value/,
     );
+    await assert.rejects(
+      () => new PreferencesStore(directory).save({ ...DEFAULT_PREFERENCES, managedWorktreeLimit: 0 }),
+      /invalid value/,
+    );
+  } finally {
+    await rm(directory, { recursive: true });
+  }
+});
+
+test("legacy version-one preferences gain the safe managed-worktree default", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-preferences-"));
+  try {
+    const { managedWorktreeLimit: _managedWorktreeLimit, ...legacy } = DEFAULT_PREFERENCES;
+    await writeFile(join(directory, "preferences.v1.json"), JSON.stringify(legacy));
+    assert.equal((await new PreferencesStore(directory).load()).preferences.managedWorktreeLimit, 10);
   } finally {
     await rm(directory, { recursive: true });
   }
