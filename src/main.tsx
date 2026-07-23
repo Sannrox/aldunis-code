@@ -1,10 +1,11 @@
-import { FormEvent, StrictMode, useMemo, useState } from "react";
+import { FormEvent, StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
 type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 interface RepositoryMetadata {
+  projectId: string;
   name: string;
   root: string;
   selectedWorktree: string;
@@ -284,6 +285,11 @@ function Conversation({
   const [runId, setRunId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [conversationId] = useState(() => crypto.randomUUID());
+  const [threadId, setThreadId] = useState<string | null>(null);
+  useEffect(() => {
+    setSessionId(null);
+    setThreadId(null);
+  }, [repository?.projectId]);
   const worktree = repository?.worktrees.find((item) => (
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
@@ -305,6 +311,8 @@ function Conversation({
           worktree: worktree.path,
           prompt: value,
           conversationId,
+          projectId: repository.projectId,
+          threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
         }),
       });
@@ -314,6 +322,7 @@ function Conversation({
       }
       const activeRunId = response.headers.get("x-provider-run-id");
       setRunId(activeRunId);
+      setThreadId(response.headers.get("x-thread-id"));
       setProviderState("streaming");
       if (!response.body) throw new Error("Claude Code returned no event stream.");
       const reader = response.body.getReader();
