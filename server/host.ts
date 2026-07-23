@@ -11,7 +11,6 @@ import {
   ProviderProtocolError,
 } from "./provider.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
-import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery.ts";
 import { PermissionBroker, PermissionError } from "./permission.ts";
 import {
   canonicalizeRepositoryRoot,
@@ -33,7 +32,7 @@ import {
 } from "./context.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
-const MAX_BODY_BYTES = 128 * 1024;
+const MAX_BODY_BYTES = 16 * 1024;
 
 export function assertLoopbackHost(host: string): void {
   if (!LOOPBACK_HOSTS.has(host)) {
@@ -107,7 +106,6 @@ async function handleApi(
   response: ServerResponse,
   provider: ClaudeCodeAdapter,
   permissions: PermissionBroker,
-  delivery: DeliveryBroker,
   state: LocalStateStore,
   profiles: ClaudeProfileStore,
 ): Promise<boolean> {
@@ -464,53 +462,6 @@ async function handleApi(
       sendJson(response, 200, await readFileDiff(context.worktree, body.path));
       return true;
     }
-    if (route === "/api/delivery/inspect") {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await inspectDelivery(context.root, context.worktree));
-      return true;
-    }
-    if (route === "/api/delivery/plans") {
-      const body = await readJson(request) as {
-        root?: unknown;
-        worktree?: unknown;
-        action?: unknown;
-        input?: unknown;
-      };
-      const actions = new Set<DeliveryAction>(["stage", "commit", "push", "pull_request"]);
-      if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.action !== "string"
-        || !actions.has(body.action as DeliveryAction)
-        || typeof body.input !== "object"
-        || body.input === null
-        || Array.isArray(body.input)
-      ) {
-        throw new RepositoryError("A complete delivery action is required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await delivery.plan(
-        context.root,
-        context.worktree,
-        body.action as DeliveryAction,
-        body.input as Record<string, unknown>,
-      ));
-      return true;
-    }
-    const deliveryMatch = route.match(/^\/api\/delivery\/plans\/([0-9a-f-]+)\/execute$/);
-    if (deliveryMatch) {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await delivery.execute(deliveryMatch[1], context.root, context.worktree));
-      return true;
-    }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
       if (!provider.cancel(cancelMatch[1])) {
@@ -569,10 +520,9 @@ export function createLocalHost(
   profiles = new ClaudeProfileStore(state.directory),
 ) {
   const permissions = new PermissionBroker();
-  const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   return createServer(async (request, response) => {
-    if (await handleApi(request, response, provider, permissions, delivery, state, profiles)) return;
+    if (await handleApi(request, response, provider, permissions, state, profiles)) return;
     await serveStatic(request, response, dist);
   });
 }
