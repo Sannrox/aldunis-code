@@ -83,12 +83,14 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .empty-threads { padding: 10px; color: #6b6d74; font-size: .65rem; }
 .session-list > button { position: relative; display: grid; width: 100%; grid-template-columns: 29px 1fr; gap: 7px; padding: 9px 10px; border-radius: 7px; background: transparent; text-align: left; }
 .session-list > button:hover, .session-list > button.active { background: #1c1d22; }
-.session-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 30px; }
+.session-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 30px 30px; }
 .session-row > button:first-child { position: relative; display: grid; min-width: 0; width: 100%; grid-template-columns: 29px 1fr; gap: 7px; padding: 9px 10px; border-radius: 7px; background: transparent; text-align: left; }
 .session-row > button:first-child:hover, .session-row > button:first-child.active { background: #1c1d22; }
 .session-row .open-beside { align-self: center; width: 28px; height: 28px; border-radius: 5px; background: transparent; color: #686a72; }
 .session-row .open-beside:hover { background: #25262c; color: var(--acid); }
 .session-row .open-beside:disabled { opacity: .25; cursor: default; }
+.session-row .conversation-actions { align-self: center; width: 28px; height: 28px; border-radius: 5px; background: transparent; color: #686a72; }
+.session-row .conversation-actions:hover, .session-row .conversation-actions:focus-visible { background: #25262c; color: var(--acid); }
 .session-icon { display: grid; width: 26px; height: 26px; place-items: center; color: #696b73; }
 .session-icon svg { width: 15px; }
 .session-copy { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
