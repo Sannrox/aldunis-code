@@ -45,6 +45,16 @@ import { PreferencesError, PreferencesStore } from "./preferences.ts";
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
 const activeCheckpointProjects = new Set<string>();
+const activeCheckpointWorktrees = new Set<string>();
+
+function checkpointWorktreeKey(projectId: string, worktree: string): string {
+  return JSON.stringify([projectId, worktree]);
+}
+
+function projectHasActiveCheckpoint(projectId: string): boolean {
+  const prefix = `[${JSON.stringify(projectId)},`;
+  return [...activeCheckpointWorktrees].some((key) => key.startsWith(prefix));
+}
 
 export function assertLoopbackHost(host: string): void {
   if (!LOOPBACK_HOSTS.has(host)) {
@@ -198,7 +208,7 @@ async function handleApi(
         throw new RepositoryError("A project is required.");
       }
       const projection = await state.load();
-      if (activeCheckpointProjects.has(body.projectId)) {
+      if (activeCheckpointProjects.has(body.projectId) || projectHasActiveCheckpoint(body.projectId)) {
         throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
       }
       activeCheckpointProjects.add(body.projectId);
@@ -241,7 +251,9 @@ async function handleApi(
           .filter((thread) => expiredThreads.has(thread.id))
           .map((thread) => thread.projectId),
       );
-      if ([...expiredProjectIds].some((projectId) => activeCheckpointProjects.has(projectId))) {
+      if ([...expiredProjectIds].some((projectId) => (
+        activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId)
+      ))) {
         throw new LocalStateError("Retention cannot run while an affected project has an active turn.", 409);
       }
       for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
@@ -280,7 +292,10 @@ async function handleApi(
       const checkpointThread = checkpoint
         ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
         : undefined;
-      if (checkpointThread && activeCheckpointProjects.has(checkpointThread.projectId)) {
+      if (checkpointThread && (
+        activeCheckpointProjects.has(checkpointThread.projectId)
+        || activeCheckpointWorktrees.has(checkpointWorktreeKey(checkpointThread.projectId, context.worktree))
+      )) {
         throw new LocalStateError("Wait for the active turn to finish before previewing a rewind.", 409);
       }
       if (
@@ -353,7 +368,13 @@ async function handleApi(
       const checkpointThread = checkpoint
         ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
         : undefined;
-      if (checkpointThread && activeCheckpointProjects.has(checkpointThread.projectId)) {
+      const rewindLock = checkpointThread
+        ? checkpointWorktreeKey(checkpointThread.projectId, context.worktree)
+        : null;
+      if (checkpointThread && (
+        activeCheckpointProjects.has(checkpointThread.projectId)
+        || (rewindLock && activeCheckpointWorktrees.has(rewindLock))
+      )) {
         throw new LocalStateError("Wait for the active turn to finish before rewinding.", 409);
       }
       if (
@@ -374,7 +395,7 @@ async function handleApi(
       if (!checkpointThread) {
         throw new LocalStateError("The checkpoint conversation is unavailable.", 409);
       }
-      activeCheckpointProjects.add(checkpointThread.projectId);
+      activeCheckpointWorktrees.add(rewindLock!);
       let files;
       try {
         files = await rewindCheckpoint(
@@ -391,7 +412,7 @@ async function handleApi(
           message: "Workspace rewound to this turn's baseline.",
         });
       } finally {
-        activeCheckpointProjects.delete(checkpointThread.projectId);
+        activeCheckpointWorktrees.delete(rewindLock!);
       }
       sendJson(response, 200, { status: "rewound", files });
       return true;
@@ -621,10 +642,14 @@ async function handleApi(
           409,
         );
       }
-      if (activeCheckpointProjects.has(project.id)) {
-        throw new LocalStateError("This project already has an active checkpoint capture.", 409);
+      const activeWorktreeKey = checkpointWorktreeKey(project.id, context.worktree);
+      if (
+        activeCheckpointProjects.has(project.id)
+        || activeCheckpointWorktrees.has(activeWorktreeKey)
+      ) {
+        throw new LocalStateError("This worktree already has an active checkpoint capture.", 409);
       }
-      activeCheckpointProjects.add(project.id);
+      activeCheckpointWorktrees.add(activeWorktreeKey);
       try {
       const persisted = await state.startTurn({
         projectId: project.id,
@@ -715,6 +740,8 @@ async function handleApi(
             message: "Provider startup failed before checkpoint completion.",
           });
         }
+        response.setHeader("x-thread-id", persisted.thread.id);
+        response.setHeader("x-turn-id", persisted.turn.id);
         throw error;
       }
       await state.bindProviderRun(persisted.turn.id, run.id);
@@ -805,7 +832,7 @@ async function handleApi(
       response.end();
       return true;
       } finally {
-        activeCheckpointProjects.delete(project.id);
+        activeCheckpointWorktrees.delete(activeWorktreeKey);
       }
     }
     if (route === "/api/provider/permissions/request") {
