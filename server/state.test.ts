@@ -233,6 +233,7 @@ test("project deletion and retention physically remove sensitive conversation da
     activities: [],
     providerSessions: [],
     checkpoints: [],
+    annotations: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -328,6 +329,48 @@ test("checkpoint states rebuild and are removed with their conversation", async 
   await store.deleteProject("project-1");
   assert.equal((await store.load()).checkpoints.length, 0);
   assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"), false);
+});
+
+test("diff annotations survive restart, resolve explicitly, and follow conversation retention", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Review this diff",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.saveAnnotation({
+    id: "annotation-1",
+    threadId: thread.id,
+    checkpointId: null,
+    diffIdentity: "diff-identity",
+    path: "src/example.ts",
+    previousPath: null,
+    targetState: "modified",
+    scope: "line",
+    side: "addition",
+    oldLine: null,
+    newLine: 4,
+    text: "sensitive annotation sentinel",
+    capturedContext: "+const enabled = true;",
+    resolution: "unresolved",
+    createdAt: new Date().toISOString(),
+  });
+
+  let restarted = new LocalStateStore(directory);
+  assert.equal((await restarted.load()).annotations[0].resolution, "unresolved");
+  await restarted.setAnnotationResolution("annotation-1", thread.id, "resolved");
+  restarted = new LocalStateStore(directory);
+  assert.equal((await restarted.load()).annotations[0].resolution, "resolved");
+
+  await restarted.enforceRetention(new Date(Date.now() + 60_000));
+  assert.equal((await restarted.load()).annotations.length, 0);
+  assert.equal(
+    (await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("annotation sentinel"),
+    false,
+  );
 });
 
 test("an existing conversation cannot silently switch provider state", async () => {

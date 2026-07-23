@@ -48,7 +48,17 @@ test("changed files expose added, modified, deleted, renamed, binary, and oversi
 
 test("text diffs are structured while binary and oversized content remain hidden", async () => {
   const root = await fixture();
-  assert.match((await readFileDiff(root, "modified.txt")).patch ?? "", /^diff --git/m);
+  const modified = await readFileDiff(root, "modified.txt");
+  assert.match(modified.patch ?? "", /^diff --git/m);
+  assert.equal(modified.identity.length, 64);
+  assert.deepEqual(
+    modified.lines.filter((line) => line.side === "deletion" || line.side === "addition")
+      .map((line) => [line.side, line.oldLine, line.newLine]),
+    [["deletion", 1, null], ["addition", null, 1]],
+  );
+  assert.equal((await readFileDiff(root, "modified.txt")).identity, modified.identity);
+  await writeFile(join(root, "modified.txt"), "changed again\n");
+  assert.notEqual((await readFileDiff(root, "modified.txt")).identity, modified.identity);
   assert.match((await readFileDiff(root, "added.txt")).patch ?? "", /^\+one/m);
   assert.equal((await readFileDiff(root, "binary.dat")).patch, null);
   assert.equal((await readFileDiff(root, "large.txt")).patch, null);
