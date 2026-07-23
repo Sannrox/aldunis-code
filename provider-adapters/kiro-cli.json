@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.kiro.cli",
+  "publisher": {
+    "name": "Kiro"
+  },
+  "version": "1.0.0",
+  "aldunis": {
+    "minimumVersion": "0.1.0",
+    "maximumVersion": "0.1.0"
+  },
+  "protocol": {
+    "kind": "acp",
+    "minimumVersion": 1,
+    "maximumVersion": 1
+  },
+  "executable": {
+    "names": [
+      "kiro-cli",
+      "kiro-cli.exe"
+    ],
+    "arguments": [
+      "acp"
+    ]
+  },
+  "capabilities": {
+    "tools": true,
+    "images": false,
+    "sessionResume": true
+  },
+  "environment": [
+    {
+      "name": "HOME",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "KIRO_HOME",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "USERPROFILE",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "XDG_RUNTIME_DIR",
+      "required": false,
+      "sensitive": true
+    }
+  ],
+  "presentation": {
+    "name": "Kiro CLI",
+    "description": "Runs an unmodified user-installed Kiro CLI as a direct-only ACP provider. Kiro owns authentication, agents, models, settings, MCP configuration, hooks, and native sessions.",
+    "website": "https://kiro.dev/docs/cli/acp/"
+  }
+}

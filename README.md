@@ -137,6 +137,29 @@ Plan decline mutations. Persisted conversations and provider session IDs remain
 bound to their original provider, and unknown Codex protocol activity fails
 closed.
 
+## Kiro CLI adapter
+
+The reviewed declarative manifest at
+`provider-adapters/kiro-cli.json` integrates an unmodified user-installed
+`kiro-cli acp` process through the built-in ACP runtime. Install it from
+**Settings → Provider adapters** by supplying the local manifest URL, its
+canonical digest from `provider-adapters/kiro-cli.sha256`, and the manifest
+JSON for inspection. Aldunis does
+not bundle Kiro or write Kiro credentials, agents, models, settings, hooks,
+MCP configuration, logs, or native sessions.
+
+The adapter is direct-only. It advertises neither client filesystem nor
+terminal capabilities, passes an empty MCP server list, and never enables
+`--trust-all-tools` or reusable trust patterns. Mutating ACP tool calls remain
+bound to the selected repository, canonical worktree, conversation, run, and
+single allow-once decision. Optional Kiro ACP extensions are ignored unless
+the built-in runtime explicitly supports them; unknown core methods and
+malformed messages fail closed. `KIRO_HOME` may be selected as an optional
+sensitive process environment boundary without Aldunis reading or rewriting
+the directory. The bounded process environment also preserves the sensitive
+`HOME` or `USERPROFILE` and optional `XDG_RUNTIME_DIR` paths Kiro uses to
+locate its own provider-owned authentication and runtime state.
+
 Use **Changed files** to inspect the active worktree without exposing a
 terminal. Added, modified, deleted, renamed, binary, and oversized files have
 explicit states. Text patches stay constrained to the selected worktree;
