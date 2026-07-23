@@ -52,7 +52,6 @@ type ProviderEvent =
   | { kind: "cancelled" }
   | { kind: "failed"; message: string };
 type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
-type InteractionMode = "ask" | "plan" | "build";
 type IconName =
   | "code"
   | "branch"
@@ -403,8 +402,7 @@ function Conversation({
   onRefreshChanges: () => void;
 }) {
   const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode }>>([]);
-  const [mode, setMode] = useState<InteractionMode>("ask");
+  const [messages, setMessages] = useState<string[]>([]);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
@@ -419,19 +417,10 @@ function Conversation({
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
   )) ?? null;
-  const runActive = providerState === "starting"
-    || providerState === "streaming"
-    || providerState === "cancelling";
-  const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
-    ask: { label: "Ask", authority: "Read-only tools" },
-    plan: { label: "Plan", authority: "Planning; mutations blocked" },
-    build: { label: "Build", authority: "Mutations require approval" },
-  };
   const send = async () => {
     const value = draft.trim();
-    if (!value || !repository || !worktree || runActive) return;
-    const turnMode = mode;
-    setMessages((current) => [...current, { text: value, mode: turnMode }]);
+    if (!value || !repository || !worktree || providerState === "starting" || providerState === "streaming") return;
+    setMessages((current) => [...current, value]);
     setDraft("");
     setProviderEvents([]);
     setProviderState("starting");
@@ -444,7 +433,6 @@ function Conversation({
           root: repository.root,
           worktree: worktree.path,
           prompt: value,
-          mode: turnMode,
           conversationId,
           projectId: repository.projectId,
           threadId: threadId ?? undefined,
@@ -614,8 +602,8 @@ function Conversation({
           </div>
         </article>
         {messages.map((message, index) => (
-          <article className="user-message" key={`${message.text}-${index}`}>
-            <span className="avatar">RK</span><div><header><strong>You</strong><span className={`turn-mode ${message.mode}`}>{modeCopy[message.mode].label}</span><time>now</time></header><p>{message.text}</p></div>
+          <article className="user-message" key={`${message}-${index}`}>
+            <span className="avatar">RK</span><div><header><strong>You</strong><time>now</time></header><p>{message}</p></div>
           </article>
         ))}
         {(providerState !== "idle" || providerEvents.length > 0) && (
@@ -664,34 +652,16 @@ function Conversation({
         )}
       </section>
       <section className="composer-wrap">
-        <fieldset className="mode-picker" disabled={runActive}>
-          <legend>Interaction mode</legend>
-          <div>
-            {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
-              <label className={mode === candidate ? "selected" : ""} key={candidate}>
-                <input
-                  type="radio"
-                  name="interaction-mode"
-                  value={candidate}
-                  checked={mode === candidate}
-                  onChange={() => setMode(candidate)}
-                />
-                <span>{modeCopy[candidate].label}</span>
-              </label>
-            ))}
-          </div>
-          <p aria-live="polite">{modeCopy[mode].authority}{runActive ? " · locked for active turn" : ""}</p>
-        </fieldset>
         <div className="composer">
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }}} placeholder={worktree ? `${modeCopy[mode].label} Claude about this worktree…` : "Open a repository with an available worktree…"} aria-label="Message Claude" disabled={!worktree || runActive} />
+          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }}} placeholder={worktree ? "Ask Claude about this worktree…" : "Open a repository with an available worktree…"} aria-label="Message Claude" disabled={!worktree || providerState === "starting" || providerState === "streaming" || providerState === "cancelling"} />
           <footer>
-            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · {modeCopy[mode].label}</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
+            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · explicit approvals</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
             {runId
               ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
-              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || runActive} aria-label="Send message">↑</button>}
+              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree} aria-label="Send message">↑</button>}
           </footer>
         </div>
-        <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · Claude uses local credentials · Enter to send, Shift + Enter for newline</p>
+        <p className="disclaimer">Claude uses local credentials · mutating tools require one scoped approval · Enter to send, Shift + Enter for newline</p>
       </section>
       {changesOpen && repository && (
         <ChangesPanel
