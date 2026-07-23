@@ -171,6 +171,27 @@ test("new conversations stop at the bounded per-project retention limit", async 
   );
 });
 
+test("existing conversations cannot silently change their bound worktree", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "Fixture", root: "/repo" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/worktree-a",
+    prompt: "Start here",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await assert.rejects(() => store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/worktree-b",
+    prompt: "Move silently",
+    mode: "ask",
+    provider: "claude-code",
+    threadId: first.thread.id,
+  }), /bound to a different canonical worktree/);
+  assert.equal((await store.load()).threads[0].worktree, "/repo/worktree-a");
+});
+
 test("corruption and incompatible schemas fail visibly without discarding history", async () => {
   const corrupt = await fixtureStore();
   await writeFile(join(corrupt.directory, "events.v1.jsonl"), "{\"schemaVersion\":1", "utf8");
