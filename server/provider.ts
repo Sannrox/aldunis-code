@@ -12,6 +12,9 @@ import {
 const execFileAsync = promisify(execFile);
 const SUPPORTED_CLAUDE_MAJOR = 2;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
+const READ_ONLY_TOOLS = "Read,Glob,Grep";
+
+export type InteractionMode = "ask" | "plan" | "build";
 
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -25,6 +28,22 @@ export type ProviderEvent =
   | { kind: "failed"; message: string };
 
 export class ProviderProtocolError extends Error {}
+
+export function modeArguments(mode: InteractionMode, help: string): string[] {
+  const supportsTools = /--tools <tools\.\.\.>/.test(help);
+  const permissionModes = help.match(/--permission-mode <mode>[\s\S]*?\(choices: ([^)]+)\)/)?.[1] ?? "";
+  const supportsPermissionMode = (value: string) => permissionModes.includes(`"${value}"`);
+  if (!supportsPermissionMode("default") || !supportsPermissionMode("plan")) {
+    throw new ProviderProtocolError("Claude Code does not advertise the required interaction modes.");
+  }
+  if (mode === "ask") {
+    if (!supportsTools || !supportsPermissionMode("dontAsk")) {
+      throw new ProviderProtocolError("Claude Code does not advertise a fail-closed read-only mode.");
+    }
+    return ["--permission-mode", "dontAsk", "--tools", READ_ONLY_TOOLS];
+  }
+  return ["--permission-mode", mode === "plan" ? "plan" : "default"];
+}
 
 type JsonRecord = Record<string, unknown>;
 interface ProviderToolRequest {
@@ -156,18 +175,28 @@ export class ClaudeCodeAdapter {
     conversationId: string,
     prompt: string,
     approvalUrl: string,
+    mode: InteractionMode,
     resumeSessionId?: string,
   ): Promise<ProviderRun> {
     let version: { stdout: string };
+    let help: { stdout: string };
     try {
-      version = await execFileAsync(this.executable, ["--version"], {
-        encoding: "utf8",
-        timeout: 5_000,
-      });
+      [version, help] = await Promise.all([
+        execFileAsync(this.executable, ["--version"], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }),
+        execFileAsync(this.executable, ["--help"], {
+          encoding: "utf8",
+          timeout: 5_000,
+          maxBuffer: 512 * 1024,
+        }),
+      ]);
     } catch {
       throw new ProviderProtocolError("Claude Code is not installed or could not be started.");
     }
     assertSupportedClaudeVersion(version.stdout.trim());
+    const authorityArgs = modeArguments(mode, help.stdout);
 
     const id = randomUUID();
     const permissionToken = this.permissions.createRunToken(id);
@@ -190,8 +219,7 @@ export class ClaudeCodeAdapter {
       "--output-format",
       "stream-json",
       "--verbose",
-      "--permission-mode",
-      "default",
+      ...authorityArgs,
       "--setting-sources",
       "",
       "--strict-mcp-config",
@@ -221,7 +249,7 @@ export class ClaudeCodeAdapter {
 
     return {
       id,
-      events: this.#events(id, active, { repository, worktree, conversationId }),
+      events: this.#events(id, active, { repository, worktree, conversationId, mode }),
     };
   }
 
@@ -241,7 +269,12 @@ export class ClaudeCodeAdapter {
   async *#events(
     id: string,
     active: ActiveRun,
-    context: { repository: string; worktree: string; conversationId: string },
+    context: {
+      repository: string;
+      worktree: string;
+      conversationId: string;
+      mode: InteractionMode;
+    },
   ): AsyncIterable<ProviderEvent> {
     let buffer = "";
     let protocolFailed = false;
@@ -279,6 +312,11 @@ export class ClaudeCodeAdapter {
                 name: event.name,
               };
               if (isMutatingTool(event.name)) {
+                if (context.mode !== "build") {
+                  throw new ProviderProtocolError(
+                    `Claude requested mutating tool ${event.name} while ${context.mode} mode was active.`,
+                  );
+                }
                 const approval = this.permissions.register({
                   runId: id,
                   conversationId: context.conversationId,
