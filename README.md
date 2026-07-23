@@ -56,15 +56,8 @@ npm run check
 npm run build
 ```
 
-After opening a repository or linked worktree, send a prompt to start a Claude
-Code session attached to that explicitly selected worktree. Provider
-credentials stay in Claude Code's
-supported local credential store and are never returned to the browser.
-Aldunis Code starts Claude in plan permission mode for this initial adapter, so
-mutating tools are not silently approved. Active turns can be cancelled, and a
-completed or interrupted Claude session can be resumed with its provider
-session ID. Unknown protocol events and unsupported Claude Code major versions
-fail closed with a visible conversation state.
+Provider and product integrations remain deliberately marked disconnected
+until their contracts are implemented.
 
 Read [AGENTS.md](AGENTS.md), [the architecture](docs/architecture.md), and
 [the work lifecycle](docs/work-lifecycle.md) before changing a boundary.
