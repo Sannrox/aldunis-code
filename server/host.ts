@@ -1,16 +1,10 @@
 import { createReadStream } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
-import {
-  canonicalizeRepositoryRoot,
-  discoverWorktrees,
-  openRepository,
-  RepositoryError,
-} from "./repository.ts";
+import { openRepository, RepositoryError } from "./repository.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 16 * 1024;
@@ -58,31 +52,8 @@ function isLoopbackOrigin(request: IncomingMessage): boolean {
   }
 }
 
-async function selectedWorktree(rootInput: string, worktreeInput: string): Promise<string> {
-  const root = await canonicalizeRepositoryRoot(rootInput);
-  const selected = await realpath(worktreeInput);
-  const worktrees = await discoverWorktrees(root);
-  const allowed = await Promise.all(worktrees.map(async (worktree) => {
-    try {
-      return await realpath(worktree.path);
-    } catch {
-      return null;
-    }
-  }));
-  if (!allowed.includes(selected)) {
-    throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
-  }
-  return selected;
-}
-
-async function handleApi(
-  request: IncomingMessage,
-  response: ServerResponse,
-  provider: ClaudeCodeAdapter,
-): Promise<boolean> {
-  const url = new URL(request.url ?? "/", "http://localhost");
-  const route = url.pathname;
-  if (!route.startsWith("/api/")) return false;
+async function handleApi(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+  if (request.url !== "/api/repositories/open") return false;
   if (request.method !== "POST") {
     response.writeHead(405, { allow: "POST" });
     response.end();
@@ -94,56 +65,16 @@ async function handleApi(
   }
 
   try {
-    if (route === "/api/repositories/open") {
-      const body = await readJson(request) as { path?: unknown };
-      if (typeof body.path !== "string") {
-        throw new RepositoryError("A repository path is required.");
-      }
-      sendJson(response, 200, await openRepository(body.path));
-      return true;
+    const body = await readJson(request) as { path?: unknown };
+    if (typeof body.path !== "string") {
+      throw new RepositoryError("A repository path is required.");
     }
-    if (route === "/api/provider/runs") {
-      const body = await readJson(request) as {
-        root?: unknown;
-        worktree?: unknown;
-        prompt?: unknown;
-        resumeSessionId?: unknown;
-      };
-      if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.prompt !== "string"
-        || !body.prompt.trim()
-        || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
-      ) {
-        throw new RepositoryError("A repository, worktree, and prompt are required.");
-      }
-      const worktree = await selectedWorktree(body.root, body.worktree);
-      const run = await provider.start(worktree, body.prompt.trim(), body.resumeSessionId);
-      response.writeHead(200, {
-        "content-type": "application/x-ndjson; charset=utf-8",
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "x-provider-run-id": run.id,
-      });
-      for await (const event of run.events) response.write(`${JSON.stringify(event)}\n`);
-      response.end();
-      return true;
-    }
-    const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
-    if (cancelMatch) {
-      if (!provider.cancel(cancelMatch[1])) {
-        throw new RepositoryError("The provider run is no longer active.", 404);
-      }
-      sendJson(response, 202, { status: "cancelling" });
-      return true;
-    }
-    sendJson(response, 404, { error: "API route not found." });
+    sendJson(response, 200, await openRepository(body.path));
   } catch (error) {
     const status = error instanceof RepositoryError ? error.status : 500;
-    const message = error instanceof RepositoryError || error instanceof ProviderProtocolError
+    const message = error instanceof RepositoryError
       ? error.message
-      : "The local operation failed.";
+      : "Repository discovery failed.";
     sendJson(response, status, { error: message });
   }
   return true;
@@ -174,9 +105,8 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse, d
 }
 
 export function createLocalHost(dist = fileURLToPath(new URL("../dist", import.meta.url))) {
-  const provider = new ClaudeCodeAdapter();
   return createServer(async (request, response) => {
-    if (await handleApi(request, response, provider)) return;
+    if (await handleApi(request, response)) return;
     await serveStatic(request, response, dist);
   });
 }
