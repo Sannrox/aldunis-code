@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -23,7 +23,12 @@ test("normalizes provider lifecycle, text, tools, and completion", () => {
     ] },
   }), [
     { kind: "assistant_text", text: "Done." },
-    { kind: "tool_started", toolCallId: "tool-1", name: "Read" },
+    {
+      kind: "tool_requested",
+      toolCallId: "tool-1",
+      name: "Read",
+      input: { file_path: "/secret" },
+    },
   ]);
   assert.deepEqual(normalizeClaudeEvent({
     type: "user",
@@ -52,10 +57,15 @@ test("provider errors are normalized without exposing raw diagnostics", () => {
 test("a running provider subprocess can be cancelled deterministically", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-provider-"));
   const executable = join(directory, "fake-claude");
+  const invocation = join(directory, "invocation.json");
   await writeFile(executable, `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("2.1.177 (Claude Code)");
 } else {
+  require("node:fs").writeFileSync(${JSON.stringify(invocation)}, JSON.stringify({
+    args: process.argv.slice(2),
+    token: process.env.ALDUNIS_PROVIDER_RUN_TOKEN
+  }));
   console.log(JSON.stringify({type:"system",subtype:"init",session_id:"fixture-session",model:"fixture"}));
   setInterval(() => {}, 1000);
 }
@@ -63,7 +73,13 @@ if (process.argv.includes("--version")) {
   await chmod(executable, 0o700);
 
   const adapter = new ClaudeCodeAdapter(executable);
-  const run = await adapter.start(directory, "sensitive prompt");
+  const run = await adapter.start(
+    directory,
+    directory,
+    "conversation-1",
+    "sensitive prompt",
+    "http://127.0.0.1:4174/api/provider/permissions/request",
+  );
   const events: Array<{ kind: string }> = [];
   for await (const event of run.events) {
     events.push(event);
@@ -71,4 +87,14 @@ if (process.argv.includes("--version")) {
   }
   assert.deepEqual(events.map((event) => event.kind), ["session_started", "cancelled"]);
   assert.equal(adapter.cancel(run.id), false);
+  const launched = JSON.parse(await readFile(invocation, "utf8")) as {
+    args: string[];
+    token: string;
+  };
+  assert.ok(launched.token);
+  assert.equal(launched.args.join(" ").includes(launched.token), false);
+  assert.equal(
+    launched.args.some((argument) => argument.includes("${ALDUNIS_PROVIDER_RUN_TOKEN}")),
+    true,
+  );
 });

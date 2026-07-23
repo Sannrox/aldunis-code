@@ -2,6 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import {
+  type ApprovalSnapshot,
+  isMutatingTool,
+  PermissionBroker,
+} from "./permission.ts";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_CLAUDE_MAJOR = 2;
@@ -11,6 +17,8 @@ export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
   | { kind: "tool_started"; toolCallId: string; name: string }
+  | ({ kind: "approval_pending" } & ApprovalSnapshot)
+  | { kind: "approval_resolved"; id: string; state: ApprovalSnapshot["state"] }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
@@ -19,6 +27,12 @@ export type ProviderEvent =
 export class ProviderProtocolError extends Error {}
 
 type JsonRecord = Record<string, unknown>;
+interface ProviderToolRequest {
+  kind: "tool_requested";
+  toolCallId: string;
+  name: string;
+  input: unknown;
+}
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -33,7 +47,7 @@ function requiredString(value: unknown, field: string): string {
   return value;
 }
 
-export function normalizeClaudeEvent(value: unknown): ProviderEvent[] {
+export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | ProviderToolRequest> {
   const event = record(value);
   if (!event || typeof event.type !== "string") {
     throw new ProviderProtocolError("Claude emitted a malformed event.");
@@ -62,9 +76,10 @@ export function normalizeClaudeEvent(value: unknown): ProviderEvent[] {
       }
       if (block.type === "tool_use") {
         return [{
-          kind: "tool_started",
+          kind: "tool_requested",
           toolCallId: requiredString(block.id, "tool id"),
           name: requiredString(block.name, "tool name"),
+          input: block.input,
         }];
       }
       if (block.type === "thinking") return [];
@@ -130,11 +145,17 @@ interface ActiveRun {
 export class ClaudeCodeAdapter {
   readonly #active = new Map<string, ActiveRun>();
 
-  constructor(private readonly executable = "claude") {}
+  constructor(
+    private readonly executable = "claude",
+    private readonly permissions = new PermissionBroker(),
+  ) {}
 
   async start(
+    repository: string,
     worktree: string,
+    conversationId: string,
     prompt: string,
+    approvalUrl: string,
     resumeSessionId?: string,
   ): Promise<ProviderRun> {
     let version: { stdout: string };
@@ -149,18 +170,45 @@ export class ClaudeCodeAdapter {
     assertSupportedClaudeVersion(version.stdout.trim());
 
     const id = randomUUID();
+    const permissionToken = this.permissions.createRunToken(id);
+    const permissionServer = fileURLToPath(new URL("./permission-mcp.mjs", import.meta.url));
+    const mcpConfig = JSON.stringify({
+      mcpServers: {
+        aldunis: {
+          command: process.execPath,
+          args: [permissionServer],
+          env: {
+            ALDUNIS_APPROVAL_URL: "${ALDUNIS_APPROVAL_URL}",
+            ALDUNIS_PROVIDER_RUN_ID: "${ALDUNIS_PROVIDER_RUN_ID}",
+            ALDUNIS_PROVIDER_RUN_TOKEN: "${ALDUNIS_PROVIDER_RUN_TOKEN}",
+          },
+        },
+      },
+    });
     const args = [
       "-p",
       "--output-format",
       "stream-json",
       "--verbose",
       "--permission-mode",
-      "plan",
+      "default",
+      "--setting-sources",
+      "",
+      "--strict-mcp-config",
+      "--mcp-config",
+      mcpConfig,
+      "--permission-prompt-tool",
+      "mcp__aldunis__approval_prompt",
     ];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
     const child = spawn(this.executable, args, {
       cwd: worktree,
-      env: process.env,
+      env: {
+        ...process.env,
+        ALDUNIS_APPROVAL_URL: approvalUrl,
+        ALDUNIS_PROVIDER_RUN_ID: id,
+        ALDUNIS_PROVIDER_RUN_TOKEN: permissionToken,
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const active: ActiveRun = { child, cancelled: false, spawnFailed: false };
@@ -171,13 +219,17 @@ export class ClaudeCodeAdapter {
     child.stdin.end(prompt);
     this.#active.set(id, active);
 
-    return { id, events: this.#events(id, active) };
+    return {
+      id,
+      events: this.#events(id, active, { repository, worktree, conversationId }),
+    };
   }
 
   cancel(id: string): boolean {
     const active = this.#active.get(id);
     if (!active) return false;
     active.cancelled = true;
+    this.permissions.closeRun(id, "cancelled");
     active.child.kill("SIGTERM");
     const timer = setTimeout(() => {
       if (active.child.exitCode === null) active.child.kill("SIGKILL");
@@ -186,7 +238,11 @@ export class ClaudeCodeAdapter {
     return true;
   }
 
-  async *#events(id: string, active: ActiveRun): AsyncIterable<ProviderEvent> {
+  async *#events(
+    id: string,
+    active: ActiveRun,
+    context: { repository: string; worktree: string; conversationId: string },
+  ): AsyncIterable<ProviderEvent> {
     let buffer = "";
     let protocolFailed = false;
     try {
@@ -206,7 +262,35 @@ export class ClaudeCodeAdapter {
             } catch {
               throw new ProviderProtocolError("Claude emitted malformed JSON.");
             }
-            yield* normalizeClaudeEvent(parsed);
+            for (const event of normalizeClaudeEvent(parsed)) {
+              if (event.kind !== "tool_requested") {
+                yield event;
+                if (event.kind === "tool_finished") {
+                  const approval = this.permissions.approvalFor(id, event.toolCallId);
+                  if (approval && approval.state !== "pending") {
+                    yield { kind: "approval_resolved", id: approval.id, state: approval.state };
+                  }
+                }
+                continue;
+              }
+              yield {
+                kind: "tool_started",
+                toolCallId: event.toolCallId,
+                name: event.name,
+              };
+              if (isMutatingTool(event.name)) {
+                const approval = this.permissions.register({
+                  runId: id,
+                  conversationId: context.conversationId,
+                  repository: context.repository,
+                  worktree: context.worktree,
+                  toolCallId: event.toolCallId,
+                  toolName: event.name,
+                  toolInput: event.input,
+                });
+                if (approval) yield { kind: "approval_pending", ...approval };
+              }
+            }
           }
           newline = buffer.indexOf("\n");
         }
@@ -234,9 +318,13 @@ export class ClaudeCodeAdapter {
     if (active.cancelled) {
       yield { kind: "cancelled" };
     } else if (!protocolFailed && active.spawnFailed) {
+      this.permissions.closeRun(id, "provider_failed");
       yield { kind: "failed", message: "Claude Code is not installed or could not be started." };
     } else if (!protocolFailed && code !== 0) {
+      this.permissions.closeRun(id, "provider_failed");
       yield { kind: "failed", message: `Claude Code exited unexpectedly (${code ?? "signal"}).` };
+    } else {
+      this.permissions.closeRun(id, "provider_failed");
     }
   }
 }

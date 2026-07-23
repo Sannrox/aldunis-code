@@ -20,10 +20,25 @@ type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
   | { kind: "tool_started"; toolCallId: string; name: string }
+  | {
+    kind: "approval_pending";
+    id: string;
+    runId: string;
+    conversationId: string;
+    repository: string;
+    worktree: string;
+    toolCallId: string;
+    toolName: string;
+    scope: { summary: string; target: string; details: string[] };
+    state: ApprovalState;
+    expiresAt: string;
+  }
+  | { kind: "approval_resolved"; id: string; state: ApprovalState }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | { kind: "failed"; message: string };
+type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
 type IconName =
   | "code"
   | "branch"
@@ -268,6 +283,7 @@ function Conversation({
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversationId] = useState(() => crypto.randomUUID());
   const worktree = repository?.worktrees.find((item) => (
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
@@ -288,6 +304,7 @@ function Conversation({
           root: repository.root,
           worktree: worktree.path,
           prompt: value,
+          conversationId,
           resumeSessionId: sessionId ?? undefined,
         }),
       });
@@ -311,11 +328,34 @@ function Conversation({
           buffer = buffer.slice(newline + 1);
           if (line) {
             const event = JSON.parse(line) as ProviderEvent;
+            if (event.kind === "approval_resolved") {
+              setProviderEvents((current) => current.map((candidate) => (
+                candidate.kind === "approval_pending" && candidate.id === event.id
+                  ? { ...candidate, state: event.state }
+                  : candidate
+              )));
+              newline = buffer.indexOf("\n");
+              continue;
+            }
             setProviderEvents((current) => [...current, event]);
             if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
             if (event.kind === "turn_completed") setProviderState("completed");
-            if (event.kind === "cancelled") setProviderState("cancelled");
-            if (event.kind === "failed") setProviderState("failed");
+            if (event.kind === "cancelled") {
+              setProviderEvents((current) => current.map((candidate) => (
+                candidate.kind === "approval_pending" && candidate.state === "pending"
+                  ? { ...candidate, state: "cancelled" }
+                  : candidate
+              )));
+              setProviderState("cancelled");
+            }
+            if (event.kind === "failed") {
+              setProviderEvents((current) => current.map((candidate) => (
+                candidate.kind === "approval_pending" && candidate.state === "pending"
+                  ? { ...candidate, state: "provider_failed" }
+                  : candidate
+              )));
+              setProviderState("failed");
+            }
           }
           newline = buffer.indexOf("\n");
         }
@@ -345,11 +385,45 @@ function Conversation({
       setProviderState("failed");
     }
   };
+  const decideApproval = async (
+    approval: Extract<ProviderEvent, { kind: "approval_pending" }>,
+    decision: "allow_once" | "deny",
+  ) => {
+    try {
+      const response = await fetch(`/api/provider/approvals/${approval.id}/decide`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runId: approval.runId,
+          conversationId: approval.conversationId,
+          repository: approval.repository,
+          worktree: approval.worktree,
+          toolCallId: approval.toolCallId,
+          decision,
+        }),
+      });
+      const body = await response.json() as typeof approval | { error?: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "Approval decision failed.");
+      setProviderEvents((current) => current.map((event) => (
+        event.kind === "approval_pending" && event.id === approval.id
+          ? { ...event, state: (body as typeof approval).state }
+          : event
+      )));
+    } catch (error) {
+      setProviderEvents((current) => [...current, {
+        kind: "failed",
+        message: error instanceof Error ? error.message : "Approval decision failed.",
+      }]);
+    }
+  };
   const assistantText = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
     .map((event) => event.text)
     .join("\n");
   const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
+  const approvals = providerEvents.filter(
+    (event): event is Extract<ProviderEvent, { kind: "approval_pending" }> => event.kind === "approval_pending",
+  );
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
@@ -414,6 +488,29 @@ function Conversation({
                   <small>{event.toolCallId}</small>
                 </div>
               ))}
+              {approvals.map((approval) => (
+                <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`Approval required: ${approval.scope.summary}`}>
+                  <header>
+                    <span><Icon name="shield" /></span>
+                    <div>
+                      <strong>{approval.scope.summary}</strong>
+                      <small>{approval.toolName} · one action only</small>
+                    </div>
+                    <em>{approval.state.replace("_", " ")}</em>
+                  </header>
+                  <p>{approval.scope.target}</p>
+                  {approval.scope.details.length > 0 && (
+                    <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
+                  )}
+                  <small className="approval-binding">Bound to this conversation, repository, worktree, and tool call.</small>
+                  {approval.state === "pending" && (
+                    <footer>
+                      <button onClick={() => void decideApproval(approval, "deny")}>Deny</button>
+                      <button className="allow-once" onClick={() => void decideApproval(approval, "allow_once")}>Allow once</button>
+                    </footer>
+                  )}
+                </section>
+              ))}
               {failure && <div className="provider-error" role="alert">{failure.message}</div>}
               {(providerState === "completed" || providerState === "cancelled") && <p className="provider-state">{stateCopy[providerState]}</p>}
             </div>
@@ -424,13 +521,13 @@ function Conversation({
         <div className="composer">
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); }}} placeholder={worktree ? "Ask Claude about this worktree…" : "Open a repository with an available worktree…"} aria-label="Message Claude" disabled={!worktree || providerState === "starting" || providerState === "streaming" || providerState === "cancelling"} />
           <footer>
-            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · plan mode</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
+            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · explicit approvals</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
             {runId
               ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
               : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree} aria-label="Send message">↑</button>}
           </footer>
         </div>
-        <p className="disclaimer">Claude uses local credentials · tools run in plan mode · Enter to send, Shift + Enter for newline</p>
+        <p className="disclaimer">Claude uses local credentials · mutating tools require one scoped approval · Enter to send, Shift + Enter for newline</p>
       </section>
     </main>
   );
