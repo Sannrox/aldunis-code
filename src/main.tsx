@@ -216,6 +216,52 @@ const nav: Array<{ id: Product; label: string; icon: IconName; detail: string }>
   { id: "tenkai", label: "Tenkai", icon: "rocket", detail: "Delivery & recovery" },
 ];
 
+const DIALOG_FOCUSABLE = [
+  "[data-dialog-initial-focus]",
+  "button:not(:disabled)",
+  "input:not(:disabled)",
+  "textarea:not(:disabled)",
+  "select:not(:disabled)",
+  "[tabindex]:not([tabindex='-1'])",
+].join(", ");
+
+function useDialogFocus(open: boolean, onClose: () => void, dismissible = true) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE) ?? [])]
+      .filter((element) => element.offsetParent !== null);
+    (focusable.find((element) => element.hasAttribute("data-dialog-initial-focus")) ?? focusable[0])?.focus();
+    return () => previouslyFocused?.focus();
+  }, [open]);
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Escape" && dismissible) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE) ?? [])]
+      .filter((element) => element.offsetParent !== null);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialogRef.current?.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  return { dialogRef, onKeyDown };
+}
+
 function PageHeader({
   product,
   onChange,
@@ -342,9 +388,10 @@ function CodeSidebar({
 }
 
 function OverlayDialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-dialog-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+      <section ref={dialogRef} className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-dialog-title" onKeyDown={onKeyDown} tabIndex={-1}>
         <header><h2 id="quick-dialog-title">{title}</h2><button onClick={onClose} aria-label={`Close ${title}`}>×</button></header>
         {children}
       </section>
@@ -369,7 +416,7 @@ function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads
   if (!open) return null;
   return (
     <OverlayDialog title="Search local conversations" onClose={onClose}>
-      <label className="quick-search"><Icon name="search" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, project, or worktree" /></label>
+      <label className="quick-search"><Icon name="search" /><input data-dialog-initial-focus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, project, or worktree" /></label>
       <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
       <div className="quick-results">
         {results.map((thread) => <button key={thread.id}><strong>{thread.title}</strong><small>{thread.projectName} · {thread.worktree}</small></button>)}
@@ -394,6 +441,7 @@ function ChangesPanel({
   onClose: () => void;
   onRefresh: () => void;
 }) {
+  const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -507,15 +555,17 @@ function ChangesPanel({
   }, [repository, selected]);
   return (
     <section
+      ref={dialogRef}
       className="changes-panel"
       role="dialog"
       aria-modal="true"
       aria-label="Changes for active conversation"
-      onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}
+      onKeyDown={onKeyDown}
+      tabIndex={-1}
     >
       <header>
         <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
-        <div><button onClick={onRefresh}>Refresh</button><button autoFocus onClick={onClose} aria-label="Close changed files">×</button></div>
+        <div><button onClick={onRefresh}>Refresh</button><button data-dialog-initial-focus onClick={onClose} aria-label="Close changed files">×</button></div>
       </header>
       <div className="changes-body">
         <nav aria-label="Changed files">
@@ -587,6 +637,7 @@ function RepositoryDialog({
   onSubmit: (path: string) => void;
 }) {
   const [path, setPath] = useState("");
+  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
   if (!open) return null;
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -595,14 +646,12 @@ function RepositoryDialog({
   return (
     <div
       className="dialog-backdrop"
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) onClose();
-      }}
+      onKeyDown={onKeyDown}
       onMouseDown={(event) => {
         if (event.currentTarget === event.target && !busy) onClose();
       }}
     >
-      <section className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title">
+      <section ref={dialogRef} className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title" tabIndex={-1}>
         <p className="eyebrow">Local access</p>
         <h2 id="repository-dialog-title">Open a repository</h2>
         <p>Enter an absolute path. The local host canonicalizes it and returns only repository and worktree metadata.</p>
@@ -610,7 +659,7 @@ function RepositoryDialog({
           <label htmlFor="repository-path">Repository path</label>
           <input
             id="repository-path"
-            autoFocus
+            data-dialog-initial-focus
             value={path}
             onChange={(event) => setPath(event.target.value)}
             placeholder="/Users/you/Projects/repository"
@@ -1964,8 +2013,7 @@ function ProfileSettingsDialog({
   const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
   const edit = (profile: ClaudeProfile | null) => {
     setSelectedId(profile?.id ?? null);
     setName(profile?.name ?? "");
@@ -1978,12 +2026,6 @@ function ProfileSettingsDialog({
   useEffect(() => {
     if (open && selectedId && !profiles.some((profile) => profile.id === selectedId)) edit(null);
   }, [open, profiles, selectedId]);
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    closeButtonRef.current?.focus();
-    return () => previouslyFocused?.focus();
-  }, [open]);
   if (!open) return null;
   const request = async (path: string, body: unknown) => {
     setBusy(true);
@@ -2026,32 +2068,12 @@ function ProfileSettingsDialog({
     <div
       className="dialog-backdrop"
       onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) {
-          event.preventDefault();
-          onClose();
-          return;
-        }
-        if (event.key !== "Tab") return;
-        const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-          "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])",
-        ) ?? [])].filter((element) => element.offsetParent !== null);
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        if (event.shiftKey && document.activeElement === first) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && document.activeElement === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }}
+      onKeyDown={onKeyDown}
     >
-      <section ref={dialogRef} className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title">
+      <section ref={dialogRef} className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" tabIndex={-1}>
         <header>
           <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
-          <button ref={closeButtonRef} onClick={onClose} aria-label="Close profile settings">×</button>
+          <button onClick={onClose} aria-label="Close profile settings">×</button>
         </header>
         <div className="profile-dialog-body">
           <nav aria-label="Claude profiles">
@@ -2161,7 +2183,7 @@ function CommandPalette({
   ].filter((action) => action.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return (
     <OverlayDialog title="Command palette" onClose={onClose}>
-      <label className="quick-search"><Icon name="search" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search available actions" /></label>
+      <label className="quick-search"><Icon name="search" /><input data-dialog-initial-focus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search available actions" /></label>
       <div className="quick-results">{actions.map((action) => <button key={action.label} onClick={() => { onClose(); action.run(); }}><strong>{action.label}</strong><small>{action.detail}</small></button>)}</div>
     </OverlayDialog>
   );
