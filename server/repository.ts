@@ -1,7 +1,19 @@
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import {
+  access,
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +40,366 @@ export class RepositoryError extends Error {
     readonly status = 400,
   ) {
     super(message);
+  }
+}
+
+export interface CheckpointSnapshot {
+  identity: string;
+  indexIdentity: string;
+  head: string;
+  gitDirectory: string;
+}
+
+export interface CheckpointFile {
+  path: string;
+  state: "added" | "modified" | "deleted" | "renamed" | "binary";
+  previousPath: string | null;
+}
+
+async function git(
+  worktree: string,
+  args: string[],
+  options: { env?: NodeJS.ProcessEnv; maxBuffer?: number } = {},
+): Promise<string> {
+  try {
+    const result = await execFileAsync("git", ["-C", worktree, ...args], {
+      encoding: "utf8",
+      timeout: 15_000,
+      maxBuffer: options.maxBuffer ?? 4 * 1024 * 1024,
+      env: options.env,
+    });
+    return result.stdout;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    throw new RepositoryError(
+      message.includes("timed out")
+        ? "Git did not finish while inspecting the workspace."
+        : "The workspace checkpoint operation could not be completed.",
+      409,
+    );
+  }
+}
+
+async function gitBuffer(
+  worktree: string,
+  args: string[],
+  maxBuffer = 32 * 1024 * 1024,
+): Promise<Buffer> {
+  try {
+    const result = await execFileAsync("git", ["-C", worktree, ...args], {
+      encoding: "buffer",
+      timeout: 15_000,
+      maxBuffer,
+    });
+    return result.stdout;
+  } catch {
+    throw new RepositoryError("The workspace checkpoint operation could not be completed.", 409);
+  }
+}
+
+export async function checkpointGitDirectory(worktree: string): Promise<string> {
+  const value = (await git(worktree, ["rev-parse", "--git-common-dir"])).trim();
+  return realpath(resolve(worktree, value));
+}
+
+async function assertCheckpointable(worktree: string, allowChanges: boolean): Promise<void> {
+  const submodules = await git(worktree, ["ls-files", "--stage"]);
+  if (submodules.split("\n").some((line) => line.startsWith("160000 "))) {
+    throw new RepositoryError("Checkpoints are unavailable while the worktree contains submodules.", 409);
+  }
+  const ignored = await git(worktree, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--ignored=matching",
+    "--untracked-files=all",
+  ]);
+  if (ignored.split("\0").some((entry) => entry.startsWith("!! "))) {
+    throw new RepositoryError(
+      "Checkpoints are unavailable while ignored files are present because their contents cannot be restored safely.",
+      409,
+    );
+  }
+  const porcelain = await git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const entries = porcelain.split("\0").filter(Boolean);
+  if (!allowChanges && entries.length > 0) {
+    throw new RepositoryError(
+      entries.some((entry) => entry.startsWith("?? "))
+        ? "Start the turn with no untracked files so unrelated work cannot be lost."
+        : "Start the turn with a clean worktree so unrelated work cannot be lost.",
+      409,
+    );
+  }
+  const changedPaths: string[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    changedPaths.push(entry.slice(3));
+    if ((entry[0] === "R" || entry[0] === "C" || entry[1] === "R" || entry[1] === "C")
+      && entries[index + 1]) {
+      changedPaths.push(entries[++index]);
+    }
+  }
+  const trackedPaths = (await git(worktree, ["ls-files", "-z"])).split("\0").filter(Boolean);
+  const attributePaths = [...new Set([...trackedPaths, ...changedPaths])];
+  for (let index = 0; index < attributePaths.length; index += 200) {
+    const attributes = await git(worktree, [
+      "check-attr",
+      "-z",
+      "filter",
+      "working-tree-encoding",
+      "--",
+      ...attributePaths.slice(index, index + 200),
+    ]);
+    const fields = attributes.split("\0").filter(Boolean);
+    for (let field = 0; field < fields.length; field += 3) {
+      const attribute = fields[field + 1];
+      const value = fields[field + 2];
+      if ((attribute === "filter" || attribute === "working-tree-encoding")
+        && value !== "unspecified"
+        && value !== "unset") {
+        throw new RepositoryError(
+          "Checkpoints are unavailable for files transformed by Git filters or working-tree encodings.",
+          409,
+        );
+      }
+    }
+  }
+  if (changedPaths.length > 0) {
+    const trackedModes = await git(worktree, ["ls-files", "--stage", "--", ...changedPaths]);
+    if (trackedModes.split("\n").some((line) => line.startsWith("120000 "))) {
+      throw new RepositoryError("Checkpoints are unavailable when a changed path is a symlink.", 409);
+    }
+  }
+  for (const path of changedPaths) {
+    try {
+      const details = await lstat(join(worktree, path));
+      if (details.isSymbolicLink()) {
+        throw new RepositoryError("Checkpoints are unavailable when a changed path is a symlink.", 409);
+      }
+      if (details.isDirectory()) {
+        try {
+          await lstat(join(worktree, path, ".git"));
+          throw new RepositoryError(
+            "Checkpoints are unavailable when an untracked path is an embedded Git repository.",
+            409,
+          );
+        } catch (error) {
+          if (error instanceof RepositoryError) throw error;
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+export async function captureCheckpoint(
+  worktree: string,
+  allowChanges: boolean,
+  reference?: string,
+): Promise<CheckpointSnapshot> {
+  const workspace = await captureWorkspaceIdentity(worktree, allowChanges);
+  const indexIdentity = (await git(worktree, ["write-tree"])).trim();
+  if (reference) {
+    await git(worktree, ["update-ref", reference, workspace.identity]);
+    await git(worktree, ["update-ref", `${reference}-index`, indexIdentity]);
+  }
+  return { ...workspace, indexIdentity };
+}
+
+async function captureWorkspaceIdentity(
+  worktree: string,
+  allowChanges: boolean,
+): Promise<Omit<CheckpointSnapshot, "indexIdentity">> {
+  await assertCheckpointable(worktree, allowChanges);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).trim();
+  const commonDirectory = await checkpointGitDirectory(worktree);
+  const temporary = await mkdtemp(join(tmpdir(), "aldunis-checkpoint-"));
+  const indexPath = join(temporary, "index");
+  const environment = { ...process.env, GIT_INDEX_FILE: indexPath };
+  try {
+    await git(worktree, ["read-tree", "HEAD"], { env: environment });
+    await git(worktree, ["add", "-A", "--", "."], { env: environment });
+    const identity = (await git(worktree, ["write-tree"], { env: environment })).trim();
+    return { identity, head, gitDirectory: commonDirectory };
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
+function parseNameStatus(output: string): CheckpointFile[] {
+  const fields = output.split("\0").filter(Boolean);
+  const files: CheckpointFile[] = [];
+  for (let index = 0; index < fields.length;) {
+    const code = fields[index++];
+    const status = code[0];
+    const firstPath = fields[index++];
+    const renamed = status === "R" || status === "C";
+    const path = renamed ? fields[index++] : firstPath;
+    files.push({
+      path,
+      previousPath: renamed ? firstPath : null,
+      state: status === "A"
+        ? "added"
+        : status === "D"
+          ? "deleted"
+          : renamed
+            ? "renamed"
+            : "modified",
+    });
+  }
+  return files;
+}
+
+export async function checkpointDiff(
+  worktree: string,
+  fromIdentity: string,
+  toIdentity: string,
+): Promise<CheckpointFile[]> {
+  const output = await git(worktree, [
+    "diff",
+    "--name-status",
+    "-z",
+    "--find-renames",
+    fromIdentity,
+    toIdentity,
+    "--",
+  ]);
+  const files = parseNameStatus(output);
+  const binary = await git(worktree, ["diff", "--numstat", "-z", fromIdentity, toIdentity, "--"]);
+  const binaryPaths = new Set(
+    binary.split("\0").filter(Boolean).flatMap((field) => {
+      const [added, deleted, ...pathParts] = field.split("\t");
+      return added === "-" && deleted === "-" ? [pathParts.join("\t")] : [];
+    }),
+  );
+  return files.map((file) => binaryPaths.has(file.path) ? { ...file, state: "binary" } : file);
+}
+
+export async function rewindCheckpoint(
+  worktree: string,
+  currentIdentity: string,
+  currentIndexIdentity: string,
+  currentHead: string,
+  targetIdentity: string,
+  targetIndexIdentity: string,
+): Promise<CheckpointFile[]> {
+  await assertCheckpointable(worktree, true);
+  const current = await captureCheckpoint(worktree, true);
+  if (current.identity !== currentIdentity) {
+    throw new RepositoryError(
+      "The workspace changed after this rewind was prepared. Preview it again before confirming.",
+      409,
+    );
+  }
+  if (current.indexIdentity !== currentIndexIdentity) {
+    throw new RepositoryError(
+      "The Git index changed after this rewind was prepared. Preview it again before confirming.",
+      409,
+    );
+  }
+  if (current.head !== currentHead) {
+    throw new RepositoryError(
+      "HEAD changed after this rewind was prepared. Rewind does not rewrite Git history.",
+      409,
+    );
+  }
+  const files = await checkpointDiff(worktree, currentIdentity, targetIdentity);
+  const temporary = await mkdtemp(join(tmpdir(), "aldunis-rewind-"));
+  const patchPath = join(temporary, "rewind.patch");
+  const targetIndexPath = join(temporary, "target-index");
+  const indexValue = (await git(worktree, ["rev-parse", "--git-path", "index"])).trim();
+  const indexPath = resolve(worktree, indexValue);
+  const indexLockPath = `${indexPath}.lock`;
+  let indexLockCreated = false;
+  try {
+    const targetEnvironment = { ...process.env, GIT_INDEX_FILE: targetIndexPath };
+    await git(worktree, ["read-tree", targetIndexIdentity], { env: targetEnvironment });
+    if (files.length > 0) {
+      const patch = await gitBuffer(
+        worktree,
+        ["diff", "--binary", "--full-index", currentIdentity, targetIdentity, "--"],
+      );
+      await writeFile(patchPath, patch, { mode: 0o600, flag: "wx" });
+      await git(worktree, ["apply", "--check", "--whitespace=nowarn", patchPath], {
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    }
+    const indexLock = await open(indexLockPath, "wx", 0o600);
+    indexLockCreated = true;
+    try {
+      await indexLock.writeFile(await readFile(targetIndexPath));
+      await indexLock.sync();
+    } finally {
+      await indexLock.close();
+    }
+    const lockedCurrent = await captureWorkspaceIdentity(worktree, true);
+    if (
+      lockedCurrent.identity !== currentIdentity
+      || lockedCurrent.head !== currentHead
+    ) {
+      throw new RepositoryError(
+        "The workspace changed while acquiring the rewind lock. Preview it again before confirming.",
+        409,
+      );
+    }
+    if (files.length > 0) {
+      await git(worktree, ["apply", "--whitespace=nowarn", patchPath], {
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    }
+    const restored = await captureWorkspaceIdentity(worktree, true);
+    if (restored.identity !== targetIdentity || restored.head !== currentHead) {
+      if (files.length > 0) {
+        await git(worktree, ["apply", "--reverse", "--whitespace=nowarn", patchPath], {
+          maxBuffer: 32 * 1024 * 1024,
+        });
+      }
+      throw new RepositoryError(
+        "The workspace changed during rewind. The rewind was rolled back; preview it again.",
+        409,
+      );
+    }
+    await rename(indexLockPath, indexPath);
+    indexLockCreated = false;
+  } finally {
+    if (indexLockCreated) await rm(indexLockPath, { force: true });
+    await rm(temporary, { recursive: true, force: true });
+  }
+  return files;
+}
+
+export function checkpointReference(checkpointId: string, phase: "baseline" | "completed"): string {
+  if (!/^[0-9a-f-]+$/.test(checkpointId)) {
+    throw new RepositoryError("The checkpoint identity is invalid.");
+  }
+  return `refs/aldunis-code/checkpoints/${checkpointId}/${phase}`;
+}
+
+export async function deleteCheckpointReferences(
+  commonDirectory: string,
+  checkpointId: string,
+): Promise<void> {
+  try {
+    if (!(await stat(commonDirectory)).isDirectory()) return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new RepositoryError("Checkpoint references could not be inspected for deletion.", 409);
+  }
+  for (const phase of ["baseline", "baseline-index", "completed", "completed-index"]) {
+    try {
+      await execFileAsync("git", [
+        "--git-dir",
+        commonDirectory,
+        "update-ref",
+        "-d",
+        `refs/aldunis-code/checkpoints/${checkpointId}/${phase}`,
+      ], { encoding: "utf8", timeout: 15_000 });
+    } catch {
+      throw new RepositoryError("Checkpoint references could not be deleted.", 409);
+    }
   }
 }
 

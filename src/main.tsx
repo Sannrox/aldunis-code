@@ -129,6 +129,23 @@ type ProviderEvent =
   | { kind: "failed"; message: string };
 type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
 type InteractionMode = "ask" | "plan" | "build";
+type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
+interface TurnCheckpoint {
+  id: string;
+  turnId: string;
+  worktree: string;
+  baselineIdentity: string | null;
+  baselineIndexIdentity: string | null;
+  completedIdentity: string | null;
+  completedIndexIdentity: string | null;
+  state: CheckpointState;
+  message: string | null;
+}
+interface CheckpointFile {
+  path: string;
+  state: "added" | "modified" | "deleted" | "renamed" | "binary";
+  previousPath: string | null;
+}
 type IconName =
   | "code"
   | "branch"
@@ -845,9 +862,19 @@ function Conversation({
   }, [profiles, profileId]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [elementReferences, setElementReferences] = useState<ElementReference[]>([]);
+  const [checkpoint, setCheckpoint] = useState<TurnCheckpoint | null>(null);
+  const [rewindPreview, setRewindPreview] = useState<{
+    currentIdentity: string;
+    currentIndexIdentity: string;
+    files: CheckpointFile[];
+  } | null>(null);
+  const [checkpointBusy, setCheckpointBusy] = useState(false);
+  const [checkpointError, setCheckpointError] = useState<string | null>(null);
   useEffect(() => {
     setSessionId(null);
     setThreadId(null);
+    setCheckpoint(null);
+    setRewindPreview(null);
   }, [repository?.projectId]);
   useEffect(() => {
     if (!repository?.projectId) return;
@@ -1034,6 +1061,10 @@ function Conversation({
     setProviderEvents([]);
     setProviderState("starting");
     setRunId(null);
+    setCheckpoint(null);
+    setRewindPreview(null);
+    setCheckpointError(null);
+    let activeTurnId: string | null = null;
     try {
       const response = await fetch("/api/provider/runs", {
         method: "POST",
@@ -1060,6 +1091,7 @@ function Conversation({
       const activeRunId = response.headers.get("x-provider-run-id");
       setRunId(activeRunId);
       setThreadId(response.headers.get("x-thread-id"));
+      activeTurnId = response.headers.get("x-turn-id");
       setProviderState("streaming");
       if (!response.body) throw new Error("Claude Code returned no event stream.");
       const reader = response.body.getReader();
@@ -1107,6 +1139,13 @@ function Conversation({
         }
         if (result.done) break;
       }
+      if (activeTurnId) {
+        const stateResponse = await fetch("/api/state/load", { method: "POST" });
+        if (stateResponse.ok) {
+          const projection = await stateResponse.json() as { checkpoints?: TurnCheckpoint[] };
+          setCheckpoint(projection.checkpoints?.find((item) => item.turnId === activeTurnId) ?? null);
+        }
+      }
     } catch (error) {
       setAttachments(sentAttachments);
       setElementReferences(sentElementReferences);
@@ -1117,6 +1156,62 @@ function Conversation({
       setProviderState("failed");
     } finally {
       setRunId(null);
+    }
+  };
+  const previewRewind = async () => {
+    if (!checkpoint || !repository || !worktree) return;
+    setCheckpointBusy(true);
+    setCheckpointError(null);
+    try {
+      const response = await fetch(`/api/checkpoints/${checkpoint.id}/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ root: repository.root, worktree: worktree.path }),
+      });
+      const body = await response.json() as {
+        currentIdentity?: string;
+        currentIndexIdentity?: string;
+        files?: CheckpointFile[];
+        error?: string;
+      };
+      if (!response.ok || !body.currentIdentity || !body.currentIndexIdentity || !body.files) {
+        throw new Error(body.error ?? "The rewind preview could not be prepared.");
+      }
+      setRewindPreview({
+        currentIdentity: body.currentIdentity,
+        currentIndexIdentity: body.currentIndexIdentity,
+        files: body.files,
+      });
+    } catch (error) {
+      setCheckpointError(error instanceof Error ? error.message : "The rewind preview failed.");
+    } finally {
+      setCheckpointBusy(false);
+    }
+  };
+  const confirmRewind = async () => {
+    if (!checkpoint || !rewindPreview || !repository || !worktree) return;
+    setCheckpointBusy(true);
+    setCheckpointError(null);
+    try {
+      const response = await fetch(`/api/checkpoints/${checkpoint.id}/rewind`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: worktree.path,
+          currentIdentity: rewindPreview.currentIdentity,
+          currentIndexIdentity: rewindPreview.currentIndexIdentity,
+          confirm: true,
+        }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "The workspace could not be rewound.");
+      setCheckpoint({ ...checkpoint, state: "superseded", message: "Workspace rewound to the turn baseline." });
+      setRewindPreview(null);
+    } catch (error) {
+      setCheckpointError(error instanceof Error ? error.message : "The workspace rewind failed.");
+    } finally {
+      setCheckpointBusy(false);
     }
   };
   const cancel = async () => {
@@ -1274,6 +1369,41 @@ function Conversation({
               ))}
               {failure && <div className="provider-error" role="alert">{failure.message}</div>}
               {(providerState === "completed" || providerState === "cancelled") && <p className="provider-state">{stateCopy[providerState]}</p>}
+              {checkpoint && (
+                <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint: ${checkpoint.state}`}>
+                  <header>
+                    <div>
+                      <strong>Workspace checkpoint</strong>
+                      <small>{checkpoint.state}</small>
+                    </div>
+                    {checkpoint.state === "completed" && !rewindPreview && (
+                      <button onClick={() => void previewRewind()} disabled={checkpointBusy}>
+                        {checkpointBusy ? "Inspecting…" : "Preview rewind"}
+                      </button>
+                    )}
+                  </header>
+                  {checkpoint.message && <p>{checkpoint.message}</p>}
+                  {rewindPreview && (
+                    <>
+                      <p>This restores the turn baseline. Only these files will be affected:</p>
+                      <ul>
+                        {rewindPreview.files.map((file) => (
+                          <li key={`${file.path}-${file.previousPath ?? ""}`}>
+                            <span>{file.state}</span> {file.previousPath ? `${file.previousPath} → ` : ""}{file.path}
+                          </li>
+                        ))}
+                      </ul>
+                      <footer>
+                        <button onClick={() => setRewindPreview(null)} disabled={checkpointBusy}>Cancel</button>
+                        <button className="rewind-confirm" onClick={() => void confirmRewind()} disabled={checkpointBusy}>
+                          {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
+                        </button>
+                      </footer>
+                    </>
+                  )}
+                  {checkpointError && <p className="checkpoint-error" role="alert">{checkpointError}</p>}
+                </section>
+              )}
             </div>
           </article>
         )}
