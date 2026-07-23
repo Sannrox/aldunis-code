@@ -234,7 +234,6 @@ test("project deletion and retention physically remove sensitive conversation da
     providerSessions: [],
     checkpoints: [],
     annotations: [],
-    conversationDeletions: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -252,95 +251,6 @@ test("project deletion and retention physically remove sensitive conversation da
   assert.equal(projection.projects.length, 1);
   assert.equal(projection.threads.length, 0);
   assert.equal((await readFile(join(retained.directory, "events.v1.jsonl"), "utf8")).includes("sensitive"), false);
-});
-
-test("conversation lifecycle persists and rebuilds with deterministic pin ordering fields", async () => {
-  const { directory, store } = await fixtureStore();
-  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  const { thread, turn } = await store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture",
-    prompt: "Original title",
-    mode: "ask",
-    provider: "claude-code",
-  });
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
-    kind: "turn_completed",
-    sessionId: "session-1",
-    costUsd: 0,
-  });
-  await store.renameConversation(thread.id, "Renamed conversation");
-  await store.setConversationPinned(thread.id, true);
-  await store.archiveConversation(thread.id);
-
-  let rebuilt = await new LocalStateStore(directory).load();
-  assert.equal(rebuilt.threads[0].title, "Renamed conversation");
-  assert.ok(rebuilt.threads[0].pinnedAt);
-  assert.ok(rebuilt.threads[0].archivedAt);
-
-  await store.restoreConversation(thread.id);
-  rebuilt = await new LocalStateStore(directory).load();
-  assert.equal(rebuilt.threads[0].archivedAt, null);
-});
-
-test("archive and delete reject active and unresolved conversations at the state boundary", async () => {
-  const { store } = await fixtureStore();
-  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  const { thread } = await store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture",
-    prompt: "Keep this active",
-    mode: "build",
-    provider: "claude-code",
-  });
-  await assert.rejects(() => store.archiveConversation(thread.id), /provider work is active/);
-  await assert.rejects(() => store.previewConversationDeletion(thread.id), /provider work is active/);
-  await assert.rejects(() => store.deleteConversation(thread.id), /provider work is active/);
-});
-
-test("conversation deletion previews and physically compacts only conversation-owned local data", async () => {
-  const { directory, store } = await fixtureStore();
-  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  const { thread, turn } = await store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture/worktree-that-must-survive",
-    prompt: "conversation secret sentinel",
-    mode: "ask",
-    provider: "claude-code",
-  });
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
-    kind: "assistant_text",
-    text: "assistant secret sentinel",
-  });
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
-    kind: "turn_completed",
-    sessionId: "session-secret-sentinel",
-    costUsd: 0,
-  });
-
-  assert.deepEqual(await store.previewConversationDeletion(thread.id), {
-    thread: 1,
-    turns: 1,
-    messages: 2,
-    activities: 0,
-    providerSessions: 1,
-    checkpoints: 0,
-    annotations: 0,
-  });
-  const deletion = await store.deleteConversation(thread.id);
-  assert.equal(deletion.status, "completed");
-
-  const rebuilt = await new LocalStateStore(directory).load();
-  assert.equal(rebuilt.projects.length, 1);
-  assert.equal(rebuilt.projects[0].root, "/fixture");
-  assert.equal(rebuilt.threads.length, 0);
-  assert.equal(rebuilt.turns.length, 0);
-  assert.equal(rebuilt.messages.length, 0);
-  assert.equal(rebuilt.providerSessions.length, 0);
-  assert.equal(rebuilt.conversationDeletions[0].status, "completed");
-  const persisted = await readFile(join(directory, "events.v1.jsonl"), "utf8");
-  assert.equal(persisted.includes("secret sentinel"), false);
-  assert.equal(persisted.includes("worktree-that-must-survive"), false);
 });
 
 test("only allowlisted provider fields are persisted", async () => {

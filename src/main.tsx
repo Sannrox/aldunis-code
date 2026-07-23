@@ -60,8 +60,6 @@ interface ThreadMetadata {
   worktree: string;
   updatedAt: string;
   projectName: string;
-  pinnedAt: string | null;
-  archivedAt: string | null;
 }
 interface ConversationSummary {
   id: string;
@@ -69,8 +67,6 @@ interface ConversationSummary {
   title: string;
   worktree: string;
   updatedAt: string;
-  pinnedAt?: string | null;
-  archivedAt?: string | null;
 }
 type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 interface ChangedFile {
@@ -419,9 +415,6 @@ function CodeSidebar({
   onNewConversation,
   onSelectWorktree,
   onManageWorktrees,
-  showingArchived,
-  onToggleArchived,
-  onConversationAction,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
@@ -438,12 +431,6 @@ function CodeSidebar({
   onNewConversation: () => void;
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
-  showingArchived: boolean;
-  onToggleArchived: () => void;
-  onConversationAction: (
-    conversation: ConversationSummary,
-    action: "rename" | "pin" | "archive" | "restore" | "delete",
-  ) => void;
 }) {
   return (
     <aside className="context-sidebar">
@@ -496,10 +483,7 @@ function CodeSidebar({
           ))}
         </div>
       )}
-      <div className="section-label">
-        <span>{showingArchived ? "Archived conversations" : "Conversations"}</span>
-        <button onClick={onToggleArchived}>{showingArchived ? "Active" : "Archived"}</button>
-      </div>
+      <div className="section-label"><span>Conversations</span><button onClick={onSearch}>•••</button></div>
       <div className="session-list">
         {conversations.map((conversation) => (
           <div className="session-row" key={conversation.id}>
@@ -510,7 +494,7 @@ function CodeSidebar({
             >
               <span className="session-icon"><Icon name="message" /></span>
               <span className="session-copy">
-                <strong>{conversation.pinnedAt ? "◆ " : ""}{conversation.title}</strong>
+                <strong>{conversation.title}</strong>
                 <small>{conversation.worktree}</small>
               </span>
               {(primaryConversationId === conversation.id || secondaryConversationId === conversation.id) && <i />}
@@ -521,29 +505,9 @@ function CodeSidebar({
               disabled={primaryConversationId === conversation.id}
               aria-label={`Open ${conversation.title} beside current conversation`}
             >▥</button>
-            <button
-              className="conversation-actions"
-              aria-label={`Manage ${conversation.title}`}
-              onClick={() => {
-                const options = showingArchived
-                  ? "restore or delete"
-                  : `rename, ${conversation.pinnedAt ? "unpin" : "pin"}, archive, or delete`;
-                const selected = window.prompt(`Choose ${options}:`)?.trim().toLocaleLowerCase();
-                if (selected === "rename" || selected === "pin" || selected === "archive"
-                  || selected === "restore" || selected === "delete") {
-                  onConversationAction(conversation, selected);
-                } else if (selected === "unpin") {
-                  onConversationAction(conversation, "pin");
-                }
-              }}
-            >•••</button>
           </div>
         ))}
-        {repository && conversations.length === 0 && (
-          <p className="empty-conversations">
-            {showingArchived ? "No archived conversations." : "Send a prompt to create the first conversation."}
-          </p>
-        )}
+        {repository && conversations.length === 0 && <p className="empty-conversations">Send a prompt to create the first conversation.</p>}
       </div>
       <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
     </aside>
@@ -564,7 +528,6 @@ function OverlayDialog({ title, children, onClose }: { title: string; children: 
 
 function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads: ThreadMetadata[]; onClose: () => void }) {
   const [query, setQuery] = useState("");
-  const [archived, setArchived] = useState<"exclude" | "include" | "only">("exclude");
   const [results, setResults] = useState<ThreadMetadata[]>(threads);
   useEffect(() => {
     if (!open) return;
@@ -572,23 +535,15 @@ function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads
     void fetch("/api/state/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, archived }),
+      body: JSON.stringify({ query }),
       signal: controller.signal,
     }).then((response) => response.json()).then((body: { threads?: ThreadMetadata[] }) => setResults(body.threads ?? []));
     return () => controller.abort();
-  }, [archived, open, query]);
+  }, [open, query]);
   if (!open) return null;
   return (
     <OverlayDialog title="Search local conversations" onClose={onClose}>
       <label className="quick-search"><Icon name="search" /><input data-dialog-initial-focus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, project, or worktree" /></label>
-      <label className="search-scope">
-        Archived conversations{" "}
-        <select value={archived} onChange={(event) => setArchived(event.target.value as typeof archived)}>
-          <option value="exclude">Exclude</option>
-          <option value="include">Include</option>
-          <option value="only">Only archived</option>
-        </select>
-      </label>
       <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
       <div className="quick-results">
         {results.map((thread) => <button key={thread.id}><strong>{thread.title}</strong><small>{thread.projectName} · {thread.worktree}</small></button>)}
@@ -2697,10 +2652,7 @@ async function loadConversationList(repository: RepositoryMetadata): Promise<Con
   const projection = await response.json() as { threads: ConversationSummary[] };
   return projection.threads
     .filter((thread) => thread.projectId === repository.projectId)
-    .sort((left, right) => {
-      if (Boolean(left.pinnedAt) !== Boolean(right.pinnedAt)) return left.pinnedAt ? -1 : 1;
-      return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
-    });
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 function PaneConversation({
@@ -2814,9 +2766,6 @@ function CodeWorkbench({
   const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
   const [secondaryFilesSignal, setSecondaryFilesSignal] = useState(0);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [showingArchived, setShowingArchived] = useState(false);
-  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
-  const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const [secondaryId, setSecondaryId] = useState<string | null>(null);
@@ -2846,15 +2795,6 @@ function CodeWorkbench({
       const available = await loadConversationList(repository);
       if (!active) return;
       setConversations(available);
-      const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
-      const lifecycleProjection = await lifecycleResponse.json() as {
-        conversationDeletions?: Array<{ threadId: string; status: string }>;
-      };
-      setIncompleteDeletionIds(
-        (lifecycleProjection.conversationDeletions ?? [])
-          .filter((deletion) => deletion.status !== "completed")
-          .map((deletion) => deletion.threadId),
-      );
       const parameters = new URLSearchParams(window.location.search);
       const urlMatchesProject = parameters.get("project") === repository.projectId;
       const stored = window.localStorage.getItem(`aldunis.split.${repository.projectId}`);
@@ -2914,72 +2854,6 @@ function CodeWorkbench({
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const listedConversations = conversations.filter(
-    (conversation) => showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt,
-  );
-  const postLifecycle = async (route: string, body: Record<string, unknown>) => {
-    const response = await fetch(route, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    if (repository) setConversations(await loadConversationList(repository));
-    return result;
-  };
-  const manageConversation = async (
-    conversation: ConversationSummary,
-    action: "rename" | "pin" | "archive" | "restore" | "delete",
-  ) => {
-    setLifecycleError(null);
-    try {
-      if (action === "rename") {
-        const title = window.prompt("Rename conversation:", conversation.title);
-        if (title === null) return;
-        await postLifecycle("/api/state/conversations/rename", { threadId: conversation.id, title });
-      } else if (action === "pin") {
-        await postLifecycle("/api/state/conversations/pin", {
-          threadId: conversation.id,
-          pinned: !conversation.pinnedAt,
-        });
-      } else if (action === "archive" || action === "restore") {
-        await postLifecycle(`/api/state/conversations/${action}`, { threadId: conversation.id });
-        if (action === "archive") {
-          if (primaryId === conversation.id) setPrimaryId(null);
-          if (secondaryId === conversation.id) setSecondaryId(null);
-        }
-      } else {
-        const previewResponse = await fetch("/api/state/conversations/delete/preview", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ threadId: conversation.id }),
-        });
-        const preview = await previewResponse.json() as {
-          affectedRecords?: Record<string, number>;
-          excluded?: string[];
-          error?: string;
-        };
-        if (!previewResponse.ok) throw new Error(preview.error ?? "Deletion preview failed.");
-        const affected = Object.entries(preview.affectedRecords ?? {})
-          .filter(([, count]) => count > 0)
-          .map(([name, count]) => `${count} ${name}`)
-          .join(", ");
-        const confirmed = window.confirm(
-          `Delete "${conversation.title}"?\n\nLocal data removed: ${affected}.\n\nNot removed: ${(preview.excluded ?? []).join(", ")}.\n\nThis cannot be undone.`,
-        );
-        if (!confirmed) return;
-        await postLifecycle("/api/state/conversations/delete", {
-          threadId: conversation.id,
-          confirm: true,
-        });
-        if (primaryId === conversation.id) setPrimaryId(null);
-        if (secondaryId === conversation.id) setSecondaryId(null);
-      }
-    } catch (error) {
-      setLifecycleError(error instanceof Error ? error.message : "Conversation lifecycle action failed.");
-    }
-  };
   const refresh = async () => {
     if (!repository) {
       setChanges([]);
@@ -3042,7 +2916,7 @@ function CodeWorkbench({
             ? setSecondaryFilesSignal((value) => value + 1)
             : setPrimaryFilesSignal((value) => value + 1)
         )}
-        conversations={listedConversations}
+        conversations={conversations}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
         onOpenConversation={(id) => {
@@ -3069,24 +2943,8 @@ function CodeWorkbench({
         onOpenPalette={onOpenPalette}
         onSelectWorktree={onSelectWorktree}
         onManageWorktrees={onManageWorktrees}
-        showingArchived={showingArchived}
-        onToggleArchived={() => setShowingArchived((value) => !value)}
-        onConversationAction={(conversation, action) => { void manageConversation(conversation, action); }}
       />
       <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace">
-        {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}
-        {incompleteDeletionIds.map((threadId) => (
-          <div className="workspace-state error" role="alert" key={threadId}>
-            <span>Conversation deletion {threadId} is incomplete.</span>
-            <button onClick={() => {
-              void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
-                .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
-                .catch((error: unknown) => setLifecycleError(
-                  error instanceof Error ? error.message : "Conversation deletion retry failed.",
-                ));
-            }}>Retry deletion</button>
-          </div>
-        ))}
         {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
         {restoreState === "failed" && (
           <div className="workspace-state failed" role="alert">
