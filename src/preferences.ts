@@ -5,7 +5,6 @@ export interface Preferences {
   zoom: 0.8 | 0.9 | 1 | 1.1 | 1.2;
   reducedMotion: "system" | "reduce" | "no-preference";
   commandPaletteShortcut: "mod+k" | "mod+shift+p";
-  managedWorktreeLimit: number | null;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -15,7 +14,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   zoom: 1,
   reducedMotion: "system",
   commandPaletteShortcut: "mod+k",
-  managedWorktreeLimit: 10,
 };
 
 export function readPreferencesResponse(value: unknown): {
@@ -34,26 +32,9 @@ export function readPreferencesResponse(value: unknown): {
     || ![0.8, 0.9, 1, 1.1, 1.2].includes(input.zoom as number)
     || !["system", "reduce", "no-preference"].includes(input.reducedMotion as string)
     || !["mod+k", "mod+shift+p"].includes(input.commandPaletteShortcut as string)
-    || (
-      input.managedWorktreeLimit !== undefined
-      && input.managedWorktreeLimit !== null
-      && (
-        !Number.isInteger(input.managedWorktreeLimit)
-        || (input.managedWorktreeLimit as number) < 1
-        || (input.managedWorktreeLimit as number) > 100
-      )
-    )
     || typeof body.recovered !== "boolean"
   ) {
     return null;
   }
-  return {
-    preferences: {
-      ...(input as unknown as Omit<Preferences, "managedWorktreeLimit">),
-      managedWorktreeLimit: input.managedWorktreeLimit === undefined
-        ? DEFAULT_PREFERENCES.managedWorktreeLimit
-        : input.managedWorktreeLimit as number | null,
-    },
-    recovered: body.recovered,
-  };
+  return { preferences: input as unknown as Preferences, recovered: body.recovered };
 }
