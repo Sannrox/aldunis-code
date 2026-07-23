@@ -28,20 +28,36 @@ Requires Node.js 22 or newer.
 
 ```sh
 npm install
-npm run dev
+npm run build
+npm start
 ```
 
 Open `http://127.0.0.1:4174`.
 
+The host refuses non-loopback addresses. To use the Vite development server,
+run the API host and Vite in separate terminals:
+
 ```sh
+npm run host -- --port 4175
+npm run dev
+```
+
+Use **Open repository** in the sidebar and enter an absolute local path. The
+host resolves symlinks, finds the canonical Git root, and returns normalized
+repository and worktree metadata. Browser code receives no filesystem handle.
+
+If a repository was moved, removed, or became inaccessible, open the project
+switcher and select its current path. Missing and inaccessible linked worktrees
+are reported in the sidebar without attempting to repair or delete them.
+
+```sh
+npm test
 npm run check
 npm run build
 ```
 
-The current application is a navigable product shell with representative local
-data. Provider and product integrations are deliberately marked disconnected
+Provider and product integrations remain deliberately marked disconnected
 until their contracts are implemented.
 
 Read [AGENTS.md](AGENTS.md), [the architecture](docs/architecture.md), and
 [the work lifecycle](docs/work-lifecycle.md) before changing a boundary.
-
