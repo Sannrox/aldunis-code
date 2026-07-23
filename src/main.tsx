@@ -62,6 +62,29 @@ interface ClaudeProfile {
   updatedAt: string;
   probes: Record<ProfileProbeKind, ProfileProbe>;
 }
+type DeliveryAction = "stage" | "commit" | "push" | "pull_request";
+interface DeliveryContext {
+  repository: string;
+  worktree: string;
+  branch: string | null;
+  detached: boolean;
+  upstream: string | null;
+  remotes: Array<{ name: string; url: string }>;
+  staged: string[];
+  unstaged: string[];
+}
+interface DeliveryPlan {
+  id: string;
+  action: DeliveryAction;
+  summary: string;
+  repository: string;
+  worktree: string;
+  branch: string;
+  remote: string | null;
+  destination: string | null;
+  details: string[];
+  expiresAt: string;
+}
 type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
 type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -248,6 +271,84 @@ function ChangesPanel({
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryContext | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [deliveryAction, setDeliveryAction] = useState<DeliveryAction>("stage");
+  const [message, setMessage] = useState("");
+  const [remote, setRemote] = useState("");
+  const [base, setBase] = useState("main");
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [plan, setPlan] = useState<DeliveryPlan | null>(null);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const inspectDelivery = async () => {
+    const response = await fetch("/api/delivery/inspect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
+    });
+    const result = await response.json() as DeliveryContext | { error?: string };
+    if (!response.ok) throw new Error("error" in result ? result.error : "Delivery state could not be inspected.");
+    const context = result as DeliveryContext;
+    setDelivery(context);
+    setRemote((current) => current || context.remotes[0]?.name || "");
+  };
+  useEffect(() => {
+    setSelectedPaths([]);
+    setPlan(null);
+    setRemote("");
+    setDeliveryError(null);
+    void inspectDelivery().catch((cause) => setDeliveryError(cause instanceof Error ? cause.message : "Delivery state could not be inspected."));
+  }, [repository.root, repository.selectedWorktree]);
+  const prepareDelivery = async () => {
+    setDeliveryBusy(true);
+    setDeliveryError(null);
+    try {
+      const input = deliveryAction === "stage" ? { paths: selectedPaths }
+        : deliveryAction === "commit" ? { message }
+        : deliveryAction === "push" ? { remote }
+        : { remote, base, title, body };
+      const response = await fetch("/api/delivery/plans", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          action: deliveryAction,
+          input,
+        }),
+      });
+      const result = await response.json() as DeliveryPlan | { error?: string };
+      if (!response.ok) throw new Error("error" in result ? result.error : "The action could not be prepared.");
+      setPlan(result as DeliveryPlan);
+    } catch (cause) {
+      setDeliveryError(cause instanceof Error ? cause.message : "The action could not be prepared.");
+    } finally {
+      setDeliveryBusy(false);
+    }
+  };
+  const executeDelivery = async () => {
+    if (!plan) return;
+    setDeliveryBusy(true);
+    setDeliveryError(null);
+    try {
+      const response = await fetch(`/api/delivery/plans/${plan.id}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "The approved action failed.");
+      setPlan(null);
+      setSelectedPaths([]);
+      await Promise.all([inspectDelivery(), Promise.resolve(onRefresh())]);
+    } catch (cause) {
+      setDeliveryError(cause instanceof Error ? cause.message : "The approved action failed.");
+    } finally {
+      setDeliveryBusy(false);
+    }
+  };
   useEffect(() => {
     if (!selected || !files.some((file) => file.path === selected)) {
       setSelected(files[0]?.path ?? null);
@@ -296,18 +397,27 @@ function ChangesPanel({
           {error && <p className="changes-error" role="alert">{error}</p>}
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
           {files.map((file) => (
-            <button
-              className={selected === file.path ? "active" : ""}
-              onClick={() => setSelected(file.path)}
-              aria-current={selected === file.path}
-              key={file.path}
-            >
-              <span className={`change-state ${file.state}`}>{file.state}</span>
-              <span><strong>{file.path}</strong>{file.previousPath && <small>from {file.previousPath}</small>}</span>
-              <small className="change-lines">{file.additions === null ? "—" : `+${file.additions}`} {file.deletions === null ? "—" : `−${file.deletions}`}</small>
-            </button>
+            <div className={selected === file.path ? "changed-file active" : "changed-file"} key={file.path}>
+              <input
+                type="checkbox"
+                aria-label={`Select ${file.path} for staging`}
+                checked={selectedPaths.includes(file.path)}
+                onChange={(event) => {
+                  const stagedPaths = file.previousPath ? [file.path, file.previousPath] : [file.path];
+                  setSelectedPaths((paths) => event.target.checked
+                    ? [...new Set([...paths, ...stagedPaths])]
+                    : paths.filter((path) => !stagedPaths.includes(path)));
+                }}
+              />
+              <button onClick={() => setSelected(file.path)} aria-current={selected === file.path}>
+                <span className={`change-state ${file.state}`}>{file.state}</span>
+                <span><strong>{file.path}</strong>{file.previousPath && <small>from {file.previousPath}</small>}</span>
+                <small className="change-lines">{file.additions === null ? "—" : `+${file.additions}`} {file.deletions === null ? "—" : `−${file.deletions}`}</small>
+              </button>
+            </div>
           ))}
         </nav>
+        <div className="review-workspace">
         <div className="diff-view" tabIndex={0} aria-label={selected ? `Diff for ${selected}` : "File diff"}>
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
@@ -315,6 +425,22 @@ function ChangesPanel({
           {diff?.patch && <pre>{diff.patch.split("\n").map((line, index) => (
             <span className={line.startsWith("+") && !line.startsWith("+++") ? "addition" : line.startsWith("-") && !line.startsWith("---") ? "deletion" : "context"} key={index}>{line || " "}</span>
           ))}</pre>}
+        </div>
+        <section className="delivery-panel" aria-label="Commit, push, and pull request actions">
+          <header><div><strong>Reviewed delivery</strong><small>{delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}</small></div><span>{delivery?.upstream ?? "No upstream"}</span></header>
+          <div className="delivery-form">
+            <label>Action<select value={deliveryAction} onChange={(event) => { setDeliveryAction(event.target.value as DeliveryAction); setPlan(null); }}>
+              <option value="stage">Stage selected files</option><option value="commit">Commit staged files</option><option value="push">Push branch</option><option value="pull_request">Open pull request</option>
+            </select></label>
+            {deliveryAction === "commit" && <label>Commit message<input value={message} onChange={(event) => setMessage(event.target.value)} /></label>}
+            {(deliveryAction === "push" || deliveryAction === "pull_request") && <label>Remote<select value={remote} onChange={(event) => setRemote(event.target.value)}>{delivery?.remotes.map((item) => <option key={item.name} value={item.name}>{item.name} · {item.url}</option>)}</select></label>}
+            {deliveryAction === "pull_request" && <><label>Base<input value={base} onChange={(event) => setBase(event.target.value)} /></label><label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label className="delivery-body">Body<textarea value={body} onChange={(event) => setBody(event.target.value)} /></label></>}
+            {!plan && <button className="prepare-delivery" onClick={() => void prepareDelivery()} disabled={deliveryBusy || delivery?.detached}>Inspect action</button>}
+          </div>
+          {delivery?.detached && <p className="delivery-warning" role="alert">Detached HEAD cannot be delivered. Create or select a branch first.</p>}
+          {deliveryError && <p className="delivery-warning" role="alert">{deliveryError}</p>}
+          {plan && <div className="delivery-approval"><strong>{plan.summary}</strong><small>{plan.repository} · {plan.worktree} · {plan.branch}</small><ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul><footer><button onClick={() => setPlan(null)}>Cancel</button><button className="allow-once" disabled={deliveryBusy} onClick={() => void executeDelivery()}>Approve once</button></footer></div>}
+        </section>
         </div>
       </div>
     </section>
