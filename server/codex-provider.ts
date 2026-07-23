@@ -598,6 +598,7 @@ export class CodexCliAdapter {
             toolCallId,
             toolName,
             toolInput: input,
+            provider: "Codex CLI",
           });
           if (!approval) throw new ProviderProtocolError("Codex approval could not be registered.");
           yield { kind: "approval_pending", ...approval };
