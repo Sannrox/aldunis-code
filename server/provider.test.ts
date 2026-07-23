@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   assertSupportedClaudeVersion,
   ClaudeCodeAdapter,
-  modeArguments,
   normalizeClaudeEvent,
   ProviderProtocolError,
 } from "./provider.ts";
@@ -40,25 +39,6 @@ test("normalizes provider lifecycle, text, tools, and completion", () => {
   }), [{ kind: "turn_completed", sessionId: "session-1", costUsd: 0.01 }]);
 });
 
-const supportedHelp = `--tools <tools...>
---permission-mode <mode> (choices: "acceptEdits", "default", "dontAsk", "plan")`;
-
-test("interaction modes are derived from advertised provider capabilities", () => {
-  assert.deepEqual(modeArguments("ask", supportedHelp), [
-    "--permission-mode", "dontAsk", "--tools", "Read,Glob,Grep",
-  ]);
-  assert.deepEqual(modeArguments("plan", supportedHelp), ["--permission-mode", "plan"]);
-  assert.deepEqual(modeArguments("build", supportedHelp), ["--permission-mode", "default"]);
-  assert.throws(
-    () => modeArguments("ask", "--permission-mode <mode> (choices: \"default\", \"plan\")"),
-    /fail-closed read-only mode/,
-  );
-  assert.throws(
-    () => modeArguments("build", "--permission-mode <mode> (choices: \"default\")"),
-    /required interaction modes/,
-  );
-});
-
 test("unknown, malformed, and incompatible provider data fail closed", () => {
   assert.throws(() => normalizeClaudeEvent({ type: "future_event" }), ProviderProtocolError);
   assert.throws(() => normalizeClaudeEvent({ type: "assistant", message: {} }), ProviderProtocolError);
@@ -81,8 +61,6 @@ test("a running provider subprocess can be cancelled deterministically", async (
   await writeFile(executable, `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("2.1.177 (Claude Code)");
-} else if (process.argv.includes("--help")) {
-  console.log(${JSON.stringify(supportedHelp)});
 } else {
   require("node:fs").writeFileSync(${JSON.stringify(invocation)}, JSON.stringify({
     args: process.argv.slice(2),
@@ -101,7 +79,6 @@ if (process.argv.includes("--version")) {
     "conversation-1",
     "sensitive prompt",
     "http://127.0.0.1:4174/api/provider/permissions/request",
-    "build",
   );
   const events: Array<{ kind: string }> = [];
   for await (const event of run.events) {
@@ -120,40 +97,4 @@ if (process.argv.includes("--version")) {
     launched.args.some((argument) => argument.includes("${ALDUNIS_PROVIDER_RUN_TOKEN}")),
     true,
   );
-});
-
-test("a mutating provider event outside Build mode fails closed", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "aldunis-provider-mode-"));
-  const executable = join(directory, "fake-claude");
-  await writeFile(executable, `#!/usr/bin/env node
-if (process.argv.includes("--version")) {
-  console.log("2.1.177 (Claude Code)");
-} else if (process.argv.includes("--help")) {
-  console.log(${JSON.stringify(supportedHelp)});
-} else {
-  console.log(JSON.stringify({type:"system",subtype:"init",session_id:"fixture-session",model:"fixture"}));
-  console.log(JSON.stringify({type:"assistant",message:{content:[
-    {type:"tool_use",id:"tool-write",name:"Write",input:{file_path:"fixture.txt",content:"private"}}
-  ]}}));
-}
-`);
-  await chmod(executable, 0o700);
-
-  const adapter = new ClaudeCodeAdapter(executable);
-  const run = await adapter.start(
-    directory,
-    directory,
-    "conversation-ask",
-    "inspect only",
-    "http://127.0.0.1:4174/api/provider/permissions/request",
-    "ask",
-  );
-  const events: Array<{ kind: string; message?: string }> = [];
-  for await (const event of run.events) events.push(event);
-  assert.deepEqual(events.map((event) => event.kind), [
-    "session_started",
-    "tool_started",
-    "failed",
-  ]);
-  assert.match(events.at(-1)?.message ?? "", /mutating tool Write while ask mode was active/);
 });
