@@ -110,6 +110,7 @@ test("project deletion and retention physically remove sensitive conversation da
     messages: [],
     activities: [],
     providerSessions: [],
+    checkpoints: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -150,4 +151,57 @@ test("only allowlisted provider fields are persisted", async () => {
   assert.equal(contents.includes("process.env"), false);
   assert.equal(contents.includes("credential"), false);
   assert.equal(contents.includes("raw-secret-value"), false);
+});
+
+test("checkpoint states rebuild and are removed with their conversation", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Create a checkpoint",
+  });
+  const createdAt = new Date().toISOString();
+  await store.saveCheckpoint({
+    id: "checkpoint-1",
+    turnId: turn.id,
+    threadId: thread.id,
+    worktree: "/fixture",
+    gitDirectory: "/fixture/.git",
+    baselineHead: "baseline-head",
+    baselineIdentity: "baseline-tree",
+    baselineIndexIdentity: "baseline-index",
+    completedIdentity: null,
+    completedIndexIdentity: null,
+    completedHead: null,
+    state: "baseline",
+    message: null,
+    createdAt,
+  });
+  await store.saveCheckpoint({
+    ...(await store.load()).checkpoints[0],
+    completedIdentity: "completed-tree",
+    completedIndexIdentity: "completed-index",
+    completedHead: "baseline-head",
+    state: "completed",
+  });
+  await store.saveCheckpoint({
+    ...(await store.load()).checkpoints[0],
+    id: "checkpoint-2",
+    worktree: "/other-worktree",
+    baselineIdentity: "other-baseline",
+    completedIdentity: "other-completed",
+    state: "completed",
+  });
+  await store.supersedeCompletedCheckpoints(thread.id, "/other-worktree", "checkpoint-2");
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.checkpoints.length, 2);
+  assert.equal(rebuilt.checkpoints[0].state, "completed");
+  assert.equal(rebuilt.checkpoints[0].baselineIdentity, "baseline-tree");
+  assert.equal(rebuilt.checkpoints[1].state, "completed");
+
+  await store.deleteProject("project-1");
+  assert.equal((await store.load()).checkpoints.length, 0);
+  assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"), false);
 });

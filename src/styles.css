@@ -273,6 +273,22 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .preview-status.failed { border-color: #c96f65; background: #191313; }
 .preview-status strong { font: .58rem "DM Mono", monospace; text-transform: uppercase; }
 .preview-status p { margin: 8px 0 0; color: #898b92; font-size: .68rem; }
+.checkpoint-card { overflow: hidden; margin: 14px 0; border: 1px solid #3d4935; border-radius: 9px; background: #141811; }
+.checkpoint-card > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid #303828; }
+.checkpoint-card > header > div { display: flex; flex-direction: column; gap: 4px; }
+.checkpoint-card strong { color: #d6d9d0; font-size: .7rem; }
+.checkpoint-card small, .checkpoint-card li { color: #7e866f; font: .54rem/1.5 "DM Mono", monospace; }
+.checkpoint-card small { text-transform: uppercase; }
+.checkpoint-card button { padding: 7px 9px; border: 1px solid #4b533d; border-radius: 5px; background: #22281c; color: #cbd6bc; font-size: .6rem; }
+.checkpoint-card button:disabled { opacity: .55; cursor: default; }
+.checkpoint-card > p { margin: 10px 12px; color: #9b9f95; font-size: .65rem; line-height: 1.5; }
+.checkpoint-card ul { max-height: 160px; overflow-y: auto; margin: 0 12px 11px; padding: 8px 10px; list-style: none; background: #10130e; }
+.checkpoint-card li { overflow-wrap: anywhere; }
+.checkpoint-card li span { display: inline-block; width: 55px; color: var(--acid); text-transform: uppercase; }
+.checkpoint-card > footer { display: flex; justify-content: flex-end; gap: 7px; padding: 9px 11px; border-top: 1px solid #303828; }
+.checkpoint-card .rewind-confirm { border-color: #94685f; background: #402823; color: #efb1a7; }
+.checkpoint-card.unavailable, .checkpoint-card.failed { border-color: #5e3834; background: #191313; }
+.checkpoint-card .checkpoint-error { color: #dba29c; }
 .disclaimer { margin: 8px 0 0; color: #4e5057; font: .52rem "DM Mono", monospace; text-align: center; }
 .domain-page { position: relative; overflow: auto; flex: 1; padding: clamp(70px, 10vh, 120px) clamp(34px, 7vw, 110px); background: radial-gradient(circle at 80% 12%, var(--glow), transparent 30%), linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px), #0d0e11; background-size: auto, 100% 48px, auto; }
 .domain-page.sekai { --tone: #7dd8cb; --glow: rgba(74,173,164,.15); }

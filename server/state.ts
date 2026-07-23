@@ -66,6 +66,27 @@ export interface ProviderSessionReference {
   updatedAt: string;
 }
 
+export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
+
+export interface TurnCheckpoint {
+  schemaVersion: 1;
+  id: string;
+  turnId: string;
+  threadId: string;
+  worktree: string;
+  gitDirectory: string | null;
+  baselineHead: string | null;
+  baselineIdentity: string | null;
+  baselineIndexIdentity: string | null;
+  completedIdentity: string | null;
+  completedIndexIdentity: string | null;
+  completedHead: string | null;
+  state: CheckpointState;
+  message: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StateProjection {
   schemaVersion: 1;
   sequence: number;
@@ -75,6 +96,7 @@ export interface StateProjection {
   messages: Message[];
   activities: Activity[];
   providerSessions: ProviderSessionReference[];
+  checkpoints: TurnCheckpoint[];
 }
 
 type StateEvent =
@@ -83,7 +105,8 @@ type StateEvent =
   | { type: "turn_saved"; turn: Turn }
   | { type: "message_saved"; message: Message }
   | { type: "activity_saved"; activity: Activity }
-  | { type: "provider_session_saved"; providerSession: ProviderSessionReference };
+  | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
+  | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint };
 
 interface EventEnvelope {
   schemaVersion: 1;
@@ -109,6 +132,7 @@ function emptyProjection(): StateProjection {
     messages: [],
     activities: [],
     providerSessions: [],
+    checkpoints: [],
   };
 }
 
@@ -141,6 +165,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     );
     if (index === -1) projection.providerSessions.push(event.providerSession);
     else projection.providerSessions[index] = event.providerSession;
+  } else if (event.type === "checkpoint_saved") {
+    replaceById(projection.checkpoints, event.checkpoint);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -176,6 +202,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     message_saved: "message",
     activity_saved: "activity",
     provider_session_saved: "providerSession",
+    checkpoint_saved: "checkpoint",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -389,6 +416,36 @@ export class LocalStateStore {
     }
   }
 
+  async saveCheckpoint(
+    checkpoint: Omit<TurnCheckpoint, "schemaVersion" | "updatedAt">,
+  ): Promise<TurnCheckpoint> {
+    const saved: TurnCheckpoint = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      ...checkpoint,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.#append({ type: "checkpoint_saved", checkpoint: saved });
+    return saved;
+  }
+
+  async supersedeCompletedCheckpoints(
+    threadId: string,
+    worktree: string,
+    exceptId: string,
+  ): Promise<void> {
+    const projection = await this.load();
+    for (const checkpoint of projection.checkpoints) {
+      if (
+        checkpoint.threadId === threadId
+        && checkpoint.worktree === worktree
+        && checkpoint.id !== exceptId
+        && checkpoint.state === "completed"
+      ) {
+        await this.saveCheckpoint({ ...checkpoint, state: "superseded" });
+      }
+    }
+  }
+
   async deleteProject(projectId: string): Promise<void> {
     await this.#compact((projection) => {
       const threadIds = new Set(
@@ -404,6 +461,9 @@ export class LocalStateStore {
       projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !threadIds.has(session.threadId),
+      );
+      projection.checkpoints = projection.checkpoints.filter(
+        (checkpoint) => !threadIds.has(checkpoint.threadId),
       );
     });
   }
@@ -425,6 +485,9 @@ export class LocalStateStore {
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !expiredThreads.has(session.threadId),
       );
+      projection.checkpoints = projection.checkpoints.filter(
+        (checkpoint) => !expiredThreads.has(checkpoint.threadId),
+      );
     });
   }
 
@@ -442,6 +505,10 @@ export class LocalStateStore {
         ...next.providerSessions.map((providerSession): StateEvent => ({
           type: "provider_session_saved",
           providerSession,
+        })),
+        ...next.checkpoints.map((checkpoint): StateEvent => ({
+          type: "checkpoint_saved",
+          checkpoint,
         })),
       ];
       const rebuilt = emptyProjection();
