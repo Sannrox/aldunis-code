@@ -69,14 +69,6 @@ through a versioned authenticated contract.
   explicitly creates a durable rule.
 - Unknown provider events and incompatible contract versions fail closed.
 - No integrated general-purpose terminal is exposed.
-- Repository selection follows the split accepted for
-  [Issue #35](https://github.com/Sannrox/aldunis-code/issues/35): a path-only
-  native desktop picker or a
-  server-backed local web browser. Web browsing starts from explicit canonical
-  roots, returns directory metadata only, rejects symlinks and mount crossings,
-  and enforces depth, entry, latency, cancellation, and concurrency limits.
-  Remote clients receive no filesystem enumeration capability until an
-  authenticated directory-grant design is accepted.
 
 ## Delivery sequence
 
