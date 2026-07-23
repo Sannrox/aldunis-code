@@ -29,7 +29,7 @@ export type ProviderEvent =
 
 export class ProviderProtocolError extends Error {}
 
-export type ProviderId = "claude-code" | "codex-cli" | `adapter:${string}@${string}`;
+export type ProviderId = "claude-code" | "codex-cli";
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface ProviderStartOptions {
