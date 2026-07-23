@@ -57,11 +57,33 @@ npm run host -- --port 4175
 npm run dev
 ```
 
-Remote workbench access is not implemented. The
-[authenticated remote workbench recommendation](docs/remote-workbench.md)
-keeps loopback as the default, recommends an explicitly launched SSH forward
-as the first admissible transport, and records the Discussion and security
-evidence required before implementation.
+Remote access is explicit and disabled by default. Recommended iPad access
+uses Tailscale Serve:
+
+```sh
+npm run host -- --remote tailscale
+```
+
+A local-network session requires an exact private backend address and an HTTPS
+reverse proxy whose public origin is supplied explicitly:
+
+```sh
+npm run host -- --remote lan --host 192.168.1.20 \
+  --public-url https://aldunis.home.example:4174 \
+  --tls-cert /path/to/aldunis.home.example.pem \
+  --tls-key /path/to/aldunis.home.example-key.pem
+```
+
+The host prints one short-lived pairing URL. Manage paired devices locally:
+
+```sh
+npm run host -- --remote-auth list
+npm run host -- --remote-auth pair
+npm run host -- --remote-auth revoke --session <session-id>
+```
+
+The [authenticated remote workbench decision](docs/remote-workbench.md)
+defines the transport and application-authority boundary.
 
 Use **Open repository** in the sidebar and enter an absolute local path. The
 host resolves symlinks, finds the canonical Git root, and returns normalized
