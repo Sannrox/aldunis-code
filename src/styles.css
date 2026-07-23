@@ -473,20 +473,6 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .worktree-approval > p { color: #858791; font-size: .66rem; line-height: 1.5; }
 .worktree-approval footer { margin-top: 12px; }
 .conversation-binding { display: block; max-width: min(70vw, 900px); margin-top: 3px; overflow: hidden; color: #656770; font: .5rem "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
-.fork-dialog { display: grid; gap: 14px; }
-.fork-dialog > p { margin: 0; color: #92949b; font-size: .68rem; line-height: 1.55; }
-.fork-dialog dl { display: grid; gap: 7px; margin: 0; }
-.fork-dialog dl div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
-.fork-dialog dt { color: #747680; font: .52rem "DM Mono", monospace; text-transform: uppercase; }
-.fork-dialog dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #b8b9bd; font: .58rem "DM Mono", monospace; }
-.fork-dialog details { max-height: 230px; overflow-y: auto; padding: 10px; border: 1px solid #34363d; border-radius: 6px; background: #101115; }
-.fork-dialog summary { cursor: pointer; color: #c6c7ca; font-size: .65rem; }
-.fork-dialog article { margin-top: 10px; padding-top: 10px; border-top: 1px solid #292b31; }
-.fork-dialog article strong { color: var(--acid); font: .5rem "DM Mono", monospace; text-transform: uppercase; }
-.fork-dialog article p, .fork-dialog details li { color: #92949b; font-size: .62rem; line-height: 1.5; white-space: pre-wrap; }
-.fork-dialog > label { display: grid; gap: 6px; color: #92949b; font: .55rem "DM Mono", monospace; text-transform: uppercase; }
-.fork-dialog select { min-height: 34px; padding: 0 8px; border: 1px solid #393b42; border-radius: 5px; background: #17181d; color: #c6c7ca; }
-.fork-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; }
 .preference-note { grid-column: 1 / -1; margin: 0; color: #777984; font-size: .62rem; line-height: 1.5; }
 .profile-dialog { display: flex; width: min(920px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: hidden; flex-direction: column; border: 1px solid #3a3c43; border-radius: 12px; background: #15161a; box-shadow: 0 28px 90px rgba(0,0,0,.65); }
 .profile-dialog > header { display: flex; min-height: 82px; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid var(--line); }

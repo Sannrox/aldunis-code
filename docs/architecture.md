@@ -63,10 +63,6 @@ through a versioned authenticated contract.
 - Conversation worktrees are coordinated by the local host through a
   [typed preview-and-approve boundary](decisions/managed-conversation-worktrees.md);
   providers cannot silently create or rebind them.
-- Cross-provider continuation uses an
-  [explicit conversation fork](decisions/cross-provider-conversation-forks.md);
-  native sessions remain provider-bound and only a reviewed allowlisted
-  manifest crosses the boundary.
 - Tool calls are typed, rendered before approval, and audited locally without
   storing secrets.
 - Approval scope is no broader than one described action unless the user
