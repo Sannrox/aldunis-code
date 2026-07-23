@@ -343,12 +343,6 @@ export class LocalStateStore {
           409,
         );
       }
-      if (existing.worktree !== input.worktree) {
-        throw new LocalStateError(
-          "This conversation is bound to a different canonical worktree and cannot be silently moved.",
-          409,
-        );
-      }
     }
     const thread: Thread = existing
       ? { ...existing, provider: existing.provider ?? input.provider, updatedAt: now }
