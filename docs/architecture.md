@@ -46,6 +46,12 @@ through a versioned authenticated contract.
 - Loopback is the default and no network bind is implicit.
 - Provider and product credentials remain server-side or in the provider's
   supported local credential store.
+- Named provider profiles may store sensitive environment values in Aldunis
+  Code's restricted server-side secret store. Persisted profile metadata and
+  browser responses contain only redacted presence markers. Claude
+  authentication remains owned by Claude Code; deleting a profile removes
+  Aldunis-owned environment secrets but never deletes Claude-owned credentials
+  or configuration directories.
 - A repository root is explicit; paths are canonicalized and constrained to it.
 - Tool calls are typed, rendered before approval, and audited locally without
   storing secrets.
@@ -63,4 +69,3 @@ through a versioned authenticated contract.
 5. Sekai Chisei read-only evidence and policy integration.
 6. Tenkai delivery views through its authenticated API.
 7. Optional Aldunis enterprise session and tenant composition.
-

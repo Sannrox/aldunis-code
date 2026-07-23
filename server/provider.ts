@@ -181,7 +181,7 @@ export class ClaudeCodeAdapter {
   readonly #active = new Map<string, ActiveRun>();
 
   constructor(
-    private readonly executable = "claude",
+    private readonly defaultExecutable = "claude",
     private readonly permissions = new PermissionBroker(),
   ) {}
 
@@ -210,19 +210,28 @@ export class ClaudeCodeAdapter {
     approvalUrl: string,
     mode: InteractionMode,
     resumeSessionId?: string,
+    options?: {
+      executable?: string;
+      environment?: NodeJS.ProcessEnv;
+      model?: string;
+    },
   ): Promise<ProviderRun> {
+    const executable = options?.executable ?? this.defaultExecutable;
+    const environment = options?.environment ?? process.env;
     let version: { stdout: string };
     let help: { stdout: string };
     try {
       [version, help] = await Promise.all([
-        execFileAsync(this.executable, ["--version"], {
+        execFileAsync(executable, ["--version"], {
           encoding: "utf8",
           timeout: 5_000,
+          env: environment,
         }),
-        execFileAsync(this.executable, ["--help"], {
+        execFileAsync(executable, ["--help"], {
           encoding: "utf8",
           timeout: 5_000,
           maxBuffer: 512 * 1024,
+          env: environment,
         }),
       ]);
     } catch {
@@ -262,10 +271,11 @@ export class ClaudeCodeAdapter {
       "mcp__aldunis__approval_prompt",
     ];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
-    const child = spawn(this.executable, args, {
+    if (options?.model && options.model !== "default") args.push("--model", options.model);
+    const child = spawn(executable, args, {
       cwd: worktree,
       env: {
-        ...process.env,
+        ...environment,
         ALDUNIS_APPROVAL_URL: approvalUrl,
         ALDUNIS_PROVIDER_RUN_ID: id,
         ALDUNIS_PROVIDER_RUN_TOKEN: permissionToken,

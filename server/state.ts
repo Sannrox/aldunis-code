@@ -61,6 +61,8 @@ export interface ProviderSessionReference {
   provider: "claude-code";
   sessionId: string;
   model: string | null;
+  profileId?: string;
+  continuationKey?: string;
   updatedAt: string;
 }
 
@@ -318,6 +320,7 @@ export class LocalStateStore {
     threadId: string,
     turnId: string,
     event: ProviderEvent,
+    providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
     const now = new Date().toISOString();
     if (event.kind === "assistant_text") {
@@ -346,6 +349,12 @@ export class LocalStateStore {
           provider: "claude-code",
           sessionId: event.sessionId,
           model: event.kind === "session_started" ? event.model : current?.model ?? null,
+          ...(providerBinding?.profileId ?? current?.profileId
+            ? { profileId: providerBinding?.profileId ?? current?.profileId }
+            : {}),
+          ...(providerBinding?.continuationKey ?? current?.continuationKey
+            ? { continuationKey: providerBinding?.continuationKey ?? current?.continuationKey }
+            : {}),
           updatedAt: now,
         },
       });
