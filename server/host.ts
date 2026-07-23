@@ -47,6 +47,7 @@ import { PreviewError, PreviewManager } from "./preview.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
+import { DirectoryBrowser } from "./directory-browser.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -221,6 +222,7 @@ async function handleApi(
   previews: PreviewManager,
   preferences: PreferencesStore,
   worktrees: WorktreeManager,
+  directories: DirectoryBrowser,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
 ): Promise<boolean> {
@@ -284,6 +286,32 @@ async function handleApi(
         root: repository.root,
       });
       sendJson(response, 200, { ...repository, projectId: project.id });
+      return true;
+    }
+    if (route === "/api/directories/browse") {
+      if (remoteAuth) {
+        throw new RepositoryError(
+          "Remote clients cannot browse the host filesystem without a directory grant.",
+          403,
+        );
+      }
+      const body = await readJson(request) as { path?: unknown; includeHidden?: unknown };
+      if (body.path !== undefined && typeof body.path !== "string") {
+        throw new RepositoryError("A directory path must be a string.");
+      }
+      if (body.includeHidden !== undefined && typeof body.includeHidden !== "boolean") {
+        throw new RepositoryError("The hidden-directory option must be a boolean.");
+      }
+      const controller = new AbortController();
+      request.once("aborted", () => controller.abort());
+      response.once("close", () => {
+        if (!response.writableEnded) controller.abort();
+      });
+      sendJson(response, 200, await directories.browse({
+        path: body.path,
+        includeHidden: body.includeHidden,
+        signal: controller.signal,
+      }));
       return true;
     }
     if (route === "/api/worktrees/create/preview") {
@@ -1378,6 +1406,7 @@ export function createLocalHost(
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
+  const directories = new DirectoryBrowser();
   const recovery = state.recoverInterruptedTurns();
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
@@ -1410,6 +1439,7 @@ export function createLocalHost(
         previews,
         preferences,
         worktrees,
+        directories,
         remoteAuth,
         internalPermissionCallback?.url,
       )
