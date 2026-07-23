@@ -2,6 +2,7 @@ import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DEFAULT_PREFERENCES, readPreferencesResponse, type Preferences } from "./preferences";
 import "./styles.css";
+import { clampSplitPercent, normalizeSplitWorkspaceState } from "./split-workspace";
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
 type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
@@ -24,6 +25,13 @@ interface ThreadMetadata {
   worktree: string;
   updatedAt: string;
   projectName: string;
+}
+interface ConversationSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  worktree: string;
+  updatedAt: string;
 }
 type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 interface ChangedFile {
@@ -298,24 +306,29 @@ function CodeSidebar({
   changes,
   onShowChanges,
   onBrowseFiles,
-  threads,
   onSearch,
   onOpenPalette,
+  conversations,
+  primaryConversationId,
+  secondaryConversationId,
+  onOpenConversation,
+  onOpenBeside,
+  onNewConversation,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
   changes: ChangedFile[];
   onShowChanges: () => void;
   onBrowseFiles: () => void;
-  threads: ThreadMetadata[];
   onSearch: () => void;
   onOpenPalette: () => void;
+  conversations: ConversationSummary[];
+  primaryConversationId: string | null;
+  secondaryConversationId: string | null;
+  onOpenConversation: (id: string) => void;
+  onOpenBeside: (id: string) => void;
+  onNewConversation: () => void;
 }) {
-  const groups = threads.reduce<Map<string, ThreadMetadata[]>>((result, thread) => {
-    const key = `${thread.projectName}\n${thread.worktree}`;
-    result.set(key, [...(result.get(key) ?? []), thread]);
-    return result;
-  }, new Map());
   return (
     <aside className="context-sidebar">
       <header>
@@ -323,7 +336,7 @@ function CodeSidebar({
           <strong>ALDUNIS CODE</strong>
           <span>Local workbench</span>
         </div>
-        <button aria-label="New conversation"><Icon name="plus" /></button>
+        <button aria-label="New conversation" onClick={onNewConversation}><Icon name="plus" /></button>
       </header>
       <button className="project-switcher" onClick={onOpenRepository}>
         <span className="repo-glyph">{repository?.name.charAt(0).toUpperCase() ?? "+"}</span>
@@ -356,24 +369,31 @@ function CodeSidebar({
           ))}
         </div>
       )}
-      <div className="section-label"><span>Projects & conversations</span><button onClick={onSearch}>•••</button></div>
-      <div className="session-list grouped">
-        {[...groups.entries()].map(([key, group]) => {
-          const [projectName, worktree] = key.split("\n");
-          const active = repository?.name === projectName && repository.selectedWorktree === worktree;
-          return (
-            <section className={active ? "thread-group active-context" : "thread-group"} key={key}>
-              <header><strong>{projectName}</strong><small>{worktree}</small>{active && <em>Current</em>}</header>
-              {group.map((thread) => (
-                <button key={thread.id}>
-                  <span className="session-icon"><Icon name="message" /></span>
-                  <span className="session-copy"><strong>{thread.title}</strong><small>{new Date(thread.updatedAt).toLocaleString()}</small></span>
-                </button>
-              ))}
-            </section>
-          );
-        })}
-        {threads.length === 0 && <p className="empty-threads">No local conversations yet.</p>}
+      <div className="section-label"><span>Conversations</span><button onClick={onSearch}>•••</button></div>
+      <div className="session-list">
+        {conversations.map((conversation) => (
+          <div className="session-row" key={conversation.id}>
+            <button
+              className={primaryConversationId === conversation.id ? "active" : ""}
+              onClick={() => onOpenConversation(conversation.id)}
+              aria-label={`Open ${conversation.title}`}
+            >
+              <span className="session-icon"><Icon name="message" /></span>
+              <span className="session-copy">
+                <strong>{conversation.title}</strong>
+                <small>{conversation.worktree}</small>
+              </span>
+              {(primaryConversationId === conversation.id || secondaryConversationId === conversation.id) && <i />}
+            </button>
+            <button
+              className="open-beside"
+              onClick={() => onOpenBeside(conversation.id)}
+              disabled={primaryConversationId === conversation.id}
+              aria-label={`Open ${conversation.title} beside current conversation`}
+            >▥</button>
+          </div>
+        ))}
+        {repository && conversations.length === 0 && <p className="empty-conversations">Send a prompt to create the first conversation.</p>}
       </div>
       <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
     </aside>
@@ -1121,6 +1141,12 @@ function FileBrowserPanel({
 
 function Conversation({
   repository,
+  conversation,
+  pane,
+  active,
+  onOpenBeside,
+  onClosePane,
+  onConversationAvailable,
   onOpenRepository,
   changes,
   changesLoading,
@@ -1136,6 +1162,12 @@ function Conversation({
   onOpenProfiles,
 }: {
   repository: RepositoryMetadata | null;
+  conversation: ConversationSummary | null;
+  pane: "primary" | "secondary";
+  active: boolean;
+  onOpenBeside: () => void;
+  onClosePane?: () => void;
+  onConversationAvailable?: (id: string) => void;
   onOpenRepository: () => void;
   changes: ChangedFile[];
   changesLoading: boolean;
@@ -1157,8 +1189,10 @@ function Conversation({
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [conversationId] = useState(() => crypto.randomUUID());
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [historyRestored, setHistoryRestored] = useState(() => conversation === null);
+  const [historyRestoreError, setHistoryRestoreError] = useState<string | null>(null);
+  const [conversationId] = useState(() => conversation?.id ?? crypto.randomUUID());
+  const [threadId, setThreadId] = useState<string | null>(conversation?.id ?? null);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<Array<{ value: string; detail: string }>>([]);
   const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
@@ -1188,17 +1222,20 @@ function Conversation({
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
   useEffect(() => {
     setSessionId(null);
-    setThreadId(null);
+    setHistoryRestored(conversation === null);
+    setHistoryRestoreError(null);
+    setThreadId(conversation?.id ?? null);
     setCheckpoint(null);
     setRewindPreview(null);
-  }, [repository?.projectId]);
+  }, [conversation?.id, repository?.projectId]);
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
       const response = await fetch("/api/state/load", { method: "POST" });
-      if (!response.ok || !active) return;
+      if (!active) return;
+      if (!response.ok) throw new Error("Conversation history could not be restored.");
       const projection = await response.json() as {
         threads: Array<{ id: string; projectId: string; updatedAt: string }>;
         turns: Array<{
@@ -1212,18 +1249,32 @@ function Conversation({
         messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
         providerSessions: Array<{ threadId: string; sessionId: string }>;
       };
-      const thread = projection.threads
-        .filter((item) => item.projectId === repository.projectId)
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-      if (!thread) return;
+      const thread = conversation
+        ? projection.threads.find((item) => item.id === conversation.id && item.projectId === repository.projectId)
+        : null;
+      if (!thread) {
+        setHistoryRestored(true);
+        return;
+      }
       const turns = projection.turns
         .filter((item) => item.threadId === thread.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
       const latest = turns.at(-1);
-      if (!latest) return;
+      if (!latest) {
+        setHistoryRestored(true);
+        return;
+      }
       setThreadId(thread.id);
       setSessionId(projection.providerSessions.find((item) => item.threadId === thread.id)?.sessionId ?? null);
-      setRunId(latest.providerRunId ?? null);
+      setRunId(
+        latest.providerRunId && (
+          latest.status === "active"
+          || latest.status === "running"
+          || latest.status === "waiting_for_approval"
+        )
+          ? latest.providerRunId
+          : null,
+      );
       const turnIds = new Set(turns.map((turn) => turn.id));
       const history = projection.messages
         .filter((message) => turnIds.has(message.turnId))
@@ -1280,19 +1331,32 @@ function Conversation({
         });
       }
       lastAttentionState.current = latest.status;
-      if (latest.status === "active" || latest.status === "waiting_for_approval") {
-        timer = window.setTimeout(() => void restore(), 10_000);
+      setHistoryRestored(true);
+      setHistoryRestoreError(null);
+      if (
+        latest.status === "active"
+        || latest.status === "running"
+        || latest.status === "waiting_for_approval"
+      ) {
+        timer = window.setTimeout(() => attempt(), 10_000);
       }
     };
-    void restore();
-    const visible = () => { if (document.visibilityState === "visible") void restore(); };
+    const attempt = () => {
+      void restore().catch(() => {
+        if (!active) return;
+        setHistoryRestoreError("Conversation history could not be restored. Retrying locally…");
+        timer = window.setTimeout(attempt, 5_000);
+      });
+    };
+    attempt();
+    const visible = () => { if (document.visibilityState === "visible") attempt(); };
     document.addEventListener("visibilitychange", visible);
     return () => {
       active = false;
       if (timer) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [notificationsEnabled, repository?.projectId]);
+  }, [conversation?.id, notificationsEnabled, repository?.projectId]);
   useEffect(() => {
     void fetch("/api/provider/capabilities", {
       method: "POST",
@@ -1366,7 +1430,7 @@ function Conversation({
   };
   const send = async () => {
     const value = draft.trim();
-    if (!value || !repository || !worktree || !profileId || runActive) return;
+    if (!value || !repository || !worktree || !profileId || runActive || !historyRestored) return;
     const turnMode = mode;
     setMessages((current) => [...current, { text: value, mode: turnMode }]);
     setDraft("");
@@ -1381,6 +1445,7 @@ function Conversation({
     setRewindPreview(null);
     setCheckpointError(null);
     let activeTurnId: string | null = null;
+    let createdThreadId: string | null = null;
     try {
       const response = await fetch("/api/provider/runs", {
         method: "POST",
@@ -1400,13 +1465,14 @@ function Conversation({
           elementReferences: sentElementReferences.map(({ screenshot: _screenshot, ...reference }) => reference),
         }),
       });
+      createdThreadId = response.headers.get("x-thread-id");
       if (!response.ok) {
         const body = await response.json() as { error?: string };
         throw new Error(body.error ?? "Claude Code could not start.");
       }
       const activeRunId = response.headers.get("x-provider-run-id");
       setRunId(activeRunId);
-      setThreadId(response.headers.get("x-thread-id"));
+      setThreadId(createdThreadId);
       activeTurnId = response.headers.get("x-turn-id");
       setProviderState("streaming");
       if (!response.body) throw new Error("Claude Code returned no event stream.");
@@ -1472,6 +1538,8 @@ function Conversation({
       setProviderState("failed");
     } finally {
       setRunId(null);
+      const availableThreadId = createdThreadId ?? conversation?.id;
+      if (availableThreadId) onConversationAvailable?.(availableThreadId);
     }
   };
   const previewRewind = async () => {
@@ -1597,9 +1665,16 @@ function Conversation({
     failed: "Provider stopped · send another prompt to resume",
   };
   return (
-    <main className="conversation">
+    <main className="conversation" aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}>
       <header className="conversation-header">
-        <div><span className="breadcrumb">aldunis-code <b>/</b> codex/12-permissions</span><h1>Shape Claude permission flow</h1></div>
+        <div className="conversation-identity">
+          <span className="pane-label">{pane} pane</span>
+          <span className="breadcrumb">
+            {repository?.name ?? "No project"} <b>/</b> {worktree?.branch ?? "detached"} <b>/</b> Claude Code · {profileId ? profiles.find((profile) => profile.id === profileId)?.name : "no profile"} · {model} · direct · {mode} · {stateCopy[providerState]}
+          </span>
+          <h1>{conversation?.title ?? "New conversation"}</h1>
+          <small>{worktree?.path ?? "No available worktree"}</small>
+        </div>
         <div className="header-actions">
           <button className="mobile-project" onClick={onOpenRepository} aria-label={repository ? `Change repository, current ${repository.name}` : "Open repository"}>
             <Icon name="branch" />
@@ -1614,6 +1689,8 @@ function Conversation({
             <Icon name="code" /><span>Preview</span>
           </button>
           <button className="ghost" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</button>
+          {pane === "primary" && <button className="ghost" onClick={onOpenBeside} aria-label="Open a conversation beside this one">▥</button>}
+          {onClosePane && <button className="ghost" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>}
           {!notificationsEnabled && typeof Notification !== "undefined" && Notification.permission !== "denied" && (
             <button
               className="ghost"
@@ -1664,7 +1741,7 @@ function Conversation({
                 </div>
               ))}
               {approvals.map((approval) => (
-                <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`Approval required: ${approval.scope.summary}`}>
+                <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`${pane} pane approval required: ${approval.scope.summary}`}>
                   <header>
                     <span><Icon name="shield" /></span>
                     <div>
@@ -1677,7 +1754,9 @@ function Conversation({
                   {approval.scope.details.length > 0 && (
                     <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
                   )}
-                  <small className="approval-binding">Bound to this conversation, repository, worktree, and tool call.</small>
+                  <small className="approval-binding">
+                    {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · Claude Code · direct · {approval.toolName} · {approval.scope.target}
+                  </small>
                   {approval.state === "pending" && (
                     <footer>
                       <button onClick={() => void decideApproval(approval, "deny")}>Deny</button>
@@ -1816,16 +1895,19 @@ function Conversation({
                 void send();
               }
             }}
-            placeholder={!profileId
+            placeholder={!historyRestored
+              ? "Restoring conversation session…"
+              : !profileId
               ? "Configure a Claude profile first…"
               : worktree
               ? `${modeCopy[mode].label} Claude… Type @ for files or / for commands`
               : "Open a repository with an available worktree…"}
             aria-label="Message Claude"
             aria-autocomplete="list"
-            disabled={!worktree || !profileId || runActive}
+            disabled={!worktree || !profileId || runActive || !historyRestored}
           />
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
+          {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <footer>
             <div className="provider-selectors">
               <span className="provider-symbol">C</span>
@@ -1849,7 +1931,7 @@ function Conversation({
             </div>
             {runId
               ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
-              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || !profileId || runActive} aria-label="Send message">↑</button>}
+              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || !profileId || runActive || !historyRestored} aria-label="Send message">↑</button>}
           </footer>
         </div>
         <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
@@ -1889,35 +1971,54 @@ function Conversation({
   );
 }
 
-function CodeWorkbench({
+async function loadConversationList(repository: RepositoryMetadata): Promise<ConversationSummary[]> {
+  const response = await fetch("/api/state/load", { method: "POST" });
+  if (!response.ok) throw new Error("Conversation history could not be loaded.");
+  const projection = await response.json() as { threads: ConversationSummary[] };
+  return projection.threads
+    .filter((thread) => thread.projectId === repository.projectId)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function PaneConversation({
   repository,
-  onOpenRepository,
+  conversation,
+  pane,
+  active,
   profiles,
+  onOpenRepository,
   onOpenProfiles,
-  threads,
-  onSearch,
-  onOpenPalette,
+  onOpenBeside,
+  onClosePane,
+  onConversationAvailable,
+  showChangesSignal,
+  showFilesSignal,
 }: {
   repository: RepositoryMetadata | null;
-  onOpenRepository: () => void;
+  conversation: ConversationSummary | null;
+  pane: "primary" | "secondary";
+  active: boolean;
   profiles: ClaudeProfile[];
+  onOpenRepository: () => void;
   onOpenProfiles: () => void;
-  threads: ThreadMetadata[];
-  onSearch: () => void;
-  onOpenPalette: () => void;
+  onOpenBeside: () => void;
+  onClosePane?: () => void;
+  onConversationAvailable?: (id: string) => void;
+  showChangesSignal: number;
+  showFilesSignal: number;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [changesLoading, setChangesLoading] = useState(false);
+  const [changesError, setChangesError] = useState<string | null>(null);
+  const [changesOpen, setChangesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
-  const refresh = async () => {
+  const refreshChanges = async () => {
     if (!repository) {
       setChanges([]);
       return;
     }
-    setLoading(true);
-    setError(null);
+    setChangesLoading(true);
+    setChangesError(null);
     try {
       const response = await fetch("/api/changes", {
         method: "POST",
@@ -1928,15 +2029,194 @@ function CodeWorkbench({
       if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
       setChanges(body.files ?? []);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Changed files could not be inspected.");
+      setChangesError(cause instanceof Error ? cause.message : "Changed files could not be inspected.");
     } finally {
-      setLoading(false);
+      setChangesLoading(false);
     }
   };
-  useEffect(() => { void refresh(); }, [repository]);
-  const show = () => {
-    setOpen(true);
-    void refresh();
+  useEffect(() => { void refreshChanges(); }, [repository?.root, repository?.selectedWorktree]);
+  useEffect(() => { if (showChangesSignal > 0) { setChangesOpen(true); void refreshChanges(); } }, [showChangesSignal]);
+  useEffect(() => { if (showFilesSignal > 0) setFilesOpen(true); }, [showFilesSignal]);
+  return (
+    <Conversation
+      repository={repository}
+      conversation={conversation}
+      pane={pane}
+      active={active}
+      onOpenBeside={onOpenBeside}
+      onClosePane={onClosePane}
+      onConversationAvailable={onConversationAvailable}
+      onOpenRepository={onOpenRepository}
+      changes={changes}
+      changesLoading={changesLoading}
+      changesError={changesError}
+      changesOpen={changesOpen}
+      onShowChanges={() => { setChangesOpen(true); void refreshChanges(); }}
+      onHideChanges={() => setChangesOpen(false)}
+      onRefreshChanges={refreshChanges}
+      filesOpen={filesOpen}
+      onBrowseFiles={() => setFilesOpen(true)}
+      onHideFiles={() => setFilesOpen(false)}
+      profiles={profiles}
+      onOpenProfiles={onOpenProfiles}
+    />
+  );
+}
+
+function CodeWorkbench({
+  repository,
+  onOpenRepository,
+  profiles,
+  onOpenProfiles,
+  onSearch,
+  onOpenPalette,
+}: {
+  repository: RepositoryMetadata | null;
+  onOpenRepository: () => void;
+  profiles: ClaudeProfile[];
+  onOpenProfiles: () => void;
+  onSearch: () => void;
+  onOpenPalette: () => void;
+}) {
+  const [changes, setChanges] = useState<ChangedFile[]>([]);
+  const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
+  const [primaryFilesSignal, setPrimaryFilesSignal] = useState(0);
+  const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
+  const [secondaryFilesSignal, setSecondaryFilesSignal] = useState(0);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [primaryId, setPrimaryId] = useState<string | null>(null);
+  const [primaryNewKey, setPrimaryNewKey] = useState(0);
+  const [secondaryId, setSecondaryId] = useState<string | null>(null);
+  const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
+  const [splitPercent, setSplitPercent] = useState(50);
+  const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
+    () => repository ? "loading" : "idle",
+  );
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const splitReference = useRef<HTMLDivElement>(null);
+  const restoredProjectReference = useRef<string | null>(null);
+  const primarySelectionReference = useRef("new:0");
+  const secondaryIdReference = useRef<string | null>(null);
+  const primaryPaneReference = useRef<HTMLDivElement>(null);
+  const secondaryPaneReference = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!repository) return;
+    let active = true;
+    restoredProjectReference.current = null;
+    secondaryIdReference.current = null;
+    setConversations([]);
+    setPrimaryId(null);
+    primarySelectionReference.current = "new:0";
+    setSecondaryId(null);
+    setRestoreState("loading");
+    const restore = async () => {
+      const available = await loadConversationList(repository);
+      if (!active) return;
+      setConversations(available);
+      const parameters = new URLSearchParams(window.location.search);
+      const urlMatchesProject = parameters.get("project") === repository.projectId;
+      const stored = window.localStorage.getItem(`aldunis.split.${repository.projectId}`);
+      let saved: { primaryId?: string | null; secondaryId?: string | null; splitPercent?: number } = {};
+      try { saved = stored ? JSON.parse(stored) as typeof saved : {}; } catch { saved = {}; }
+      const restored = normalizeSplitWorkspaceState({
+        primaryId: (urlMatchesProject ? parameters.get("conversation") : null) ?? saved.primaryId,
+        secondaryId: (urlMatchesProject ? parameters.get("beside") : null) ?? saved.secondaryId,
+        splitPercent: saved.splitPercent,
+      }, available[0]?.id ?? null);
+      setPrimaryId(restored.primaryId);
+      primarySelectionReference.current = restored.primaryId ?? `new:${primaryNewKey}`;
+      setSecondaryId(restored.secondaryId);
+      secondaryIdReference.current = restored.secondaryId;
+      setSplitPercent(restored.splitPercent);
+      restoredProjectReference.current = repository.projectId;
+      setRestoreState("ready");
+    };
+    void restore().catch(() => {
+      if (!active) return;
+      restoredProjectReference.current = null;
+      setRestoreState("failed");
+    });
+    return () => { active = false; };
+  }, [repository?.projectId, restoreAttempt]);
+  useEffect(() => {
+    if (!repository || restoredProjectReference.current !== repository.projectId) return;
+    window.localStorage.setItem(`aldunis.split.${repository.projectId}`, JSON.stringify({
+      primaryId,
+      secondaryId,
+      splitPercent,
+    }));
+    const parameters = new URLSearchParams(window.location.search);
+    parameters.set("project", repository.projectId);
+    if (primaryId) parameters.set("conversation", primaryId); else parameters.delete("conversation");
+    if (secondaryId) parameters.set("beside", secondaryId); else parameters.delete("beside");
+    window.history.replaceState(null, "", `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`);
+  }, [primaryId, repository?.projectId, secondaryId, splitPercent]);
+  useEffect(() => {
+    const moveFocus = (event: KeyboardEvent) => {
+      if (!secondaryId || !event.altKey || !event.shiftKey) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setActivePane("primary");
+        primaryPaneReference.current?.focus();
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setActivePane("secondary");
+        secondaryPaneReference.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", moveFocus);
+    return () => window.removeEventListener("keydown", moveFocus);
+  }, [secondaryId]);
+  const primary = conversations.find((conversation) => conversation.id === primaryId) ?? null;
+  const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
+  const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
+  const activeConversation = activePane === "secondary" ? secondary : primary;
+  const refresh = async () => {
+    if (!repository) {
+      setChanges([]);
+      return;
+    }
+    try {
+      const response = await fetch("/api/changes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: activeConversation?.worktree ?? repository.selectedWorktree,
+        }),
+      });
+      const body = await response.json() as { files?: ChangedFile[]; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
+      setChanges(body.files ?? []);
+    } catch {
+      setChanges([]);
+    }
+  };
+  useEffect(() => { void refresh(); }, [activeConversation?.worktree, repository]);
+  const repositoryFor = (conversation: ConversationSummary | null) => repository
+    ? { ...repository, selectedWorktree: conversation?.worktree ?? repository.selectedWorktree }
+    : null;
+  const openBeside = (id?: string) => {
+    const candidate = id ?? conversations.find((conversation) => conversation.id !== primaryId)?.id ?? `new:${crypto.randomUUID()}`;
+    secondaryIdReference.current = candidate;
+    setSecondaryId(candidate);
+    setActivePane("secondary");
+  };
+  const resize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const element = splitReference.current;
+    if (!element) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const move = (pointer: PointerEvent) => {
+      const bounds = element.getBoundingClientRect();
+      setSplitPercent(clampSplitPercent(((pointer.clientX - bounds.left) / bounds.width) * 100));
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
   };
   return (
     <>
@@ -1944,29 +2224,145 @@ function CodeWorkbench({
         repository={repository}
         onOpenRepository={onOpenRepository}
         changes={changes}
-        onShowChanges={show}
-        onBrowseFiles={() => setFilesOpen(true)}
-        threads={threads}
+        onShowChanges={() => {
+          void refresh();
+          if (activePane === "secondary") setSecondaryChangesSignal((value) => value + 1);
+          else setPrimaryChangesSignal((value) => value + 1);
+        }}
+        onBrowseFiles={() => (
+          activePane === "secondary"
+            ? setSecondaryFilesSignal((value) => value + 1)
+            : setPrimaryFilesSignal((value) => value + 1)
+        )}
+        conversations={conversations}
+        primaryConversationId={primaryId}
+        secondaryConversationId={secondaryId}
+        onOpenConversation={(id) => {
+          primarySelectionReference.current = id;
+          setPrimaryId(id);
+          if (secondaryId === id) {
+            secondaryIdReference.current = null;
+            setSecondaryId(null);
+          }
+          setActivePane("primary");
+        }}
+        onOpenBeside={openBeside}
+        onNewConversation={() => {
+          primarySelectionReference.current = `new:${primaryNewKey + 1}`;
+          setPrimaryId(null);
+          setPrimaryNewKey((value) => value + 1);
+          if (secondaryId?.startsWith("new:")) {
+            secondaryIdReference.current = null;
+            setSecondaryId(null);
+          }
+          setActivePane("primary");
+        }}
         onSearch={onSearch}
         onOpenPalette={onOpenPalette}
       />
-      <Conversation
-        repository={repository}
-        onOpenRepository={onOpenRepository}
-        changes={changes}
-        changesLoading={loading}
-        changesError={error}
-        changesOpen={open}
-        onShowChanges={show}
-        onHideChanges={() => setOpen(false)}
-        onRefreshChanges={refresh}
-        filesOpen={filesOpen}
-        onBrowseFiles={() => setFilesOpen(true)}
-        onHideFiles={() => setFilesOpen(false)}
-        profiles={profiles}
-        onOpenProfiles={onOpenProfiles}
-      />
+      <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace">
+        {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
+        {restoreState === "failed" && (
+          <div className="workspace-state failed" role="alert">
+            <span>Local conversation history could not be loaded.</span>
+            <button onClick={() => setRestoreAttempt((value) => value + 1)}>Retry</button>
+          </div>
+        )}
+        {(restoreState === "ready" || !repository) && <>
+        {secondaryId && (
+          <nav className="pane-switcher" aria-label="Visible conversation pane">
+            <button className={activePane === "primary" ? "active" : ""} onClick={() => setActivePane("primary")}>
+              Primary · {primary?.title ?? (primaryId ? "Replace conversation" : "New conversation")}
+            </button>
+            <button className={activePane === "secondary" ? "active" : ""} onClick={() => setActivePane("secondary")}>
+              Secondary · {secondary?.title ?? (secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation")}
+            </button>
+          </nav>
+        )}
+        <div
+          className={`split-workspace ${secondaryId ? "split" : ""}`}
+          ref={splitReference}
+          style={secondaryId ? { gridTemplateColumns: `${splitPercent}% 6px minmax(0, 1fr)` } : undefined}
+        >
+          <div className="conversation-pane primary-pane" tabIndex={-1} ref={primaryPaneReference} onFocusCapture={() => setActivePane("primary")}>
+            {primaryId && !primary
+              ? <MissingConversation pane="primary" conversations={conversations.filter((item) => item.id !== secondaryId)} onReplace={(id) => {
+                  primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
+                  setPrimaryId(id);
+                }} />
+              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onOpenBeside={() => openBeside()} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+                  if (primarySelectionReference.current === primarySelectionKey) {
+                    primarySelectionReference.current = id;
+                    setPrimaryId(id);
+                  }
+                  if (repository) void loadConversationList(repository).then(setConversations).catch(() => {});
+                }} />}
+          </div>
+          {secondaryId && (
+            <>
+              <div
+                className="split-divider"
+                role="separator"
+                aria-label="Resize conversation panes"
+                aria-orientation="vertical"
+                aria-valuemin={30}
+                aria-valuemax={70}
+                aria-valuenow={Math.round(splitPercent)}
+                tabIndex={0}
+                onPointerDown={resize}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowLeft") setSplitPercent((value) => Math.max(30, value - 5));
+                  if (event.key === "ArrowRight") setSplitPercent((value) => Math.min(70, value + 5));
+                }}
+              />
+              <div className="conversation-pane secondary-pane" tabIndex={-1} ref={secondaryPaneReference} onFocusCapture={() => setActivePane("secondary")}>
+                {!secondary && !secondaryId.startsWith("new:")
+                  ? <MissingConversation pane="secondary" conversations={conversations.filter((item) => item.id !== primaryId)} onReplace={setSecondaryId} onClose={() => setSecondaryId(null)} />
+                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onOpenBeside={() => openBeside()} onClosePane={() => {
+                      secondaryIdReference.current = null;
+                      setSecondaryId(null);
+                      setActivePane("primary");
+                    }} showChangesSignal={secondaryChangesSignal} showFilesSignal={secondaryFilesSignal} onConversationAvailable={(id) => {
+                      if (secondaryIdReference.current !== secondaryId) return;
+                      secondaryIdReference.current = id;
+                      setSecondaryId(id);
+                      if (repository) void loadConversationList(repository).then(setConversations).catch(() => {});
+                    }} />}
+              </div>
+            </>
+          )}
+        </div>
+        </>}
+      </section>
     </>
+  );
+}
+
+function MissingConversation({
+  pane,
+  conversations,
+  onReplace,
+  onClose,
+}: {
+  pane: "primary" | "secondary";
+  conversations: ConversationSummary[];
+  onReplace: (id: string | null) => void;
+  onClose?: () => void;
+}) {
+  return (
+    <section className="missing-conversation" role="region" aria-label={`${pane} conversation unavailable`}>
+      <span>{pane} pane</span>
+      <h2>Conversation unavailable</h2>
+      <p>It may have been deleted, archived, or created by an incompatible local state version. Choose a replacement; no provider session was ended.</p>
+      <label>
+        Replacement conversation
+        <select defaultValue="" onChange={(event) => { if (event.target.value) onReplace(event.target.value); }}>
+          <option value="" disabled>Choose a conversation…</option>
+          {conversations.map((conversation) => <option value={conversation.id} key={conversation.id}>{conversation.title}</option>)}
+        </select>
+      </label>
+      {onClose && <button onClick={onClose}>Close pane</button>}
+    </section>
   );
 }
 
@@ -2267,7 +2663,7 @@ function App() {
       <PageHeader product={product} onChange={setProduct} onSettings={() => setPreferencesOpen(true)} />
       <div className="app-content">
         <div className="code-page" hidden={product !== "code"}>
-          <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} threads={threads} onSearch={() => setSearchOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
+          <CodeWorkbench key={repository?.projectId ?? "no-project"} repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} onSearch={() => setSearchOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         </div>
         {product !== "code" && <DomainPage product={product} />}
       </div>
