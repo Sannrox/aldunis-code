@@ -1,0 +1,233 @@
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
+
+export type PreviewState =
+  | "approval_pending"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "failed";
+
+export interface PreviewSnapshot {
+  id: string;
+  repository: string;
+  worktree: string;
+  command: string;
+  origin: string;
+  state: PreviewState;
+  approvalExpiresAt: string | null;
+  message: string | null;
+}
+
+interface PreviewRecord extends PreviewSnapshot {
+  child: ChildProcess | null;
+  approvalTimer: NodeJS.Timeout | null;
+}
+
+const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+
+export class PreviewError extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
+
+export function assertPreviewOrigin(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new PreviewError("Preview URL must be a valid loopback HTTP(S) origin.");
+  }
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:")
+    || !LOOPBACK_NAMES.has(url.hostname)
+    || url.username
+    || url.password
+  ) {
+    throw new PreviewError("Preview navigation is limited to loopback HTTP(S) origins.", 403);
+  }
+  return url.origin;
+}
+
+async function developmentCommand(worktree: string): Promise<{ command: string; args: string[] }> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(join(worktree, "package.json"), "utf8"));
+  } catch {
+    throw new PreviewError("The selected worktree has no readable package.json.", 404);
+  }
+  const scripts = typeof value === "object" && value !== null
+    ? (value as { scripts?: unknown }).scripts
+    : null;
+  const dev = typeof scripts === "object" && scripts !== null
+    ? (scripts as Record<string, unknown>).dev
+    : null;
+  if (typeof dev !== "string" || !dev.trim()) {
+    throw new PreviewError("The selected worktree does not declare a development script.", 404);
+  }
+  return { command: "npm run dev", args: ["run", "dev"] };
+}
+
+export class PreviewManager {
+  readonly #previews = new Map<string, PreviewRecord>();
+
+  async requestStart(repository: string, worktree: string, originInput: string): Promise<PreviewSnapshot> {
+    const origin = assertPreviewOrigin(originInput);
+    const { command } = await developmentCommand(worktree);
+    for (const preview of this.#previews.values()) {
+      if (
+        preview.worktree === worktree
+        && ["approval_pending", "starting", "running", "stopping"].includes(preview.state)
+      ) {
+        throw new PreviewError("This worktree already has an active preview.", 409);
+      }
+    }
+    const id = randomUUID();
+    const record: PreviewRecord = {
+      id,
+      repository,
+      worktree,
+      command,
+      origin,
+      state: "approval_pending",
+      approvalExpiresAt: new Date(Date.now() + APPROVAL_TIMEOUT_MS).toISOString(),
+      message: null,
+      child: null,
+      approvalTimer: null,
+    };
+    record.approvalTimer = setTimeout(() => {
+      if (record.state === "approval_pending") {
+        record.state = "failed";
+        record.message = "Start approval expired.";
+        record.approvalExpiresAt = null;
+      }
+    }, APPROVAL_TIMEOUT_MS);
+    record.approvalTimer.unref();
+    this.#previews.set(id, record);
+    return this.#snapshot(record);
+  }
+
+  decide(
+    id: string,
+    context: { repository: string; worktree: string },
+    decision: "allow_once" | "deny",
+  ): PreviewSnapshot {
+    const preview = this.#get(id);
+    if (preview.repository !== context.repository || preview.worktree !== context.worktree) {
+      throw new PreviewError("Preview approval is bound to a different repository or worktree.", 403);
+    }
+    if (preview.state !== "approval_pending") {
+      throw new PreviewError("Preview approval has already been resolved.", 409);
+    }
+    if (preview.approvalTimer) clearTimeout(preview.approvalTimer);
+    preview.approvalTimer = null;
+    preview.approvalExpiresAt = null;
+    if (decision === "deny") {
+      preview.state = "stopped";
+      preview.message = "Start denied.";
+      return this.#snapshot(preview);
+    }
+    this.#start(preview);
+    return this.#snapshot(preview);
+  }
+
+  snapshot(id: string): PreviewSnapshot {
+    return this.#snapshot(this.#get(id));
+  }
+
+  async stop(id: string, context: { repository: string; worktree: string }): Promise<PreviewSnapshot> {
+    const preview = this.#get(id);
+    if (preview.repository !== context.repository || preview.worktree !== context.worktree) {
+      throw new PreviewError("Preview is bound to a different repository or worktree.", 403);
+    }
+    if (preview.state === "approval_pending") {
+      if (preview.approvalTimer) clearTimeout(preview.approvalTimer);
+      preview.approvalTimer = null;
+      preview.approvalExpiresAt = null;
+      preview.state = "stopped";
+      preview.message = "Start cancelled.";
+      return this.#snapshot(preview);
+    }
+    if (!preview.child || !["starting", "running", "failed"].includes(preview.state)) {
+      throw new PreviewError("Preview is not running.", 409);
+    }
+    preview.state = "stopping";
+    const child = preview.child;
+    const exited = new Promise<boolean>((resolve) => {
+      child.once("exit", () => resolve(true));
+      setTimeout(() => resolve(false), 3_000).unref();
+    });
+    child.kill("SIGTERM");
+    if (!await exited) {
+      preview.state = "failed";
+      preview.message = "The development process did not stop after SIGTERM.";
+      return this.#snapshot(preview);
+    }
+    preview.child = null;
+    preview.state = "stopped";
+    preview.message = null;
+    return this.#snapshot(preview);
+  }
+
+  #start(preview: PreviewRecord): void {
+    preview.state = "starting";
+    const executable = process.platform === "win32" ? "npm.cmd" : "npm";
+    const child = spawn(executable, ["run", "dev"], {
+      cwd: preview.worktree,
+      env: { ...process.env, BROWSER: "none" },
+      shell: false,
+      stdio: "ignore",
+    });
+    preview.child = child;
+    child.once("spawn", () => {
+      if (preview.state === "starting") void this.#awaitReady(preview);
+    });
+    child.once("error", () => {
+      preview.state = "failed";
+      preview.message = "The configured development command could not be started.";
+      preview.child = null;
+    });
+    child.once("exit", (code, signal) => {
+      if (preview.state === "stopping" || preview.state === "stopped" || preview.state === "failed") return;
+      preview.state = code === 0 ? "stopped" : "failed";
+      preview.message = code === 0
+        ? "The development process exited."
+        : `The development process exited unexpectedly (${signal ?? `code ${code ?? "unknown"}`}).`;
+      preview.child = null;
+    });
+  }
+
+  async #awaitReady(preview: PreviewRecord): Promise<void> {
+    const deadline = Date.now() + 8_000;
+    while (preview.state === "starting" && Date.now() < deadline) {
+      try {
+        await fetch(preview.origin, { signal: AbortSignal.timeout(600) });
+        if (preview.state === "starting") preview.state = "running";
+        return;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+    }
+    if (preview.state !== "starting") return;
+    preview.state = "failed";
+    preview.message = `The development server is unavailable at ${preview.origin}.`;
+    preview.child?.kill("SIGTERM");
+    preview.child = null;
+  }
+
+  #get(id: string): PreviewRecord {
+    const preview = this.#previews.get(id);
+    if (!preview) throw new PreviewError("Preview session does not exist.", 404);
+    return preview;
+  }
+
+  #snapshot(preview: PreviewRecord): PreviewSnapshot {
+    const { child: _child, approvalTimer: _approvalTimer, ...snapshot } = preview;
+    return { ...snapshot };
+  }
+}
