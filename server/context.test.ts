@@ -43,6 +43,20 @@ test("text and supported images resolve into bounded local context", async () =>
   assert.match(prompt, /<image path="image.png"/);
 });
 
+test("visible element references compose as bounded escaped structured context", () => {
+  const prompt = composePrompt("Explain this.", [], [{
+    selector: "main > button:nth-of-type(1)",
+    tag: "button",
+    role: "button",
+    name: `Save "draft"`,
+    text: "<untrusted> page text",
+  }]);
+  assert.match(prompt, /<visible-element/);
+  assert.match(prompt, /Save &quot;draft&quot;/);
+  assert.match(prompt, /&lt;untrusted&gt; page text/);
+  assert.doesNotMatch(prompt, /<untrusted>/);
+});
+
 test("missing, binary, oversized, secret-like, excessive, and escaping inputs fail explicitly", async () => {
   const { parent, root } = await fixture();
   await assert.rejects(() => resolveContextAttachments(root, ["missing.ts"]), /missing or was deleted/);

@@ -31,6 +31,7 @@ import {
   resolveContextAttachments,
   searchRepositoryFiles,
 } from "./context.ts";
+import { PreviewError, PreviewManager } from "./preview.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -110,6 +111,7 @@ async function handleApi(
   delivery: DeliveryBroker,
   state: LocalStateStore,
   profiles: ClaudeProfileStore,
+  previews: PreviewManager,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -268,6 +270,7 @@ async function handleApi(
         attachments?: unknown;
         profileId?: unknown;
         model?: unknown;
+        elementReferences?: unknown;
       };
       if (
         typeof body.root !== "string"
@@ -287,6 +290,16 @@ async function handleApi(
         || typeof body.profileId !== "string"
         || typeof body.model !== "string"
         || !CLAUDE_MODEL_ALIASES.includes(body.model)
+        || (body.elementReferences !== undefined && (
+          !Array.isArray(body.elementReferences)
+          || body.elementReferences.length > 3
+          || body.elementReferences.some((value) => (
+            typeof value !== "object"
+            || value === null
+            || typeof (value as { selector?: unknown }).selector !== "string"
+            || typeof (value as { tag?: unknown }).tag !== "string"
+          ))
+        ))
       ) {
         throw new RepositoryError(
           "A repository, worktree, prompt, interaction mode, Claude profile, and model are required.",
@@ -298,7 +311,17 @@ async function handleApi(
         context.worktree,
         (body.attachments ?? []) as string[],
       );
-      const providerPrompt = composePrompt(body.prompt.trim(), attachments);
+      const providerPrompt = composePrompt(
+        body.prompt.trim(),
+        attachments,
+        (body.elementReferences ?? []) as Array<{
+          selector: string;
+          tag: string;
+          role?: string | null;
+          name?: string | null;
+          text?: string | null;
+        }>,
+      );
       const projection = await state.load();
       const project = typeof body.projectId === "string"
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
@@ -511,6 +534,75 @@ async function handleApi(
       sendJson(response, 200, await delivery.execute(deliveryMatch[1], context.root, context.worktree));
       return true;
     }
+    if (route === "/api/previews/request") {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        origin?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.origin !== "string"
+      ) {
+        throw new PreviewError("A repository, worktree, and loopback origin are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(
+        response,
+        200,
+        await previews.requestStart(context.root, context.worktree, body.origin),
+      );
+      return true;
+    }
+    const previewDecision = route.match(/^\/api\/previews\/([0-9a-f-]+)\/decide$/);
+    if (previewDecision) {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        decision?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || (body.decision !== "allow_once" && body.decision !== "deny")
+      ) {
+        throw new PreviewError("A scoped preview decision is required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(
+        response,
+        200,
+        previews.decide(
+          previewDecision[1],
+          { repository: context.root, worktree: context.worktree },
+          body.decision,
+        ),
+      );
+      return true;
+    }
+    const previewStatus = route.match(/^\/api\/previews\/([0-9a-f-]+)\/status$/);
+    if (previewStatus) {
+      sendJson(response, 200, previews.snapshot(previewStatus[1]));
+      return true;
+    }
+    const previewStop = route.match(/^\/api\/previews\/([0-9a-f-]+)\/stop$/);
+    if (previewStop) {
+      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
+        throw new PreviewError("A repository and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(
+        response,
+        200,
+        await previews.stop(
+          previewStop[1],
+          { repository: context.root, worktree: context.worktree },
+        ),
+      );
+      return true;
+    }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
       if (!provider.cancel(cancelMatch[1])) {
@@ -525,6 +617,7 @@ async function handleApi(
       || error instanceof PermissionError
       || error instanceof LocalStateError
       || error instanceof ProfileError
+      || error instanceof PreviewError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -532,6 +625,7 @@ async function handleApi(
       || error instanceof PermissionError
       || error instanceof LocalStateError
       || error instanceof ProfileError
+      || error instanceof PreviewError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -571,8 +665,20 @@ export function createLocalHost(
   const permissions = new PermissionBroker();
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
+  const previews = new PreviewManager();
   return createServer(async (request, response) => {
-    if (await handleApi(request, response, provider, permissions, delivery, state, profiles)) return;
+    if (
+      await handleApi(
+        request,
+        response,
+        provider,
+        permissions,
+        delivery,
+        state,
+        profiles,
+        previews,
+      )
+    ) return;
     await serveStatic(request, response, dist);
   });
 }
