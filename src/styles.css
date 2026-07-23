@@ -109,6 +109,20 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .file-card pre { overflow-x: auto; margin: 0; padding: 13px 16px; color: #798c76; font: .64rem/1.75 "DM Mono", monospace; }
 .file-card pre b { color: #9bbf8c; font-weight: 400; }
 .composer-wrap { position: absolute; right: 0; bottom: 0; left: 0; padding: 22px max(28px, calc((100% - 780px) / 2)); background: linear-gradient(transparent, #0d0e11 24%); }
+.mode-picker { display: flex; min-width: 0; align-items: center; gap: 10px; margin: 0 0 7px; padding: 0; border: 0; }
+.mode-picker legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mode-picker > div { display: flex; padding: 2px; border: 1px solid #34363c; border-radius: 7px; background: #131419; }
+.mode-picker label { position: relative; cursor: pointer; }
+.mode-picker input { position: absolute; opacity: 0; pointer-events: none; }
+.mode-picker label span { display: block; padding: 5px 9px; border-radius: 5px; color: #777981; font: .56rem "DM Mono", monospace; }
+.mode-picker label.selected span { background: #292b31; color: #e0e0dc; }
+.mode-picker label:has(input:focus-visible) span { outline: 2px solid var(--acid); outline-offset: 1px; }
+.mode-picker:disabled label { cursor: default; opacity: .58; }
+.mode-picker > p { min-width: 0; overflow: hidden; margin: 0; color: #696b73; font: .52rem "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.turn-mode { padding: 2px 5px; border: 1px solid #3a3c43; border-radius: 4px; color: #8b8d94; font: .48rem "DM Mono", monospace; text-transform: uppercase; }
+.turn-mode.ask { border-color: #3b5261; color: #8db6ca; }
+.turn-mode.plan { border-color: #594d38; color: #c9aa75; }
+.turn-mode.build { border-color: #4b5d37; color: #a6c97b; }
 .composer { overflow: hidden; border: 1px solid #3a3c43; border-radius: 11px; background: #17181d; box-shadow: 0 18px 55px rgba(0,0,0,.45); }
 .composer:focus-within { border-color: #575a63; }
 .composer textarea { display: block; width: 100%; height: 70px; padding: 15px 16px; resize: none; border: 0; outline: 0; background: transparent; color: #e3e3df; font-size: .8rem; line-height: 1.55; }

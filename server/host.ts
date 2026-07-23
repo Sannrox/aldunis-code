@@ -5,7 +5,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
+import {
+  ClaudeCodeAdapter,
+  type InteractionMode,
+  ProviderProtocolError,
+} from "./provider.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { PermissionBroker, PermissionError } from "./permission.ts";
 import {
@@ -150,6 +154,7 @@ async function handleApi(
         resumeSessionId?: unknown;
         projectId?: unknown;
         threadId?: unknown;
+        mode?: unknown;
       };
       if (
         typeof body.root !== "string"
@@ -161,9 +166,11 @@ async function handleApi(
         || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
         || (body.projectId !== undefined && typeof body.projectId !== "string")
         || (body.threadId !== undefined && typeof body.threadId !== "string")
+        || !["ask", "plan", "build"].includes(body.mode as string)
       ) {
-        throw new RepositoryError("A repository, worktree, and prompt are required.");
+        throw new RepositoryError("A repository, worktree, prompt, and interaction mode are required.");
       }
+      const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
       const projection = await state.load();
       const project = typeof body.projectId === "string"
@@ -174,6 +181,7 @@ async function handleApi(
         projectId: project.id,
         worktree: context.worktree,
         prompt: body.prompt.trim(),
+        mode,
         threadId: body.threadId,
       });
       const port = request.socket.localPort;
@@ -187,6 +195,7 @@ async function handleApi(
           body.conversationId,
           body.prompt.trim(),
           approvalUrl,
+          mode,
           body.resumeSessionId,
         );
       } catch (error) {
