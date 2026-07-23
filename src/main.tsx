@@ -56,6 +56,17 @@ interface ConversationSummary {
   worktree: string;
   updatedAt: string;
 }
+type InboxStatus = "working" | "approval" | "input" | "ready";
+interface InboxThreadPreview {
+  id: string;
+  title: string;
+  summary: string;
+  worktree: string;
+  updatedAt: string;
+  status: InboxStatus;
+  changedFiles: number | null;
+  demo: boolean;
+}
 type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 interface ChangedFile {
   path: string;
@@ -397,12 +408,104 @@ function CodeSidebar({
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
 }) {
+  const demoThreads: InboxThreadPreview[] = repository && conversations.length === 0
+    ? [
+        {
+          id: "demo:approval",
+          title: "Review scoped filesystem approval",
+          summary: "The agent needs permission before updating the repository adapter.",
+          worktree: repository.selectedWorktree,
+          updatedAt: "9m",
+          status: "approval",
+          changedFiles: 3,
+          demo: true,
+        },
+        {
+          id: "demo:working",
+          title: "Normalize provider session events",
+          summary: "Codex is running deterministic adapter checks.",
+          worktree: repository.selectedWorktree,
+          updatedAt: "2m",
+          status: "working",
+          changedFiles: 6,
+          demo: true,
+        },
+        {
+          id: "demo:ready",
+          title: "Add inbox-style conversation workflow",
+          summary: "Implementation finished; review the result or clear it from active attention.",
+          worktree: repository.selectedWorktree,
+          updatedAt: "24m",
+          status: "ready",
+          changedFiles: 2,
+          demo: true,
+        },
+        {
+          id: "demo:input",
+          title: "Choose recovery behavior for moved worktrees",
+          summary: "A product decision is needed before the agent can continue.",
+          worktree: repository.selectedWorktree,
+          updatedAt: "1h",
+          status: "input",
+          changedFiles: null,
+          demo: true,
+        },
+      ]
+    : [];
+  const liveThreads: InboxThreadPreview[] = conversations.map((conversation) => ({
+    ...conversation,
+    summary: "Local conversation attached to an explicit worktree.",
+    status: "ready",
+    changedFiles: null,
+    demo: false,
+  }));
+  const inboxThreads = liveThreads.length > 0 ? liveThreads : demoThreads;
+  const storageKey = `aldunis.inbox.settled.${repository?.projectId ?? "none"}`;
+  const [settledIds, setSettledIds] = useState<string[]>(() => {
+    try {
+      const value = window.localStorage.getItem(storageKey);
+      return value ? JSON.parse(value) as string[] : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      const value = window.localStorage.getItem(storageKey);
+      setSettledIds(value ? JSON.parse(value) as string[] : []);
+    } catch {
+      setSettledIds([]);
+    }
+  }, [storageKey]);
+  const settle = (id: string) => {
+    setSettledIds((current) => {
+      const next = current.includes(id) ? current : [...current, id];
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  };
+  const unsettle = (id: string) => {
+    setSettledIds((current) => {
+      const next = current.filter((item) => item !== id);
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+      return next;
+    });
+  };
+  const activeThreads = inboxThreads.filter((thread) => !settledIds.includes(thread.id));
+  const settledThreads = inboxThreads.filter((thread) => settledIds.includes(thread.id));
+  const [settledOpen, setSettledOpen] = useState(false);
+  const statusLabel: Record<InboxStatus, string> = {
+    working: "Working",
+    approval: "Approval",
+    input: "Needs input",
+    ready: "Ready",
+  };
   return (
-    <aside className="context-sidebar">
+    <aside className="context-sidebar inbox-sidebar">
       <header>
         <div>
           <strong>ALDUNIS CODE</strong>
-          <span>Local workbench</span>
+          <span>Conversation inbox</span>
         </div>
         <button aria-label="New conversation" onClick={onNewConversation}><Icon name="plus" /></button>
       </header>
@@ -414,67 +517,95 @@ function CodeSidebar({
         </span>
         <Icon name="chevron" />
       </button>
-      <div className="sidebar-actions">
-        <button onClick={onOpenPalette}><Icon name="spark" /> Commands <kbd>⌘ K</kbd></button>
-        <button onClick={onSearch}><Icon name="search" /> Thread search</button>
-        <button onClick={onBrowseFiles} disabled={!repository}><Icon name="search" /> Browse files</button>
-        <button onClick={() => onManageWorktrees()} disabled={!repository}><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
-        <button onClick={onShowChanges} disabled={!repository}>
-          <Icon name="diff" /> Changed files <span className="change-count">{repository ? changes.length : "—"}</span>
+      <div className="inbox-toolbar">
+        <button onClick={onSearch}><Icon name="search" /> Search <kbd>⌘ K</kbd></button>
+        <button onClick={onOpenPalette} aria-label="Open commands"><Icon name="spark" /></button>
+        <button onClick={onBrowseFiles} disabled={!repository} aria-label="Browse repository files"><Icon name="code" /></button>
+      </div>
+      <div className="inbox-scope">
+        <button>
+          <Icon name="message" />
+          <span>All conversations</span>
+          <small>{activeThreads.length}</small>
+          <Icon name="chevron" />
+        </button>
+        <button onClick={() => onManageWorktrees()} disabled={!repository} aria-label="Manage worktrees">
+          <Icon name="branch" />
         </button>
       </div>
-      {repository && (
-        <div className="worktree-list" aria-label="Repository worktrees">
-          {repository.worktrees.map((worktree) => (
-            <div className={repository.selectedWorktree === worktree.path ? "selected" : ""} key={worktree.path}>
-              <span className={`worktree-state ${worktree.state}`} aria-hidden="true" />
+      <div className="inbox-list" aria-label="Active conversation inbox">
+        {activeThreads.map((thread) => {
+          const blocked = thread.status !== "ready";
+          const selected = !thread.demo && (
+            primaryConversationId === thread.id || secondaryConversationId === thread.id
+          );
+          return (
+            <article className={`inbox-thread ${thread.status} ${selected ? "selected" : ""}`} key={thread.id}>
               <button
-                className="worktree-select"
-                onClick={() => onSelectWorktree(worktree.path)}
-                disabled={worktree.state === "missing" || worktree.state === "inaccessible"}
-                aria-current={repository.selectedWorktree === worktree.path ? "true" : undefined}
+                className="inbox-thread-main"
+                onClick={() => { if (!thread.demo) onOpenConversation(thread.id); }}
+                aria-label={`${thread.demo ? "Preview" : "Open"} ${thread.title}`}
               >
-                <strong>{worktree.branch ?? "Detached HEAD"}</strong>
-                <small>{worktree.path}</small>
+                <span className="inbox-thread-status">
+                  <span className="status-dot" aria-hidden="true" />
+                  {statusLabel[thread.status]}
+                </span>
+                <time>{thread.updatedAt.includes("T") ? "recent" : thread.updatedAt}</time>
+                <strong>{thread.title}</strong>
+                <p>{thread.summary}</p>
+                <span className="inbox-thread-meta">
+                  <span><Icon name="branch" />{thread.worktree.split("/").pop()}</span>
+                  {thread.changedFiles !== null && <span><Icon name="diff" />{thread.changedFiles} files</span>}
+                </span>
               </button>
-              <button
-                className="worktree-manage"
-                onClick={() => onManageWorktrees(worktree.path)}
-                aria-label={`Manage ${worktree.branch ?? worktree.path}`}
-              >
-                {worktree.ownership === "aldunis" ? worktree.recovery : "user"}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="section-label"><span>Conversations</span><button onClick={onSearch}>•••</button></div>
-      <div className="session-list">
-        {conversations.map((conversation) => (
-          <div className="session-row" key={conversation.id}>
+              <footer>
+                {thread.demo && <small>Preview data</small>}
+                {!thread.demo && (
+                  <button
+                    className="open-beside"
+                    onClick={() => onOpenBeside(thread.id)}
+                    disabled={primaryConversationId === thread.id}
+                  >Open beside</button>
+                )}
+                <button
+                  className="settle-button"
+                  onClick={() => settle(thread.id)}
+                  disabled={blocked}
+                  title={blocked ? `Cannot settle while ${statusLabel[thread.status].toLowerCase()}` : "Clear from active attention"}
+                >
+                  <Icon name="chevron" /> Settle
+                </button>
+              </footer>
+            </article>
+          );
+        })}
+        {repository && inboxThreads.length === 0 && <p className="empty-conversations">Send a prompt to create the first conversation.</p>}
+        {settledThreads.length > 0 && (
+          <section className="settled-section">
             <button
-              className={primaryConversationId === conversation.id ? "active" : ""}
-              onClick={() => onOpenConversation(conversation.id)}
-              aria-label={`Open ${conversation.title}`}
+              className="settled-heading"
+              onClick={() => setSettledOpen((value) => !value)}
+              aria-expanded={settledOpen}
             >
-              <span className="session-icon"><Icon name="message" /></span>
-              <span className="session-copy">
-                <strong>{conversation.title}</strong>
-                <small>{conversation.worktree}</small>
-              </span>
-              {(primaryConversationId === conversation.id || secondaryConversationId === conversation.id) && <i />}
+              <span>Settled</span><small>{settledThreads.length}</small><Icon name="chevron" />
             </button>
-            <button
-              className="open-beside"
-              onClick={() => onOpenBeside(conversation.id)}
-              disabled={primaryConversationId === conversation.id}
-              aria-label={`Open ${conversation.title} beside current conversation`}
-            >▥</button>
-          </div>
-        ))}
-        {repository && conversations.length === 0 && <p className="empty-conversations">Send a prompt to create the first conversation.</p>}
+            {settledOpen && settledThreads.map((thread) => (
+              <div className="settled-row" key={thread.id}>
+                <button onClick={() => { if (!thread.demo) onOpenConversation(thread.id); }}>
+                  <span className="status-dot" aria-hidden="true" />
+                  <span><strong>{thread.title}</strong><small>{thread.updatedAt.includes("T") ? "recent" : thread.updatedAt}</small></span>
+                </button>
+                <button onClick={() => unsettle(thread.id)} aria-label={`Return ${thread.title} to active conversations`}><Icon name="route" /></button>
+              </div>
+            ))}
+          </section>
+        )}
       </div>
-      <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
+      <footer>
+        <span className="provider-dot" />
+        <span><strong>Local-first</strong><small>{changes.length} changed files · explicit approvals</small></span>
+        <button onClick={onShowChanges}>Review</button>
+      </footer>
     </aside>
   );
 }
