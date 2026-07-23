@@ -75,6 +75,24 @@ After opening a repository or linked worktree, send a prompt to start a Claude
 Code session attached to that explicitly selected worktree. Provider
 credentials stay in Claude Code's
 supported local credential store and are never returned to the browser.
+
+## Claude profiles
+
+Open Settings to create named Claude Code profiles with a binary path, an
+optional Claude configuration directory, and provider-specific environment
+variables. Aldunis Code passes a custom directory as `CLAUDE_CONFIG_DIR` while
+leaving the process home unchanged.
+
+Sensitive environment values are stored separately in the local server secret
+store with owner-only file permissions. Profile metadata and browser responses
+contain only a marker indicating whether a value exists. Editing a profile with
+an empty displayed sensitive value preserves the stored value; removing its
+environment-variable row deletes the Aldunis-owned secret.
+
+Deleting a profile removes its Aldunis-owned environment secrets. It never
+deletes the configured Claude directory, Claude credentials, or other
+provider-owned files. Existing Claude threads may continue only through a
+profile that resolves to the same Claude configuration directory.
 Aldunis Code starts Claude in plan permission mode for this initial adapter, so
 mutating tools are not silently approved. Active turns can be cancelled, and a
 completed or interrupted Claude session can be resumed with its provider
