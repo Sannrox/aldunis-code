@@ -67,6 +67,17 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .section-label { display: flex; align-items: center; justify-content: space-between; padding: 18px 18px 8px; color: #60626a; font: 500 .59rem "DM Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
 .section-label button { background: transparent; color: #666870; }
 .session-list { padding: 0 8px; }
+.session-list.grouped { overflow-y: auto; }
+.thread-group { margin-bottom: 8px; border-left: 2px solid transparent; }
+.thread-group.active-context { border-left-color: var(--acid); }
+.thread-group > header { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 10px; }
+.thread-group > header strong, .thread-group > header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-group > header strong { color: #c6c7ca; font-size: .65rem; }
+.thread-group > header small { color: #62646c; font: .5rem "DM Mono", monospace; }
+.thread-group > header em { position: absolute; top: 8px; right: 8px; color: var(--acid); font: normal .45rem "DM Mono", monospace; text-transform: uppercase; }
+.thread-group > button { display: grid; width: 100%; grid-template-columns: 29px 1fr; gap: 7px; padding: 8px 10px; border-radius: 6px; background: transparent; text-align: left; }
+.thread-group > button:hover { background: #1c1d22; }
+.empty-threads { padding: 10px; color: #6b6d74; font-size: .65rem; }
 .session-list > button { position: relative; display: grid; width: 100%; grid-template-columns: 29px 1fr; gap: 7px; padding: 9px 10px; border-radius: 7px; background: transparent; text-align: left; }
 .session-list > button:hover, .session-list > button.active { background: #1c1d22; }
 .session-icon { display: grid; width: 26px; height: 26px; place-items: center; color: #696b73; }
@@ -394,6 +405,37 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .profile-dialog form > footer button.primary { border-color: var(--acid); background: var(--acid); color: #11130d; font-weight: 600; }
 .profile-dialog form > footer button.danger { border-color: #5e3834; color: #dba29c; }
 .profile-dialog form > footer button:disabled { opacity: .5; cursor: default; }
+.quick-dialog { width: min(620px, 100%); overflow: hidden; border: 1px solid #3a3c43; border-radius: 12px; background: #15161a; box-shadow: 0 28px 90px rgba(0,0,0,.65); }
+.quick-dialog > header { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+.quick-dialog h2 { margin: 0; font: 400 1.45rem "Newsreader", serif; }
+.quick-dialog > header button { width: 30px; height: 30px; border-radius: 6px; background: #222329; color: #9a9ca3; }
+.quick-search { display: flex; align-items: center; gap: 9px; margin: 16px; padding: 0 12px; border: 1px solid #3a3c43; border-radius: 7px; background: #0f1013; }
+.quick-search svg { width: 15px; color: #71737b; }
+.quick-search input { width: 100%; padding: 12px 0; border: 0; outline: 0; background: transparent; }
+.search-scope { margin: 0 16px 12px; color: #73757d; font-size: .62rem; line-height: 1.5; }
+.quick-results { max-height: min(430px, 55vh); overflow-y: auto; padding: 0 10px 12px; }
+.quick-results > button { display: flex; width: 100%; flex-direction: column; gap: 5px; padding: 11px 12px; border-radius: 7px; background: transparent; text-align: left; }
+.quick-results > button:hover, .quick-results > button:focus-visible { background: #202126; }
+.quick-results strong { color: #d2d3d0; font-size: .72rem; }
+.quick-results small { overflow: hidden; color: #6d6f77; font: .55rem "DM Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.quick-results > p { padding: 12px; color: #73757d; font-size: .68rem; }
+.preferences-form { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 20px 20px; }
+.preferences-form label { display: flex; flex-direction: column; gap: 7px; color: #a9aab0; font: .56rem "DM Mono", monospace; text-transform: uppercase; }
+.preferences-form select { padding: 10px; border: 1px solid #34363d; border-radius: 6px; background: #0f1013; }
+.preferences-form .search-scope, .preferences-form footer, .recovery-note { grid-column: 1 / -1; }
+.preferences-form footer { display: flex; justify-content: flex-end; gap: 8px; }
+.preferences-form footer button { padding: 8px 10px; border: 1px solid #34363c; border-radius: 6px; background: #1c1d22; }
+.preferences-form footer .primary { border-color: var(--acid); background: var(--acid); color: #11130d; font-weight: 600; }
+.recovery-note { margin: 16px 20px 0; padding: 9px 10px; border-left: 2px solid #d8b276; background: #1b1912; color: #d8c18e; font-size: .66rem; }
+[data-density="compact"] .session-list button, [data-density="compact"] .thread-group > button { padding-block: 5px; }
+[data-density="compact"] .conversation-scroll { padding-top: 16px; }
+[data-motion="reduce"] *, [data-motion="reduce"] *::before, [data-motion="reduce"] *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+[data-theme="light"] { color: #202126; background: #f3f1eb; --line: #d6d3cb; --muted: #686a70; --panel: #f7f5ef; --panel-2: #eeece5; --acid: #547b00; }
+[data-theme="light"] .app, [data-theme="light"] .page-header { background: #f3f1eb; }
+[data-theme="light"] .conversation { background: #faf9f5; }
+[data-theme="light"] .page-selector-current, [data-theme="light"] .page-settings, [data-theme="light"] .project-switcher, [data-theme="light"] .quick-dialog { background: #fff; color: #24252a; }
+[data-theme="light"] .page-selector select, [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea { color: #24252a; }
+[data-theme="light"] .session-copy strong, [data-theme="light"] .thread-group > header strong, [data-theme="light"] .quick-results strong { color: #34353a; }
 @media (max-width: 900px) {
   .context-sidebar { width: 240px; flex-basis: 240px; }
   .domain-orbit { opacity: .35; }
@@ -438,6 +480,7 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .profile-fields, .probe-grid { grid-template-columns: 1fr; }
   .provider-selectors .context { display: none; }
   .delivery-form { grid-template-columns: 1fr; }
+  .preferences-form { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .conversation-scroll > article, .domain-page > * { animation: arrive .4s both; }
