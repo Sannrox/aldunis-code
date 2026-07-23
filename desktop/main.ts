@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalHost } from "../server/host.ts";
@@ -7,9 +7,7 @@ import {
   DESKTOP_PROTOCOL,
   isSupportedDeepLink,
   listenOnLoopback,
-  selectedDirectoryPath,
 } from "./lifecycle.ts";
-import { CHOOSE_DIRECTORY_CHANNEL } from "./channels.ts";
 
 const applicationRoot = fileURLToPath(new URL("..", import.meta.url));
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -55,19 +53,10 @@ if (!gotSingleInstanceLock) {
       minHeight: 640,
       show: false,
       webPreferences: {
-        preload: join(applicationRoot, "dist-electron", "preload.cjs"),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
       },
-    });
-    ipcMain.removeHandler(CHOOSE_DIRECTORY_CHANNEL);
-    ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
-      if (!window || event.sender !== window.webContents) return null;
-      const result = await dialog.showOpenDialog(window, {
-        properties: ["openDirectory", "createDirectory"],
-      });
-      return selectedDirectoryPath(result);
     });
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("https://")) void shell.openExternal(url);

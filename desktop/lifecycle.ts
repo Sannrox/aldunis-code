@@ -3,13 +3,6 @@ import type { Server } from "node:http";
 
 export const DESKTOP_PROTOCOL = "aldunis-code";
 
-export function selectedDirectoryPath(result: {
-  canceled: boolean;
-  filePaths: string[];
-}): string | null {
-  return result.canceled ? null : (result.filePaths[0] ?? null);
-}
-
 export function localApplicationUrl(address: AddressInfo | string | null): string {
   if (!address || typeof address === "string") {
     throw new Error("The local backend did not provide a TCP address.");
