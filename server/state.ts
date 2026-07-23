@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { ProviderEvent } from "./provider.ts";
+import type { InteractionMode, ProviderEvent } from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 1;
 
@@ -31,6 +31,7 @@ export interface Turn {
   status: "running" | "completed" | "cancelled" | "failed";
   createdAt: string;
   completedAt: string | null;
+  mode?: InteractionMode;
 }
 
 export interface Message {
@@ -265,6 +266,7 @@ export class LocalStateStore {
     projectId: string;
     worktree: string;
     prompt: string;
+    mode: InteractionMode;
     threadId?: string;
   }): Promise<{ thread: Thread; turn: Turn }> {
     const projection = await this.load();
@@ -296,6 +298,7 @@ export class LocalStateStore {
       status: "running",
       createdAt: now,
       completedAt: null,
+      mode: input.mode,
     };
     const message: Message = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
