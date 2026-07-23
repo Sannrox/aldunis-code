@@ -104,7 +104,7 @@ interface ElementReference {
   text: string | null;
   screenshot: string | null;
 }
-type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
+type ProviderState = "idle" | "starting" | "streaming" | "waiting_for_approval" | "cancelling" | "completed" | "cancelled" | "failed";
 type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
@@ -834,6 +834,10 @@ function Conversation({
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(null);
   const [profileId, setProfileId] = useState("");
   const [model, setModel] = useState("default");
+  const [notificationsEnabled, setNotificationsEnabled] = useState(
+    () => typeof Notification !== "undefined" && Notification.permission === "granted",
+  );
+  const lastAttentionState = useRef<string | null>(null);
   useEffect(() => {
     if (!profiles.some((profile) => profile.id === profileId)) {
       setProfileId(profiles[0]?.id ?? "");
@@ -845,6 +849,107 @@ function Conversation({
     setSessionId(null);
     setThreadId(null);
   }, [repository?.projectId]);
+  useEffect(() => {
+    if (!repository?.projectId) return;
+    let active = true;
+    let timer: number | undefined;
+    const restore = async () => {
+      const response = await fetch("/api/state/load", { method: "POST" });
+      if (!response.ok || !active) return;
+      const projection = await response.json() as {
+        threads: Array<{ id: string; projectId: string; updatedAt: string }>;
+        turns: Array<{
+          id: string;
+          threadId: string;
+          status: "active" | "idle" | "waiting_for_user" | "waiting_for_approval" | "completed" | "failed" | "interrupted" | "running" | "cancelled";
+          mode?: InteractionMode;
+          providerRunId?: string;
+          createdAt: string;
+        }>;
+        messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
+        providerSessions: Array<{ threadId: string; sessionId: string }>;
+      };
+      const thread = projection.threads
+        .filter((item) => item.projectId === repository.projectId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      if (!thread) return;
+      const turns = projection.turns
+        .filter((item) => item.threadId === thread.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      const latest = turns.at(-1);
+      if (!latest) return;
+      setThreadId(thread.id);
+      setSessionId(projection.providerSessions.find((item) => item.threadId === thread.id)?.sessionId ?? null);
+      setRunId(latest.providerRunId ?? null);
+      const turnIds = new Set(turns.map((turn) => turn.id));
+      const history = projection.messages
+        .filter((message) => turnIds.has(message.turnId))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      setMessages(history.filter((message) => message.role === "user").map((message) => ({
+        text: message.text,
+        mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
+      })));
+      setProviderEvents(history.filter((message) => message.role === "assistant").map((message) => ({
+        kind: "assistant_text" as const,
+        text: message.text,
+      })));
+      const nextState: ProviderState = latest.status === "active" || latest.status === "running"
+        ? "streaming"
+        : latest.status === "waiting_for_approval"
+          ? "waiting_for_approval"
+          : latest.status === "interrupted" || latest.status === "cancelled"
+            ? "cancelled"
+            : latest.status === "failed"
+              ? "failed"
+              : latest.status === "completed"
+                ? "completed"
+                : "idle";
+      setProviderState(nextState);
+      if (latest.providerRunId && latest.status === "waiting_for_approval") {
+        const approvalsResponse = await fetch("/api/provider/approvals/list", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ runId: latest.providerRunId }),
+        });
+        if (approvalsResponse.ok) {
+          const body = await approvalsResponse.json() as {
+            approvals: Array<Extract<ProviderEvent, { kind: "approval_pending" }>>;
+          };
+          setProviderEvents((current) => [
+            ...current.filter((event) => event.kind !== "approval_pending"),
+            ...body.approvals.map(({ kind: _kind, ...approval }) => ({
+              kind: "approval_pending" as const,
+              ...approval,
+            })),
+          ]);
+        }
+      }
+      if (
+        notificationsEnabled
+        && document.visibilityState !== "visible"
+        && lastAttentionState.current !== latest.status
+        && ["waiting_for_approval", "completed", "failed", "interrupted"].includes(latest.status)
+      ) {
+        new Notification("Aldunis Code needs attention", {
+          body: latest.status === "waiting_for_approval"
+            ? "A local action is waiting for your decision."
+            : "A background turn changed state.",
+        });
+      }
+      lastAttentionState.current = latest.status;
+      if (latest.status === "active" || latest.status === "waiting_for_approval") {
+        timer = window.setTimeout(() => void restore(), 10_000);
+      }
+    };
+    void restore();
+    const visible = () => { if (document.visibilityState === "visible") void restore(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [notificationsEnabled, repository?.projectId]);
   useEffect(() => {
     void fetch("/api/provider/capabilities", {
       method: "POST",
@@ -860,6 +965,7 @@ function Conversation({
   )) ?? null;
   const runActive = providerState === "starting"
     || providerState === "streaming"
+    || providerState === "waiting_for_approval"
     || providerState === "cancelling";
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
@@ -1073,6 +1179,7 @@ function Conversation({
     idle: repository ? "Ready" : "Open a repository to start",
     starting: "Starting Claude Code…",
     streaming: "Claude Code is working…",
+    waiting_for_approval: "Waiting for your approval…",
     cancelling: "Cancelling…",
     completed: "Turn completed",
     cancelled: "Turn cancelled · send another prompt to resume",
@@ -1093,6 +1200,13 @@ function Conversation({
             <Icon name="code" /><span>Preview</span>
           </button>
           <button className="ghost" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</button>
+          {!notificationsEnabled && typeof Notification !== "undefined" && Notification.permission !== "denied" && (
+            <button
+              className="ghost"
+              onClick={async () => setNotificationsEnabled(await Notification.requestPermission() === "granted")}
+              aria-label="Enable optional background notifications"
+            >Notify</button>
+          )}
         </div>
       </header>
       <section className="conversation-scroll">
@@ -1124,7 +1238,7 @@ function Conversation({
             <span className="claude-avatar">C</span>
             <div>
               <header><strong>Claude</strong><span className="model">Claude Code</span><time>now</time></header>
-              {(providerState === "starting" || providerState === "streaming" || providerState === "cancelling") && (
+              {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantText && <p className="provider-copy">{assistantText}</p>}

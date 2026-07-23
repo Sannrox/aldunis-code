@@ -120,5 +120,14 @@ deletion and retention compact the log atomically so removed prompts and
 activity are not left behind. Provider credentials, environment variables,
 tool inputs, and tool outputs are not part of the persistence schema.
 
+Active turns remain owned by the loopback host when the user navigates away
+from Code. Returning restores the latest durable messages, provider run,
+attention state, and pending approval without restarting the provider.
+Background state checks are bounded to active turns, and each project is
+limited to 200 retained conversations until older local history is deleted or
+compacted. Desktop notifications are optional, requested only by an explicit
+user action, and contain generic attention text rather than prompts, paths, or
+provider output.
+
 Read [AGENTS.md](AGENTS.md), [the architecture](docs/architecture.md), and
 [the work lifecycle](docs/work-lifecycle.md) before changing a boundary.

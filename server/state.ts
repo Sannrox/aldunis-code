@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { InteractionMode, ProviderEvent } from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 1;
+export const MAX_THREADS_PER_PROJECT = 200;
 
 export interface Project {
   schemaVersion: 1;
@@ -28,10 +29,20 @@ export interface Turn {
   schemaVersion: 1;
   id: string;
   threadId: string;
-  status: "running" | "completed" | "cancelled" | "failed";
+  status:
+    | "active"
+    | "idle"
+    | "waiting_for_user"
+    | "waiting_for_approval"
+    | "completed"
+    | "failed"
+    | "interrupted"
+    | "running"
+    | "cancelled";
   createdAt: string;
   completedAt: string | null;
   mode?: InteractionMode;
+  providerRunId?: string;
 }
 
 export interface Message {
@@ -275,6 +286,16 @@ export class LocalStateStore {
     if (!projection.projects.some((project) => project.id === input.projectId)) {
       throw new LocalStateError("The selected project is not in local history.", 404);
     }
+    if (
+      !input.threadId
+      && projection.threads.filter((thread) => thread.projectId === input.projectId).length
+        >= MAX_THREADS_PER_PROJECT
+    ) {
+      throw new LocalStateError(
+        `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit. Delete or retain older conversations before starting another.`,
+        429,
+      );
+    }
     const now = new Date().toISOString();
     const existing = input.threadId
       ? projection.threads.find((thread) => thread.id === input.threadId)
@@ -297,7 +318,7 @@ export class LocalStateStore {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
       id: randomUUID(),
       threadId: thread.id,
-      status: "running",
+      status: "active",
       createdAt: now,
       completedAt: null,
       mode: input.mode,
@@ -316,6 +337,29 @@ export class LocalStateStore {
     return { thread, turn };
   }
 
+  async bindProviderRun(turnId: string, providerRunId: string): Promise<void> {
+    const turn = (await this.load()).turns.find((item) => item.id === turnId);
+    if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
+    await this.#append({ type: "turn_saved", turn: { ...turn, providerRunId } });
+  }
+
+  async recoverInterruptedTurns(): Promise<void> {
+    const projection = await this.load();
+    for (const turn of projection.turns) {
+      if (turn.status !== "active" && turn.status !== "running" && turn.status !== "waiting_for_approval") {
+        continue;
+      }
+      await this.#append({
+        type: "turn_saved",
+        turn: {
+          ...turn,
+          status: "interrupted",
+          completedAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+
   async recordProviderEvent(
     threadId: string,
     turnId: string,
@@ -323,6 +367,20 @@ export class LocalStateStore {
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
     const now = new Date().toISOString();
+    if (event.kind === "approval_pending" || event.kind === "approval_resolved") {
+      const turn = (await this.load()).turns.find((item) => item.id === turnId);
+      if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      await this.#append({
+        type: "turn_saved",
+        turn: {
+          ...turn,
+          status: event.kind === "approval_pending" && event.state === "pending"
+            ? "waiting_for_approval"
+            : "active",
+        },
+      });
+      return;
+    }
     if (event.kind === "assistant_text") {
       await this.#append({
         type: "message_saved",
@@ -382,7 +440,7 @@ export class LocalStateStore {
         type: "turn_saved",
         turn: {
           ...turn,
-          status: event.kind === "turn_completed" ? "completed" : event.kind === "cancelled" ? "cancelled" : "failed",
+          status: event.kind === "turn_completed" ? "completed" : event.kind === "cancelled" ? "interrupted" : "failed",
           completedAt: now,
         },
       });
