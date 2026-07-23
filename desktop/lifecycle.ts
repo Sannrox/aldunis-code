@@ -1,0 +1,44 @@
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+
+export const DESKTOP_PROTOCOL = "aldunis-code";
+
+export function localApplicationUrl(address: AddressInfo | string | null): string {
+  if (!address || typeof address === "string") {
+    throw new Error("The local backend did not provide a TCP address.");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+export function isSupportedDeepLink(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === `${DESKTOP_PROTOCOL}:`;
+  } catch {
+    return false;
+  }
+}
+
+export async function listenOnLoopback(server: Server): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, "127.0.0.1");
+  });
+  return localApplicationUrl(server.address());
+}
+
+export async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+}
