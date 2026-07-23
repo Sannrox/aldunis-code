@@ -17,6 +17,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "Inspect the change",
+    mode: "plan",
   });
   await store.recordProviderEvent(thread.id, turn.id, {
     kind: "session_started",
@@ -45,6 +46,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.projects[0].schemaVersion, 1);
   assert.equal(rebuilt.threads[0].schemaVersion, 1);
   assert.equal(rebuilt.turns[0].status, "completed");
+  assert.equal(rebuilt.turns[0].mode, "plan");
   assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);
   assert.equal(rebuilt.activities[0].name, "Read");
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
@@ -57,6 +59,7 @@ test("concurrent writes remain strictly ordered and crash-safe", async () => {
     projectId: "project-1",
     worktree: "/fixture",
     prompt: `Turn ${index}`,
+    mode: "ask",
   })));
 
   const projection = await new LocalStateStore(directory).load();
@@ -95,6 +98,7 @@ test("project deletion and retention physically remove sensitive conversation da
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "secret prompt sentinel",
+    mode: "build",
   });
   await deleted.store.deleteProject("project-1");
   assert.deepEqual(await deleted.store.load(), {
@@ -115,6 +119,7 @@ test("project deletion and retention physically remove sensitive conversation da
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "expired sensitive prompt",
+    mode: "build",
   });
   await retained.store.enforceRetention(new Date(Date.now() + 60_000));
   const projection = await retained.store.load();
@@ -130,6 +135,7 @@ test("only allowlisted provider fields are persisted", async () => {
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "safe prompt",
+    mode: "ask",
   });
   await store.recordProviderEvent(thread.id, turn.id, {
     kind: "tool_started",
