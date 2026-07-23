@@ -127,6 +127,22 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .tool-activity svg { width: 14px; color: #d49a74; }
 .tool-activity small { max-width: 150px; overflow: hidden; color: #5f6169; font: .52rem "DM Mono", monospace; text-overflow: ellipsis; }
 .tool-activity.failed { border-color: #5e3834; }
+.approval-card { overflow: hidden; margin: 12px 0; border: 1px solid #675b35; border-radius: 9px; background: #191912; }
+.approval-card > header { display: grid; min-height: 48px; grid-template-columns: 28px 1fr auto; align-items: center; gap: 9px; padding: 9px 11px; border-bottom: 1px solid #383621; }
+.approval-card > header > span { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 6px; background: rgba(197,255,82,.1); color: var(--acid); }
+.approval-card > header svg { width: 15px; }
+.approval-card > header > div { display: flex; flex-direction: column; gap: 3px; }
+.approval-card > header strong { font-size: .7rem; }
+.approval-card > header small, .approval-card > header em { color: #85826e; font: normal .52rem "DM Mono", monospace; }
+.approval-card > header em { text-transform: uppercase; }
+.approval-card > p { margin: 11px 12px 8px; color: #d0d0c8; font: .62rem/1.5 "DM Mono", monospace; overflow-wrap: anywhere; }
+.approval-card ul { margin: 0 12px 10px; padding-left: 17px; color: #858791; font: .57rem/1.6 "DM Mono", monospace; }
+.approval-binding { display: block; margin: 0 12px 11px; color: #66685e; font: .52rem/1.5 "DM Mono", monospace; }
+.approval-card > footer { display: flex; justify-content: flex-end; gap: 7px; padding: 9px 11px; border-top: 1px solid #302f20; }
+.approval-card > footer button { padding: 7px 10px; border: 1px solid #454640; border-radius: 5px; background: #23241f; font-size: .62rem; }
+.approval-card > footer .allow-once { border-color: var(--acid); background: var(--acid); color: #11130d; font-weight: 600; }
+.approval-card.allowed_once { border-color: #496536; }
+.approval-card.denied, .approval-card.cancelled, .approval-card.expired, .approval-card.provider_failed { border-color: #5e3834; background: #191313; }
 .provider-error { margin: 12px 0; padding: 10px 12px; border-left: 2px solid #c96f65; background: rgba(201,111,101,.08); color: #dba29c; font-size: .7rem; line-height: 1.5; }
 .provider-state { color: #777981 !important; font: .6rem "DM Mono", monospace !important; }
 .disclaimer { margin: 8px 0 0; color: #4e5057; font: .52rem "DM Mono", monospace; text-align: center; }
