@@ -131,15 +131,13 @@ interface ProviderCapabilities {
     imageTypes: string[];
   };
 }
-type ProviderId = "claude-code" | "codex-cli" | `adapter:${string}@${string}`;
+type ProviderId = "claude-code" | "codex-cli";
 type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 interface ProviderDiscovery {
   id: ProviderId;
   installed: boolean;
   authenticated?: boolean;
   version?: string | null;
-  name?: string;
-  enabled?: boolean;
   models?: Array<{
     id: string;
     displayName: string;
@@ -147,26 +145,6 @@ interface ProviderDiscovery {
     reasoningEfforts: ReasoningEffort[];
     defaultReasoningEffort: ReasoningEffort;
   }>;
-}
-interface ProviderAdapterManifest {
-  schemaVersion: 1;
-  id: string;
-  publisher: { name: string };
-  version: string;
-  aldunis: { minimumVersion: string; maximumVersion: string };
-  protocol: { kind: "acp"; minimumVersion: 1; maximumVersion: 1 };
-  executable: { names: string[]; arguments: string[] };
-  capabilities: { tools: boolean; images: boolean; sessionResume: boolean };
-  environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
-  presentation: { name: string; description: string; website?: string };
-}
-interface InstalledProviderAdapter {
-  schemaVersion: 1;
-  source: string;
-  digest: string;
-  enabled: boolean;
-  installedAt: string;
-  manifest: ProviderAdapterManifest;
 }
 type ProfileProbeKind = "availability" | "version" | "authentication" | "models";
 interface ProfileProbe {
@@ -246,7 +224,6 @@ type ProviderEvent =
     conversationId: string;
     repository: string;
     worktree: string;
-    provider: string;
     toolCallId: string;
     toolName: string;
     scope: { summary: string; target: string; details: string[] };
@@ -1770,25 +1747,14 @@ function Conversation({
   const [providers, setProviders] = useState<ProviderDiscovery[]>([]);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   useEffect(() => {
-    const loadProviders = () => {
-      void fetch("/api/providers/discover", { method: "POST" })
-        .then((response) => response.json())
-        .then((body: { providers?: ProviderDiscovery[] }) => setProviders(body.providers ?? []))
-        .catch(() => setProviders([{ id: "claude-code", installed: true }]));
-    };
-    loadProviders();
-    window.addEventListener("aldunis:adapters-changed", loadProviders);
-    return () => window.removeEventListener("aldunis:adapters-changed", loadProviders);
+    void fetch("/api/providers/discover", { method: "POST" })
+      .then((response) => response.json())
+      .then((body: { providers?: ProviderDiscovery[] }) => setProviders(body.providers ?? []))
+      .catch(() => setProviders([{ id: "claude-code", installed: true }]));
   }, []);
   const codex = providers.find((item) => item.id === "codex-cli");
-  const selectedProvider = providers.find((item) => item.id === provider);
   const selectedCodexModel = codex?.models?.find((item) => item.id === model);
-  const providerName = provider === "codex-cli"
-    ? "Codex CLI"
-    : provider === "claude-code"
-    ? "Claude Code"
-    : selectedProvider?.name ?? "Provider adapter unavailable";
-  const providerLabel = provider === "codex-cli" ? "Codex" : provider === "claude-code" ? "Claude" : providerName;
+  const providerName = provider === "codex-cli" ? "Codex CLI" : "Claude Code";
   useEffect(() => {
     if (!profiles.some((profile) => profile.id === profileId)) {
       setProfileId(profiles[0]?.id ?? "");
@@ -2347,7 +2313,7 @@ function Conversation({
           <article className="assistant-message provider-response" aria-live="polite">
             <span className="claude-avatar">C</span>
             <div>
-              <header><strong>{providerLabel}</strong><span className="model">{providerName}</span><time>now</time></header>
+              <header><strong>{provider === "codex-cli" ? "Codex" : "Claude"}</strong><span className="model">{providerName}</span><time>now</time></header>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
@@ -2373,14 +2339,14 @@ function Conversation({
                     <div><dt>Host</dt><dd>{location.host}</dd></div>
                     <div><dt>Repository</dt><dd>{approval.repository}</dd></div>
                     <div><dt>Worktree</dt><dd>{approval.worktree}</dd></div>
-                    <div><dt>Provider</dt><dd>{approval.provider}</dd></div>
+                    <div><dt>Provider</dt><dd>Claude Code</dd></div>
                   </dl>
                   <p>{approval.scope.target}</p>
                   {approval.scope.details.length > 0 && (
                     <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
                   )}
                   <small className="approval-binding">
-                    {location.host} · {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · {approval.provider} · direct · {approval.toolName} · {approval.scope.target}
+                    {location.host} · {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · Claude Code · direct · {approval.toolName} · {approval.scope.target}
                   </small>
                   {approval.state === "pending" && (
                     <footer>
@@ -2544,11 +2510,6 @@ function Conversation({
                 }} disabled={runActive}>
                   <option value="claude-code">Claude Code</option>
                   <option value="codex-cli" disabled={!codex?.installed || !codex?.authenticated}>Codex CLI</option>
-                  {providers.filter((item) => item.id.startsWith("adapter:")).map((item) => (
-                    <option value={item.id} disabled={!item.enabled} key={item.id}>
-                      {item.name ?? item.id}{item.enabled ? "" : " (disabled)"}
-                    </option>
-                  ))}
                 </select>
               </label>
               {provider === "claude-code" && profiles.length > 0 ? (
@@ -2568,7 +2529,7 @@ function Conversation({
                 </>
               ) : provider === "claude-code"
                 ? <button className="configure-profile" onClick={onOpenProfiles}>Configure Claude</button>
-                : provider === "codex-cli" ? (
+                : (
                   <>
                     <label>
                       <span className="sr-only">Codex model</span>
@@ -2591,7 +2552,7 @@ function Conversation({
                       </label>
                     )}
                   </>
-                ) : <span className="context">ACP · adapter {selectedProvider?.version}</span>}
+                )}
               <span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span>
             </div>
             {runId
@@ -3233,149 +3194,6 @@ function PreferencesDialog({
   );
 }
 
-function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [adapters, setAdapters] = useState<InstalledProviderAdapter[]>([]);
-  const [administrationAvailable, setAdministrationAvailable] = useState(true);
-  const [source, setSource] = useState("");
-  const [digest, setDigest] = useState("");
-  const [manifestText, setManifestText] = useState("");
-  const [candidate, setCandidate] = useState<InstalledProviderAdapter | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const request = async (route: string, body: unknown = {}) => {
-    const response = await fetch(route, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error ?? "Adapter operation failed.");
-    return result;
-  };
-  const load = async () => {
-    const result = await request("/api/provider/adapters/list") as unknown as {
-      adapters: InstalledProviderAdapter[];
-      administrationAvailable: boolean;
-    };
-    setAdapters(result.adapters);
-    setAdministrationAvailable(result.administrationAvailable);
-  };
-  useEffect(() => {
-    if (!open) return;
-    void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Adapters could not be loaded."));
-  }, [open]);
-  if (!open) return null;
-
-  const inspect = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const manifest = JSON.parse(manifestText) as unknown;
-      const result = await request("/api/provider/adapters/inspect", { source, digest, manifest });
-      setCandidate(result as unknown as InstalledProviderAdapter);
-    } catch (cause) {
-      setCandidate(null);
-      setError(cause instanceof Error ? cause.message : "Adapter inspection failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const act = async (route: string, body: unknown = { approved: true }) => {
-    setBusy(true);
-    setError(null);
-    try {
-      await request(route, body);
-      setCandidate(null);
-      await load();
-      window.dispatchEvent(new Event("aldunis:adapters-changed"));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Adapter operation failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const existing = candidate
-    ? adapters.find((adapter) => adapter.manifest.id === candidate.manifest.id)
-    : undefined;
-
-  return (
-    <OverlayDialog title="Declarative provider adapters" onClose={onClose}>
-      <div className="adapter-settings">
-        <p className="adapter-policy">
-          You decide which source and publisher to trust. Aldunis verifies the reviewed digest,
-          rejects executable package code, and keeps authority inside its ACP runtime and permission broker.
-        </p>
-        {!administrationAvailable && (
-          <p className="context-error" role="status">Remote clients can inspect adapter readiness but cannot administer host adapters.</p>
-        )}
-        <section className="adapter-list" aria-label="Installed provider adapters">
-          {adapters.length === 0 && <p>No declarative adapters installed.</p>}
-          {adapters.map((adapter) => (
-            <article key={adapter.manifest.id}>
-              <header>
-                <div>
-                  <strong>{adapter.manifest.presentation.name}</strong>
-                  <small>{adapter.manifest.id}@{adapter.manifest.version} · {adapter.enabled ? "enabled" : "disabled"}</small>
-                </div>
-                <code>{adapter.digest}</code>
-              </header>
-              <p>{adapter.manifest.presentation.description}</p>
-              <footer>
-                <button disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/${adapter.enabled ? "disable" : "enable"}`)}>
-                  {adapter.enabled ? "Disable" : "Enable"}
-                </button>
-                <button disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/rollback`)}>Rollback</button>
-                <button className="danger" disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}>Uninstall</button>
-              </footer>
-            </article>
-          ))}
-        </section>
-        {administrationAvailable && (
-          <section className="adapter-import">
-            <h3>Inspect a manifest</h3>
-            <label>Source URL<input value={source} onChange={(event) => { setSource(event.target.value); setCandidate(null); }} placeholder="file:///… or https://…" /></label>
-            <label>Expected SHA-256 digest<input value={digest} onChange={(event) => { setDigest(event.target.value); setCandidate(null); }} placeholder="sha256:…" /></label>
-            <label>Manifest JSON<textarea value={manifestText} onChange={(event) => { setManifestText(event.target.value); setCandidate(null); }} rows={10} spellCheck={false} /></label>
-            <button disabled={busy || !source || !digest || !manifestText} onClick={() => void inspect()}>
-              {busy ? "Checking…" : "Inspect compatibility"}
-            </button>
-          </section>
-        )}
-        {candidate && (
-          <section className="adapter-review" aria-label="Adapter approval review">
-            <h3>{existing ? "Review update" : "Review installation"}</h3>
-            <dl>
-              <div><dt>Source</dt><dd>{candidate.source}</dd></div>
-              <div><dt>Publisher claim</dt><dd>{candidate.manifest.publisher.name} · not endorsed by Aldunis</dd></div>
-              <div><dt>Integrity</dt><dd>{candidate.digest}</dd></div>
-              <div><dt>Compatibility</dt><dd>Aldunis {candidate.manifest.aldunis.minimumVersion}–{candidate.manifest.aldunis.maximumVersion}; ACP {candidate.manifest.protocol.minimumVersion}</dd></div>
-              <div><dt>Executable</dt><dd>{candidate.manifest.executable.names.join(", ")}</dd></div>
-              <div><dt>Fixed arguments</dt><dd>{candidate.manifest.executable.arguments.join(" ") || "None"}</dd></div>
-              <div><dt>Environment names</dt><dd>{candidate.manifest.environment.map((item) => `${item.name}${item.required ? " (required)" : ""}`).join(", ") || "None"}</dd></div>
-              <div><dt>Declared capabilities</dt><dd>{Object.entries(candidate.manifest.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(", ") || "None"}</dd></div>
-              <div><dt>Working directory</dt><dd>Canonical conversation worktree</dd></div>
-              <div><dt>Provider process authority</dt><dd>Runs as your local OS user. Aldunis bounds cwd and environment, but does not sandbox native filesystem, process, or network access.</dd></div>
-              <div><dt>Declared capabilities</dt><dd>Cannot grant Aldunis tool authority; ACP mutations still require allow-once approval</dd></div>
-            </dl>
-            <button
-              className="primary"
-              disabled={busy}
-              onClick={() => void act(
-                existing ? "/api/provider/adapters/update" : "/api/provider/adapters/install",
-                { source, digest, manifest: candidate.manifest, approved: true },
-              )}
-            >
-              Approve and {existing ? "update" : "install"}
-            </button>
-          </section>
-        )}
-        {error && <p className="context-error" role="alert">{error}</p>}
-      </div>
-    </OverlayDialog>
-  );
-}
-
 function CommandPalette({
   open,
   onClose,
@@ -3383,7 +3201,6 @@ function CommandPalette({
   onSearch,
   onPreferences,
   onProviderSettings,
-  onAdapterSettings,
 }: {
   open: boolean;
   onClose: () => void;
@@ -3391,7 +3208,6 @@ function CommandPalette({
   onSearch: () => void;
   onPreferences: () => void;
   onProviderSettings: () => void;
-  onAdapterSettings: () => void;
 }) {
   const [query, setQuery] = useState("");
   if (!open) return null;
@@ -3400,7 +3216,6 @@ function CommandPalette({
     { label: "Search conversations", detail: "Search bounded local thread metadata", run: onSearch, available: true },
     { label: "Appearance & keyboard", detail: "Theme, density, zoom, motion, and keybindings", run: onPreferences, available: true },
     { label: "Provider settings", detail: "Configure local Claude profiles", run: onProviderSettings, available: true },
-    { label: "Provider adapters", detail: "Inspect and administer declarative ACP adapters", run: onAdapterSettings, available: true },
   ].filter((action) => action.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return (
     <OverlayDialog title="Command palette" onClose={onClose}>
@@ -3420,7 +3235,6 @@ function App() {
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [profileDialog, setProfileDialog] = useState(false);
-  const [adapterDialog, setAdapterDialog] = useState(false);
   const [threads, setThreads] = useState<ThreadMetadata[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -3539,7 +3353,6 @@ function App() {
         onClose={() => setProfileDialog(false)}
         onChanged={loadProfiles}
       />
-      <AdapterSettingsDialog open={adapterDialog} onClose={() => setAdapterDialog(false)} />
       <ThreadSearchDialog open={searchOpen} threads={threads} onClose={() => setSearchOpen(false)} />
       <CommandPalette
         open={paletteOpen}
@@ -3548,7 +3361,6 @@ function App() {
         onSearch={() => setSearchOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
         onProviderSettings={() => setProfileDialog(true)}
-        onAdapterSettings={() => setAdapterDialog(true)}
       />
       <PreferencesDialog
         open={preferencesOpen}
