@@ -33,9 +33,7 @@ import {
   type ProfileProbeKind,
 } from "./profiles.ts";
 import {
-  browseRepositoryFiles,
   composePrompt,
-  previewRepositoryFile,
   resolveContextAttachments,
   searchRepositoryFiles,
 } from "./context.ts";
@@ -388,48 +386,6 @@ async function handleApi(
       const context = await selectedWorktree(body.root, body.worktree);
       sendJson(response, 200, {
         files: await searchRepositoryFiles(context.worktree, body.query),
-      });
-      return true;
-    }
-    if (route === "/api/context/browse") {
-      const body = await readJson(request) as {
-        root?: unknown;
-        worktree?: unknown;
-        query?: unknown;
-      };
-      if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.query !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and search query are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const controller = new AbortController();
-      request.once("aborted", () => controller.abort());
-      sendJson(
-        response,
-        200,
-        await browseRepositoryFiles(context.worktree, body.query, controller.signal),
-      );
-      return true;
-    }
-    if (route === "/api/context/preview") {
-      const body = await readJson(request) as {
-        root?: unknown;
-        worktree?: unknown;
-        path?: unknown;
-      };
-      if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.path !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and repository-relative path are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, {
-        preview: await previewRepositoryFile(context.worktree, body.path),
       });
       return true;
     }
