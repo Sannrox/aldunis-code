@@ -1,5 +1,6 @@
 import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { DEFAULT_PREFERENCES, readPreferencesResponse, type Preferences } from "./preferences";
 import "./styles.css";
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
@@ -23,14 +24,6 @@ interface ThreadMetadata {
   worktree: string;
   updatedAt: string;
   projectName: string;
-}
-interface Preferences {
-  schemaVersion: 1;
-  theme: "system" | "light" | "dark";
-  density: "comfortable" | "compact";
-  zoom: 0.8 | 0.9 | 1 | 1.1 | 1.2;
-  reducedMotion: "system" | "reduce" | "no-preference";
-  commandPaletteShortcut: "mod+k" | "mod+shift+p";
 }
 type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 interface ChangedFile {
@@ -2202,9 +2195,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
-  const [preferences, setPreferences] = useState<Preferences>({
-    schemaVersion: 1, theme: "system", density: "comfortable", zoom: 1, reducedMotion: "system", commandPaletteShortcut: "mod+k",
-  });
+  const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
@@ -2218,10 +2209,14 @@ function App() {
   };
   useEffect(() => {
     void loadThreads();
-    void fetch("/api/preferences/load", { method: "POST" }).then((response) => response.json()).then((body: { preferences: Preferences; recovered: boolean }) => {
-      setPreferences(body.preferences);
-      setPreferencesRecovered(body.recovered);
-    });
+    void fetch("/api/preferences/load", { method: "POST" })
+      .then(async (response) => response.ok ? readPreferencesResponse(await response.json()) : null)
+      .then((result) => {
+        if (!result) return;
+        setPreferences(result.preferences);
+        setPreferencesRecovered(result.recovered);
+      })
+      .catch(() => undefined);
   }, []);
   useEffect(() => {
     document.documentElement.dataset.theme = preferences.theme;
