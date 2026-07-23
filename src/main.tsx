@@ -38,6 +38,30 @@ interface ProviderCapabilities {
     imageTypes: string[];
   };
 }
+type ProfileProbeKind = "availability" | "version" | "authentication" | "models";
+interface ProfileProbe {
+  state: "unknown" | "refreshing" | "ready" | "unavailable";
+  checkedAt: string | null;
+  detail: string | null;
+  authenticated?: boolean;
+  models?: string[];
+}
+interface ClaudeProfile {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  binaryPath: string;
+  homePath: string;
+  environment: Array<{
+    name: string;
+    sensitive: boolean;
+    value?: string;
+    valueSet?: boolean;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+  probes: Record<ProfileProbeKind, ProfileProbe>;
+}
 type ProviderState = "idle" | "starting" | "streaming" | "cancelling" | "completed" | "cancelled" | "failed";
 type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -108,7 +132,15 @@ const sessions = [
   { title: "Refine worktree discovery", branch: "codex/8-worktrees", age: "2h" },
 ];
 
-function ProductRail({ product, onChange }: { product: Product; onChange: (product: Product) => void }) {
+function ProductRail({
+  product,
+  onChange,
+  onSettings,
+}: {
+  product: Product;
+  onChange: (product: Product) => void;
+  onSettings: () => void;
+}) {
   return (
     <aside className="product-rail" aria-label="Products">
       <button className="aldunis-mark" aria-label="Aldunis home">A</button>
@@ -126,7 +158,7 @@ function ProductRail({ product, onChange }: { product: Product; onChange: (produ
           </button>
         ))}
       </div>
-      <button className="rail-settings" aria-label="Settings"><Icon name="settings" /></button>
+      <button className="rail-settings" aria-label="Claude profile settings" onClick={onSettings}><Icon name="settings" /></button>
     </aside>
   );
 }
@@ -401,6 +433,8 @@ function Conversation({
   onShowChanges,
   onHideChanges,
   onRefreshChanges,
+  profiles,
+  onOpenProfiles,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
@@ -411,6 +445,8 @@ function Conversation({
   onShowChanges: () => void;
   onHideChanges: () => void;
   onRefreshChanges: () => void;
+  profiles: ClaudeProfile[];
+  onOpenProfiles: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode }>>([]);
@@ -427,6 +463,13 @@ function Conversation({
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [contextError, setContextError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(null);
+  const [profileId, setProfileId] = useState("");
+  const [model, setModel] = useState("default");
+  useEffect(() => {
+    if (!profiles.some((profile) => profile.id === profileId)) {
+      setProfileId(profiles[0]?.id ?? "");
+    }
+  }, [profiles, profileId]);
   useEffect(() => {
     setSessionId(null);
     setThreadId(null);
@@ -503,7 +546,7 @@ function Conversation({
   };
   const send = async () => {
     const value = draft.trim();
-    if (!value || !repository || !worktree || runActive) return;
+    if (!value || !repository || !worktree || !profileId || runActive) return;
     const turnMode = mode;
     setMessages((current) => [...current, { text: value, mode: turnMode }]);
     setDraft("");
@@ -526,6 +569,8 @@ function Conversation({
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           attachments: sentAttachments,
+          profileId,
+          model,
         }),
       });
       if (!response.ok) {
@@ -669,7 +714,7 @@ function Conversation({
           <button onClick={onShowChanges} disabled={!repository} aria-label={repository ? `Review ${changes.length} changed files` : "Review changed files"}>
             <Icon name="diff" /><span>{changes.length} changes</span>
           </button>
-          <button className="ghost">•••</button>
+          <button className="ghost" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</button>
         </div>
       </header>
       <section className="conversation-scroll">
@@ -817,17 +862,40 @@ function Conversation({
                 void send();
               }
             }}
-            placeholder={worktree ? `${modeCopy[mode].label} Claude… Type @ for files or / for commands` : "Open a repository with an available worktree…"}
+            placeholder={!profileId
+              ? "Configure a Claude profile first…"
+              : worktree
+              ? `${modeCopy[mode].label} Claude… Type @ for files or / for commands`
+              : "Open a repository with an available worktree…"}
             aria-label="Message Claude"
             aria-autocomplete="list"
-            disabled={!worktree || runActive}
+            disabled={!worktree || !profileId || runActive}
           />
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           <footer>
-            <div><span className="model-select"><span className="provider-symbol">C</span> Claude Code · {modeCopy[mode].label}</span><span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span></div>
+            <div className="provider-selectors">
+              <span className="provider-symbol">C</span>
+              {profiles.length > 0 ? (
+                <>
+                  <label>
+                    <span className="sr-only">Claude profile</span>
+                    <select value={profileId} onChange={(event) => setProfileId(event.target.value)} disabled={runActive}>
+                      {profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <span className="sr-only">Claude model</span>
+                    <select value={model} onChange={(event) => setModel(event.target.value)} disabled={runActive}>
+                      {["default", "sonnet", "opus", "haiku"].map((option) => <option value={option} key={option}>{option}</option>)}
+                    </select>
+                  </label>
+                </>
+              ) : <button className="configure-profile" onClick={onOpenProfiles}>Configure Claude</button>}
+              <span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span>
+            </div>
             {runId
               ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel Claude Code">■</button>
-              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || runActive} aria-label="Send message">↑</button>}
+              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || !profileId || runActive} aria-label="Send message">↑</button>}
           </footer>
         </div>
         <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
@@ -849,9 +917,13 @@ function Conversation({
 function CodeWorkbench({
   repository,
   onOpenRepository,
+  profiles,
+  onOpenProfiles,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
+  profiles: ClaudeProfile[];
+  onOpenProfiles: () => void;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -897,8 +969,148 @@ function CodeWorkbench({
         onShowChanges={show}
         onHideChanges={() => setOpen(false)}
         onRefreshChanges={refresh}
+        profiles={profiles}
+        onOpenProfiles={onOpenProfiles}
       />
     </>
+  );
+}
+
+function parseEnvironment(
+  input: string,
+  sensitive: boolean,
+  existing: ClaudeProfile["environment"],
+): ClaudeProfile["environment"] {
+  return input.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => {
+    const separator = line.indexOf("=");
+    const name = (separator === -1 ? line : line.slice(0, separator)).trim();
+    const value = separator === -1 ? "" : line.slice(separator + 1);
+    const previous = existing.find((variable) => variable.name === name && variable.sensitive === sensitive);
+    return sensitive
+      ? { name, sensitive: true, value, valueSet: previous?.valueSet === true }
+      : { name, sensitive: false, value };
+  });
+}
+
+function ProfileSettingsDialog({
+  open,
+  profiles,
+  onClose,
+  onChanged,
+}: {
+  open: boolean;
+  profiles: ClaudeProfile[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = profiles.find((profile) => profile.id === selectedId) ?? null;
+  const [name, setName] = useState("");
+  const [binaryPath, setBinaryPath] = useState("claude");
+  const [homePath, setHomePath] = useState("");
+  const [environment, setEnvironment] = useState("");
+  const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const edit = (profile: ClaudeProfile | null) => {
+    setSelectedId(profile?.id ?? null);
+    setName(profile?.name ?? "");
+    setBinaryPath(profile?.binaryPath ?? "claude");
+    setHomePath(profile?.homePath ?? "");
+    setEnvironment(profile?.environment.filter((item) => !item.sensitive).map((item) => `${item.name}=${item.value ?? ""}`).join("\n") ?? "");
+    setSensitiveEnvironment(profile?.environment.filter((item) => item.sensitive).map((item) => `${item.name}=`).join("\n") ?? "");
+    setError(null);
+  };
+  useEffect(() => {
+    if (open && selectedId && !profiles.some((profile) => profile.id === selectedId)) edit(null);
+  }, [open, profiles, selectedId]);
+  if (!open) return null;
+  const request = async (path: string, body: unknown) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Claude profiles could not be updated.");
+      await onChanged();
+      return result;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Claude profiles could not be updated.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const saved = await request("/api/provider/profiles/save", {
+      ...(selected ? { id: selected.id } : {}),
+      name,
+      binaryPath,
+      homePath,
+      environment: [
+        ...parseEnvironment(environment, false, selected?.environment ?? []),
+        ...parseEnvironment(sensitiveEnvironment, true, selected?.environment ?? []),
+      ],
+    }) as ClaudeProfile | null;
+    if (saved?.id) edit(saved);
+  };
+  const refresh = async (profile: ClaudeProfile, kind: ProfileProbeKind) => {
+    await request("/api/provider/profiles/refresh", { id: profile.id, kind });
+  };
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title">
+        <header>
+          <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
+          <button onClick={onClose} aria-label="Close profile settings">×</button>
+        </header>
+        <div className="profile-dialog-body">
+          <nav aria-label="Claude profiles">
+            {profiles.map((profile) => (
+              <button className={selectedId === profile.id ? "active" : ""} onClick={() => edit(profile)} key={profile.id}>
+                <strong>{profile.name}</strong><small>{profile.homePath || "Default Claude home"}</small>
+              </button>
+            ))}
+            <button className={!selectedId ? "active add-profile" : "add-profile"} onClick={() => edit(null)}>+ New profile</button>
+          </nav>
+          <form onSubmit={save}>
+            <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
+            <div className="profile-fields">
+              <label>Binary path<input value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder="claude" /></label>
+              <label>Claude config path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="~/.claude-personal" /></label>
+            </div>
+            <label>Environment variables<textarea value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder={"ANTHROPIC_BASE_URL=https://…"} /></label>
+            <label>Sensitive environment values<textarea value={sensitiveEnvironment} onChange={(event) => setSensitiveEnvironment(event.target.value)} placeholder={"ANTHROPIC_AUTH_TOKEN=write-only value"} /></label>
+            <p className="secret-note">Sensitive values are write-only. Existing values appear empty and remain stored unless their line is removed.</p>
+            {selected && (
+              <div className="probe-grid">
+                {(["availability", "version", "authentication", "models"] as ProfileProbeKind[]).map((kind) => (
+                  <button type="button" onClick={() => void refresh(selected, kind)} disabled={busy} key={kind}>
+                    <span className={`probe-state ${selected.probes[kind].state}`} />
+                    <strong>{kind}</strong>
+                    <small>{selected.probes[kind].detail ?? "Not checked"}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+            {error && <p className="repository-error" role="alert">{error}</p>}
+            <footer>
+              {selected && <button type="button" className="danger" onClick={async () => {
+                if (await request("/api/provider/profiles/delete", { id: selected.id })) edit(null);
+              }} disabled={busy}>Delete profile</button>}
+              <span />
+              <button type="button" onClick={onClose}>Cancel</button>
+              <button className="primary" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save profile"}</button>
+            </footer>
+          </form>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -908,6 +1120,14 @@ function App() {
   const [repositoryDialog, setRepositoryDialog] = useState(false);
   const [repositoryBusy, setRepositoryBusy] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
+  const [profileDialog, setProfileDialog] = useState(false);
+  const loadProfiles = async () => {
+    const response = await fetch("/api/provider/profiles/list", { method: "POST" });
+    const body = await response.json() as { profiles?: ClaudeProfile[] };
+    if (response.ok) setProfiles(body.profiles ?? []);
+  };
+  useEffect(() => { void loadProfiles(); }, []);
   const showRepositoryDialog = () => {
     setRepositoryError(null);
     setRepositoryDialog(true);
@@ -932,11 +1152,11 @@ function App() {
     }
   };
   const content = useMemo(() => product === "code"
-    ? <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} />
-    : <DomainPage product={product} />, [product, repository]);
+    ? <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} />
+    : <DomainPage product={product} />, [product, repository, profiles]);
   return (
     <div className="app">
-      <ProductRail product={product} onChange={setProduct} />
+      <ProductRail product={product} onChange={setProduct} onSettings={() => setProfileDialog(true)} />
       {content}
       <RepositoryDialog
         open={repositoryDialog}
@@ -944,6 +1164,12 @@ function App() {
         error={repositoryError}
         onClose={() => setRepositoryDialog(false)}
         onSubmit={openRepository}
+      />
+      <ProfileSettingsDialog
+        open={profileDialog}
+        profiles={profiles}
+        onClose={() => setProfileDialog(false)}
+        onChanged={loadProfiles}
       />
     </div>
   );
