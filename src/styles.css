@@ -13,9 +13,9 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
-button, textarea { color: inherit; font: inherit; }
+button, input, textarea { color: inherit; font: inherit; }
 button { border: 0; cursor: pointer; }
-button:focus-visible, textarea:focus-visible { outline: 2px solid var(--acid); outline-offset: -2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--acid); outline-offset: -2px; }
 svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
 .app { display: flex; width: 100vw; height: 100vh; background: #0b0c0f; }
 .product-rail { position: relative; z-index: 3; display: flex; width: 72px; flex: 0 0 72px; align-items: center; flex-direction: column; border-right: 1px solid var(--line); background: #0a0b0d; }
@@ -48,6 +48,17 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .sidebar-actions kbd { margin-left: auto; color: #5f6168; font: .6rem "DM Mono", monospace; }
 .count, .change-count { margin-left: auto; font: .62rem "DM Mono", monospace; }
 .change-count { color: var(--acid); }
+.worktree-list { display: flex; max-height: 150px; overflow-y: auto; flex-direction: column; gap: 2px; padding: 6px 12px 10px; border-bottom: 1px solid var(--line); }
+.worktree-list > div { display: grid; min-width: 0; grid-template-columns: 7px 1fr auto; align-items: center; gap: 8px; padding: 7px 6px; }
+.worktree-list > div > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.worktree-list strong, .worktree-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.worktree-list strong { color: #b8b9bd; font-size: .65rem; font-weight: 500; }
+.worktree-list small { color: #5e6068; font: .52rem "DM Mono", monospace; }
+.worktree-list em { color: #666870; font: normal .48rem "DM Mono", monospace; text-transform: uppercase; }
+.worktree-state { width: 6px; height: 6px; border-radius: 50%; background: #777981; }
+.worktree-state.available { background: var(--acid); }
+.worktree-state.detached { background: #d8b276; }
+.worktree-state.missing, .worktree-state.inaccessible { background: #c96f65; }
 .section-label { display: flex; align-items: center; justify-content: space-between; padding: 18px 18px 8px; color: #60626a; font: 500 .59rem "DM Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
 .section-label button { background: transparent; color: #666870; }
 .session-list { padding: 0 8px; }
@@ -75,6 +86,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-lineca
 .header-actions button { display: flex; height: 32px; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid #303238; border-radius: 6px; background: #17181c; color: #a6a8ae; font-size: .67rem; }
 .header-actions svg { width: 14px; }
 .header-actions .ghost { width: 32px; padding: 0; justify-content: center; }
+.header-actions .mobile-project { display: none; width: 32px; padding: 0; justify-content: center; }
 .conversation-scroll { overflow-y: auto; width: min(780px, calc(100% - 56px)); margin: 0 auto; padding: 26px 0 210px; scrollbar-width: thin; }
 .date-rule { display: flex; align-items: center; gap: 12px; margin: 2px 0 27px; color: #55575f; font: .58rem "DM Mono", monospace; text-transform: uppercase; }
 .date-rule::before, .date-rule::after { height: 1px; flex: 1; background: #23252a; content: ""; }
@@ -129,6 +141,20 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .domain-grid button svg { width: 14px; align-self: end; color: var(--tone); }
 .boundary-note { max-width: 760px; margin-top: 32px; padding: 13px 15px; border-left: 2px solid var(--tone); background: rgba(255,255,255,.025); color: #777981; font-size: .68rem; line-height: 1.6; }
 .boundary-note span { margin-right: 9px; color: var(--tone); font: .55rem "DM Mono", monospace; letter-spacing: .12em; }
+.dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; padding: 20px; place-items: center; background: rgba(4,5,7,.78); backdrop-filter: blur(8px); }
+.repository-dialog { width: min(510px, 100%); padding: 28px; border: 1px solid #3a3c43; border-radius: 12px; background: #15161a; box-shadow: 0 28px 90px rgba(0,0,0,.65); }
+.repository-dialog .eyebrow { margin-bottom: 10px; color: var(--acid); font-size: .56rem; }
+.repository-dialog h2 { margin: 0; font: 400 2rem "Newsreader", serif; }
+.repository-dialog > p:not(.eyebrow) { margin: 13px 0 24px; color: #858791; font-size: .75rem; line-height: 1.6; }
+.repository-dialog form { display: flex; flex-direction: column; }
+.repository-dialog label { margin-bottom: 8px; color: #a9aab0; font: .58rem "DM Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.repository-dialog input { width: 100%; padding: 12px 13px; border: 1px solid #3a3c43; border-radius: 7px; background: #0f1013; font: .7rem "DM Mono", monospace; }
+.repository-dialog input::placeholder { color: #53555d; }
+.repository-error { margin-top: 10px; padding: 9px 10px; border-left: 2px solid #c96f65; background: rgba(201,111,101,.08); color: #dba29c; font-size: .67rem; line-height: 1.45; }
+.repository-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.repository-dialog footer button { padding: 9px 12px; border: 1px solid #34363c; border-radius: 6px; background: #1c1d22; font-size: .68rem; }
+.repository-dialog footer button.primary { border-color: var(--acid); background: var(--acid); color: #11130d; font-weight: 600; }
+.repository-dialog footer button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 900px) {
   .context-sidebar { width: 240px; flex-basis: 240px; }
   .domain-orbit { opacity: .35; }
@@ -146,6 +172,7 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .context-sidebar { display: none; }
   .conversation { min-height: calc(100vh - 62px); padding-bottom: 62px; }
   .conversation-header { padding: 0 14px; }
+  .header-actions .mobile-project { display: flex; }
   .header-actions button span { display: none; }
   .conversation-scroll { width: calc(100% - 28px); }
   .composer-wrap { position: fixed; bottom: 62px; padding: 18px 14px 10px; }
@@ -161,4 +188,3 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
   .domain-page > :nth-child(5) { animation-delay: .18s; }
 }
 @keyframes arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-

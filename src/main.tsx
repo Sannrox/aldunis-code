@@ -1,8 +1,19 @@
-import { StrictMode, useMemo, useState } from "react";
+import { FormEvent, StrictMode, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
+type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
+interface RepositoryMetadata {
+  name: string;
+  root: string;
+  worktrees: Array<{
+    path: string;
+    head: string | null;
+    branch: string | null;
+    state: WorktreeState;
+  }>;
+}
 type IconName =
   | "code"
   | "branch"
@@ -71,7 +82,13 @@ function ProductRail({ product, onChange }: { product: Product; onChange: (produ
   );
 }
 
-function CodeSidebar() {
+function CodeSidebar({
+  repository,
+  onOpenRepository,
+}: {
+  repository: RepositoryMetadata | null;
+  onOpenRepository: () => void;
+}) {
   return (
     <aside className="context-sidebar">
       <header>
@@ -81,16 +98,33 @@ function CodeSidebar() {
         </div>
         <button aria-label="New conversation"><Icon name="plus" /></button>
       </header>
-      <button className="project-switcher">
-        <span className="repo-glyph">A</span>
-        <span><strong>aldunis-code</strong><small>~/Projects/aldunis-code</small></span>
+      <button className="project-switcher" onClick={onOpenRepository}>
+        <span className="repo-glyph">{repository?.name.charAt(0).toUpperCase() ?? "+"}</span>
+        <span>
+          <strong>{repository?.name ?? "Open repository"}</strong>
+          <small>{repository?.root ?? "Select an explicit local root"}</small>
+        </span>
         <Icon name="chevron" />
       </button>
       <div className="sidebar-actions">
         <button><Icon name="search" /> Search <kbd>⌘ K</kbd></button>
-        <button><Icon name="branch" /> Worktrees <span className="count">3</span></button>
+        <button><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
         <button><Icon name="diff" /> Changed files <span className="change-count">8</span></button>
       </div>
+      {repository && (
+        <div className="worktree-list" aria-label="Repository worktrees">
+          {repository.worktrees.map((worktree) => (
+            <div key={worktree.path}>
+              <span className={`worktree-state ${worktree.state}`} aria-hidden="true" />
+              <span>
+                <strong>{worktree.branch ?? "Detached HEAD"}</strong>
+                <small>{worktree.path}</small>
+              </span>
+              <em>{worktree.state}</em>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="section-label"><span>Conversations</span><button>•••</button></div>
       <div className="session-list">
         {sessions.map((session) => (
@@ -106,6 +140,62 @@ function CodeSidebar() {
       </div>
       <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
     </aside>
+  );
+}
+
+function RepositoryDialog({
+  open,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  busy: boolean;
+  error: string | null;
+  onClose: () => void;
+  onSubmit: (path: string) => void;
+}) {
+  const [path, setPath] = useState("");
+  if (!open) return null;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    onSubmit(path);
+  };
+  return (
+    <div
+      className="dialog-backdrop"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy) onClose();
+      }}
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target && !busy) onClose();
+      }}
+    >
+      <section className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title">
+        <p className="eyebrow">Local access</p>
+        <h2 id="repository-dialog-title">Open a repository</h2>
+        <p>Enter an absolute path. The local host canonicalizes it and returns only repository and worktree metadata.</p>
+        <form onSubmit={submit}>
+          <label htmlFor="repository-path">Repository path</label>
+          <input
+            id="repository-path"
+            autoFocus
+            value={path}
+            onChange={(event) => setPath(event.target.value)}
+            placeholder="/Users/you/Projects/repository"
+            disabled={busy}
+          />
+          {error && <div className="repository-error" role="alert">{error}</div>}
+          <footer>
+            <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+            <button className="primary" type="submit" disabled={busy || !path.trim()}>
+              {busy ? "Inspecting…" : "Open repository"}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -155,7 +245,13 @@ function DomainPage({ product }: { product: Exclude<Product, "code"> }) {
   );
 }
 
-function Conversation() {
+function Conversation({
+  repository,
+  onOpenRepository,
+}: {
+  repository: RepositoryMetadata | null;
+  onOpenRepository: () => void;
+}) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<string[]>([]);
   const send = () => {
@@ -168,7 +264,13 @@ function Conversation() {
     <main className="conversation">
       <header className="conversation-header">
         <div><span className="breadcrumb">aldunis-code <b>/</b> codex/12-permissions</span><h1>Shape Claude permission flow</h1></div>
-        <div className="header-actions"><button><Icon name="diff" /><span>8 changes</span></button><button className="ghost">•••</button></div>
+        <div className="header-actions">
+          <button className="mobile-project" onClick={onOpenRepository} aria-label={repository ? `Change repository, current ${repository.name}` : "Open repository"}>
+            <Icon name="branch" />
+          </button>
+          <button><Icon name="diff" /><span>8 changes</span></button>
+          <button className="ghost">•••</button>
+        </div>
       </header>
       <section className="conversation-scroll">
         <div className="date-rule"><span>Today</span></div>
@@ -211,9 +313,49 @@ function Conversation() {
 
 function App() {
   const [product, setProduct] = useState<Product>("code");
-  const content = useMemo(() => product === "code" ? <><CodeSidebar /><Conversation /></> : <DomainPage product={product} />, [product]);
-  return <div className="app"><ProductRail product={product} onChange={setProduct} />{content}</div>;
+  const [repository, setRepository] = useState<RepositoryMetadata | null>(null);
+  const [repositoryDialog, setRepositoryDialog] = useState(false);
+  const [repositoryBusy, setRepositoryBusy] = useState(false);
+  const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const showRepositoryDialog = () => {
+    setRepositoryError(null);
+    setRepositoryDialog(true);
+  };
+  const openRepository = async (path: string) => {
+    setRepositoryBusy(true);
+    setRepositoryError(null);
+    try {
+      const response = await fetch("/api/repositories/open", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const body = await response.json() as RepositoryMetadata | { error?: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
+      setRepository(body as RepositoryMetadata);
+      setRepositoryDialog(false);
+    } catch (error) {
+      setRepositoryError(error instanceof Error ? error.message : "Repository discovery failed.");
+    } finally {
+      setRepositoryBusy(false);
+    }
+  };
+  const content = useMemo(() => product === "code"
+    ? <><CodeSidebar repository={repository} onOpenRepository={showRepositoryDialog} /><Conversation repository={repository} onOpenRepository={showRepositoryDialog} /></>
+    : <DomainPage product={product} />, [product, repository]);
+  return (
+    <div className="app">
+      <ProductRail product={product} onChange={setProduct} />
+      {content}
+      <RepositoryDialog
+        open={repositoryDialog}
+        busy={repositoryBusy}
+        error={repositoryError}
+        onClose={() => setRepositoryDialog(false)}
+        onSubmit={openRepository}
+      />
+    </div>
+  );
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
-
