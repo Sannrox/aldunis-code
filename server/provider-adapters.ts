@@ -11,7 +11,7 @@ const ADAPTER_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$/;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const ENVIRONMENT_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const GENERIC_INTERPRETERS = /^(?:(?:ba|z|c|k|fi)?sh|fish|node(?:js)?|deno|bun|python(?:\d+(?:\.\d+)*)?|pypy(?:\d+)?|ruby|perl|php|java|jshell|lua|luajit|tclsh|wish|rscript|busybox|cmd|powershell|pwsh|env|git|npm|npx|pnpm|yarn|make|cmake|cargo|go|docker|podman|ssh|curl|wget|xargs|find|awk|sed)(?:\.exe)?$/i;
-const SAFE_FIXED_ARGUMENT = /^--?[A-Za-z][A-Za-z0-9-]*$/;
+const SAFE_FIXED_OPTION = /^--?[A-Za-z][A-Za-z0-9-]*$/;
 
 export interface ProviderAdapterManifest {
   schemaVersion: 1;
@@ -186,9 +186,14 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
   if (!argumentsValue || argumentsValue.length > 32) {
     throw new ProviderAdapterError("Executable arguments must be a bounded array.");
   }
+  const reviewedKiroLaunch = names.length === 2
+    && names[0] === "kiro-cli"
+    && names[1] === "kiro-cli.exe"
+    && argumentsValue.length === 1
+    && argumentsValue[0] === "acp";
   const argumentsList = argumentsValue.map((entry, index) => {
     const argument = string(entry, `Executable arguments[${index}]`, 512);
-    if (!SAFE_FIXED_ARGUMENT.test(argument)) {
+    if (!reviewedKiroLaunch && !SAFE_FIXED_OPTION.test(argument)) {
       throw new ProviderAdapterError(
         "Version 1 executable arguments may contain option flags only.",
       );
