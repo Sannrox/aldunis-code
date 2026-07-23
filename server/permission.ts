@@ -241,6 +241,12 @@ export class PermissionBroker {
     return approval ? this.#snapshot(approval) : null;
   }
 
+  approvalsFor(runId: string): ApprovalSnapshot[] {
+    return [...this.#approvals.values()]
+      .filter((approval) => approval.runId === runId)
+      .map((approval) => this.#snapshot(approval));
+  }
+
   #finish(approval: PendingApproval, state: ApprovalState): void {
     if (approval.state !== "pending") return;
     approval.state = state;

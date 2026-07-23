@@ -169,6 +169,14 @@ async function handleApi(
       sendJson(response, 200, provider.capabilities());
       return true;
     }
+    if (route === "/api/provider/approvals/list") {
+      const body = await readJson(request) as { runId?: unknown };
+      if (typeof body.runId !== "string") {
+        throw new PermissionError("A provider run is required.");
+      }
+      sendJson(response, 200, { approvals: permissions.approvalsFor(body.runId) });
+      return true;
+    }
     if (route === "/api/context/files") {
       const body = await readJson(request) as {
         root?: unknown;
@@ -375,6 +383,7 @@ async function handleApi(
         }, { profileId: profile.profile.id, continuationKey: profile.continuationKey });
         throw error;
       }
+      await state.bindProviderRun(persisted.turn.id, run.id);
       response.writeHead(200, {
         "content-type": "application/x-ndjson; charset=utf-8",
         "cache-control": "no-store",
@@ -666,7 +675,9 @@ export function createLocalHost(
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const previews = new PreviewManager();
+  const recovery = state.recoverInterruptedTurns();
   return createServer(async (request, response) => {
+    await recovery;
     if (
       await handleApi(
         request,
