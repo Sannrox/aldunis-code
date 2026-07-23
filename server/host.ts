@@ -40,7 +40,6 @@ import {
   searchRepositoryFiles,
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
-import { PreferencesError, PreferencesStore } from "./preferences.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -122,7 +121,6 @@ async function handleApi(
   state: LocalStateStore,
   profiles: ClaudeProfileStore,
   previews: PreviewManager,
-  preferences: PreferencesStore,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -156,40 +154,6 @@ async function handleApi(
     }
     if (route === "/api/state/load") {
       sendJson(response, 200, await state.load());
-      return true;
-    }
-    if (route === "/api/state/search") {
-      const body = await readJson(request) as { query?: unknown };
-      if (typeof body.query !== "string") throw new LocalStateError("A search query is required.", 400);
-      const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
-      const projection = await state.load();
-      const projects = new Map(projection.projects.map((project) => [project.id, project]));
-      const threads = projection.threads
-        .filter((thread) => {
-          const project = projects.get(thread.projectId);
-          return !query || thread.title.toLocaleLowerCase().includes(query)
-            || thread.worktree.toLocaleLowerCase().includes(query)
-            || project?.name.toLocaleLowerCase().includes(query);
-        })
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 50)
-        .map((thread) => ({
-          id: thread.id,
-          projectId: thread.projectId,
-          title: thread.title,
-          worktree: thread.worktree,
-          updatedAt: thread.updatedAt,
-          projectName: projects.get(thread.projectId)?.name ?? "Unknown project",
-        }));
-      sendJson(response, 200, { threads, bounded: true });
-      return true;
-    }
-    if (route === "/api/preferences/load") {
-      sendJson(response, 200, await preferences.load());
-      return true;
-    }
-    if (route === "/api/preferences/save") {
-      sendJson(response, 200, await preferences.save(await readJson(request)));
       return true;
     }
     if (route === "/api/state/projects/delete") {
@@ -1020,7 +984,6 @@ async function handleApi(
       || error instanceof PermissionError
       || error instanceof LocalStateError
       || error instanceof ProfileError
-      || error instanceof PreferencesError
       || error instanceof PreviewError
       ? error.status
       : 500;
@@ -1029,7 +992,6 @@ async function handleApi(
       || error instanceof PermissionError
       || error instanceof LocalStateError
       || error instanceof ProfileError
-      || error instanceof PreferencesError
       || error instanceof PreviewError
       ? error.message
       : "The local operation failed.";
@@ -1071,7 +1033,6 @@ export function createLocalHost(
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const previews = new PreviewManager();
-  const preferences = new PreferencesStore(state.directory);
   const recovery = state.recoverInterruptedTurns();
   return createServer(async (request, response) => {
     await recovery;
@@ -1085,7 +1046,6 @@ export function createLocalHost(
         state,
         profiles,
         previews,
-        preferences,
       )
     ) return;
     await serveStatic(request, response, dist);
