@@ -16,6 +16,22 @@ interface RepositoryMetadata {
     state: WorktreeState;
   }>;
 }
+interface ThreadMetadata {
+  id: string;
+  projectId: string;
+  title: string;
+  worktree: string;
+  updatedAt: string;
+  projectName: string;
+}
+interface Preferences {
+  schemaVersion: 1;
+  theme: "system" | "light" | "dark";
+  density: "comfortable" | "compact";
+  zoom: 0.8 | 0.9 | 1 | 1.1 | 1.2;
+  reducedMotion: "system" | "reduce" | "no-preference";
+  commandPaletteShortcut: "mod+k" | "mod+shift+p";
+}
 type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 interface ChangedFile {
   path: string;
@@ -200,12 +216,6 @@ const nav: Array<{ id: Product; label: string; icon: IconName; detail: string }>
   { id: "tenkai", label: "Tenkai", icon: "rocket", detail: "Delivery & recovery" },
 ];
 
-const sessions = [
-  { title: "Shape Claude permission flow", branch: "codex/12-permissions", age: "4m", active: true },
-  { title: "Inspect provider event stream", branch: "main", age: "42m" },
-  { title: "Refine worktree discovery", branch: "codex/8-worktrees", age: "2h" },
-];
-
 function PageHeader({
   product,
   onChange,
@@ -235,9 +245,9 @@ function PageHeader({
           <Icon name="chevron" />
         </span>
       </label>
-      <button className="page-settings" aria-label="Claude profile settings" onClick={onSettings}>
+      <button className="page-settings" aria-label="Appearance and keyboard settings" onClick={onSettings}>
         <Icon name="settings" />
-        <span>Provider settings</span>
+        <span>Preferences</span>
       </button>
     </header>
   );
@@ -249,13 +259,24 @@ function CodeSidebar({
   changes,
   onShowChanges,
   onBrowseFiles,
+  threads,
+  onSearch,
+  onOpenPalette,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
   changes: ChangedFile[];
   onShowChanges: () => void;
   onBrowseFiles: () => void;
+  threads: ThreadMetadata[];
+  onSearch: () => void;
+  onOpenPalette: () => void;
 }) {
+  const groups = threads.reduce<Map<string, ThreadMetadata[]>>((result, thread) => {
+    const key = `${thread.projectName}\n${thread.worktree}`;
+    result.set(key, [...(result.get(key) ?? []), thread]);
+    return result;
+  }, new Map());
   return (
     <aside className="context-sidebar">
       <header>
@@ -274,7 +295,9 @@ function CodeSidebar({
         <Icon name="chevron" />
       </button>
       <div className="sidebar-actions">
-        <button onClick={onBrowseFiles} disabled={!repository}><Icon name="search" /> Browse files <kbd>⌘ K</kbd></button>
+        <button onClick={onOpenPalette}><Icon name="spark" /> Commands <kbd>⌘ K</kbd></button>
+        <button onClick={onSearch}><Icon name="search" /> Thread search</button>
+        <button onClick={onBrowseFiles} disabled={!repository}><Icon name="search" /> Browse files</button>
         <button><Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span></button>
         <button onClick={onShowChanges} disabled={!repository}>
           <Icon name="diff" /> Changed files <span className="change-count">{repository ? changes.length : "—"}</span>
@@ -294,21 +317,65 @@ function CodeSidebar({
           ))}
         </div>
       )}
-      <div className="section-label"><span>Conversations</span><button>•••</button></div>
-      <div className="session-list">
-        {sessions.map((session) => (
-          <button className={session.active ? "active" : ""} key={session.title}>
-            <span className="session-icon"><Icon name="message" /></span>
-            <span className="session-copy">
-              <strong>{session.title}</strong>
-              <small>{session.branch} · {session.age}</small>
-            </span>
-            {session.active && <i />}
-          </button>
-        ))}
+      <div className="section-label"><span>Projects & conversations</span><button onClick={onSearch}>•••</button></div>
+      <div className="session-list grouped">
+        {[...groups.entries()].map(([key, group]) => {
+          const [projectName, worktree] = key.split("\n");
+          const active = repository?.name === projectName && repository.selectedWorktree === worktree;
+          return (
+            <section className={active ? "thread-group active-context" : "thread-group"} key={key}>
+              <header><strong>{projectName}</strong><small>{worktree}</small>{active && <em>Current</em>}</header>
+              {group.map((thread) => (
+                <button key={thread.id}>
+                  <span className="session-icon"><Icon name="message" /></span>
+                  <span className="session-copy"><strong>{thread.title}</strong><small>{new Date(thread.updatedAt).toLocaleString()}</small></span>
+                </button>
+              ))}
+            </section>
+          );
+        })}
+        {threads.length === 0 && <p className="empty-threads">No local conversations yet.</p>}
       </div>
       <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
     </aside>
+  );
+}
+
+function OverlayDialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-dialog-title" onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+        <header><h2 id="quick-dialog-title">{title}</h2><button onClick={onClose} aria-label={`Close ${title}`}>×</button></header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads: ThreadMetadata[]; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ThreadMetadata[]>(threads);
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    void fetch("/api/state/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query }),
+      signal: controller.signal,
+    }).then((response) => response.json()).then((body: { threads?: ThreadMetadata[] }) => setResults(body.threads ?? []));
+    return () => controller.abort();
+  }, [open, query]);
+  if (!open) return null;
+  return (
+    <OverlayDialog title="Search local conversations" onClose={onClose}>
+      <label className="quick-search"><Icon name="search" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, project, or worktree" /></label>
+      <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
+      <div className="quick-results">
+        {results.map((thread) => <button key={thread.id}><strong>{thread.title}</strong><small>{thread.projectName} · {thread.worktree}</small></button>)}
+        {results.length === 0 && <p>No matching conversations.</p>}
+      </div>
+    </OverlayDialog>
   );
 }
 
@@ -1078,20 +1145,6 @@ function Conversation({
   const [checkpointBusy, setCheckpointBusy] = useState(false);
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
   useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
-      if (
-        repository
-        && (event.metaKey || event.ctrlKey)
-        && event.key.toLocaleLowerCase() === "k"
-      ) {
-        event.preventDefault();
-        onBrowseFiles();
-      }
-    };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
-  }, [onBrowseFiles, repository]);
-  useEffect(() => {
     setSessionId(null);
     setThreadId(null);
     setCheckpoint(null);
@@ -1799,11 +1852,17 @@ function CodeWorkbench({
   onOpenRepository,
   profiles,
   onOpenProfiles,
+  threads,
+  onSearch,
+  onOpenPalette,
 }: {
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: () => void;
+  threads: ThreadMetadata[];
+  onSearch: () => void;
+  onOpenPalette: () => void;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1845,6 +1904,9 @@ function CodeWorkbench({
         changes={changes}
         onShowChanges={show}
         onBrowseFiles={() => setFilesOpen(true)}
+        threads={threads}
+        onSearch={onSearch}
+        onOpenPalette={onOpenPalette}
       />
       <Conversation
         repository={repository}
@@ -2004,6 +2066,75 @@ function ProfileSettingsDialog({
   );
 }
 
+function PreferencesDialog({
+  open,
+  preferences,
+  recovered,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  preferences: Preferences;
+  recovered: boolean;
+  onClose: () => void;
+  onSave: (preferences: Preferences) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(preferences);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) setDraft(preferences); }, [open, preferences]);
+  if (!open) return null;
+  const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) => setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <OverlayDialog title="Appearance & keyboard" onClose={onClose}>
+      {recovered && <p className="recovery-note" role="status">Invalid preference data was recovered to safe defaults.</p>}
+      <form className="preferences-form" onSubmit={(event) => {
+        event.preventDefault();
+        setBusy(true);
+        void onSave(draft).finally(() => setBusy(false));
+      }}>
+        <label>Theme<select value={draft.theme} onChange={(event) => update("theme", event.target.value as Preferences["theme"])}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <label>Density<select value={draft.density} onChange={(event) => update("density", event.target.value as Preferences["density"])}><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+        <label>Zoom<select value={draft.zoom} onChange={(event) => update("zoom", Number(event.target.value) as Preferences["zoom"])}>{[0.8, 0.9, 1, 1.1, 1.2].map((value) => <option value={value} key={value}>{Math.round(value * 100)}%</option>)}</select></label>
+        <label>Reduced motion<select value={draft.reducedMotion} onChange={(event) => update("reducedMotion", event.target.value as Preferences["reducedMotion"])}><option value="system">Follow system</option><option value="reduce">Reduce</option><option value="no-preference">Allow motion</option></select></label>
+        <label>Command palette<select value={draft.commandPaletteShortcut} onChange={(event) => update("commandPaletteShortcut", event.target.value as Preferences["commandPaletteShortcut"])}><option value="mod+k">⌘/Ctrl K</option><option value="mod+shift+p">⌘/Ctrl Shift P</option></select></label>
+        <p className="search-scope">Shortcuts are exclusive: selecting one command-palette binding releases the other, preventing conflicts.</p>
+        <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Saving…" : "Save preferences"}</button></footer>
+      </form>
+    </OverlayDialog>
+  );
+}
+
+function CommandPalette({
+  open,
+  onClose,
+  onOpenRepository,
+  onSearch,
+  onPreferences,
+  onProviderSettings,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenRepository: () => void;
+  onSearch: () => void;
+  onPreferences: () => void;
+  onProviderSettings: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  if (!open) return null;
+  const actions = [
+    { label: "Open repository", detail: "Choose an explicit local repository root", run: onOpenRepository, available: true },
+    { label: "Search conversations", detail: "Search bounded local thread metadata", run: onSearch, available: true },
+    { label: "Appearance & keyboard", detail: "Theme, density, zoom, motion, and keybindings", run: onPreferences, available: true },
+    { label: "Provider settings", detail: "Configure local Claude profiles", run: onProviderSettings, available: true },
+  ].filter((action) => action.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  return (
+    <OverlayDialog title="Command palette" onClose={onClose}>
+      <label className="quick-search"><Icon name="search" /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search available actions" /></label>
+      <div className="quick-results">{actions.map((action) => <button key={action.label} onClick={() => { onClose(); action.run(); }}><strong>{action.label}</strong><small>{action.detail}</small></button>)}</div>
+    </OverlayDialog>
+  );
+}
+
 function App() {
   const [product, setProduct] = useState<Product>("code");
   const [repository, setRepository] = useState<RepositoryMetadata | null>(null);
@@ -2012,12 +2143,52 @@ function App() {
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [profileDialog, setProfileDialog] = useState(false);
+  const [threads, setThreads] = useState<ThreadMetadata[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [preferencesRecovered, setPreferencesRecovered] = useState(false);
+  const [preferences, setPreferences] = useState<Preferences>({
+    schemaVersion: 1, theme: "system", density: "comfortable", zoom: 1, reducedMotion: "system", commandPaletteShortcut: "mod+k",
+  });
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
     if (response.ok) setProfiles(body.profiles ?? []);
   };
   useEffect(() => { void loadProfiles(); }, []);
+  const loadThreads = async () => {
+    const response = await fetch("/api/state/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "" }) });
+    const body = await response.json() as { threads?: ThreadMetadata[] };
+    if (response.ok) setThreads(body.threads ?? []);
+  };
+  useEffect(() => {
+    void loadThreads();
+    void fetch("/api/preferences/load", { method: "POST" }).then((response) => response.json()).then((body: { preferences: Preferences; recovered: boolean }) => {
+      setPreferences(body.preferences);
+      setPreferencesRecovered(body.recovered);
+    });
+  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.theme = preferences.theme;
+    document.documentElement.dataset.density = preferences.density;
+    document.documentElement.dataset.motion = preferences.reducedMotion;
+    document.documentElement.style.fontSize = `${preferences.zoom * 100}%`;
+  }, [preferences]);
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      const matches = preferences.commandPaletteShortcut === "mod+k"
+        ? modifier && !event.shiftKey && event.key.toLocaleLowerCase() === "k"
+        : modifier && event.shiftKey && event.key.toLocaleLowerCase() === "p";
+      if (matches) {
+        event.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [preferences.commandPaletteShortcut]);
   const showRepositoryDialog = () => {
     setRepositoryError(null);
     setRepositoryDialog(true);
@@ -2034,6 +2205,7 @@ function App() {
       const body = await response.json() as RepositoryMetadata | { error?: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
       setRepository(body as RepositoryMetadata);
+      await loadThreads();
       setRepositoryDialog(false);
     } catch (error) {
       setRepositoryError(error instanceof Error ? error.message : "Repository discovery failed.");
@@ -2043,10 +2215,10 @@ function App() {
   };
   return (
     <div className="app">
-      <PageHeader product={product} onChange={setProduct} onSettings={() => setProfileDialog(true)} />
+      <PageHeader product={product} onChange={setProduct} onSettings={() => setPreferencesOpen(true)} />
       <div className="app-content">
         <div className="code-page" hidden={product !== "code"}>
-          <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} />
+          <CodeWorkbench repository={repository} onOpenRepository={showRepositoryDialog} profiles={profiles} onOpenProfiles={() => setProfileDialog(true)} threads={threads} onSearch={() => setSearchOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         </div>
         {product !== "code" && <DomainPage product={product} />}
       </div>
@@ -2062,6 +2234,28 @@ function App() {
         profiles={profiles}
         onClose={() => setProfileDialog(false)}
         onChanged={loadProfiles}
+      />
+      <ThreadSearchDialog open={searchOpen} threads={threads} onClose={() => setSearchOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenRepository={showRepositoryDialog}
+        onSearch={() => setSearchOpen(true)}
+        onPreferences={() => setPreferencesOpen(true)}
+        onProviderSettings={() => setProfileDialog(true)}
+      />
+      <PreferencesDialog
+        open={preferencesOpen}
+        preferences={preferences}
+        recovered={preferencesRecovered}
+        onClose={() => setPreferencesOpen(false)}
+        onSave={async (value) => {
+          const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+          if (!response.ok) return;
+          setPreferences(await response.json() as Preferences);
+          setPreferencesRecovered(false);
+          setPreferencesOpen(false);
+        }}
       />
     </div>
   );
