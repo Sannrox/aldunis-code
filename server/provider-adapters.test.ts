@@ -412,18 +412,11 @@ test("Kiro session notifications normalize without exposing the wire shape", () 
   }), /malformed session update/);
 });
 
-test("Kiro prompts use its documented content field without changing standard ACP", () => {
-  assert.deepEqual(acpPromptRequest("dev.kiro.cli", "session-1", "hello"), {
+test("Kiro prompts use the standard ACP prompt field exercised by the CLI", () => {
+  assert.deepEqual(acpPromptRequest("session-1", "hello"), {
     method: "session/prompt",
     params: {
       sessionId: "session-1",
-      content: [{ type: "text", text: "hello" }],
-    },
-  });
-  assert.deepEqual(acpPromptRequest("example.acp-agent", "session-2", "hello"), {
-    method: "session/prompt",
-    params: {
-      sessionId: "session-2",
       prompt: [{ type: "text", text: "hello" }],
     },
   });

@@ -131,16 +131,14 @@ export function acpAllowOnceOption(value: unknown): string | null {
 }
 
 export function acpPromptRequest(
-  adapterId: string,
   sessionId: string,
   prompt: string,
 ): { method: "session/prompt"; params: JsonRecord } {
-  const content = [{ type: "text", text: prompt }];
   return {
     method: "session/prompt",
     params: {
       sessionId,
-      ...(adapterId === "dev.kiro.cli" ? { content } : { prompt: content }),
+      prompt: [{ type: "text", text: prompt }],
     },
   };
 }
@@ -336,7 +334,6 @@ export class AcpProviderAdapter {
             jsonrpc: "2.0",
             id: 2,
             ...acpPromptRequest(
-              this.adapter.manifest.id,
               active.sessionId,
               options.prompt,
             ),
