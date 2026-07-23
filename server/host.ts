@@ -15,9 +15,15 @@ import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery
 import { PermissionBroker, PermissionError } from "./permission.ts";
 import {
   canonicalizeRepositoryRoot,
+  captureCheckpoint,
+  checkpointGitDirectory,
+  checkpointReference,
+  checkpointDiff,
+  deleteCheckpointReferences,
   discoverWorktrees,
   openRepository,
   RepositoryError,
+  rewindCheckpoint,
 } from "./repository.ts";
 import { LocalStateError, LocalStateStore } from "./state.ts";
 import {
@@ -35,6 +41,7 @@ import { PreviewError, PreviewManager } from "./preview.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
+const activeCheckpointProjects = new Set<string>();
 
 export function assertLoopbackHost(host: string): void {
   if (!LOOPBACK_HOSTS.has(host)) {
@@ -152,7 +159,32 @@ async function handleApi(
       if (typeof body.projectId !== "string") {
         throw new RepositoryError("A project is required.");
       }
-      await state.deleteProject(body.projectId);
+      const projection = await state.load();
+      if (activeCheckpointProjects.has(body.projectId)) {
+        throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
+      }
+      activeCheckpointProjects.add(body.projectId);
+      try {
+        const threadIds = new Set(
+          projection.threads.filter((thread) => thread.projectId === body.projectId).map((thread) => thread.id),
+        );
+        const checkpoints = projection.checkpoints.filter((item) => threadIds.has(item.threadId));
+        for (const checkpoint of checkpoints) {
+          await state.saveCheckpoint({
+            ...checkpoint,
+            state: "unavailable",
+            message: "Checkpoint cleanup is pending project deletion.",
+          });
+        }
+        for (const checkpoint of checkpoints) {
+          if (checkpoint.gitDirectory) {
+            await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+          }
+        }
+        await state.deleteProject(body.projectId);
+      } finally {
+        activeCheckpointProjects.delete(body.projectId);
+      }
       sendJson(response, 200, { status: "deleted" });
       return true;
     }
@@ -161,8 +193,169 @@ async function handleApi(
       if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
         throw new RepositoryError("A valid retention cutoff is required.");
       }
-      await state.enforceRetention(new Date(body.olderThan));
+      const cutoff = new Date(body.olderThan);
+      const projection = await state.load();
+      const expiredThreads = new Set(
+        projection.threads.filter((thread) => new Date(thread.updatedAt) < cutoff).map((thread) => thread.id),
+      );
+      const expiredProjectIds = new Set(
+        projection.threads
+          .filter((thread) => expiredThreads.has(thread.id))
+          .map((thread) => thread.projectId),
+      );
+      if ([...expiredProjectIds].some((projectId) => activeCheckpointProjects.has(projectId))) {
+        throw new LocalStateError("Retention cannot run while an affected project has an active turn.", 409);
+      }
+      for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
+      try {
+        const checkpoints = projection.checkpoints.filter((item) => expiredThreads.has(item.threadId));
+        for (const checkpoint of checkpoints) {
+          await state.saveCheckpoint({
+            ...checkpoint,
+            state: "unavailable",
+            message: "Checkpoint cleanup is pending retention.",
+          });
+        }
+        for (const checkpoint of checkpoints) {
+          if (checkpoint.gitDirectory) {
+            await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+          }
+        }
+        await state.enforceRetention(cutoff);
+      } finally {
+        for (const projectId of expiredProjectIds) activeCheckpointProjects.delete(projectId);
+      }
       sendJson(response, 200, { status: "compacted" });
+      return true;
+    }
+    const previewMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/preview$/);
+    if (previewMatch) {
+      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
+        throw new RepositoryError("A repository and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const projection = await state.load();
+      const checkpoint = projection.checkpoints.find(
+        (item) => item.id === previewMatch[1] && item.worktree === context.worktree,
+      );
+      const checkpointThread = checkpoint
+        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
+        : undefined;
+      if (checkpointThread && activeCheckpointProjects.has(checkpointThread.projectId)) {
+        throw new LocalStateError("Wait for the active turn to finish before previewing a rewind.", 409);
+      }
+      if (
+        !checkpoint
+        || checkpoint.state !== "completed"
+        || !checkpoint.baselineIdentity
+        || !checkpoint.baselineIndexIdentity
+        || !checkpoint.baselineHead
+        || !checkpoint.completedIdentity
+        || !checkpoint.completedIndexIdentity
+        || !checkpoint.completedHead
+        || checkpoint.baselineHead !== checkpoint.completedHead
+      ) {
+        throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
+      }
+      const current = await captureCheckpoint(context.worktree, true);
+      if (current.identity !== checkpoint.completedIdentity) {
+        throw new RepositoryError(
+          "The workspace changed after this checkpoint. Rewind is unavailable until those changes are handled.",
+          409,
+        );
+      }
+      if (current.indexIdentity !== checkpoint.completedIndexIdentity) {
+        throw new RepositoryError(
+          "The Git index changed after this checkpoint. Rewind is unavailable until those changes are handled.",
+          409,
+        );
+      }
+      if (current.head !== checkpoint.completedHead) {
+        throw new RepositoryError(
+          "HEAD changed after this checkpoint. Rewind does not rewrite Git history.",
+          409,
+        );
+      }
+      sendJson(response, 200, {
+        checkpoint,
+        currentIdentity: current.identity,
+        currentIndexIdentity: current.indexIdentity,
+        files: await checkpointDiff(
+          context.worktree,
+          checkpoint.completedIdentity,
+          checkpoint.baselineIdentity,
+        ),
+      });
+      return true;
+    }
+    const rewindMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/rewind$/);
+    if (rewindMatch) {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        currentIdentity?: unknown;
+        currentIndexIdentity?: unknown;
+        confirm?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.currentIdentity !== "string"
+        || typeof body.currentIndexIdentity !== "string"
+        || body.confirm !== true
+      ) {
+        throw new RepositoryError("Preview and confirm the exact rewind before continuing.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const projection = await state.load();
+      const checkpoint = projection.checkpoints.find(
+        (item) => item.id === rewindMatch[1] && item.worktree === context.worktree,
+      );
+      const checkpointThread = checkpoint
+        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
+        : undefined;
+      if (checkpointThread && activeCheckpointProjects.has(checkpointThread.projectId)) {
+        throw new LocalStateError("Wait for the active turn to finish before rewinding.", 409);
+      }
+      if (
+        !checkpoint
+        || checkpoint.state !== "completed"
+        || !checkpoint.baselineIdentity
+        || !checkpoint.baselineIndexIdentity
+        || !checkpoint.baselineHead
+        || !checkpoint.completedIdentity
+        || !checkpoint.completedIndexIdentity
+        || !checkpoint.completedHead
+        || checkpoint.baselineHead !== checkpoint.completedHead
+        || body.currentIdentity !== checkpoint.completedIdentity
+        || body.currentIndexIdentity !== checkpoint.completedIndexIdentity
+      ) {
+        throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
+      }
+      if (!checkpointThread) {
+        throw new LocalStateError("The checkpoint conversation is unavailable.", 409);
+      }
+      activeCheckpointProjects.add(checkpointThread.projectId);
+      let files;
+      try {
+        files = await rewindCheckpoint(
+          context.worktree,
+          body.currentIdentity,
+          body.currentIndexIdentity,
+          checkpoint.completedHead,
+          checkpoint.baselineIdentity,
+          checkpoint.baselineIndexIdentity,
+        );
+        await state.saveCheckpoint({
+          ...checkpoint,
+          state: "superseded",
+          message: "Workspace rewound to this turn's baseline.",
+        });
+      } finally {
+        activeCheckpointProjects.delete(checkpointThread.projectId);
+      }
+      sendJson(response, 200, { status: "rewound", files });
       return true;
     }
     if (route === "/api/provider/capabilities") {
@@ -348,6 +541,11 @@ async function handleApi(
           409,
         );
       }
+      if (activeCheckpointProjects.has(project.id)) {
+        throw new LocalStateError("This project already has an active checkpoint capture.", 409);
+      }
+      activeCheckpointProjects.add(project.id);
+      try {
       const persisted = await state.startTurn({
         projectId: project.id,
         worktree: context.worktree,
@@ -355,6 +553,54 @@ async function handleApi(
         mode,
         threadId: body.threadId,
       });
+      const checkpointId = randomUUID();
+      const checkpointCreatedAt = new Date().toISOString();
+      let baselineIdentity: string | null = null;
+      let commonGitDirectory: string | null = null;
+      try {
+        commonGitDirectory = await checkpointGitDirectory(context.worktree);
+      } catch {
+        // Capture below records a visible unavailable state without creating refs.
+      }
+      const checkpointIntent = await state.saveCheckpoint({
+        id: checkpointId,
+        turnId: persisted.turn.id,
+        threadId: persisted.thread.id,
+        worktree: context.worktree,
+        gitDirectory: commonGitDirectory,
+        baselineHead: null,
+        baselineIdentity: null,
+        baselineIndexIdentity: null,
+        completedIdentity: null,
+        completedIndexIdentity: null,
+        completedHead: null,
+        state: "unavailable",
+        message: "Baseline capture did not complete.",
+        createdAt: checkpointCreatedAt,
+      });
+      try {
+        const baseline = await captureCheckpoint(
+          context.worktree,
+          false,
+          checkpointReference(checkpointId, "baseline"),
+        );
+        baselineIdentity = baseline.identity;
+        await state.saveCheckpoint({
+          ...checkpointIntent,
+          gitDirectory: baseline.gitDirectory,
+          baselineHead: baseline.head,
+          baselineIdentity,
+          baselineIndexIdentity: baseline.indexIdentity,
+          state: "baseline",
+          message: null,
+        });
+      } catch (error) {
+        await state.saveCheckpoint({
+          ...checkpointIntent,
+          state: "unavailable",
+          message: error instanceof RepositoryError ? error.message : "Baseline capture failed.",
+        });
+      }
       const port = request.socket.localPort;
       if (!port) throw new RepositoryError("The local permission broker is unavailable.", 503);
       const approvalUrl = `http://127.0.0.1:${port}/api/provider/permissions/request`;
@@ -381,6 +627,14 @@ async function handleApi(
             ? error.message
             : "The provider could not be started.",
         }, { profileId: profile.profile.id, continuationKey: profile.continuationKey });
+        const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
+        if (checkpoint && checkpoint.state === "baseline") {
+          await state.saveCheckpoint({
+            ...checkpoint,
+            state: "failed",
+            message: "Provider startup failed before checkpoint completion.",
+          });
+        }
         throw error;
       }
       await state.bindProviderRun(persisted.turn.id, run.id);
@@ -392,6 +646,8 @@ async function handleApi(
         "x-thread-id": persisted.thread.id,
         "x-turn-id": persisted.turn.id,
       });
+      let completed = false;
+      let historyFailed = false;
       for await (const event of run.events) {
         try {
           await state.recordProviderEvent(
@@ -406,13 +662,71 @@ async function handleApi(
             kind: "failed",
             message: "Local history could not be updated. The provider run was stopped.",
           })}\n`);
-          response.end();
-          return true;
+          historyFailed = true;
+          break;
         }
+        if (event.kind === "turn_completed") completed = true;
         response.write(`${JSON.stringify(event)}\n`);
+      }
+      const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
+      if (checkpoint?.state === "baseline" && baselineIdentity) {
+        if (historyFailed) {
+          await state.saveCheckpoint({
+            ...checkpoint,
+            state: "failed",
+            message: "Local history failed and the provider turn was stopped.",
+          });
+        } else if (completed) {
+          try {
+            const captured = await captureCheckpoint(
+              context.worktree,
+              true,
+              checkpointReference(checkpointId, "completed"),
+            );
+            if (captured.head !== checkpoint.baselineHead) {
+              await deleteCheckpointReferences(captured.gitDirectory, checkpointId);
+              await state.saveCheckpoint({
+                ...checkpoint,
+                state: "unavailable",
+                message: "HEAD changed during the turn; rewind does not rewrite Git history.",
+              });
+            } else {
+              const saved = await state.saveCheckpoint({
+                ...checkpoint,
+                completedIdentity: captured.identity,
+                completedIndexIdentity: captured.indexIdentity,
+                completedHead: captured.head,
+                state: "completed",
+                message: null,
+              });
+              await state.supersedeCompletedCheckpoints(
+                persisted.thread.id,
+                context.worktree,
+                saved.id,
+              );
+            }
+          } catch (error) {
+            await state.saveCheckpoint({
+              ...checkpoint,
+              state: "unavailable",
+              message: error instanceof RepositoryError
+                ? error.message
+                : "Completed checkpoint capture failed.",
+            });
+          }
+        } else {
+          await state.saveCheckpoint({
+            ...checkpoint,
+            state: "failed",
+            message: "The turn did not complete; its baseline remains inspectable.",
+          });
+        }
       }
       response.end();
       return true;
+      } finally {
+        activeCheckpointProjects.delete(project.id);
+      }
     }
     if (route === "/api/provider/permissions/request") {
       const body = await readJson(request) as {
