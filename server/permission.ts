@@ -20,7 +20,6 @@ export interface ApprovalSnapshot {
   conversationId: string;
   repository: string;
   worktree: string;
-  provider: string;
   toolCallId: string;
   toolName: string;
   scope: ApprovalScope;
@@ -42,12 +41,9 @@ export type PermissionDecision =
 
 const MUTATING_TOOLS = new Set([
   "Bash",
-  "Delete",
   "Edit",
-  "Move",
   "MultiEdit",
   "NotebookEdit",
-  "ProviderAction",
   "Write",
 ]);
 
@@ -102,7 +98,7 @@ export function isMutatingTool(toolName: string): boolean {
 
 export function describeMutation(toolName: string, inputValue: unknown): ApprovalScope {
   const input = record(inputValue);
-  const targetKeys = ["file_path", "path", "notebook_path", "command", "host", "title"];
+  const targetKeys = ["file_path", "path", "notebook_path", "command", "host"];
   const targetEntry = targetKeys
     .map((key) => [key, displayValue(key, input[key])] as const)
     .find(([, value]) => value);
@@ -124,13 +120,10 @@ export function describeMutation(toolName: string, inputValue: unknown): Approva
   ];
   const summaries: Record<string, string> = {
     Bash: "Run a command",
-    Delete: "Delete a path",
     Edit: "Edit a file",
-    Move: "Move a path",
     MultiEdit: "Edit files",
     NotebookEdit: "Edit a notebook",
     Write: "Write a file",
-    ProviderAction: "Run a provider action",
   };
   return {
     summary: toolName === "Bash" && typeof input.host === "string"
@@ -168,7 +161,6 @@ export class PermissionBroker {
     toolCallId: string;
     toolName: string;
     toolInput: unknown;
-    provider?: string;
   }): ApprovalSnapshot | null {
     if (!isMutatingTool(input.toolName)) return null;
     const id = randomUUID();
@@ -182,7 +174,6 @@ export class PermissionBroker {
       conversationId: input.conversationId,
       repository: input.repository,
       worktree: input.worktree,
-      provider: input.provider ?? "Claude Code",
       toolCallId: input.toolCallId,
       toolName: input.toolName,
       scope: describeMutation(input.toolName, input.toolInput),

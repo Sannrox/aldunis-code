@@ -78,38 +78,6 @@ through a versioned authenticated contract.
   Remote clients receive no filesystem enumeration capability until an
   authenticated directory-grant design is accepted.
 
-## Declarative provider adapter trust
-
-The [accepted adapter decision](https://github.com/Sannrox/aldunis-code/issues/49#issuecomment-5062009517)
-separates user-selected trust from Aldunis-enforced integrity. The user decides
-whether to trust an adapter source, its claimed publisher, and its provider
-executable. Aldunis does not endorse that publisher.
-
-Version 1 adapter packages are code-free manifests pinned to the SHA-256 digest
-shown during approval. Aldunis validates the complete schema, compatibility,
-fixed arguments, named environment references, and executable discovery rules;
-unknown fields, generic interpreters, command launchers, positional arguments,
-argument values, and inline code fail closed. Version 1 fixed arguments are
-option flags only. Material updates require a new explicit approval and retain
-one prior validated manifest for rollback.
-Because Aldunis threads are multi-turn, version 1 adapters and the negotiated
-ACP runtime must support session resume; incompatible providers fail visibly.
-
-Adapters run only through Aldunis-owned, versioned ACP JSON-RPC stdio handling.
-The host launches an explicit or safely discovered provider executable without a
-shell, with the canonical conversation worktree as its working directory and a
-bounded environment. The native provider process still runs with the local OS
-user's authority and is not an operating-system sandbox; installation approval
-therefore names this unrestricted process boundary explicitly. Users must trust
-the selected provider executable, not only its adapter manifest.
-Declared capabilities are descriptive inputs to the runtime and cannot grant
-filesystem, terminal, network, credential, MCP, or tool authority. Disabling,
-rollback, and uninstall modify only Aldunis-owned adapter metadata and never
-provider-owned binaries, credentials, configuration, or conversation history.
-Adapter administration is disabled for the entire host while remote mode is
-active. The user returns to the default loopback-only mode to install, update,
-enable, disable, roll back, or uninstall adapters.
-
 ## Delivery sequence
 
 1. Original navigable application shell and domain information architecture.

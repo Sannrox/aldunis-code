@@ -14,12 +14,6 @@ import {
   type ReasoningEffort,
 } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
-import { AcpProviderAdapter } from "./acp-provider.ts";
-import {
-  adapterReference,
-  ProviderAdapterError,
-  ProviderAdapterStore,
-} from "./provider-adapters.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
 import {
   annotationView,
@@ -235,9 +229,6 @@ async function handleApi(
   preferences: PreferencesStore,
   worktrees: WorktreeManager,
   directories: DirectoryBrowser,
-  adapters: ProviderAdapterStore,
-  activeAcp: Map<string, AcpProviderAdapter>,
-  remoteRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
 ): Promise<boolean> {
@@ -267,67 +258,8 @@ async function handleApi(
         providers: [
           { id: "claude-code", installed: true },
           codexReadiness,
-          ...(await adapters.list()).map((adapter) => ({
-            id: adapterReference(adapter.manifest),
-            installed: true,
-            authenticated: true,
-            version: adapter.manifest.version,
-            name: adapter.manifest.presentation.name,
-            enabled: adapter.enabled,
-          })),
         ],
       });
-      return true;
-    }
-    if (route === "/api/provider/adapters/list") {
-      const installed = await adapters.list();
-      sendJson(response, 200, {
-        adapters: remoteRequest
-          ? installed.map((adapter) => ({ ...adapter, source: "Source available on host only" }))
-          : installed,
-        administrationAvailable: !remoteRequest,
-      });
-      return true;
-    }
-    if (route === "/api/provider/adapters/inspect") {
-      const body = await readJson(request) as {
-        source?: unknown;
-        digest?: unknown;
-        manifest?: unknown;
-      };
-      sendJson(response, 200, adapters.inspect(body));
-      return true;
-    }
-    if (route === "/api/provider/adapters/install" || route === "/api/provider/adapters/update") {
-      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
-      const body = await readJson(request) as {
-        source?: unknown;
-        digest?: unknown;
-        manifest?: unknown;
-        approved?: unknown;
-      };
-      if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
-      sendJson(response, 200, route.endsWith("/install")
-        ? await adapters.install(body)
-        : await adapters.update(body));
-      return true;
-    }
-    const adapterAction = route.match(
-      /^\/api\/provider\/adapters\/([a-z0-9.-]+)\/(enable|disable|rollback|uninstall)$/,
-    );
-    if (adapterAction) {
-      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
-      const body = await readJson(request) as { approved?: unknown };
-      if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
-      const [, id, action] = adapterAction;
-      if (action === "uninstall") {
-        await adapters.uninstall(id);
-        sendJson(response, 200, { uninstalled: true });
-      } else if (action === "rollback") {
-        sendJson(response, 200, await adapters.rollback(id));
-      } else {
-        sendJson(response, 200, await adapters.setEnabled(id, action === "enable"));
-      }
       return true;
     }
     if (route === "/api/remote/pair") {
@@ -892,7 +824,6 @@ async function handleApi(
         reasoningEffort?: unknown;
       };
       const providerId = (body.provider ?? "claude-code") as ProviderId;
-      const isDeclarativeAdapter = typeof providerId === "string" && providerId.startsWith("adapter:");
       const reasoningEfforts = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
       if (
         typeof body.root !== "string"
@@ -909,7 +840,7 @@ async function handleApi(
           !Array.isArray(body.attachments)
           || body.attachments.some((path) => typeof path !== "string")
         ))
-        || (providerId !== "claude-code" && providerId !== "codex-cli" && !isDeclarativeAdapter)
+        || (providerId !== "claude-code" && providerId !== "codex-cli")
         || (providerId === "claude-code" && typeof body.profileId !== "string")
         || typeof body.model !== "string"
         || (providerId === "claude-code" && !CLAUDE_MODEL_ALIASES.includes(body.model))
@@ -960,16 +891,6 @@ async function handleApi(
           (session) => session.threadId === body.threadId && session.provider === providerId,
         )
         : undefined;
-      const installedAdapter = isDeclarativeAdapter ? await adapters.version(providerId) : null;
-      if (isDeclarativeAdapter && !installedAdapter) {
-        throw new ProviderAdapterError(
-          "This thread requires an adapter version that is unavailable. Reinstall that exact version or start a new conversation.",
-          409,
-        );
-      }
-      if (installedAdapter && !installedAdapter.enabled) {
-        throw new ProviderAdapterError("The selected adapter is disabled.", 409);
-      }
       if (
         profile
         &&
@@ -1075,22 +996,6 @@ async function handleApi(
             model: body.model === "default" ? undefined : body.model,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
           })
-          : installedAdapter
-          ? await (async () => {
-              const executable = await adapters.resolveExecutable(installedAdapter);
-              const adapter = new AcpProviderAdapter(installedAdapter, executable, permissions);
-              const started = await adapter.start({
-                repository: context.root,
-                worktree: context.worktree,
-                conversationId: body.conversationId,
-                prompt: providerPrompt,
-                approvalUrl: await approvalUrl,
-                mode,
-                resumeSessionId: body.resumeSessionId,
-              });
-              activeAcp.set(started.id, adapter);
-              return started;
-            })()
           : await provider.start(
             context.root,
             context.worktree,
@@ -1124,16 +1029,7 @@ async function handleApi(
         response.setHeader("x-turn-id", persisted.turn.id);
         throw error;
       }
-      try {
-        await state.bindProviderRun(persisted.turn.id, run.id);
-      } catch (error) {
-        if (providerId === "codex-cli") codex.cancel(run.id);
-        else if (isDeclarativeAdapter) {
-          activeAcp.get(run.id)?.cancel(run.id);
-          activeAcp.delete(run.id);
-        } else provider.cancel(run.id);
-        throw error;
-      }
+      await state.bindProviderRun(persisted.turn.id, run.id);
       response.writeHead(200, {
         "content-type": "application/x-ndjson; charset=utf-8",
         "cache-control": "no-store",
@@ -1155,7 +1051,6 @@ async function handleApi(
           );
         } catch {
           if (providerId === "codex-cli") codex.cancel(run.id);
-          else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
           else provider.cancel(run.id);
           response.write(`${JSON.stringify({
             kind: "failed",
@@ -1222,7 +1117,6 @@ async function handleApi(
         }
       }
       response.end();
-      activeAcp.delete(run.id);
       return true;
       } finally {
         activeCheckpointWorktrees.delete(activeWorktreeKey);
@@ -1624,8 +1518,7 @@ async function handleApi(
     }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
-      const acp = activeAcp.get(cancelMatch[1]);
-      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1]) && !acp?.cancel(cancelMatch[1])) {
+      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1])) {
         throw new RepositoryError("The provider run is no longer active.", 404);
       }
       sendJson(response, 202, { status: "cancelling" });
@@ -1639,7 +1532,6 @@ async function handleApi(
       || error instanceof ProfileError
       || error instanceof PreferencesError
       || error instanceof PreviewError
-      || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
       ? error.status
       : 500;
@@ -1650,7 +1542,6 @@ async function handleApi(
       || error instanceof ProfileError
       || error instanceof PreferencesError
       || error instanceof PreviewError
-      || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
       ? error.message
       : "The local operation failed.";
@@ -1701,8 +1592,6 @@ export function createLocalHost(
   const preferences = new PreferencesStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
   const directories = new DirectoryBrowser();
-  const adapters = new ProviderAdapterStore(state.directory);
-  const activeAcp = new Map<string, AcpProviderAdapter>();
   const recovery = state.recoverInterruptedTurns();
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
@@ -1736,9 +1625,6 @@ export function createLocalHost(
         preferences,
         worktrees,
         directories,
-        adapters,
-        activeAcp,
-        Boolean(remoteAuth),
         remoteAuth,
         internalPermissionCallback?.url,
       )
