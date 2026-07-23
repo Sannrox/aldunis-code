@@ -77,8 +77,34 @@ interface ChangedFile {
   deletions: number | null;
 }
 interface FileDiff extends ChangedFile {
+  identity: string;
+  lines: Array<{
+    index: number;
+    side: "context" | "addition" | "deletion" | "metadata";
+    oldLine: number | null;
+    newLine: number | null;
+    content: string;
+  }>;
   patch: string | null;
   message: string | null;
+}
+interface DiffAnnotation {
+  id: string;
+  threadId: string;
+  checkpointId: string | null;
+  diffIdentity: string;
+  path: string;
+  previousPath: string | null;
+  targetState: ChangeState;
+  scope: "file" | "line";
+  side: "addition" | "deletion" | "context" | null;
+  oldLine: number | null;
+  newLine: number | null;
+  text: string;
+  capturedContext: string;
+  resolution: "unresolved" | "resolved";
+  stale: boolean;
+  staleReason: string | null;
 }
 interface RepositoryFileResult {
   path: string;
@@ -506,23 +532,36 @@ function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads
 
 function ChangesPanel({
   repository,
+  threadId,
   files,
   loading,
   error,
   onClose,
   onRefresh,
+  onSendRevision,
+  canSendRevision,
 }: {
   repository: RepositoryMetadata;
+  threadId: string | null;
   files: ChangedFile[];
   loading: boolean;
   error: string | null;
   onClose: () => void;
   onRefresh: () => void;
+  onSendRevision: (prompt: string) => void;
+  canSendRevision: boolean;
 }) {
   const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const [annotations, setAnnotations] = useState<DiffAnnotation[]>([]);
+  const [annotationError, setAnnotationError] = useState<string | null>(null);
+  const [annotationBusy, setAnnotationBusy] = useState(false);
+  const [commentLineIndex, setCommentLineIndex] = useState<number | null | undefined>(undefined);
+  const [commentText, setCommentText] = useState("");
+  const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([]);
+  const [revisionPreview, setRevisionPreview] = useState<string | null>(null);
   const [delivery, setDelivery] = useState<DeliveryContext | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [deliveryAction, setDeliveryAction] = useState<DeliveryAction>("stage");
@@ -631,6 +670,111 @@ function ChangesPanel({
     });
     return () => { active = false; };
   }, [repository, selected]);
+  const loadAnnotations = async () => {
+    if (!threadId) {
+      setAnnotations([]);
+      return;
+    }
+    const response = await fetch("/api/annotations/list", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        root: repository.root,
+        worktree: repository.selectedWorktree,
+        threadId,
+      }),
+    });
+    const body = await response.json() as { annotations?: DiffAnnotation[]; error?: string };
+    if (!response.ok) throw new Error(body.error ?? "Annotations could not be loaded.");
+    const loaded = body.annotations ?? [];
+    setAnnotations(loaded);
+    setSelectedAnnotationIds((current) => current.filter(
+      (id) => loaded.some((annotation) => annotation.id === id),
+    ));
+  };
+  useEffect(() => {
+    void loadAnnotations().catch((cause) => {
+      setAnnotationError(cause instanceof Error ? cause.message : "Annotations could not be loaded.");
+    });
+  }, [threadId, repository.root, repository.selectedWorktree]);
+  const saveAnnotation = async () => {
+    if (!threadId || !selected || !diff || commentLineIndex === undefined || !commentText.trim()) return;
+    setAnnotationBusy(true);
+    setAnnotationError(null);
+    try {
+      const response = await fetch("/api/annotations/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          threadId,
+          path: selected,
+          diffIdentity: diff.identity,
+          scope: commentLineIndex === null ? "file" : "line",
+          lineIndex: commentLineIndex,
+          text: commentText,
+        }),
+      });
+      const body = await response.json() as DiffAnnotation | { error?: string };
+      if (!response.ok) throw new Error("error" in body ? body.error : "The annotation could not be saved.");
+      setCommentLineIndex(undefined);
+      setCommentText("");
+      await loadAnnotations();
+    } catch (cause) {
+      setAnnotationError(cause instanceof Error ? cause.message : "The annotation could not be saved.");
+    } finally {
+      setAnnotationBusy(false);
+    }
+  };
+  const setResolution = async (annotation: DiffAnnotation) => {
+    if (!threadId) return;
+    setAnnotationBusy(true);
+    setAnnotationError(null);
+    try {
+      const response = await fetch(`/api/annotations/${annotation.id}/resolution`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          threadId,
+          resolved: annotation.resolution === "unresolved",
+        }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "The annotation could not be updated.");
+      await loadAnnotations();
+    } catch (cause) {
+      setAnnotationError(cause instanceof Error ? cause.message : "The annotation could not be updated.");
+    } finally {
+      setAnnotationBusy(false);
+    }
+  };
+  const previewRevision = async () => {
+    if (!threadId || selectedAnnotationIds.length === 0) return;
+    setAnnotationBusy(true);
+    setAnnotationError(null);
+    try {
+      const response = await fetch("/api/annotations/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          threadId,
+          annotationIds: selectedAnnotationIds,
+        }),
+      });
+      const body = await response.json() as { prompt?: string; error?: string };
+      if (!response.ok || !body.prompt) throw new Error(body.error ?? "The revision request could not be previewed.");
+      setRevisionPreview(body.prompt);
+    } catch (cause) {
+      setAnnotationError(cause instanceof Error ? cause.message : "The revision request could not be previewed.");
+    } finally {
+      setAnnotationBusy(false);
+    }
+  };
   return (
     <section
       ref={dialogRef}
@@ -643,7 +787,7 @@ function ChangesPanel({
     >
       <header>
         <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
-        <div><button onClick={onRefresh}>Refresh</button><button data-dialog-initial-focus onClick={onClose} aria-label="Close changed files">×</button></div>
+        <div><button onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</button><button data-dialog-initial-focus onClick={onClose} aria-label="Close changed files">×</button></div>
       </header>
       <div className="changes-body">
         <nav aria-label="Changed files">
@@ -676,10 +820,86 @@ function ChangesPanel({
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
           {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
-          {diff?.patch && <pre>{diff.patch.split("\n").map((line, index) => (
-            <span className={line.startsWith("+") && !line.startsWith("+++") ? "addition" : line.startsWith("-") && !line.startsWith("---") ? "deletion" : "context"} key={index}>{line || " "}</span>
+          {diff && threadId && <button className="file-comment-button" onClick={() => setCommentLineIndex(null)}>Comment on {diff.path}</button>}
+          {diff?.patch && <pre>{diff.lines.map((line) => (
+            <span className={line.side} key={line.index}>
+              {line.side !== "metadata" && threadId
+                ? <button
+                    className="diff-comment-button"
+                    onClick={() => setCommentLineIndex(line.index)}
+                    aria-label={`Comment on ${diff.path} ${line.side} line ${line.newLine ?? line.oldLine}`}
+                  >+</button>
+                : <i aria-hidden="true" />}
+              <code>{line.content || " "}</code>
+            </span>
           ))}</pre>}
+          {!threadId && <p className="changes-note">Send the first conversation turn before saving review comments.</p>}
+          {commentLineIndex !== undefined && diff && (
+            <section className="annotation-composer" aria-label="New local diff comment">
+              <strong>{commentLineIndex === null
+                ? `Comment on ${diff.path}`
+                : `Comment on ${diff.path} line ${diff.lines.find((line) => line.index === commentLineIndex)?.newLine
+                  ?? diff.lines.find((line) => line.index === commentLineIndex)?.oldLine}`}
+              </strong>
+              <textarea
+                autoFocus
+                maxLength={2000}
+                value={commentText}
+                onChange={(event) => setCommentText(event.target.value)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void saveAnnotation();
+                  if (event.key === "Escape") setCommentLineIndex(undefined);
+                }}
+                aria-label="Review comment"
+              />
+              <footer>
+                <button onClick={() => { setCommentLineIndex(undefined); setCommentText(""); }}>Cancel</button>
+                <button onClick={() => void saveAnnotation()} disabled={annotationBusy || !commentText.trim()}>Save comment</button>
+              </footer>
+            </section>
+          )}
         </div>
+        <section className="annotations-panel" aria-label="Local diff comments">
+          <header><strong>Review comments</strong><small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small></header>
+          {annotations.length === 0 && <p>No local comments yet.</p>}
+          <ul>
+            {annotations.map((annotation) => (
+              <li className={`${annotation.resolution} ${annotation.stale ? "stale" : ""}`} key={annotation.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={selectedAnnotationIds.includes(annotation.id)}
+                    onChange={(event) => setSelectedAnnotationIds((current) => event.target.checked
+                      ? [...current, annotation.id]
+                      : current.filter((id) => id !== annotation.id))}
+                  />
+                  <span>
+                    <strong>{annotation.path} · {annotation.scope === "file" ? "file" : annotation.side === "deletion" ? `old line ${annotation.oldLine}` : `new line ${annotation.newLine}`}</strong>
+                    <small>{annotation.stale ? annotation.staleReason : annotation.checkpointId ? "Checkpoint-bound target" : "Diff-bound target"}</small>
+                    <em>{annotation.text}</em>
+                  </span>
+                </label>
+                <button onClick={() => void setResolution(annotation)} disabled={annotationBusy}>
+                  {annotation.resolution === "unresolved" ? "Resolve" : "Reopen"}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {annotationError && <p className="changes-error" role="alert">{annotationError}</p>}
+          <button className="preview-revision" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</button>
+        </section>
+        {revisionPreview && (
+          <section className="revision-preview" role="dialog" aria-modal="true" aria-label="Revision request preview">
+            <header><strong>Exact provider context</strong><button onClick={() => setRevisionPreview(null)} aria-label="Close revision preview">×</button></header>
+            <pre>{revisionPreview}</pre>
+            <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
+            <footer>
+              <button onClick={() => setRevisionPreview(null)}>Cancel</button>
+              <button onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</button>
+            </footer>
+            {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
+          </section>
+        )}
         <section className="delivery-panel" aria-label="Commit, push, and pull request actions">
           <header><div><strong>Reviewed delivery</strong><small>{delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}</small></div><span>{delivery?.upstream ?? "No upstream"}</span></header>
           <div className="delivery-form">
@@ -1775,8 +1995,8 @@ function Conversation({
     setSuggestionMode(null);
     setSuggestions([]);
   };
-  const send = async () => {
-    const value = draft.trim();
+  const send = async (promptOverride?: string) => {
+    const value = (promptOverride ?? draft).trim();
     if (
       !value
       || !repository
@@ -1787,11 +2007,11 @@ function Conversation({
     ) return;
     const turnMode = mode;
     setMessages((current) => [...current, { text: value, mode: turnMode }]);
-    setDraft("");
-    const sentAttachments = attachments;
-    setAttachments([]);
-    const sentElementReferences = elementReferences;
-    setElementReferences([]);
+    if (promptOverride === undefined) setDraft("");
+    const sentAttachments = promptOverride === undefined ? attachments : [];
+    if (promptOverride === undefined) setAttachments([]);
+    const sentElementReferences = promptOverride === undefined ? elementReferences : [];
+    if (promptOverride === undefined) setElementReferences([]);
     setProviderEvents([]);
     setProviderState("starting");
     setRunId(null);
@@ -1887,8 +2107,10 @@ function Conversation({
         }
       }
     } catch (error) {
-      setAttachments(sentAttachments);
-      setElementReferences(sentElementReferences);
+      if (promptOverride === undefined) {
+        setAttachments(sentAttachments);
+        setElementReferences(sentElementReferences);
+      }
       setProviderEvents((current) => [...current, {
         kind: "failed",
         message: error instanceof Error ? error.message : `${providerName} failed.`,
@@ -2343,11 +2565,21 @@ function Conversation({
       {changesOpen && repository && (
         <ChangesPanel
           repository={repository}
+          threadId={threadId}
           files={changes}
           loading={changesLoading}
           error={changesError}
           onClose={onHideChanges}
           onRefresh={onRefreshChanges}
+          canSendRevision={historyRestored && !runActive && (
+            provider === "codex-cli"
+              ? Boolean(codex?.installed && codex.authenticated)
+              : Boolean(profileId)
+          )}
+          onSendRevision={(prompt) => {
+            onHideChanges();
+            void send(prompt);
+          }}
         />
       )}
       {previewOpen && repository && (
