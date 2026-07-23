@@ -35,25 +35,38 @@ function textContent(value: unknown): string {
 
 export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
   const message = record(value);
-  if (!message || message.method !== "session/update") {
+  if (
+    !message
+    || (message.method !== "session/update" && message.method !== "session/notification")
+  ) {
     throw new ProviderProtocolError(`Unsupported ACP notification: ${String(message?.method)}.`);
   }
   const params = record(message.params);
   const update = record(params?.update);
-  if (!update || typeof update.sessionUpdate !== "string") {
+  const updateType = typeof update?.sessionUpdate === "string"
+    ? update.sessionUpdate
+    : typeof update?.type === "string"
+    ? ({
+        AgentMessageChunk: "agent_message_chunk",
+        ToolCall: "tool_call",
+        ToolCallUpdate: "tool_call_update",
+        TurnEnd: "turn_end",
+      } as Record<string, string>)[update.type]
+    : undefined;
+  if (!update || !updateType) {
     throw new ProviderProtocolError("ACP emitted a malformed session update.");
   }
-  if (update.sessionUpdate === "agent_message_chunk") {
+  if (updateType === "agent_message_chunk") {
     return [{ kind: "assistant_text", text: textContent(update.content) }];
   }
-  if (update.sessionUpdate === "tool_call") {
+  if (updateType === "tool_call") {
     return [{
       kind: "tool_started",
       toolCallId: requiredString(update.toolCallId, "tool call ID"),
       name: typeof update.title === "string" ? update.title : "Provider tool",
     }];
   }
-  if (update.sessionUpdate === "tool_call_update") {
+  if (updateType === "tool_call_update") {
     const status = update.status;
     if (status === "completed" || status === "failed") {
       return [{
@@ -71,9 +84,21 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
     "available_commands_update",
     "current_mode_update",
     "usage_update",
+    "turn_end",
   ]);
-  if (informational.has(update.sessionUpdate)) return [];
-  throw new ProviderProtocolError(`Unsupported ACP session update: ${update.sessionUpdate}.`);
+  if (informational.has(updateType)) return [];
+  throw new ProviderProtocolError(`Unsupported ACP session update: ${updateType}.`);
+}
+
+export function isOptionalKiroNotification(adapterId: string, value: unknown): boolean {
+  const message = record(value);
+  return adapterId === "dev.kiro.cli"
+    && typeof message?.method === "string"
+    && (
+      message.method.startsWith("_kiro.dev/")
+      || message.method === "_session/terminate"
+    )
+    && message.id === undefined;
 }
 
 export function acpSessionRequest(
@@ -103,6 +128,21 @@ export function acpAllowOnceOption(value: unknown): string | null {
     }
   }
   return null;
+}
+
+export function acpPromptRequest(
+  adapterId: string,
+  sessionId: string,
+  prompt: string,
+): { method: "session/prompt"; params: JsonRecord } {
+  const content = [{ type: "text", text: prompt }];
+  return {
+    method: "session/prompt",
+    params: {
+      sessionId,
+      ...(adapterId === "dev.kiro.cli" ? { content } : { prompt: content }),
+    },
+  };
 }
 
 interface ActiveRun {
@@ -295,11 +335,11 @@ export class AcpProviderAdapter {
           this.#send(active.child, {
             jsonrpc: "2.0",
             id: 2,
-            method: "session/prompt",
-            params: {
-              sessionId: active.sessionId,
-              prompt: [{ type: "text", text: options.prompt }],
-            },
+            ...acpPromptRequest(
+              this.adapter.manifest.id,
+              active.sessionId,
+              options.prompt,
+            ),
           });
           continue;
         }
@@ -401,6 +441,10 @@ export class AcpProviderAdapter {
           continue;
         }
         if (typeof message.method === "string") {
+          if (isOptionalKiroNotification(this.adapter.manifest.id, message)) {
+            setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
+            continue;
+          }
           const events = normalizeAcpNotification(message);
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           for (const event of events) yield event;
