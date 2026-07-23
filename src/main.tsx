@@ -1964,6 +1964,8 @@ function ProfileSettingsDialog({
   const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const edit = (profile: ClaudeProfile | null) => {
     setSelectedId(profile?.id ?? null);
     setName(profile?.name ?? "");
@@ -1976,6 +1978,12 @@ function ProfileSettingsDialog({
   useEffect(() => {
     if (open && selectedId && !profiles.some((profile) => profile.id === selectedId)) edit(null);
   }, [open, profiles, selectedId]);
+  useEffect(() => {
+    if (!open) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => previouslyFocused?.focus();
+  }, [open]);
   if (!open) return null;
   const request = async (path: string, body: unknown) => {
     setBusy(true);
@@ -2015,11 +2023,35 @@ function ProfileSettingsDialog({
     await request("/api/provider/profiles/refresh", { id: profile.id, kind });
   };
   return (
-    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title">
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !busy) {
+          event.preventDefault();
+          onClose();
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex='-1'])",
+        ) ?? [])].filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
+    >
+      <section ref={dialogRef} className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title">
         <header>
           <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
-          <button onClick={onClose} aria-label="Close profile settings">×</button>
+          <button ref={closeButtonRef} onClick={onClose} aria-label="Close profile settings">×</button>
         </header>
         <div className="profile-dialog-body">
           <nav aria-label="Claude profiles">
