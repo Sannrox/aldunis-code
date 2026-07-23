@@ -24,28 +24,6 @@ export interface Thread {
   provider: ProviderId;
   createdAt: string;
   updatedAt: string;
-  pinnedAt?: string | null;
-  archivedAt?: string | null;
-}
-
-export type ConversationDeletionStatus = "pending" | "failed" | "completed";
-
-export interface ConversationDeletion {
-  schemaVersion: 1;
-  threadId: string;
-  status: ConversationDeletionStatus;
-  affectedRecords: {
-    thread: number;
-    turns: number;
-    messages: number;
-    activities: number;
-    providerSessions: number;
-    checkpoints: number;
-    annotations: number;
-  };
-  requestedAt: string;
-  completedAt: string | null;
-  error: string | null;
 }
 
 export interface Turn {
@@ -155,7 +133,6 @@ export interface StateProjection {
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
-  conversationDeletions: ConversationDeletion[];
 }
 
 type StateEvent =
@@ -166,8 +143,7 @@ type StateEvent =
   | { type: "activity_saved"; activity: Activity }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
-  | { type: "annotation_saved"; annotation: DiffAnnotation }
-  | { type: "conversation_deletion_saved"; conversationDeletion: ConversationDeletion };
+  | { type: "annotation_saved"; annotation: DiffAnnotation };
 
 interface EventEnvelope {
   schemaVersion: 1;
@@ -195,7 +171,6 @@ function emptyProjection(): StateProjection {
     providerSessions: [],
     checkpoints: [],
     annotations: [],
-    conversationDeletions: [],
   };
 }
 
@@ -232,12 +207,6 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.checkpoints, event.checkpoint);
   } else if (event.type === "annotation_saved") {
     replaceById(projection.annotations, event.annotation);
-  } else if (event.type === "conversation_deletion_saved") {
-    const index = projection.conversationDeletions.findIndex(
-      (item) => item.threadId === event.conversationDeletion.threadId,
-    );
-    if (index === -1) projection.conversationDeletions.push(event.conversationDeletion);
-    else projection.conversationDeletions[index] = event.conversationDeletion;
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -275,7 +244,6 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
-    conversation_deletion_saved: "conversationDeletion",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -285,9 +253,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     || payload.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION
     || (key === "providerSession"
       ? typeof payload.threadId !== "string" || typeof payload.sessionId !== "string"
-      : key === "conversationDeletion"
-        ? typeof payload.threadId !== "string"
-        : typeof payload.id !== "string")
+      : typeof payload.id !== "string")
   ) {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
@@ -424,8 +390,6 @@ export class LocalStateStore {
           provider: input.provider,
           createdAt: now,
           updatedAt: now,
-          pinnedAt: null,
-          archivedAt: null,
         };
     const turn: Turn = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -454,163 +418,6 @@ export class LocalStateStore {
     const turn = (await this.load()).turns.find((item) => item.id === turnId);
     if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
     await this.#append({ type: "turn_saved", turn: { ...turn, providerRunId } });
-  }
-
-  async renameConversation(threadId: string, title: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const trimmed = title.trim();
-    if (!trimmed) throw new LocalStateError("A conversation title is required.", 400);
-    const saved = { ...thread, title: trimmed.slice(0, 120), updatedAt: new Date().toISOString() };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
-  }
-
-  async setConversationPinned(threadId: string, pinned: boolean): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const now = new Date().toISOString();
-    const saved = { ...thread, pinnedAt: pinned ? now : null, updatedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
-  }
-
-  async archiveConversation(threadId: string): Promise<Thread> {
-    const projection = await this.load();
-    const thread = this.#requireThread(projection, threadId);
-    this.#assertConversationSettled(projection, threadId, "archived");
-    const now = new Date().toISOString();
-    const saved = { ...thread, archivedAt: now, updatedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
-  }
-
-  async restoreConversation(threadId: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const saved = { ...thread, archivedAt: null, updatedAt: new Date().toISOString() };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
-  }
-
-  async previewConversationDeletion(threadId: string): Promise<ConversationDeletion["affectedRecords"]> {
-    const projection = await this.load();
-    this.#requireThread(projection, threadId);
-    this.#assertConversationSettled(projection, threadId, "deleted");
-    return this.#conversationRecordCounts(projection, threadId);
-  }
-
-  async deleteConversation(threadId: string): Promise<ConversationDeletion> {
-    const projection = await this.load();
-    const existingDeletion = projection.conversationDeletions.find(
-      (item) => item.threadId === threadId && item.status !== "completed",
-    );
-    const thread = projection.threads.find((item) => item.id === threadId);
-    if (!thread && !existingDeletion) {
-      throw new LocalStateError("The selected conversation is not available.", 404);
-    }
-    if (thread) this.#assertConversationSettled(projection, threadId, "deleted");
-    const requestedAt = new Date().toISOString();
-    const pending: ConversationDeletion = existingDeletion ?? {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      threadId,
-      status: "pending",
-      affectedRecords: this.#conversationRecordCounts(projection, threadId),
-      requestedAt,
-      completedAt: null,
-      error: null,
-    };
-    await this.#append({
-      type: "conversation_deletion_saved",
-      conversationDeletion: { ...pending, status: "pending", error: null },
-    });
-    try {
-      await this.#compact((next) => this.#removeConversationRecords(next, threadId));
-      const completed: ConversationDeletion = {
-        ...pending,
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      };
-      await this.#append({ type: "conversation_deletion_saved", conversationDeletion: completed });
-      return completed;
-    } catch (error) {
-      const failed: ConversationDeletion = {
-        ...pending,
-        status: "failed",
-        error: error instanceof Error ? error.message : "Conversation compaction failed.",
-      };
-      await this.#append({ type: "conversation_deletion_saved", conversationDeletion: failed });
-      throw new LocalStateError(
-        "Conversation deletion is incomplete and can be retried. No repository or worktree was changed.",
-      );
-    }
-  }
-
-  #requireThread(projection: StateProjection, threadId: string): Thread {
-    const thread = projection.threads.find((item) => item.id === threadId);
-    if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
-    return thread;
-  }
-
-  #assertConversationSettled(
-    projection: StateProjection,
-    threadId: string,
-    action: "archived" | "deleted",
-  ): void {
-    const blocking = projection.turns.find((turn) => (
-      turn.threadId === threadId
-      && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
-    ));
-    if (!blocking) return;
-    const reason = blocking.status === "waiting_for_approval"
-      ? "a tool approval is unresolved"
-      : blocking.status === "waiting_for_user"
-        ? "provider input is unresolved"
-        : "provider work is active";
-    throw new LocalStateError(
-      `This conversation cannot be ${action} because ${reason}. Stop or resolve it, then retry.`,
-      409,
-    );
-  }
-
-  #conversationRecordCounts(
-    projection: StateProjection,
-    threadId: string,
-  ): ConversationDeletion["affectedRecords"] {
-    const turnIds = new Set(
-      projection.turns.filter((turn) => turn.threadId === threadId).map((turn) => turn.id),
-    );
-    return {
-      thread: projection.threads.some((thread) => thread.id === threadId) ? 1 : 0,
-      turns: turnIds.size,
-      messages: projection.messages.filter((message) => turnIds.has(message.turnId)).length,
-      activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)).length,
-      providerSessions: projection.providerSessions.filter(
-        (session) => session.threadId === threadId,
-      ).length,
-      checkpoints: projection.checkpoints.filter(
-        (checkpoint) => checkpoint.threadId === threadId,
-      ).length,
-      annotations: projection.annotations.filter(
-        (annotation) => annotation.threadId === threadId,
-      ).length,
-    };
-  }
-
-  #removeConversationRecords(projection: StateProjection, threadId: string): void {
-    const turnIds = new Set(
-      projection.turns.filter((turn) => turn.threadId === threadId).map((turn) => turn.id),
-    );
-    projection.threads = projection.threads.filter((thread) => thread.id !== threadId);
-    projection.turns = projection.turns.filter((turn) => turn.threadId !== threadId);
-    projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
-    projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
-    projection.providerSessions = projection.providerSessions.filter(
-      (session) => session.threadId !== threadId,
-    );
-    projection.checkpoints = projection.checkpoints.filter(
-      (checkpoint) => checkpoint.threadId !== threadId,
-    );
-    projection.annotations = projection.annotations.filter(
-      (annotation) => annotation.threadId !== threadId,
-    );
   }
 
   async recoverInterruptedTurns(): Promise<void> {
@@ -847,10 +654,6 @@ export class LocalStateStore {
         ...next.annotations.map((annotation): StateEvent => ({
           type: "annotation_saved",
           annotation,
-        })),
-        ...next.conversationDeletions.map((conversationDeletion): StateEvent => ({
-          type: "conversation_deletion_saved",
-          conversationDeletion,
         })),
       ];
       const rebuilt = emptyProjection();

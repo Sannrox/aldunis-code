@@ -484,19 +484,13 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/search") {
-      const body = await readJson(request) as { query?: unknown; archived?: unknown };
+      const body = await readJson(request) as { query?: unknown };
       if (typeof body.query !== "string") throw new LocalStateError("A search query is required.", 400);
-      if (body.archived !== undefined && !["exclude", "include", "only"].includes(String(body.archived))) {
-        throw new LocalStateError("A valid archived conversation scope is required.", 400);
-      }
       const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
-      const archived = body.archived ?? "exclude";
       const projection = await state.load();
       const projects = new Map(projection.projects.map((project) => [project.id, project]));
       const threads = projection.threads
         .filter((thread) => {
-          if (archived === "exclude" && thread.archivedAt) return false;
-          if (archived === "only" && !thread.archivedAt) return false;
           const project = projects.get(thread.projectId);
           return !query || thread.title.toLocaleLowerCase().includes(query)
             || thread.worktree.toLocaleLowerCase().includes(query)
@@ -510,63 +504,9 @@ async function handleApi(
           title: thread.title,
           worktree: thread.worktree,
           updatedAt: thread.updatedAt,
-          pinnedAt: thread.pinnedAt ?? null,
-          archivedAt: thread.archivedAt ?? null,
           projectName: projects.get(thread.projectId)?.name ?? "Unknown project",
         }));
       sendJson(response, 200, { threads, bounded: true });
-      return true;
-    }
-    if (route === "/api/state/conversations/rename") {
-      const body = await readJson(request) as { threadId?: unknown; title?: unknown };
-      if (typeof body.threadId !== "string" || typeof body.title !== "string") {
-        throw new LocalStateError("A conversation and title are required.", 400);
-      }
-      sendJson(response, 200, await state.renameConversation(body.threadId, body.title));
-      return true;
-    }
-    if (route === "/api/state/conversations/pin") {
-      const body = await readJson(request) as { threadId?: unknown; pinned?: unknown };
-      if (typeof body.threadId !== "string" || typeof body.pinned !== "boolean") {
-        throw new LocalStateError("A conversation and pin state are required.", 400);
-      }
-      sendJson(response, 200, await state.setConversationPinned(body.threadId, body.pinned));
-      return true;
-    }
-    if (route === "/api/state/conversations/archive") {
-      const body = await readJson(request) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      sendJson(response, 200, await state.archiveConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/restore") {
-      const body = await readJson(request) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      sendJson(response, 200, await state.restoreConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/delete/preview") {
-      const body = await readJson(request) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      sendJson(response, 200, {
-        threadId: body.threadId,
-        affectedRecords: await state.previewConversationDeletion(body.threadId),
-        excluded: ["repository", "worktree", "branch", "provider credentials", "remote content"],
-      });
-      return true;
-    }
-    if (route === "/api/state/conversations/delete") {
-      const body = await readJson(request) as { threadId?: unknown; confirm?: unknown };
-      if (typeof body.threadId !== "string" || body.confirm !== true) {
-        throw new LocalStateError("A confirmed conversation deletion is required.", 400);
-      }
-      sendJson(response, 200, await state.deleteConversation(body.threadId));
       return true;
     }
     if (route === "/api/preferences/load") {
