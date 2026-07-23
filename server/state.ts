@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,8 +22,46 @@ export interface Thread {
   title: string;
   worktree: string;
   provider: ProviderId;
+  parentThreadId?: string;
+  forkId?: string;
+  profileId?: string | null;
+  model?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ForkTransferMessage {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  createdAt: string;
+}
+
+export interface ForkTransferAnnotation {
+  id: string;
+  path: string;
+  text: string;
+  capturedContext: string;
+}
+
+export interface ConversationFork {
+  schemaVersion: 1;
+  id: string;
+  sourceThreadId: string;
+  destinationThreadId: string;
+  provider: ProviderId;
+  profileId: string | null;
+  model: string;
+  worktree: string;
+  status: "pending" | "started";
+  messages: ForkTransferMessage[];
+  annotations: ForkTransferAnnotation[];
+  files: [];
+  summaries: [];
+  prompt: string;
+  byteCount: number;
+  createdAt: string;
+  startedAt: string | null;
 }
 
 export interface Turn {
@@ -133,6 +171,7 @@ export interface StateProjection {
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
+  forks: ConversationFork[];
 }
 
 type StateEvent =
@@ -143,7 +182,9 @@ type StateEvent =
   | { type: "activity_saved"; activity: Activity }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
-  | { type: "annotation_saved"; annotation: DiffAnnotation };
+  | { type: "annotation_saved"; annotation: DiffAnnotation }
+  | { type: "fork_created"; thread: Thread; fork: ConversationFork }
+  | { type: "fork_saved"; fork: ConversationFork };
 
 interface EventEnvelope {
   schemaVersion: 1;
@@ -171,6 +212,7 @@ function emptyProjection(): StateProjection {
     providerSessions: [],
     checkpoints: [],
     annotations: [],
+    forks: [],
   };
 }
 
@@ -182,6 +224,38 @@ function replaceById<T extends { id: string }>(items: T[], value: T): void {
   const index = items.findIndex((item) => item.id === value.id);
   if (index === -1) items.push(value);
   else items[index] = value;
+}
+
+function renderForkPrompt(
+  source: Thread,
+  messages: ForkTransferMessage[],
+  annotations: ForkTransferAnnotation[],
+): string {
+  const sections = [
+    "Continue this investigation in a new provider-native conversation.",
+    `Source conversation: ${source.title}`,
+    "The following context was explicitly reviewed for cross-provider transfer.",
+  ];
+  if (messages.length) {
+    sections.push(
+      "Conversation messages:",
+      ...messages.map((message) => `[${message.role}] ${message.text}`),
+    );
+  }
+  if (annotations.length) {
+    sections.push(
+      "User-authored diff annotations:",
+      ...annotations.map((annotation) => (
+        `${annotation.path}: ${annotation.text}${annotation.capturedContext
+          ? `\nContext: ${annotation.capturedContext}`
+          : ""}`
+      )),
+    );
+  }
+  sections.push(
+    "Excluded by policy: provider credentials, environment values, native session identifiers, hidden reasoning, raw tool inputs and outputs, and approval state.",
+  );
+  return sections.join("\n\n");
 }
 
 function applyEvent(projection: StateProjection, envelope: EventEnvelope): void {
@@ -207,6 +281,11 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.checkpoints, event.checkpoint);
   } else if (event.type === "annotation_saved") {
     replaceById(projection.annotations, event.annotation);
+  } else if (event.type === "fork_created") {
+    replaceById(projection.threads, event.thread);
+    replaceById(projection.forks, event.fork);
+  } else if (event.type === "fork_saved") {
+    replaceById(projection.forks, event.fork);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -244,13 +323,21 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
+    fork_created: "fork",
+    fork_saved: "fork",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
+  const forkThread = event.type === "fork_created" ? event.thread : undefined;
   if (
     !key
     || !isRecord(payload)
     || payload.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION
+    || (event.type === "fork_created" && (
+      !isRecord(forkThread)
+      || forkThread.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION
+      || typeof forkThread.id !== "string"
+    ))
     || (key === "providerSession"
       ? typeof payload.threadId !== "string" || typeof payload.sessionId !== "string"
       : typeof payload.id !== "string")
@@ -412,6 +499,144 @@ export class LocalStateStore {
     await this.#append({ type: "turn_saved", turn });
     await this.#append({ type: "message_saved", message });
     return { thread, turn };
+  }
+
+  async createFork(input: {
+    sourceThreadId: string;
+    provider: ProviderId;
+    profileId: string | null;
+    model: string;
+    worktree: string;
+    expectedDigest: string;
+  }): Promise<{ thread: Thread; fork: ConversationFork }> {
+    const projection = await this.load();
+    const source = projection.threads.find((thread) => thread.id === input.sourceThreadId);
+    if (!source) throw new LocalStateError("The source conversation is unavailable.", 404);
+    if (source.provider === input.provider) {
+      throw new LocalStateError("Choose a different provider for this fork.", 409);
+    }
+    if (source.worktree !== input.worktree) {
+      throw new LocalStateError("The source worktree changed after the fork preview.", 409);
+    }
+    if (
+      projection.threads.filter((thread) => thread.projectId === source.projectId).length
+      >= MAX_THREADS_PER_PROJECT
+    ) {
+      throw new LocalStateError(
+        `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit.`,
+        429,
+      );
+    }
+    const preview = await this.previewFork(source.id);
+    const { messages, annotations, prompt, byteCount } = preview;
+    if (preview.digest !== input.expectedDigest) {
+      throw new LocalStateError("The source context changed after the fork preview.", 409);
+    }
+    if (byteCount > 64 * 1024) {
+      throw new LocalStateError("The reviewed context exceeds the 64 KiB fork limit.", 413);
+    }
+    const now = new Date().toISOString();
+    const forkId = randomUUID();
+    const thread: Thread = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      id: randomUUID(),
+      projectId: source.projectId,
+      title: `${source.title} (fork)`.slice(0, 80),
+      worktree: source.worktree,
+      provider: input.provider,
+      parentThreadId: source.id,
+      forkId,
+      profileId: input.profileId,
+      model: input.model,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fork: ConversationFork = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      id: forkId,
+      sourceThreadId: source.id,
+      destinationThreadId: thread.id,
+      provider: input.provider,
+      profileId: input.profileId,
+      model: input.model,
+      worktree: source.worktree,
+      status: "pending",
+      messages,
+      annotations,
+      files: [],
+      summaries: [],
+      prompt,
+      byteCount,
+      createdAt: now,
+      startedAt: null,
+    };
+    await this.#append({ type: "fork_created", thread, fork });
+    return { thread, fork };
+  }
+
+  async previewFork(sourceThreadId: string): Promise<{
+    sourceThreadId: string;
+    sourceProvider: ProviderId;
+    worktree: string;
+    messages: ForkTransferMessage[];
+    annotations: ForkTransferAnnotation[];
+    files: [];
+    summaries: [];
+    prompt: string;
+    byteCount: number;
+    digest: string;
+    excluded: string[];
+  }> {
+    const projection = await this.load();
+    const source = projection.threads.find((thread) => thread.id === sourceThreadId);
+    if (!source) throw new LocalStateError("The source conversation is unavailable.", 404);
+    const turnIds = new Set(
+      projection.turns.filter((turn) => turn.threadId === source.id).map((turn) => turn.id),
+    );
+    const messages = projection.messages
+      .filter((message) => turnIds.has(message.turnId))
+      .map(({ id, role, text, createdAt }) => ({ id, role, text, createdAt }));
+    const annotations = projection.annotations
+      .filter((annotation) => annotation.threadId === source.id)
+      .map(({ id, path, text, capturedContext }) => ({ id, path, text, capturedContext }));
+    const prompt = renderForkPrompt(source, messages, annotations);
+    return {
+      sourceThreadId: source.id,
+      sourceProvider: source.provider,
+      worktree: source.worktree,
+      messages,
+      annotations,
+      files: [],
+      summaries: [],
+      prompt,
+      byteCount: Buffer.byteLength(prompt, "utf8"),
+      digest: createHash("sha256").update(prompt, "utf8").digest("hex"),
+      excluded: [
+        "Provider credentials and environment values",
+        "Native provider session identifiers",
+        "Hidden reasoning",
+        "Raw tool inputs and outputs",
+        "Tool approvals and runtime activity",
+      ],
+    };
+  }
+
+  async pendingForkPrompt(threadId: string): Promise<string | null> {
+    const fork = (await this.load()).forks.find(
+      (candidate) => candidate.destinationThreadId === threadId && candidate.status === "pending",
+    );
+    return fork?.prompt ?? null;
+  }
+
+  async markForkStarted(threadId: string): Promise<void> {
+    const fork = (await this.load()).forks.find(
+      (candidate) => candidate.destinationThreadId === threadId && candidate.status === "pending",
+    );
+    if (!fork) return;
+    await this.#append({
+      type: "fork_saved",
+      fork: { ...fork, status: "started", startedAt: new Date().toISOString() },
+    });
   }
 
   async bindProviderRun(turnId: string, providerRunId: string): Promise<void> {
@@ -603,14 +828,22 @@ export class LocalStateStore {
       projection.annotations = projection.annotations.filter(
         (annotation) => !threadIds.has(annotation.threadId),
       );
+      projection.forks = projection.forks.filter(
+        (fork) => !threadIds.has(fork.sourceThreadId) && !threadIds.has(fork.destinationThreadId),
+      );
     });
   }
 
   async enforceRetention(olderThan: Date): Promise<void> {
     await this.#compact((projection) => {
+      const protectedByFork = new Set(
+        projection.forks.flatMap((fork) => [fork.sourceThreadId, fork.destinationThreadId]),
+      );
       const expiredThreads = new Set(
         projection.threads
-          .filter((thread) => new Date(thread.updatedAt) < olderThan)
+          .filter((thread) => (
+            new Date(thread.updatedAt) < olderThan && !protectedByFork.has(thread.id)
+          ))
           .map((thread) => thread.id),
       );
       const expiredTurns = new Set(
@@ -628,6 +861,12 @@ export class LocalStateStore {
       );
       projection.annotations = projection.annotations.filter(
         (annotation) => !expiredThreads.has(annotation.threadId),
+      );
+      projection.forks = projection.forks.filter(
+        (fork) => (
+          !expiredThreads.has(fork.sourceThreadId)
+          && !expiredThreads.has(fork.destinationThreadId)
+        ),
       );
     });
   }
@@ -655,6 +894,7 @@ export class LocalStateStore {
           type: "annotation_saved",
           annotation,
         })),
+        ...next.forks.map((fork): StateEvent => ({ type: "fork_saved", fork })),
       ];
       const rebuilt = emptyProjection();
       const lines = events.map((event, index) => {
