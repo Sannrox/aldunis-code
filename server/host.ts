@@ -1,7 +1,8 @@
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,11 +46,13 @@ import {
 import { PreviewError, PreviewManager } from "./preview.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import { WorktreeManager } from "./worktrees.ts";
+import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
+const requestBodies = new WeakMap<IncomingMessage, Buffer>();
 
 function checkpointWorktreeKey(projectId: string, worktree: string): string {
   return JSON.stringify([projectId, worktree]);
@@ -78,6 +81,14 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
+  const cached = requestBodies.get(request);
+  if (cached) {
+    try {
+      return JSON.parse(cached.toString("utf8"));
+    } catch {
+      throw new RepositoryError("Request body must be valid JSON.");
+    }
+  }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -92,16 +103,32 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+async function bufferRequest(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) throw new RepositoryError("Request body is too large.", 413);
+    chunks.push(chunk);
+  }
+  const body = Buffer.concat(chunks);
+  requestBodies.set(request, body);
+  return body;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isLoopbackOrigin(request: IncomingMessage): boolean {
+function isAllowedOrigin(request: IncomingMessage, remote: boolean): boolean {
   const origin = request.headers.origin;
   if (!origin) return true;
   try {
-    const hostname = new URL(origin).hostname.replace(/^\[(.*)\]$/, "$1");
-    return LOOPBACK_HOSTS.has(hostname);
+    const originUrl = new URL(origin);
+    const hostname = originUrl.hostname.replace(/^\[(.*)\]$/, "$1");
+    if (!remote) return LOOPBACK_HOSTS.has(hostname);
+    const requestHost = request.headers.host;
+    return typeof requestHost === "string" && originUrl.host === requestHost;
   } catch {
     return false;
   }
@@ -127,6 +154,61 @@ async function selectedWorktree(
   return { root, worktree: selected };
 }
 
+function createInternalPermissionCallback(permissions: PermissionBroker): {
+  server: ReturnType<typeof createHttpServer>;
+  url: Promise<string>;
+} {
+  const server = createHttpServer(async (request, response) => {
+    if (request.method !== "POST" || request.url !== "/api/provider/permissions/request") {
+      sendJson(response, 404, { error: "Internal permission route not found." });
+      return;
+    }
+    try {
+      const body = await readJson(request) as {
+        runId?: unknown;
+        toolName?: unknown;
+        input?: unknown;
+      };
+      const authorization = request.headers.authorization;
+      if (
+        typeof body.runId !== "string"
+        || typeof body.toolName !== "string"
+        || typeof authorization !== "string"
+        || !authorization.startsWith("Bearer ")
+      ) {
+        throw new PermissionError("A valid provider permission request is required.", 403);
+      }
+      sendJson(
+        response,
+        200,
+        await permissions.awaitDecision(
+          body.runId,
+          authorization.slice("Bearer ".length),
+          body.toolName,
+          body.input,
+        ),
+      );
+    } catch (error) {
+      const status = error instanceof PermissionError ? error.status : 500;
+      const message = error instanceof PermissionError ? error.message : "Permission request failed.";
+      sendJson(response, status, { error: message });
+    }
+  });
+  const url = new Promise<string>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("The internal permission broker did not provide a TCP address."));
+        return;
+      }
+      resolve(`http://127.0.0.1:${address.port}/api/provider/permissions/request`);
+    });
+  });
+  return { server, url };
+}
+
 async function handleApi(
   request: IncomingMessage,
   response: ServerResponse,
@@ -139,6 +221,8 @@ async function handleApi(
   previews: PreviewManager,
   preferences: PreferencesStore,
   worktrees: WorktreeManager,
+  remoteAuth?: RemoteAuth,
+  internalApprovalUrl?: Promise<string>,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -148,7 +232,7 @@ async function handleApi(
     response.end();
     return true;
   }
-  if (!isLoopbackOrigin(request)) {
+  if (!isAllowedOrigin(request, Boolean(remoteAuth))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
   }
@@ -168,6 +252,21 @@ async function handleApi(
           codexReadiness,
         ],
       });
+      return true;
+    }
+    if (route === "/api/remote/pair") {
+      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
+      const body = await readJson(request) as {
+        credential?: unknown;
+        label?: unknown;
+        publicKey?: unknown;
+      };
+      sendJson(response, 200, await remoteAuth.pair(body));
+      return true;
+    }
+    if (route === "/api/remote/descriptor") {
+      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
+      sendJson(response, 200, await remoteAuth.descriptor());
       return true;
     }
     if (route === "/api/repositories/open") {
@@ -844,8 +943,11 @@ async function handleApi(
         });
       }
       const port = request.socket.localPort;
-      if (!port) throw new RepositoryError("The local permission broker is unavailable.", 503);
-      const approvalUrl = `http://127.0.0.1:${port}/api/provider/permissions/request`;
+      const approvalUrl = internalApprovalUrl ?? (
+        port
+          ? Promise.resolve(`http://127.0.0.1:${port}/api/provider/permissions/request`)
+          : Promise.reject(new RepositoryError("The local permission broker is unavailable.", 503))
+      );
       let run;
       try {
         run = providerId === "codex-cli"
@@ -854,7 +956,7 @@ async function handleApi(
             worktree: context.worktree,
             conversationId: body.conversationId,
             prompt: providerPrompt,
-            approvalUrl,
+            approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
             model: body.model === "default" ? undefined : body.model,
@@ -865,7 +967,7 @@ async function handleApi(
             context.worktree,
             body.conversationId,
             providerPrompt,
-            approvalUrl,
+            await approvalUrl,
             mode,
             body.resumeSessionId,
             {
@@ -1217,6 +1319,7 @@ async function handleApi(
       || error instanceof ProfileError
       || error instanceof PreferencesError
       || error instanceof PreviewError
+      || error instanceof RemoteAuthError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -1226,6 +1329,7 @@ async function handleApi(
       || error instanceof ProfileError
       || error instanceof PreferencesError
       || error instanceof PreviewError
+      || error instanceof RemoteAuthError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -1261,8 +1365,13 @@ export function createLocalHost(
   dist = fileURLToPath(new URL("../dist", import.meta.url)),
   state = new LocalStateStore(),
   profiles = new ClaudeProfileStore(state.directory),
+  remoteAuth?: RemoteAuth,
+  tls?: { key: Buffer; cert: Buffer },
 ) {
   const permissions = new PermissionBroker();
+  const internalPermissionCallback = remoteAuth
+    ? createInternalPermissionCallback(permissions)
+    : undefined;
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
@@ -1270,8 +1379,24 @@ export function createLocalHost(
   const preferences = new PreferencesStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
   const recovery = state.recoverInterruptedTurns();
-  return createServer(async (request, response) => {
+  const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
+    const route = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (
+      remoteAuth
+      && route.startsWith("/api/")
+      && route !== "/api/remote/pair"
+      && route !== "/api/remote/descriptor"
+    ) {
+      try {
+        await remoteAuth.verify(request, await bufferRequest(request));
+      } catch (error) {
+        const status = error instanceof RemoteAuthError ? error.status : 500;
+        const message = error instanceof RemoteAuthError ? error.message : "Remote authentication failed.";
+        sendJson(response, status, { error: message });
+        return;
+      }
+    }
     if (
       await handleApi(
         request,
@@ -1285,8 +1410,13 @@ export function createLocalHost(
         previews,
         preferences,
         worktrees,
+        remoteAuth,
+        internalPermissionCallback?.url,
       )
     ) return;
     await serveStatic(request, response, dist);
-  });
+  };
+  const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
+  server.once("close", () => internalPermissionCallback?.server.close());
+  return server;
 }

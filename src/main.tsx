@@ -1,6 +1,7 @@
 import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DEFAULT_PREFERENCES, readPreferencesResponse, type Preferences } from "./preferences";
+import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "./split-workspace";
 
@@ -1993,12 +1994,18 @@ function Conversation({
                     </div>
                     <em>{approval.state.replace("_", " ")}</em>
                   </header>
+                  <dl className="approval-context">
+                    <div><dt>Host</dt><dd>{location.host}</dd></div>
+                    <div><dt>Repository</dt><dd>{approval.repository}</dd></div>
+                    <div><dt>Worktree</dt><dd>{approval.worktree}</dd></div>
+                    <div><dt>Provider</dt><dd>Claude Code</dd></div>
+                  </dl>
                   <p>{approval.scope.target}</p>
                   {approval.scope.details.length > 0 && (
                     <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
                   )}
                   <small className="approval-binding">
-                    {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · Claude Code · direct · {approval.toolName} · {approval.scope.target}
+                    {location.host} · {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · Claude Code · direct · {approval.toolName} · {approval.scope.target}
                   </small>
                   {approval.state === "pending" && (
                     <footer>
@@ -3021,4 +3028,18 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+void initializeRemoteAuthentication()
+  .then(() => createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>))
+  .catch((error: unknown) => {
+    const root = document.getElementById("root")!;
+    root.innerHTML = "";
+    const main = document.createElement("main");
+    main.className = "remote-pairing-error";
+    main.setAttribute("role", "alert");
+    const heading = document.createElement("h1");
+    heading.textContent = "Remote pairing failed";
+    const detail = document.createElement("p");
+    detail.textContent = error instanceof Error ? error.message : "The pairing link is invalid or expired.";
+    main.append(heading, detail);
+    root.append(main);
+  });
