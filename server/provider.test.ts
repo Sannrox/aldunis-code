@@ -74,6 +74,18 @@ test("provider errors are normalized without exposing raw diagnostics", () => {
   }), [{ kind: "failed", message: "Authentication is required." }]);
 });
 
+test("provider capabilities expose typed commands and bounded local attachments", () => {
+  const capabilities = new ClaudeCodeAdapter().capabilities();
+  assert.equal(capabilities.provider, "claude-code");
+  assert.deepEqual(capabilities.commands.map((command) => command.name), [
+    "/compact",
+    "/cost",
+    "/help",
+  ]);
+  assert.equal(capabilities.attachments.maxCount, 8);
+  assert.ok(capabilities.attachments.imageTypes.includes("image/png"));
+});
+
 test("a running provider subprocess can be cancelled deterministically", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-provider-"));
   const executable = join(directory, "fake-claude");
