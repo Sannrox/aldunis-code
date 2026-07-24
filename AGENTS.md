@@ -51,6 +51,13 @@ fully qualified references.
 Use rebase merges and delete merged branches. Branches created by agents use
 the `codex/` prefix.
 
+## Reference repos
+
+- Open-source T3 Code repo: https://github.com/pingdotgg/t3code
+
+Use these as implementation references when designing protocol handling, UX
+flows, and operational safeguards.
+
 ## Repository skills
 
 - `route-code-work` — route work to Aldunis Code or the owning product.
