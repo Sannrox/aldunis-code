@@ -421,7 +421,7 @@ time { color: #565860; font: .56rem "DM Mono", monospace; }
 .domain-orbit::after { inset: 43px; }
 .domain-orbit svg { z-index: 1; width: 25px; height: 25px; color: var(--tone); }
 .eyebrow { margin: 0 0 18px; color: var(--tone); font: 500 .65rem "DM Mono", monospace; letter-spacing: .16em; text-transform: uppercase; }
-.domain-page h1 { max-width: 750px; margin: 0; font: 400 clamp(3.6rem, 7vw, 7rem)/.9 "Newsreader", serif; letter-spacing: -.055em; }
+.domain-page h1 { max-width: 750px; margin: 0; color: #e9e8e4; font: 400 clamp(3.6rem, 7vw, 7rem)/.9 "Newsreader", serif; letter-spacing: -.055em; }
 .domain-summary { max-width: 610px; margin: 30px 0 52px; color: #92949b; font-size: .92rem; line-height: 1.75; }
 .domain-grid { display: grid; max-width: 1050px; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #33353b; border-left: 1px solid #33353b; }
 .domain-grid button { display: grid; min-height: 120px; grid-template-columns: 1fr auto; grid-template-rows: 1fr auto; padding: 16px; border-right: 1px solid #33353b; border-bottom: 1px solid #33353b; background: rgba(18,19,23,.75); text-align: left; transition: background .18s; }
