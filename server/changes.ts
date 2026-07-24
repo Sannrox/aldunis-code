@@ -134,11 +134,20 @@ async function isBinary(worktree: string, path: string, untracked: boolean): Pro
   return result.stdout.split("\n").some((line) => line.startsWith("-\t-\t"));
 }
 
+// Split file content into lines the way git counts them: a trailing newline
+// terminates the final line rather than introducing an extra empty one.
+function contentLines(content: string): string[] {
+  if (content.length === 0) return [];
+  const lines = content.split(/\r?\n/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
 async function counts(worktree: string, path: string, untracked: boolean): Promise<[number | null, number | null]> {
   if (untracked) {
     try {
       const content = await readFile(resolve(worktree, path), "utf8");
-      return [content.length ? content.split(/\r?\n/).length : 0, 0];
+      return [contentLines(content).length, 0];
     } catch {
       return [null, null];
     }
@@ -236,7 +245,8 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
   }
   if (change.state === "added") {
     const content = await readFile(resolve(worktree, path), "utf8");
-    const lines = content.split(/\r?\n/);
+    const lines = contentLines(content);
+    const endsWithNewline = content.endsWith("\n");
     const patch = [
       `diff --git a/${path} b/${path}`,
       "new file",
@@ -244,6 +254,7 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
       `+++ b/${path}`,
       `@@ -0,0 +1,${lines.length} @@`,
       ...lines.map((line) => `+${line}`),
+      ...(lines.length > 0 && !endsWithNewline ? ["\\ No newline at end of file"] : []),
     ].join("\n");
     return finalizeDiff(change, patch, null);
   }
