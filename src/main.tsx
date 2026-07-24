@@ -329,6 +329,10 @@ function Icon({ name }: { name: IconName }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[name]}</svg>;
 }
 
+function CloseButton({ label, ...props }: { label: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button {...props} aria-label={label}>×</button>;
+}
+
 const nav: Array<{ id: Product; label: string; icon: IconName; detail: string }> = [
   { id: "code", label: "Code", icon: "code", detail: "Local workbench" },
   { id: "sekai", label: "Sekai", icon: "spark", detail: "Knowledge & evidence" },
@@ -571,7 +575,7 @@ function OverlayDialog({ title, children, onClose }: { title: string; children: 
   return (
     <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={dialogRef} className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-dialog-title" onKeyDown={onKeyDown} tabIndex={-1}>
-        <header><h2 id="quick-dialog-title">{title}</h2><button onClick={onClose} aria-label={`Close ${title}`}>×</button></header>
+        <header><h2 id="quick-dialog-title">{title}</h2><CloseButton onClick={onClose} label={`Close ${title}`} /></header>
         {children}
       </section>
     </div>
@@ -977,7 +981,7 @@ function ChangesPanel({
     >
       <header>
         <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
-        <div><button onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</button><button data-dialog-initial-focus onClick={onClose} aria-label="Close changed files">×</button></div>
+        <div><button onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</button><CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" /></div>
       </header>
       <div className="changes-body">
         <nav aria-label="Changed files">
@@ -1097,7 +1101,7 @@ function ChangesPanel({
               }
             }}
           >
-            <header><strong>Exact provider context</strong><button onClick={() => setRevisionPreview(null)} aria-label="Close revision preview">×</button></header>
+            <header><strong>Exact provider context</strong><CloseButton onClick={() => setRevisionPreview(null)} label="Close revision preview" /></header>
             <pre>{revisionPreview}</pre>
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
             <footer>
@@ -1639,7 +1643,7 @@ function PreviewPanel({
         <div><p className="eyebrow">CONSTRAINED PREVIEW</p><h2>Local web application</h2></div>
         <div>
           {running && <button onClick={() => void stop()}>Stop</button>}
-          <button onClick={onClose} aria-label="Close preview">×</button>
+          <CloseButton onClick={onClose} label="Close preview" />
         </div>
       </header>
       <div className="preview-policy">
@@ -1807,7 +1811,7 @@ function FileBrowserPanel({
     <section className="file-browser-panel" aria-label="Browse active worktree">
       <header>
         <div><p className="eyebrow">Bounded local context</p><h2>Browse active worktree</h2></div>
-        <button onClick={onClose} aria-label="Close file browser">×</button>
+        <CloseButton onClick={onClose} label="Close file browser" />
       </header>
       <div className="file-browser-policy">
         Hidden, ignored, secret-like, and generated ignored files are excluded. Search is local, capped, and not indexed.
@@ -2531,7 +2535,7 @@ function Conversation({
           </button>
           <button className="ghost" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</button>
           {pane === "primary" && <button className="ghost" onClick={onOpenBeside} aria-label="Open a conversation beside this one">▥</button>}
-          {onClosePane && <button className="ghost" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>}
+          {onClosePane && <CloseButton className="ghost" onClick={onClosePane} label={`Close ${pane} pane`} />}
           {!notificationsEnabled && typeof Notification !== "undefined" && Notification.permission !== "denied" && (
             <button
               className="ghost"
@@ -3470,7 +3474,7 @@ function ProfileSettingsDialog({
       <section ref={dialogRef} className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" tabIndex={-1}>
         <header>
           <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
-          <button onClick={onClose} aria-label="Close profile settings">×</button>
+          <CloseButton onClick={onClose} label="Close profile settings" />
         </header>
         <div className="profile-dialog-body">
           <nav aria-label="Claude profiles">
