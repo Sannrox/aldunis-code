@@ -707,7 +707,7 @@ function ForkConversationDialog({
             <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
             <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{["default", "sonnet", "opus", "haiku"].map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
           </> : <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>}
-          <footer><button onClick={onClose} disabled={busy}>Cancel</button><button onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</button></footer>
+          <footer><button onClick={onClose} disabled={busy}>Cancel</button><button className="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</button></footer>
         </>}
         {unavailable && <p className="context-error" role="alert">The destination provider is unavailable or not authenticated.</p>}
         {error && <p className="context-error" role="alert">{error}</p>}
