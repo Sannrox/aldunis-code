@@ -1,6 +1,6 @@
 import { FormEvent, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { DEFAULT_PREFERENCES, readPreferencesResponse, type Preferences } from "./preferences";
+import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Preferences } from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "./split-workspace";
@@ -3774,10 +3774,16 @@ function App() {
       .catch(() => undefined);
   }, []);
   useEffect(() => {
-    document.documentElement.dataset.theme = preferences.theme;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = resolveTheme(preferences.theme, media.matches);
+    };
+    applyTheme();
     document.documentElement.dataset.density = preferences.density;
     document.documentElement.dataset.motion = preferences.reducedMotion;
     document.documentElement.style.fontSize = `${preferences.zoom * 100}%`;
+    media.addEventListener("change", applyTheme);
+    return () => media.removeEventListener("change", applyTheme);
   }, [preferences]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
