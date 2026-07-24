@@ -59,7 +59,16 @@ test("text diffs are structured while binary and oversized content remain hidden
   assert.equal((await readFileDiff(root, "modified.txt")).identity, modified.identity);
   await writeFile(join(root, "modified.txt"), "changed again\n");
   assert.notEqual((await readFileDiff(root, "modified.txt")).identity, modified.identity);
-  assert.match((await readFileDiff(root, "added.txt")).patch ?? "", /^\+one/m);
+  const added = await readFileDiff(root, "added.txt");
+  assert.match(added.patch ?? "", /^\+one/m);
+  // A file ending in a newline is two lines, not three: no phantom trailing addition.
+  assert.match(added.patch ?? "", /^@@ -0,0 \+1,2 @@$/m);
+  assert.deepEqual(
+    added.lines.filter((line) => line.side === "addition").map((line) => [line.newLine, line.content]),
+    [[1, "+one"], [2, "+two"]],
+  );
+  const addedStates = new Map((await listChangedFiles(root)).map((change) => [change.path, change]));
+  assert.equal(addedStates.get("added.txt")?.additions, 2);
   assert.equal((await readFileDiff(root, "binary.dat")).patch, null);
   assert.equal((await readFileDiff(root, "large.txt")).patch, null);
   await assert.rejects(() => readFileDiff(root, "../outside"), /escapes/);
