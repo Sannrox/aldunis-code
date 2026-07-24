@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_PREFERENCES, readPreferencesResponse } from "./preferences";
+import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme } from "./preferences";
+
+test("resolveTheme follows the operating system when set to system", () => {
+  assert.equal(resolveTheme("system", true), "dark");
+  assert.equal(resolveTheme("system", false), "light");
+});
+
+test("resolveTheme honors an explicit theme regardless of the system preference", () => {
+  assert.equal(resolveTheme("light", true), "light");
+  assert.equal(resolveTheme("dark", false), "dark");
+});
 
 test("preferences response accepts the current validated contract", () => {
   assert.deepEqual(readPreferencesResponse({
