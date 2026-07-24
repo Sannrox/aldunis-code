@@ -8,6 +8,14 @@ export interface Preferences {
   managedWorktreeLimit: number | null;
 }
 
+export function resolveTheme(
+  theme: Preferences["theme"],
+  prefersDark: boolean,
+): "light" | "dark" {
+  if (theme === "light" || theme === "dark") return theme;
+  return prefersDark ? "dark" : "light";
+}
+
 export const DEFAULT_PREFERENCES: Preferences = {
   schemaVersion: 1,
   theme: "system",
