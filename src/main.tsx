@@ -748,6 +748,7 @@ function ChangesPanel({
   const [commentText, setCommentText] = useState("");
   const [selectedAnnotationIds, setSelectedAnnotationIds] = useState<string[]>([]);
   const [revisionPreview, setRevisionPreview] = useState<string | null>(null);
+  const revisionPreviewRef = useRef<HTMLElement>(null);
   const [delivery, setDelivery] = useState<DeliveryContext | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [deliveryAction, setDeliveryAction] = useState<DeliveryAction>("stage");
@@ -961,6 +962,9 @@ function ChangesPanel({
       setAnnotationBusy(false);
     }
   };
+  useEffect(() => {
+    if (revisionPreview) revisionPreviewRef.current?.focus();
+  }, [revisionPreview]);
   return (
     <section
       ref={dialogRef}
@@ -1034,7 +1038,11 @@ function ChangesPanel({
                 onChange={(event) => setCommentText(event.target.value)}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void saveAnnotation();
-                  if (event.key === "Escape") setCommentLineIndex(undefined);
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    setCommentLineIndex(undefined);
+                    setCommentText("");
+                  }
                 }}
                 aria-label="Review comment"
               />
@@ -1075,7 +1083,20 @@ function ChangesPanel({
           <button className="preview-revision" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</button>
         </section>
         {revisionPreview && (
-          <section className="revision-preview" role="dialog" aria-modal="true" aria-label="Revision request preview">
+          <section
+            ref={revisionPreviewRef}
+            tabIndex={-1}
+            className="revision-preview"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Revision request preview"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setRevisionPreview(null);
+              }
+            }}
+          >
             <header><strong>Exact provider context</strong><button onClick={() => setRevisionPreview(null)} aria-label="Close revision preview">×</button></header>
             <pre>{revisionPreview}</pre>
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
