@@ -611,6 +611,8 @@ time { color: #565860; font: .55rem "DM Mono", monospace; }
 [data-theme="light"] .provider-selectors select { border-color: var(--line); background: var(--panel-2); }
 [data-theme="light"] .context-sidebar > header button { border-color: var(--line); background: var(--panel-2); }
 [data-theme="light"] .context-sidebar > footer button { background: var(--panel-2); color: #34353a; }
+[data-theme="light"] .sidebar-actions button { color: #5b5d64; }
+[data-theme="light"] .sidebar-actions button:hover { background: var(--panel-2); color: #24252a; }
 [data-theme="light"] .repository-dialog, [data-theme="light"] .profile-dialog { border-color: var(--line); background: #fff; }
 [data-theme="light"] .quick-dialog { border-color: var(--line); }
 [data-theme="light"] .profile-dialog-body > nav { border-color: var(--line); background: var(--panel); }
