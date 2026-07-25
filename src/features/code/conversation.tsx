@@ -10,6 +10,7 @@ import { ChangesPanel } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
 import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
+import { DESIGN_MOCK_PRIMARY_ID, DESIGN_MOCK_THREAD } from "./design-mock";
 
 export function Conversation({
   repository,
@@ -132,6 +133,19 @@ export function Conversation({
   }, [conversation?.id, repository?.projectId, repository?.selectedWorktree, provider]);
   useEffect(() => {
     if (!repository?.projectId) return;
+    // Design mock fixtures: no server history.
+    if (conversation?.id?.startsWith("mock-")) {
+      if (conversation.id === DESIGN_MOCK_PRIMARY_ID) {
+        setMessages([{ text: DESIGN_MOCK_THREAD.user, mode: "build" }]);
+        setProviderEvents([{ kind: "assistant_text", text: DESIGN_MOCK_THREAD.assistant }]);
+        setProviderState("completed");
+        setModel(DESIGN_MOCK_THREAD.model);
+        setMode("build");
+        setThreadId(conversation.id);
+      }
+      setHistoryRestored(true);
+      return;
+    }
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
@@ -659,13 +673,13 @@ export function Conversation({
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M15 3v18" />
             </svg>
-            {changes.length} changes
+            {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? 6 : changes.length} changes
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             onClick={() => setPreviewOpen(true)}
-            disabled={!repository}
+            disabled={!repository || conversation?.id?.startsWith("mock-")}
             title="Preview panel"
             aria-label="Preview"
           >
@@ -674,48 +688,6 @@ export function Conversation({
               <path d="M3 15h18" />
             </svg>
           </button>
-          {/* Product actions not in the mock chrome — icon-only, after primary mock controls */}
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={onBrowseFiles}
-            disabled={!repository}
-            aria-label="Browse files"
-            title="Browse files"
-          >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setForkOpen(true)}
-            disabled={!threadId || runActive}
-            aria-label="Fork conversation"
-            title="Fork"
-          >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="6" cy="6" r="2" />
-              <circle cx="18" cy="6" r="2" />
-              <circle cx="12" cy="18" r="2" />
-              <path d="M6 8v4a6 6 0 0 0 6 6M18 8v2a6 6 0 0 1-6 6" />
-            </svg>
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenProfiles} aria-label="Profiles" title="Profiles">
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="8" r="3.5" />
-              <path d="M5 19a7 7 0 0 1 14 0" />
-            </svg>
-          </button>
-          {pane === "primary" && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBeside} aria-label="Open beside" title="Open beside">
-              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="16" rx="2" />
-                <path d="M12 4v16" />
-              </svg>
-            </button>
-          )}
           {onClosePane && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>
           )}
@@ -738,9 +710,9 @@ export function Conversation({
         {messages.map((message, index) => (
           <div className="turn user" key={`${message.text}-${index}`}>
             <div className="role">
-              <span className="av you">Y</span>
+              <span className="av you">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "R" : "Y"}</span>
               <span className="rname">You</span>
-              <span className="rtime">now</span>
+              <span className="rtime">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "13:10" : "now"}</span>
             </div>
             <p>{message.text}</p>
           </div>
@@ -750,13 +722,24 @@ export function Conversation({
             <div className="role">
               <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
               <span className="rname">{providerLabel}</span>
-              <span className="rtime">now</span>
+              <span className="rtime">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "13:52" : "now"}</span>
             </div>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantText && <p>{assistantText}</p>}
-              {toolEvents.length > 0 && (
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
+                <div className="tools">
+                  {DESIGN_MOCK_THREAD.tools.map((tool) => (
+                    <div className="tool" key={tool.code}>
+                      <span>{tool.label}</span>
+                      <code>{tool.code}</code>
+                      <span className="r" style={{ color: "var(--emerald)" }}>{tool.result}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {toolEvents.length > 0 && conversation?.id !== DESIGN_MOCK_PRIMARY_ID && (
                 <div className="tools">
                   {toolEvents.map((event, index) => {
                     const id = event.toolCallId;
@@ -781,14 +764,16 @@ export function Conversation({
                     <span className="ttl">Nothing left to do here</span>
                   </div>
                   <p>
-                    Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out.
-                    Settling keeps the worktree.
+                    {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                      ? <>{DESIGN_MOCK_THREAD.done.files} · worktree <code>{DESIGN_MOCK_THREAD.done.worktree}</code> is still checked out.</>
+                      : <>Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out. Settling keeps the worktree.</>}
                   </p>
                   <div className="acts">
                     <button
                       type="button"
                       className="btn btn-default btn-sm"
                       onClick={() => {
+                        if (threadId.startsWith("mock-")) return;
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
                           headers: { "content-type": "application/json" },
@@ -802,6 +787,7 @@ export function Conversation({
                       type="button"
                       className="btn btn-outline btn-sm"
                       onClick={() => {
+                        if (threadId.startsWith("mock-")) return;
                         if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
@@ -818,6 +804,12 @@ export function Conversation({
                     </button>
                     <button type="button" className="btn btn-ghost btn-sm">Keep open</button>
                   </div>
+                  {conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
+                    <p style={{ margin: "10px 0 0", fontSize: 12 }}>
+                      Settling keeps the worktree. You&apos;re using{" "}
+                      <b style={{ color: "var(--amber)", fontWeight: 500 }}>{DESIGN_MOCK_THREAD.done.meter}</b>.
+                    </p>
+                  )}
                 </div>
               )}
               {approvals.map((approval) => (
@@ -852,7 +844,9 @@ export function Conversation({
                 </section>
               ))}
               {failure && <div className="provider-error" role="alert">{failure.message}</div>}
-              {(providerState === "completed" || providerState === "cancelled") && <p className="provider-state">{stateCopy[providerState]}</p>}
+              {(providerState === "completed" || providerState === "cancelled")
+                && !conversation?.id?.startsWith("mock-")
+                && <p className="provider-state">{stateCopy[providerState]}</p>}
               {checkpoint && (
                 <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint: ${checkpoint.state}`}>
                   <header>
@@ -931,6 +925,9 @@ export function Conversation({
               ))}
             </div>
           )}
+          {!draft && conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
+            <div className="cph" aria-hidden="true">Reply to Claude Code…</div>
+          )}
           <textarea
             className="composer-input"
             value={draft}
@@ -962,29 +959,40 @@ export function Conversation({
                 void send();
               }
             }}
-            placeholder={!historyRestored
-              ? "Restoring conversation session…"
-              : provider === "claude-code" && !profileId
-              ? "Configure a Claude profile first…"
-              : worktree
-              ? `Reply to ${providerName}…`
-              : "Open a repository with an available worktree…"}
+            placeholder={
+              conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                ? ""
+                : !historyRestored
+                ? "Restoring conversation session…"
+                : provider === "claude-code" && !profileId
+                ? "Configure a Claude profile first…"
+                : worktree
+                ? `Reply to ${providerName}…`
+                : "Open a repository with an available worktree…"
+            }
             aria-label={`Message ${providerName}`}
-            disabled={!worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
+            disabled={
+              conversation?.id?.startsWith("mock-")
+              || !worktree
+              || (provider === "claude-code" && !profileId)
+              || runActive
+              || !historyRestored
+            }
           />
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <div className="crow">
             <button type="button" className="cc" onClick={onOpenProfiles} disabled={runActive}>
               <span className="pv">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
-              {provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}
-              {model !== "default" ? ` · ${model}` : ""}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                ? "claude-code · sonnet"
+                : `${provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}${model !== "default" ? ` · ${model}` : ""}`}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <button
               type="button"
               className="cc"
-              disabled={runActive}
+              disabled={runActive || conversation?.id?.startsWith("mock-")}
               onClick={() => {
                 // Cycle reasoning/default model presentation without inventing UI
                 if (provider === "claude-code") {
@@ -994,15 +1002,16 @@ export function Conversation({
                 }
               }}
             >
-              {model === "default" ? "default" : model}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "default" : model === "default" ? "default" : model}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <span className="cdiv" />
             <button
               type="button"
-              className={`cc ${accessScope.warning ? "scoped" : ""}`}
+              className={`cc ${accessScope.warning || conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "scoped" : ""}`}
               title={modeCopy[mode].authority}
               onClick={() => {
+                if (conversation?.id?.startsWith("mock-")) return;
                 const order: InteractionMode[] = ["ask", "plan", "build"];
                 setMode(order[(order.indexOf(mode) + 1) % order.length]!);
               }}
@@ -1011,19 +1020,21 @@ export function Conversation({
                 <rect x="3" y="11" width="18" height="10" rx="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
-              {mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                ? "Worktree write"
+                : mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <button
               type="button"
               className="cc"
-              disabled={runActive}
+              disabled={runActive || conversation?.id?.startsWith("mock-")}
               onClick={() => {
                 const order: InteractionMode[] = ["ask", "plan", "build"];
                 setMode(order[(order.indexOf(mode) + 1) % order.length]!);
               }}
             >
-              {modeCopy[mode].label}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "Build" : modeCopy[mode].label}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             {runId

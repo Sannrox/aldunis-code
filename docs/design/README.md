@@ -43,6 +43,13 @@ chrome, by design. The product switcher is the brand mark in the top-left.
 It loads fonts from Google Fonts, which the shipped application must not do.
 See the local-first note in the design system.
 
+### Live workbench parity
+
+Open the running app with **`?mock=1`** to load the same sample threads,
+conversation, and settle/worktree chrome as this HTML mock (UI-only fixtures;
+nothing is written to the server). Without the flag the shell uses real local
+data and will look empty until a repository is opened.
+
 ### History
 
 Only the final state exists. Earlier explorations — an inbox, an operations

@@ -7,11 +7,19 @@ import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { DomainPage } from "../shell/domain-page";
+import {
+  DESIGN_MOCK_MANAGED_WORKTREE_COUNT,
+  DESIGN_MOCK_PRIMARY_ID,
+  DESIGN_MOCK_REPOSITORY,
+  DESIGN_MOCK_WORKTREE_LIMIT,
+  designMockConversations,
+  isDesignMockEnabled,
+} from "./design-mock";
 
 export function CodeWorkbench({
   product,
   onProductChange,
-  repository,
+  repository: repositoryProp,
   onOpenRepository,
   profiles,
   onOpenProfiles,
@@ -33,22 +41,28 @@ export function CodeWorkbench({
   onManageWorktrees: (path?: string) => void;
   onSettings: () => void;
 }) {
+  const designMock = isDesignMockEnabled();
+  const repository = repositoryProp ?? (designMock ? DESIGN_MOCK_REPOSITORY : null);
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
   const [primaryFilesSignal, setPrimaryFilesSignal] = useState(0);
   const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
   const [secondaryFilesSignal, setSecondaryFilesSignal] = useState(0);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>(
+    () => (designMock && !repositoryProp ? designMockConversations() : []),
+  );
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
-  const [primaryId, setPrimaryId] = useState<string | null>(null);
+  const [primaryId, setPrimaryId] = useState<string | null>(
+    () => (designMock && !repositoryProp ? DESIGN_MOCK_PRIMARY_ID : null),
+  );
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const [secondaryId, setSecondaryId] = useState<string | null>(null);
   const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
   const [splitPercent, setSplitPercent] = useState(50);
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
-    () => repository ? "loading" : "idle",
+    () => (repositoryProp ? "loading" : designMock ? "ready" : "idle"),
   );
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const splitReference = useRef<HTMLDivElement>(null);
@@ -59,6 +73,16 @@ export function CodeWorkbench({
   const secondaryPaneReference = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!repository) return;
+    // Design fixtures only — do not hit the server or wipe mock rows.
+    if (designMock && !repositoryProp) {
+      setConversations(designMockConversations());
+      setPrimaryId(DESIGN_MOCK_PRIMARY_ID);
+      primarySelectionReference.current = DESIGN_MOCK_PRIMARY_ID;
+      setSecondaryId(null);
+      setRestoreState("ready");
+      restoredProjectReference.current = repository.projectId;
+      return;
+    }
     let active = true;
     restoredProjectReference.current = null;
     secondaryIdReference.current = null;
@@ -104,9 +128,10 @@ export function CodeWorkbench({
       setRestoreState("failed");
     });
     return () => { active = false; };
-  }, [repository?.projectId, restoreAttempt]);
+  }, [repository?.projectId, repositoryProp, designMock, restoreAttempt]);
   useEffect(() => {
     if (!repository || restoredProjectReference.current !== repository.projectId) return;
+    if (designMock && !repositoryProp) return; // keep ?mock=1 in the URL
     window.localStorage.setItem(`aldunis.split.${repository.projectId}`, JSON.stringify({
       primaryId,
       secondaryId,
@@ -117,7 +142,7 @@ export function CodeWorkbench({
     if (primaryId) parameters.set("conversation", primaryId); else parameters.delete("conversation");
     if (secondaryId) parameters.set("beside", secondaryId); else parameters.delete("beside");
     window.history.replaceState(null, "", `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`);
-  }, [primaryId, repository?.projectId, secondaryId, splitPercent]);
+  }, [primaryId, repository?.projectId, repositoryProp, designMock, secondaryId, splitPercent]);
   useEffect(() => {
     const moveFocus = (event: KeyboardEvent) => {
       if (!secondaryId || !event.altKey || !event.shiftKey) return;
@@ -142,8 +167,10 @@ export function CodeWorkbench({
   const listedConversations = conversations.filter(
     (conversation) => showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt,
   );
-  const worktreeLimit = 10;
-  const managedWorktreeCount = repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
+  const worktreeLimit = designMock && !repositoryProp ? DESIGN_MOCK_WORKTREE_LIMIT : 10;
+  const managedWorktreeCount = designMock && !repositoryProp
+    ? DESIGN_MOCK_MANAGED_WORKTREE_COUNT
+    : repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
   const postLifecycle = async (route: string, body: Record<string, unknown>) => {
     const response = await fetch(route, {
       method: "POST",
@@ -229,9 +256,15 @@ export function CodeWorkbench({
     }
   };
   useEffect(() => { void refresh(); }, [activeConversation?.worktree, repository]);
-  const repositoryFor = (conversation: ConversationSummary | null) => repository
-    ? { ...repository, selectedWorktree: conversation?.worktree ?? repository.selectedWorktree }
-    : null;
+  const repositoryFor = (conversation: ConversationSummary | null) => {
+    if (!repository) return null;
+    if (!conversation?.worktree) return repository;
+    return {
+      ...repository,
+      selectedWorktree: conversation.worktree,
+      name: conversation.projectName ?? repository.name,
+    };
+  };
   const openBeside = (id?: string) => {
     const candidate = id ?? conversations.find((conversation) => conversation.id !== primaryId)?.id ?? `new:${crypto.randomUUID()}`;
     secondaryIdReference.current = candidate;

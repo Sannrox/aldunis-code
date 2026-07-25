@@ -191,7 +191,7 @@ export function CodeSidebar({
               </svg>
               <span className="b">
                 <span className="n">{repository?.name ?? "All projects"}</span>
-                {repository?.root && (
+                {repository?.root && repository.name !== "All projects" && (
                   <span className="p">{repository.root}</span>
                 )}
               </span>
@@ -206,9 +206,6 @@ export function CodeSidebar({
             <div className="glabel">
               Threads
               <span className="n">{active.length}</span>
-              <button type="button" className="glabel-action" onClick={onToggleArchived}>
-                {showingArchived ? "Active" : "Archived"}
-              </button>
             </div>
             {active.map((conversation) => (
               <ThreadRow
