@@ -715,11 +715,33 @@ export function Conversation({
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantText && <p>{assistantText}</p>}
+              {toolEvents.length > 0 && (
+                <div className="tools">
+                  {toolEvents.map((event, index) => {
+                    const id = event.toolCallId;
+                    const label = event.kind === "tool_started"
+                      ? event.name
+                      : id;
+                    const failed = event.kind === "tool_finished" && event.failed;
+                    return (
+                      <div className="tool" key={`${id}-${event.kind}-${index}`}>
+                        <span>{event.kind === "tool_started" ? "Run" : failed ? "Failed" : "Done"}</span>
+                        <code>{label}</code>
+                        <span className="r">{id.slice(0, 8)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {providerState === "completed" && threadId && (
                 <div className="done" role="status">
-                  <div className="h"><span className="ttl">Completed · Nothing left to do here</span></div>
+                  <div className="h">
+                    <span className="pill completed"><span className="dot" />Completed</span>
+                    <span className="ttl">Nothing left to do here</span>
+                  </div>
                   <p>
-                    Settling keeps the worktree. You&apos;re using managed checkouts under the installation limit.
+                    Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out.
+                    Settling keeps the worktree.
                   </p>
                   <div className="acts">
                     <button
@@ -757,13 +779,6 @@ export function Conversation({
                   </div>
                 </div>
               )}
-              {toolEvents.map((event, index) => (
-                <div className={`tool-activity ${event.kind === "tool_finished" && event.failed ? "failed" : ""}`} key={`${event.toolCallId}-${event.kind}-${index}`}>
-                  <Icon name="settings" />
-                  <span>{event.kind === "tool_started" ? `${event.name} requested` : event.failed ? "Tool failed" : "Tool finished"}</span>
-                  <small>{event.toolCallId}</small>
-                </div>
-              ))}
               {approvals.map((approval) => (
                 <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`${pane} pane approval required: ${approval.scope.summary}`}>
                   <header>
@@ -875,11 +890,6 @@ export function Conversation({
               ))}
             </div>
           )}
-          <div
-            className="cph"
-            contentEditable={false}
-            style={{ display: "none" }}
-          />
           <textarea
             className="composer-input"
             value={draft}
@@ -928,31 +938,59 @@ export function Conversation({
               <span className="pv">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
               {provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}
               {model !== "default" ? ` · ${model}` : ""}
+              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <button
+              type="button"
+              className="cc"
+              disabled={runActive}
+              onClick={() => {
+                // Cycle reasoning/default model presentation without inventing UI
+                if (provider === "claude-code") {
+                  const order = ["default", "sonnet", "opus", "haiku"];
+                  const next = order[(order.indexOf(model) + 1) % order.length] ?? "default";
+                  setModel(next);
+                }
+              }}
+            >
+              {model === "default" ? "default" : model}
+              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <span className="cdiv" />
             <button
               type="button"
               className={`cc ${accessScope.warning ? "scoped" : ""}`}
               title={modeCopy[mode].authority}
+              onClick={() => {
+                const order: InteractionMode[] = ["ask", "plan", "build"];
+                setMode(order[(order.indexOf(mode) + 1) % order.length]!);
+              }}
             >
-              {accessScope.warning ? "🔒" : "○"} {accessScope.label}
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="11" width="18" height="10" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              {mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
+              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
-            <span className="cdiv" />
-            <div className="cc mode-inline">
-              {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
-                <button
-                  type="button"
-                  key={candidate}
-                  className={mode === candidate ? "on" : ""}
-                  disabled={runActive}
-                  onClick={() => setMode(candidate)}
-                >
-                  {modeCopy[candidate].label}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              className="cc"
+              disabled={runActive}
+              onClick={() => {
+                const order: InteractionMode[] = ["ask", "plan", "build"];
+                setMode(order[(order.indexOf(mode) + 1) % order.length]!);
+              }}
+            >
+              {modeCopy[mode].label}
+              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
             {runId
-              ? <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel">■</button>
+              ? (
+                <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel">
+                  <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                </button>
+              )
               : (
                 <button
                   type="button"
@@ -961,7 +999,9 @@ export function Conversation({
                   disabled={!draft.trim() || !worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
                   aria-label="Send message"
                 >
-                  ↑
+                  <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
                 </button>
               )}
           </div>
