@@ -78,6 +78,8 @@ function providerMonogram(provider: string): string {
   if (provider === "codex-cli") return "CX";
   if (provider.startsWith("adapter:")) {
     const id = provider.slice("adapter:".length).split("@")[0] ?? "AD";
+    // Mock uses KR for Kiro; take first + last consonant-ish letters of short ids
+    if (id.toLowerCase() === "kiro") return "KR";
     return id.slice(0, 2).toUpperCase();
   }
   return provider.slice(0, 2).toUpperCase();

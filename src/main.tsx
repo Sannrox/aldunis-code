@@ -55,8 +55,13 @@ function App() {
   }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const designMock = new URLSearchParams(window.location.search).get("mock") === "1"
+      || new URLSearchParams(window.location.search).get("design") === "1";
     const applyTheme = () => {
-      document.documentElement.dataset.theme = resolveTheme(preferences.theme, media.matches);
+      // Design mock is always dark (workbench-mock.html).
+      document.documentElement.dataset.theme = designMock
+        ? "dark"
+        : resolveTheme(preferences.theme, media.matches);
     };
     applyTheme();
     document.documentElement.dataset.density = preferences.density;

@@ -68,6 +68,10 @@ export function providerLabel(provider: string): string {
 }
 
 export function branchFromWorktree(worktree: string): string {
-  const parts = worktree.replace(/\\/g, "/").split("/").filter(Boolean);
+  const normalized = worktree.replace(/\\/g, "/");
+  // Managed worktrees: .../.aldunis/wt/<branch path>
+  const managed = normalized.split("/.aldunis/wt/")[1];
+  if (managed) return managed;
+  const parts = normalized.split("/").filter(Boolean);
   return parts.at(-1) ?? worktree;
 }
