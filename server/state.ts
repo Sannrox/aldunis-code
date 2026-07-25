@@ -4,11 +4,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { InteractionMode, ProviderEvent, ProviderId } from "./provider.ts";
 
-export const LOCAL_STATE_SCHEMA_VERSION = 1;
+export const LOCAL_STATE_SCHEMA_VERSION = 2;
+/** Schema versions accepted when loading on-disk history. */
+const SUPPORTED_LOCAL_STATE_SCHEMA_VERSIONS = new Set([1, LOCAL_STATE_SCHEMA_VERSION]);
 export const MAX_THREADS_PER_PROJECT = 200;
 
 export interface Project {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   name: string;
   root: string;
@@ -16,7 +18,7 @@ export interface Project {
 }
 
 export interface Thread {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   projectId: string;
   title: string;
@@ -30,12 +32,18 @@ export interface Thread {
   updatedAt: string;
   pinnedAt?: string | null;
   archivedAt?: string | null;
+  /** Sidebar settle (reversible). Distinct from archivedAt. */
+  settledAt?: string | null;
+  /** When the thread last entered a state that wants operator attention. */
+  wokeAt?: string | null;
+  /** When the operator last opened this thread. Unread is lastVisitedAt < wokeAt. */
+  lastVisitedAt?: string | null;
 }
 
 export type ConversationDeletionStatus = "pending" | "failed" | "completed";
 
 export interface ConversationDeletion {
-  schemaVersion: 1;
+  schemaVersion: 2;
   threadId: string;
   status: ConversationDeletionStatus;
   affectedRecords: {
@@ -46,6 +54,7 @@ export interface ConversationDeletion {
     providerSessions: number;
     checkpoints: number;
     annotations: number;
+    fileReviews: number;
     forks: number;
   };
   requestedAt: string;
@@ -68,7 +77,7 @@ export interface ForkTransferAnnotation {
 }
 
 export interface ConversationFork {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   sourceThreadId: string;
   destinationThreadId: string;
@@ -88,7 +97,7 @@ export interface ConversationFork {
 }
 
 export interface Turn {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   threadId: string;
   status:
@@ -108,7 +117,7 @@ export interface Turn {
 }
 
 export interface Message {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   turnId: string;
   role: "user" | "assistant";
@@ -117,7 +126,7 @@ export interface Message {
 }
 
 export interface Activity {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   turnId: string;
   kind: "tool_started" | "tool_finished" | "provider_failed";
@@ -129,7 +138,7 @@ export interface Activity {
 }
 
 export interface ProviderSessionReference {
-  schemaVersion: 1;
+  schemaVersion: 2;
   threadId: string;
   provider: ProviderId;
   sessionId: string;
@@ -142,7 +151,7 @@ export interface ProviderSessionReference {
 export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
 
 export interface TurnCheckpoint {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   turnId: string;
   threadId: string;
@@ -164,7 +173,7 @@ export type AnnotationResolution = "unresolved" | "resolved";
 export type AnnotationScope = "file" | "line";
 
 export interface DiffAnnotation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: string;
   threadId: string;
   checkpointId: string | null;
@@ -183,8 +192,41 @@ export interface DiffAnnotation {
   updatedAt: string;
 }
 
+/**
+ * Per-file review progress for a thread. Anchored to content via diffIdentity
+ * (same scheme as annotations) so a rebase invalidates the review row rather
+ * than leaving a false positive on a line number.
+ */
+export interface FileReview {
+  schemaVersion: 2;
+  id: string;
+  threadId: string;
+  path: string;
+  previousPath: string | null;
+  diffIdentity: string;
+  reviewed: boolean;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Derived sidebar status — computed server-side so the client only does elapsed time. */
+export type ThreadStatus =
+  | "pending_approval"
+  | "awaiting_input"
+  | "running"
+  | "failed"
+  | "completed"
+  | "idle";
+
+export interface ThreadStatusProjection {
+  threadId: string;
+  status: ThreadStatus;
+  since: string;
+}
+
 export interface StateProjection {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sequence: number;
   projects: Project[];
   threads: Thread[];
@@ -194,6 +236,7 @@ export interface StateProjection {
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
+  fileReviews: FileReview[];
   conversationDeletions: ConversationDeletion[];
   forks: ConversationFork[];
 }
@@ -207,12 +250,13 @@ type StateEvent =
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
   | { type: "annotation_saved"; annotation: DiffAnnotation }
+  | { type: "file_review_saved"; fileReview: FileReview }
   | { type: "conversation_deletion_saved"; conversationDeletion: ConversationDeletion }
   | { type: "fork_created"; thread: Thread; fork: ConversationFork }
   | { type: "fork_saved"; fork: ConversationFork };
 
 interface EventEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sequence: number;
   id: string;
   recordedAt: string;
@@ -237,13 +281,117 @@ function emptyProjection(): StateProjection {
     providerSessions: [],
     checkpoints: [],
     annotations: [],
+    fileReviews: [],
     conversationDeletions: [],
     forks: [],
   };
 }
 
+const WAKE_THREAD_STATUSES = new Set<ThreadStatus>([
+  "pending_approval",
+  "awaiting_input",
+  "failed",
+]);
+
+export function projectThreadStatus(
+  projection: StateProjection,
+  threadId: string,
+): ThreadStatusProjection {
+  const thread = projection.threads.find((item) => item.id === threadId);
+  const turns = projection.turns
+    .filter((turn) => turn.threadId === threadId)
+    .slice()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const latest = turns.at(-1);
+  const approval = [...turns].reverse().find((turn) => turn.status === "waiting_for_approval");
+  if (approval) {
+    return {
+      threadId,
+      status: "pending_approval",
+      since: thread?.wokeAt && thread.wokeAt >= approval.createdAt
+        ? thread.wokeAt
+        : approval.createdAt,
+    };
+  }
+  const awaiting = [...turns].reverse().find((turn) => turn.status === "waiting_for_user");
+  if (awaiting) {
+    return {
+      threadId,
+      status: "awaiting_input",
+      since: thread?.wokeAt && thread.wokeAt >= awaiting.createdAt
+        ? thread.wokeAt
+        : awaiting.createdAt,
+    };
+  }
+  const running = [...turns].reverse().find((turn) => (
+    turn.status === "active" || turn.status === "running"
+  ));
+  if (running) {
+    return { threadId, status: "running", since: running.createdAt };
+  }
+  if (latest?.status === "failed") {
+    return {
+      threadId,
+      status: "failed",
+      since: latest.completedAt
+        ?? (thread?.wokeAt && thread.wokeAt >= latest.createdAt ? thread.wokeAt : latest.createdAt),
+    };
+  }
+  if (latest?.status === "completed") {
+    return {
+      threadId,
+      status: "completed",
+      since: latest.completedAt ?? latest.createdAt,
+    };
+  }
+  return {
+    threadId,
+    status: "idle",
+    since: latest?.completedAt ?? latest?.createdAt ?? thread?.updatedAt ?? thread?.createdAt
+      ?? new Date(0).toISOString(),
+  };
+}
+
+export function projectThreadStatuses(projection: StateProjection): ThreadStatusProjection[] {
+  return projection.threads.map((thread) => projectThreadStatus(projection, thread.id));
+}
+
+export function isWakeThreadStatus(status: ThreadStatus): boolean {
+  return WAKE_THREAD_STATUSES.has(status);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSupportedSchemaVersion(value: unknown): value is number {
+  return typeof value === "number" && SUPPORTED_LOCAL_STATE_SCHEMA_VERSIONS.has(value);
+}
+
+/** Default missing lifecycle timestamps the same way preferences default managedWorktreeLimit. */
+function migrateNullableTimestamp(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  throw new LocalStateError("Local history is corrupt.");
+}
+
+function migrateThreadRecord(payload: Record<string, unknown>): Thread {
+  return {
+    ...(payload as unknown as Omit<Thread, "schemaVersion" | "settledAt" | "wokeAt" | "lastVisitedAt">),
+    schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+    settledAt: migrateNullableTimestamp(payload.settledAt),
+    wokeAt: migrateNullableTimestamp(payload.wokeAt),
+    lastVisitedAt: migrateNullableTimestamp(payload.lastVisitedAt),
+  };
+}
+
+function migrateEntityRecord<T extends { schemaVersion: number }>(
+  payload: Record<string, unknown>,
+): T {
+  return {
+    ...(payload as unknown as T),
+    schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+  };
 }
 
 function replaceById<T extends { id: string }>(items: T[], value: T): void {
@@ -307,6 +455,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.checkpoints, event.checkpoint);
   } else if (event.type === "annotation_saved") {
     replaceById(projection.annotations, event.annotation);
+  } else if (event.type === "file_review_saved") {
+    replaceById(projection.fileReviews, event.fileReview);
   } else if (event.type === "conversation_deletion_saved") {
     const index = projection.conversationDeletions.findIndex(
       (item) => item.threadId === event.conversationDeletion.threadId,
@@ -331,7 +481,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   } catch {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
-  if (!isRecord(value) || value.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION) {
+  if (!isRecord(value) || !isSupportedSchemaVersion(value.schemaVersion)) {
     throw new LocalStateError(
       `Local history uses an incompatible schema at line ${lineNumber}.`,
     );
@@ -355,6 +505,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
+    file_review_saved: "fileReview",
     conversation_deletion_saved: "conversationDeletion",
     fork_created: "fork",
     fork_saved: "fork",
@@ -365,10 +516,10 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   if (
     !key
     || !isRecord(payload)
-    || payload.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION
+    || !isSupportedSchemaVersion(payload.schemaVersion)
     || (event.type === "fork_created" && (
       !isRecord(forkThread)
-      || forkThread.schemaVersion !== LOCAL_STATE_SCHEMA_VERSION
+      || !isSupportedSchemaVersion(forkThread.schemaVersion)
       || typeof forkThread.id !== "string"
     ))
     || (key === "providerSession"
@@ -379,7 +530,48 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   ) {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
-  return value as unknown as EventEnvelope;
+
+  // Migrate version-1 records into the current schema before applying.
+  try {
+    if (event.type === "thread_saved") {
+      event.thread = migrateThreadRecord(payload);
+    } else if (event.type === "fork_created") {
+      event.thread = migrateThreadRecord(forkThread as Record<string, unknown>);
+      event.fork = migrateEntityRecord(payload);
+    } else if (event.type === "conversation_deletion_saved") {
+      const migrated = migrateEntityRecord<ConversationDeletion>(payload);
+      const records = isRecord(payload.affectedRecords) ? payload.affectedRecords : {};
+      event.conversationDeletion = {
+        ...migrated,
+        affectedRecords: {
+          thread: Number(records.thread ?? 0),
+          turns: Number(records.turns ?? 0),
+          messages: Number(records.messages ?? 0),
+          activities: Number(records.activities ?? 0),
+          providerSessions: Number(records.providerSessions ?? 0),
+          checkpoints: Number(records.checkpoints ?? 0),
+          annotations: Number(records.annotations ?? 0),
+          fileReviews: Number(records.fileReviews ?? 0),
+          forks: Number(records.forks ?? 0),
+        },
+      };
+    } else {
+      event[key] = migrateEntityRecord(payload);
+    }
+  } catch (error) {
+    if (error instanceof LocalStateError) {
+      throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
+    }
+    throw error;
+  }
+
+  return {
+    schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+    sequence: value.sequence as number,
+    id: value.id as string,
+    recordedAt: value.recordedAt as string,
+    event: event as unknown as StateEvent,
+  };
 }
 
 export function defaultStateDirectory(): string {
@@ -514,6 +706,9 @@ export class LocalStateStore {
           updatedAt: now,
           pinnedAt: null,
           archivedAt: null,
+          settledAt: null,
+          wokeAt: null,
+          lastVisitedAt: null,
         };
     const turn: Turn = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -587,6 +782,11 @@ export class LocalStateStore {
       model: input.model,
       createdAt: now,
       updatedAt: now,
+      pinnedAt: null,
+      archivedAt: null,
+      settledAt: null,
+      wokeAt: null,
+      lastVisitedAt: null,
     };
     const fork: ConversationFork = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -716,6 +916,38 @@ export class LocalStateStore {
     return saved;
   }
 
+  /**
+   * Sidebar settle: reversible, independent of archive, and never touches the worktree.
+   * Idempotent — an already-settled thread is returned unchanged.
+   */
+  async settleConversation(threadId: string): Promise<Thread> {
+    const projection = await this.load();
+    const thread = this.#requireThread(projection, threadId);
+    this.#assertConversationSettled(projection, threadId, "settled");
+    if (thread.settledAt) return thread;
+    const now = new Date().toISOString();
+    const saved = { ...thread, settledAt: now, updatedAt: now };
+    await this.#append({ type: "thread_saved", thread: saved });
+    return saved;
+  }
+
+  /** Clear settle. Idempotent — an unsettled thread is returned unchanged. */
+  async unsettleConversation(threadId: string): Promise<Thread> {
+    const thread = this.#requireThread(await this.load(), threadId);
+    if (!thread.settledAt) return thread;
+    const saved = { ...thread, settledAt: null, updatedAt: new Date().toISOString() };
+    await this.#append({ type: "thread_saved", thread: saved });
+    return saved;
+  }
+
+  async markConversationVisited(threadId: string): Promise<Thread> {
+    const thread = this.#requireThread(await this.load(), threadId);
+    const now = new Date().toISOString();
+    const saved = { ...thread, lastVisitedAt: now, updatedAt: now };
+    await this.#append({ type: "thread_saved", thread: saved });
+    return saved;
+  }
+
   async previewConversationDeletion(threadId: string): Promise<ConversationDeletion["affectedRecords"]> {
     const projection = await this.load();
     this.#requireThread(projection, threadId);
@@ -778,7 +1010,7 @@ export class LocalStateStore {
   #assertConversationSettled(
     projection: StateProjection,
     threadId: string,
-    action: "archived" | "deleted",
+    action: "archived" | "deleted" | "settled",
   ): void {
     const blocking = projection.turns.find((turn) => (
       turn.threadId === threadId
@@ -817,6 +1049,9 @@ export class LocalStateStore {
       annotations: projection.annotations.filter(
         (annotation) => annotation.threadId === threadId,
       ).length,
+      fileReviews: projection.fileReviews.filter(
+        (review) => review.threadId === threadId,
+      ).length,
       forks: projection.forks.filter(
         (fork) => fork.sourceThreadId === threadId || fork.destinationThreadId === threadId,
       ).length,
@@ -839,6 +1074,9 @@ export class LocalStateStore {
     );
     projection.annotations = projection.annotations.filter(
       (annotation) => annotation.threadId !== threadId,
+    );
+    projection.fileReviews = projection.fileReviews.filter(
+      (review) => review.threadId !== threadId,
     );
     const removedForkIds = new Set(
       projection.forks
@@ -872,6 +1110,16 @@ export class LocalStateStore {
     }
   }
 
+  async #markThreadWoke(threadId: string, at: string): Promise<void> {
+    const thread = (await this.load()).threads.find((item) => item.id === threadId);
+    if (!thread) return;
+    if (thread.wokeAt === at) return;
+    await this.#append({
+      type: "thread_saved",
+      thread: { ...thread, wokeAt: at, updatedAt: at },
+    });
+  }
+
   async recordProviderEvent(
     threadId: string,
     turnId: string,
@@ -883,15 +1131,19 @@ export class LocalStateStore {
     if (event.kind === "approval_pending" || event.kind === "approval_resolved") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      const nextStatus = event.kind === "approval_pending" && event.state === "pending"
+        ? "waiting_for_approval" as const
+        : "active" as const;
       await this.#append({
         type: "turn_saved",
         turn: {
           ...turn,
-          status: event.kind === "approval_pending" && event.state === "pending"
-            ? "waiting_for_approval"
-            : "active",
+          status: nextStatus,
         },
       });
+      if (nextStatus === "waiting_for_approval") {
+        await this.#markThreadWoke(threadId, now);
+      }
       return;
     }
     if (event.kind === "assistant_text") {
@@ -949,14 +1201,22 @@ export class LocalStateStore {
     if (event.kind === "turn_completed" || event.kind === "cancelled" || event.kind === "failed") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      const nextStatus = event.kind === "turn_completed"
+        ? "completed" as const
+        : event.kind === "cancelled"
+          ? "interrupted" as const
+          : "failed" as const;
       await this.#append({
         type: "turn_saved",
         turn: {
           ...turn,
-          status: event.kind === "turn_completed" ? "completed" : event.kind === "cancelled" ? "interrupted" : "failed",
+          status: nextStatus,
           completedAt: now,
         },
       });
+      if (nextStatus === "failed") {
+        await this.#markThreadWoke(threadId, now);
+      }
     }
   }
 
@@ -996,6 +1256,43 @@ export class LocalStateStore {
     );
     if (!annotation) throw new LocalStateError("The annotation is unavailable.", 404);
     return this.saveAnnotation({ ...annotation, resolution });
+  }
+
+  async setFileReview(input: {
+    threadId: string;
+    path: string;
+    previousPath?: string | null;
+    diffIdentity: string;
+    reviewed: boolean;
+  }): Promise<FileReview> {
+    const projection = await this.load();
+    const thread = projection.threads.find((item) => item.id === input.threadId);
+    if (!thread) throw new LocalStateError("The review conversation is unavailable.", 404);
+    const path = input.path.trim();
+    const diffIdentity = input.diffIdentity.trim();
+    if (!path || !diffIdentity) {
+      throw new LocalStateError("A file path and content identity are required.", 400);
+    }
+    const now = new Date().toISOString();
+    const existing = projection.fileReviews.find((item) => (
+      item.threadId === input.threadId
+      && item.path === path
+      && item.diffIdentity === diffIdentity
+    ));
+    const saved: FileReview = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      id: existing?.id ?? randomUUID(),
+      threadId: input.threadId,
+      path,
+      previousPath: input.previousPath ?? existing?.previousPath ?? null,
+      diffIdentity,
+      reviewed: input.reviewed,
+      reviewedAt: input.reviewed ? (existing?.reviewed && existing.reviewedAt ? existing.reviewedAt : now) : null,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    await this.#append({ type: "file_review_saved", fileReview: saved });
+    return saved;
   }
 
   async supersedeCompletedCheckpoints(
@@ -1038,6 +1335,9 @@ export class LocalStateStore {
       projection.annotations = projection.annotations.filter(
         (annotation) => !threadIds.has(annotation.threadId),
       );
+      projection.fileReviews = projection.fileReviews.filter(
+        (review) => !threadIds.has(review.threadId),
+      );
       projection.forks = projection.forks.filter(
         (fork) => !threadIds.has(fork.sourceThreadId) && !threadIds.has(fork.destinationThreadId),
       );
@@ -1072,6 +1372,9 @@ export class LocalStateStore {
       projection.annotations = projection.annotations.filter(
         (annotation) => !expiredThreads.has(annotation.threadId),
       );
+      projection.fileReviews = projection.fileReviews.filter(
+        (review) => !expiredThreads.has(review.threadId),
+      );
       projection.forks = projection.forks.filter(
         (fork) => (
           !expiredThreads.has(fork.sourceThreadId)
@@ -1103,6 +1406,10 @@ export class LocalStateStore {
         ...next.annotations.map((annotation): StateEvent => ({
           type: "annotation_saved",
           annotation,
+        })),
+        ...next.fileReviews.map((fileReview): StateEvent => ({
+          type: "file_review_saved",
+          fileReview,
         })),
         ...next.conversationDeletions.map((conversationDeletion): StateEvent => ({
           type: "conversation_deletion_saved",

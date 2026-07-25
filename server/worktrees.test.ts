@@ -230,6 +230,32 @@ test("removal rejects a replacement checkout at the approved path", async () => 
   }
 });
 
+test("managed path release removes the checkout without requiring conversation deletion", async () => {
+  const { data, root } = await fixture();
+  try {
+    const manager = new WorktreeManager(data);
+    const creation = await manager.previewCreate({
+      repository: root,
+      base: "main",
+      branch: "codex/release-me",
+      limit: 10,
+    });
+    const record = await manager.create(creation.id, 10);
+    assert.equal(await manager.countActiveManaged(), 1);
+    const released = await manager.releaseManagedPath(record.path);
+    assert.equal(released.released, true);
+    assert.equal(released.count, 0);
+    assert.equal(await stat(record.path).catch(() => null), null);
+    const again = await manager.releaseManagedPath(record.path);
+    assert.equal(again.released, false);
+    assert.equal(again.count, 0);
+    assert.equal((await execFileAsync("git", ["-C", root, "branch", "--list", "codex/release-me"])).stdout.includes("codex/release-me"), true);
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("post-removal registry failure leaves a recoverable intent outside the active limit", async () => {
   const { data, root } = await fixture();
   class FailingFinalSaveStore extends ManagedWorktreeStore {

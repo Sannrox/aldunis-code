@@ -3,7 +3,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { LocalStateError, LocalStateStore, MAX_THREADS_PER_PROJECT } from "./state.ts";
+import {
+  LocalStateError,
+  LocalStateStore,
+  MAX_THREADS_PER_PROJECT,
+  projectThreadStatus,
+} from "./state.ts";
 
 async function fixtureStore(): Promise<{ directory: string; store: LocalStateStore }> {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
@@ -43,9 +48,12 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   const first = await store.load();
   const rebuilt = await new LocalStateStore(directory).load();
   assert.deepEqual(rebuilt, first);
-  assert.equal(rebuilt.schemaVersion, 1);
-  assert.equal(rebuilt.projects[0].schemaVersion, 1);
-  assert.equal(rebuilt.threads[0].schemaVersion, 1);
+  assert.equal(rebuilt.schemaVersion, 2);
+  assert.equal(rebuilt.projects[0].schemaVersion, 2);
+  assert.equal(rebuilt.threads[0].schemaVersion, 2);
+  assert.equal(rebuilt.threads[0].settledAt, null);
+  assert.equal(rebuilt.threads[0].wokeAt, null);
+  assert.equal(rebuilt.threads[0].lastVisitedAt, null);
   assert.equal(rebuilt.turns[0].status, "completed");
   assert.equal(rebuilt.turns[0].mode, "plan");
   assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);
@@ -203,7 +211,7 @@ test("corruption and incompatible schemas fail visibly without discarding histor
   const incompatible = await fixtureStore();
   await writeFile(
     join(incompatible.directory, "events.v1.jsonl"),
-    `${JSON.stringify({ schemaVersion: 2, sequence: 1, id: "event", recordedAt: "now", event: {} })}\n`,
+    `${JSON.stringify({ schemaVersion: 3, sequence: 1, id: "event", recordedAt: "now", event: {} })}\n`,
     "utf8",
   );
   await assert.rejects(
@@ -224,7 +232,7 @@ test("project deletion and retention physically remove sensitive conversation da
   });
   await deleted.store.deleteProject("project-1");
   assert.deepEqual(await deleted.store.load(), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sequence: 0,
     projects: [],
     threads: [],
@@ -234,6 +242,7 @@ test("project deletion and retention physically remove sensitive conversation da
     providerSessions: [],
     checkpoints: [],
     annotations: [],
+    fileReviews: [],
     conversationDeletions: [],
     forks: [],
   });
@@ -253,6 +262,58 @@ test("project deletion and retention physically remove sensitive conversation da
   assert.equal(projection.projects.length, 1);
   assert.equal(projection.threads.length, 0);
   assert.equal((await readFile(join(retained.directory, "events.v1.jsonl"), "utf8")).includes("sensitive"), false);
+});
+
+test("version-one history loads with null thread lifecycle timestamps", async () => {
+  const { directory } = await fixtureStore();
+  const recordedAt = "2026-01-01T00:00:00.000Z";
+  const project = {
+    schemaVersion: 1,
+    id: "project-1",
+    name: "fixture",
+    root: "/fixture",
+    openedAt: recordedAt,
+  };
+  const thread = {
+    schemaVersion: 1,
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Legacy conversation",
+    worktree: "/fixture",
+    provider: "claude-code",
+    createdAt: recordedAt,
+    updatedAt: recordedAt,
+    pinnedAt: null,
+    archivedAt: null,
+  };
+  const lines = [
+    {
+      schemaVersion: 1,
+      sequence: 1,
+      id: "event-1",
+      recordedAt,
+      event: { type: "project_saved", project },
+    },
+    {
+      schemaVersion: 1,
+      sequence: 2,
+      id: "event-2",
+      recordedAt,
+      event: { type: "thread_saved", thread },
+    },
+  ].map((envelope) => JSON.stringify(envelope));
+  await writeFile(join(directory, "events.v1.jsonl"), `${lines.join("\n")}\n`, "utf8");
+
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.schemaVersion, 2);
+  assert.equal(projection.projects[0].schemaVersion, 2);
+  assert.equal(projection.threads[0].schemaVersion, 2);
+  assert.equal(projection.threads[0].id, "thread-1");
+  assert.equal(projection.threads[0].title, "Legacy conversation");
+  assert.equal(projection.threads[0].settledAt, null);
+  assert.equal(projection.threads[0].wokeAt, null);
+  assert.equal(projection.threads[0].lastVisitedAt, null);
+  assert.equal(projection.threads[0].archivedAt, null);
 });
 
 test("conversation lifecycle persists and rebuilds with deterministic pin ordering fields", async () => {
@@ -327,6 +388,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     providerSessions: 1,
     checkpoints: 0,
     annotations: 0,
+    fileReviews: 0,
     forks: 0,
   });
   const deletion = await store.deleteConversation(thread.id);
@@ -551,6 +613,139 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   const afterDeletion = await store.load();
   assert.equal(afterDeletion.forks.length, 0);
   assert.equal(afterDeletion.threads.length, 1);
+});
+
+test("settle and unsettle are idempotent and never archive the conversation", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/worktree-must-remain",
+    prompt: "Finish this",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await assert.rejects(() => store.settleConversation(thread.id), /provider work is active/);
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: 0,
+  });
+  const settled = await store.settleConversation(thread.id);
+  assert.ok(settled.settledAt);
+  assert.equal(settled.archivedAt ?? null, null);
+  const again = await store.settleConversation(thread.id);
+  assert.equal(again.settledAt, settled.settledAt);
+  const unsettled = await store.unsettleConversation(thread.id);
+  assert.equal(unsettled.settledAt, null);
+  assert.equal((await store.unsettleConversation(thread.id)).settledAt, null);
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.threads[0].settledAt, null);
+  assert.equal(rebuilt.threads[0].worktree, "/fixture/worktree-must-remain");
+  assert.equal(rebuilt.threads[0].archivedAt ?? null, null);
+});
+
+test("thread status projection and wokeAt track operator-attention transitions", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Need approval",
+    mode: "build",
+    provider: "claude-code",
+  });
+  let projection = await store.load();
+  assert.equal(projectThreadStatus(projection, thread.id).status, "running");
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_pending",
+    id: "approval-1",
+    runId: "run-1",
+    conversationId: "conversation-1",
+    repository: "/fixture",
+    worktree: "/fixture",
+    toolCallId: "tool-1",
+    toolName: "Write",
+    scope: { summary: "Write a file", target: "fixture.ts", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  projection = await store.load();
+  const approvalStatus = projectThreadStatus(projection, thread.id);
+  assert.equal(approvalStatus.status, "pending_approval");
+  assert.ok(projection.threads[0].wokeAt);
+  assert.equal(approvalStatus.since, projection.threads[0].wokeAt);
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_resolved",
+    id: "approval-1",
+    state: "allowed_once",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "failed",
+    message: "provider blew up",
+  });
+  projection = await store.load();
+  assert.equal(projectThreadStatus(projection, thread.id).status, "failed");
+  assert.ok(projection.threads[0].wokeAt);
+
+  await store.markConversationVisited(thread.id);
+  projection = await store.load();
+  assert.ok(projection.threads[0].lastVisitedAt);
+  assert.ok(projection.threads[0].lastVisitedAt! >= projection.threads[0].wokeAt!);
+});
+
+test("file reviews are keyed by content identity and follow conversation retention", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Review files",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const first = await store.setFileReview({
+    threadId: thread.id,
+    path: "src/example.ts",
+    previousPath: null,
+    diffIdentity: "content-identity-a",
+    reviewed: true,
+  });
+  assert.equal(first.reviewed, true);
+  assert.ok(first.reviewedAt);
+  // Same path with a new content identity is a new review row (rebase-safe).
+  const afterRebase = await store.setFileReview({
+    threadId: thread.id,
+    path: "src/example.ts",
+    previousPath: null,
+    diffIdentity: "content-identity-b",
+    reviewed: false,
+  });
+  assert.notEqual(afterRebase.id, first.id);
+  const again = await store.setFileReview({
+    threadId: thread.id,
+    path: "src/example.ts",
+    previousPath: null,
+    diffIdentity: "content-identity-a",
+    reviewed: false,
+  });
+  assert.equal(again.id, first.id);
+  assert.equal(again.reviewed, false);
+  assert.equal(again.reviewedAt, null);
+
+  let rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.fileReviews.length, 2);
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: 0,
+  });
+  await store.deleteConversation(thread.id);
+  rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.fileReviews.length, 0);
 });
 
 test("cross-provider fork fails closed when reviewed context changes", async () => {

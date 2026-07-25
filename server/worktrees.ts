@@ -81,6 +81,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function countActiveManaged(registry: ManagedWorktreeRegistry): number {
+  return registry.records.filter((record) => !record.removedAt && !record.removalPendingAt).length;
+}
+
+async function findActiveManagedByPath(
+  registry: ManagedWorktreeRegistry,
+  pathInput: string,
+): Promise<ManagedWorktreeRecord | undefined> {
+  const active = registry.records.filter((record) => !record.removedAt && !record.removalPendingAt);
+  const exact = active.find((record) => record.path === pathInput);
+  if (exact) return exact;
+  try {
+    const resolved = await realpath(pathInput);
+    return active.find((record) => record.path === resolved);
+  } catch {
+    return undefined;
+  }
+}
+
 function parseRegistry(value: unknown): ManagedWorktreeRegistry {
   if (!isRecord(value) || value.schemaVersion !== REGISTRY_SCHEMA_VERSION || !Array.isArray(value.records)) {
     throw new RepositoryError("Managed worktree history uses an incompatible schema.", 409);
@@ -474,34 +493,101 @@ export class WorktreeManager {
         );
       }
       await assertRemovableWorktree(plan.path, "The worktree changed after approval. Removal was cancelled.");
-      const removalPendingAt = new Date().toISOString();
-      const pendingRecords = registry.records.map((candidate) => (
-        candidate.id === record.id ? { ...candidate, removalPendingAt } : candidate
-      ));
-      await this.store.save(pendingRecords);
-      try {
-        await git(
-          plan.repository,
-          ["worktree", "remove", plan.path],
-          "Git could not remove the worktree. Its branch and files were not otherwise changed.",
-        );
-      } catch (error) {
-        await this.store.save(registry.records).catch(() => undefined);
-        throw error;
-      }
-      try {
-        await this.store.save(pendingRecords.map((candidate) => (
-          candidate.id === record.id
-            ? { ...candidate, removalPendingAt: null, removedAt: new Date().toISOString() }
-            : candidate
-        )));
-      } catch {
-        throw new RepositoryError(
-          "The checkout was removed, but its ownership record remains in recoverable pending-removal state and no longer counts toward the managed limit.",
-          500,
-        );
-      }
+      await this.#finalizeRemoval(registry, record);
     });
+  }
+
+  /** Active managed worktrees still counting toward the installation limit. */
+  async countActiveManaged(): Promise<number> {
+    const registry = await this.store.load();
+    return countActiveManaged(registry);
+  }
+
+  /**
+   * Release a managed worktree without deleting conversation history.
+   * Uses the same recoverable pending-removal path as approved removal so the
+   * checkout stops counting toward the limit even if the final registry write fails.
+   * Idempotent when the path is already released or was never managed.
+   */
+  async releaseManagedPath(pathInput: string): Promise<{
+    released: boolean;
+    path: string;
+    count: number;
+  }> {
+    return this.#exclusive(pathInput, async () => {
+      const registry = await this.store.load();
+      const record = await findActiveManagedByPath(registry, pathInput);
+      if (!record) {
+        return {
+          released: false,
+          path: pathInput,
+          count: countActiveManaged(registry),
+        };
+      }
+      const pathExistsOnDisk = await pathExists(record.path);
+      if (!pathExistsOnDisk) {
+        const next = registry.records.map((candidate) => (
+          candidate.id === record.id
+            ? {
+                ...candidate,
+                removalPendingAt: null,
+                removedAt: candidate.removedAt ?? new Date().toISOString(),
+              }
+            : candidate
+        ));
+        await this.store.save(next);
+        return {
+          released: true,
+          path: record.path,
+          count: countActiveManaged({ ...registry, records: next }),
+        };
+      }
+      await assertNoGitLocks(record.repository);
+      const identity = await inspectWorktreeIdentity(record.path);
+      if (identity.branch !== record.branch) {
+        throw new RepositoryError("The managed worktree branch no longer matches its ownership record.", 409);
+      }
+      await assertRemovableWorktree(record.path);
+      await this.#finalizeRemoval(registry, record);
+      return {
+        released: true,
+        path: record.path,
+        count: await this.countActiveManaged(),
+      };
+    });
+  }
+
+  async #finalizeRemoval(
+    registry: ManagedWorktreeRegistry,
+    record: ManagedWorktreeRecord,
+  ): Promise<void> {
+    const removalPendingAt = new Date().toISOString();
+    const pendingRecords = registry.records.map((candidate) => (
+      candidate.id === record.id ? { ...candidate, removalPendingAt } : candidate
+    ));
+    await this.store.save(pendingRecords);
+    try {
+      await git(
+        record.repository,
+        ["worktree", "remove", record.path],
+        "Git could not remove the worktree. Its branch and files were not otherwise changed.",
+      );
+    } catch (error) {
+      await this.store.save(registry.records).catch(() => undefined);
+      throw error;
+    }
+    try {
+      await this.store.save(pendingRecords.map((candidate) => (
+        candidate.id === record.id
+          ? { ...candidate, removalPendingAt: null, removedAt: new Date().toISOString() }
+          : candidate
+      )));
+    } catch {
+      throw new RepositoryError(
+        "The checkout was removed, but its ownership record remains in recoverable pending-removal state and no longer counts toward the managed limit.",
+        500,
+      );
+    }
   }
 
   #consumePlan<T extends WorktreePlan["action"]>(
