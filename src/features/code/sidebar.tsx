@@ -1,15 +1,21 @@
-import React, { useMemo, useState } from "react";
-import type { RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
-import { Icon } from "../../components/icon";
-import { Button } from "../../components/ui";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree } from "./conversation-list";
 
+const PRODUCTS: Array<{ id: Product; label: string; detail: string; mark: string }> = [
+  { id: "code", label: "Code", detail: "Local workbench", mark: "A" },
+  { id: "sekai", label: "Sekai", detail: "Knowledge plane", mark: "S" },
+  { id: "chisei", label: "Chisei", detail: "Governance plane", mark: "C" },
+  { id: "tenkai", label: "Tenkai", detail: "Delivery plane", mark: "T" },
+];
+
 /**
- * Sidebar layout matching workbench-mock.html:
- * brand · search + new · project · thread list · settled shelf
+ * 1:1 sidebar structure from workbench-mock.html, wired to live data.
  */
 export function CodeSidebar({
+  product,
+  onProductChange,
   repository,
   onOpenRepository,
   changes,
@@ -19,21 +25,21 @@ export function CodeSidebar({
   onOpenPalette,
   conversations,
   primaryConversationId,
-  secondaryConversationId,
   onOpenConversation,
-  onOpenBeside,
   onNewConversation,
   onSelectWorktree,
   onManageWorktrees,
   showingArchived,
   onToggleArchived,
-  onConversationAction,
   onSettle,
   onUnsettle,
   onReleaseWorktree,
   worktreeLimit,
   managedWorktreeCount,
+  onSettings,
 }: {
+  product: Product;
+  onProductChange: (product: Product) => void;
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
   changes: ChangedFile[];
@@ -60,8 +66,12 @@ export function CodeSidebar({
   onReleaseWorktree: (conversation: ConversationSummary) => void;
   worktreeLimit: number;
   managedWorktreeCount: number;
+  onSettings: () => void;
 }) {
-  const [shelfOpen, setShelfOpen] = useState(true);
+  const [productOpen, setProductOpen] = useState(false);
+  const [shelfOpen, setShelfOpen] = useState(false);
+  const brandRef = useRef<HTMLDivElement>(null);
+
   const { active, settled } = useMemo(() => {
     const activeList: ConversationSummary[] = [];
     const settledList: ConversationSummary[] = [];
@@ -73,174 +83,210 @@ export function CodeSidebar({
     return { active: activeList, settled: settledList };
   }, [conversations]);
 
-  const meterHot = worktreeLimit > 0 && managedWorktreeCount / worktreeLimit >= 0.8;
   const meterPct = worktreeLimit > 0
     ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100))
     : 0;
+  const meterHot = worktreeLimit > 0 && managedWorktreeCount / worktreeLimit >= 0.75;
+
+  useEffect(() => {
+    if (!productOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!brandRef.current?.contains(event.target as Node)) setProductOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProductOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [productOpen]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      // mock uses ⌘1–4 without shift in UI label; we accept both
+      const map: Record<string, Product> = {
+        Digit1: "code", Digit2: "sekai", Digit3: "chisei", Digit4: "tenkai",
+        "1": "code", "2": "sekai", "3": "chisei", "4": "tenkai",
+      };
+      const next = map[event.code] ?? map[event.key];
+      if (!next) return;
+      event.preventDefault();
+      onProductChange(next);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onProductChange]);
+
+  const current = PRODUCTS.find((item) => item.id === product) ?? PRODUCTS[0];
 
   return (
-    <aside className="context-sidebar mock-sb">
-      <div className="mock-sb-hd">
-        <div className="mock-logo" aria-hidden="true">A</div>
-        <div className="mock-sb-name">Aldunis Code</div>
-      </div>
-
-      <div className="mock-g1">
-        <button type="button" className="mock-search" onClick={onSearch}>
-          <Icon name="search" />
-          <span>Search threads</span>
-          <kbd>⌘K</kbd>
-        </button>
+    <aside className="sb">
+      <div className="sb-hd" ref={brandRef}>
         <button
           type="button"
-          className="mock-newthr"
-          aria-label="New conversation"
-          onClick={onNewConversation}
+          className="brandbtn"
+          onClick={() => setProductOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={productOpen}
+          aria-label={`Product: ${current.label}`}
         >
-          +
+          <div className="logo">{current.mark}</div>
+          <div className="sb-name">Aldunis Code</div>
+          <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
         </button>
-      </div>
-
-      <div className="mock-g2">
-        <button type="button" className="mock-proj" onClick={onOpenRepository}>
-          <span className="mock-fav">{repository?.name.charAt(0).toUpperCase() ?? "+"}</span>
-          <span className="mock-proj-b">
-            <span className="mock-proj-n">{repository?.name ?? "Open repository"}</span>
-            <span className="mock-proj-p">{repository?.root ?? "Select an explicit local root"}</span>
-          </span>
-          <Icon name="chevron" />
-        </button>
-      </div>
-
-      <div className="mock-tools">
-        <button type="button" onClick={onOpenPalette}>Commands</button>
-        <button type="button" onClick={onBrowseFiles} disabled={!repository}>Files</button>
-        <button type="button" onClick={() => onManageWorktrees()} disabled={!repository}>
-          Worktrees {repository ? `(${repository.worktrees.length})` : ""}
-        </button>
-        <button type="button" onClick={onShowChanges} disabled={!repository}>
-          Changes {repository ? `(${changes.length})` : ""}
-        </button>
-      </div>
-
-      {repository && repository.worktrees.length > 0 && (
-        <div className="worktree-list compact" aria-label="Repository worktrees">
-          {repository.worktrees.map((worktree) => (
-            <div className={repository.selectedWorktree === worktree.path ? "selected" : ""} key={worktree.path}>
-              <span className={`worktree-state ${worktree.state}`} aria-hidden="true" />
+        {productOpen && (
+          <div className="pswitch" role="menu" aria-label="Products">
+            {PRODUCTS.map((item, index) => (
               <button
                 type="button"
-                className="worktree-select"
-                onClick={() => onSelectWorktree(worktree.path)}
-                disabled={worktree.state === "missing" || worktree.state === "inaccessible"}
-                aria-current={repository.selectedWorktree === worktree.path ? "true" : undefined}
+                role="menuitemradio"
+                aria-checked={item.id === product}
+                key={item.id}
+                className={`pi2 ${item.id === product ? "cur" : ""}`}
+                onClick={() => {
+                  onProductChange(item.id);
+                  setProductOpen(false);
+                }}
               >
-                <strong>{worktree.branch ?? "Detached HEAD"}</strong>
-                <small>{worktree.path}</small>
+                <span className="m2">{item.mark}</span>
+                <span className="b2">
+                  <span className="n2">{item.label}</span>
+                  <span className="p2">{item.detail}</span>
+                </span>
+                <span className="k2">⌘{index + 1}</span>
               </button>
-              <button
-                type="button"
-                className="worktree-manage"
-                onClick={() => onManageWorktrees(worktree.path)}
-                aria-label={`Manage ${worktree.branch ?? worktree.path}`}
-              >
-                {worktree.ownership === "aldunis" ? worktree.recovery : "user"}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="mock-glabel">
-        <span>{showingArchived ? "Archived" : "Threads"}</span>
-        <span className="n">{active.length}</span>
-        <button type="button" className="mock-glabel-action" onClick={onToggleArchived}>
-          {showingArchived ? "Active" : "Archived"}
-        </button>
-      </div>
-
-      <div className="mock-list thread-list" role="list">
-        {active.map((conversation) => (
-          <ThreadRow
-            key={conversation.id}
-            conversation={conversation}
-            active={primaryConversationId === conversation.id || secondaryConversationId === conversation.id}
-            onOpen={() => onOpenConversation(conversation.id)}
-            onSettle={showingArchived ? undefined : () => onSettle(conversation)}
-            showSettle={!showingArchived}
-            onOpenBeside={() => onOpenBeside(conversation.id)}
-            canOpenBeside={primaryConversationId !== conversation.id}
-          />
-        ))}
-        {active.length === 0 && (
-          <p className="empty-conversations">
-            {!repository
-              ? "Open a repository to list threads."
-              : showingArchived
-                ? "No archived conversations."
-                : "No open threads. Use + to start — first send binds a managed worktree."}
-          </p>
+            ))}
+          </div>
         )}
       </div>
 
-      {!showingArchived && (
-        <div className="settled-shelf mock-shelf">
-          <button
-            type="button"
-            className={`settled-shelf__toggle ${shelfOpen ? "open" : ""}`}
-            onClick={() => setShelfOpen((value) => !value)}
-            aria-expanded={shelfOpen}
-          >
-            <span className="settled-shelf__chevron" aria-hidden="true">▸</span>
-            Settled ({settled.length})
-          </button>
-          {shelfOpen && (
-            <>
-              <div className="worktree-meter" aria-label={`Managed worktrees ${managedWorktreeCount} of ${worktreeLimit}`}>
-                <span>{managedWorktreeCount} / {worktreeLimit} worktrees</span>
-                <span className="worktree-meter__bar" aria-hidden="true">
-                  <i style={{ width: `${meterPct}%` }} className={meterHot ? "hot" : ""} />
-                </span>
-              </div>
-              {settled.length === 0 ? (
-                <p className="empty-conversations settled-empty">
-                  Settled threads land here. Settling keeps the worktree until released.
-                </p>
-              ) : (
-                <div className="settled-list">
+      {product === "code" && (
+        <div className="code-nav" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <div className="g1">
+            <button type="button" className="search" onClick={onSearch}>
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              Search
+              <span className="kbd">⌘K</span>
+            </button>
+            <button type="button" className="newthr" title="New thread" aria-label="New conversation" onClick={onNewConversation}>
+              <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="g2">
+            <button type="button" className="proj" onClick={onOpenRepository}>
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+              <span className="b">
+                <span className="n">{repository?.name ?? "Open repository"}</span>
+              </span>
+              {repository && <span className="pcount">{repository.worktrees.length}</span>}
+              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="list" id="list" role="list">
+            <div className="glabel">
+              Threads
+              <span className="n">{active.length}</span>
+              <button type="button" className="glabel-action" onClick={onToggleArchived} style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>
+                {showingArchived ? "Active" : "Archived"}
+              </button>
+            </div>
+            {active.map((conversation) => (
+              <ThreadRow
+                key={conversation.id}
+                conversation={conversation}
+                active={primaryConversationId === conversation.id}
+                onOpen={() => onOpenConversation(conversation.id)}
+                onSettle={showingArchived ? undefined : () => onSettle(conversation)}
+                showSettle={!showingArchived}
+              />
+            ))}
+            {active.length === 0 && (
+              <p className="empty-list">
+                {!repository
+                  ? "Open a repository to list threads."
+                  : showingArchived
+                    ? "No archived conversations."
+                    : "No open threads."}
+              </p>
+            )}
+          </div>
+
+          {!showingArchived && (
+            <div className="shelf">
+              <button
+                type="button"
+                className={`shelf-h ${shelfOpen ? "open" : ""}`}
+                onClick={() => setShelfOpen((v) => !v)}
+                aria-expanded={shelfOpen}
+              >
+                <span className="cv">▶</span>
+                <span>Settled ({settled.length})</span>
+              </button>
+              {shelfOpen && (
+                <div>
+                  <div className="meter">
+                    <span>Worktrees</span>
+                    <span className="mbar">
+                      <i className={meterHot ? "hot" : ""} style={{ width: `${meterPct}%` }} />
+                    </span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                      {managedWorktreeCount} / {worktreeLimit}
+                    </span>
+                  </div>
                   {settled.map((conversation) => {
-                    const holdsWorktree = repository?.worktrees.some(
+                    const holds = repository?.worktrees.some(
                       (wt) => wt.path === conversation.worktree && wt.ownership === "aldunis",
                     );
                     return (
-                      <div className="settled-row" key={conversation.id}>
-                        <button
-                          type="button"
-                          className="settled-row__main"
-                          onClick={() => onOpenConversation(conversation.id)}
-                        >
-                          <span className="settled-row__title">{conversation.title}</span>
-                          {holdsWorktree
-                            ? <span className="settled-row__wt"><span className="dot" />wt</span>
-                            : <span className="settled-row__branch">{branchFromWorktree(conversation.worktree)}</span>}
+                      <div className="srow" key={conversation.id} data-wt={holds ? "1" : "0"}>
+                        <button type="button" className="srow-main" onClick={() => onOpenConversation(conversation.id)}>
+                          <span className="t">{conversation.title}</span>
                         </button>
-                        <div className="settled-row__actions">
-                          <button type="button" onClick={() => onUnsettle(conversation)}>Unsettle</button>
-                          {holdsWorktree && (
-                            <button type="button" className="release" onClick={() => onReleaseWorktree(conversation)}>
+                        {holds
+                          ? <span className="wt"><span className="dot" />worktree</span>
+                          : <span className="w">{branchFromWorktree(conversation.worktree)}</span>}
+                        <div className="sacts">
+                          {holds && (
+                            <button type="button" className="sbtn rel" onClick={() => onReleaseWorktree(conversation)}>
                               Release
                             </button>
                           )}
+                          <button type="button" className="sbtn" onClick={() => onUnsettle(conversation)}>
+                            Unsettle
+                          </button>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
-            </>
+            </div>
           )}
         </div>
       )}
+
+      <div className="sb-ft">
+        <button type="button" className="btn btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={onSettings}>
+          Settings
+        </button>
+      </div>
     </aside>
   );
 }
