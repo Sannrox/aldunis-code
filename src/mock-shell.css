@@ -740,3 +740,53 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-left: 1px solid var(--border) !important;
   color: var(--foreground) !important;
 }
+
+
+/* ── Flex chain: match mock main column geometry exactly ─────────── */
+.code-view,
+.conversation-workspace,
+.conv-root,
+.conversation-pane,
+.split-workspace:not(.split) {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  background: var(--background) !important;
+}
+.split-workspace.split {
+  display: grid !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  background: var(--background) !important;
+}
+.conversation-pane { overflow: hidden !important; }
+.conv-root > .split { flex: 1 1 auto !important; min-height: 0 !important; }
+.conv > .thread { flex: 1 1 auto !important; min-height: 0 !important; }
+.conv > .cwrap { flex: 0 0 auto !important; }
+
+/* Empty state: sparse (mock has sample content; we stay empty without chrome card weight) */
+.conversation-empty.sparse {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  margin-top: clamp(48px, 14vh, 120px) !important;
+  padding: 0 8px !important;
+}
+.conversation-empty.sparse h2 { font-weight: 500 !important; font-size: 16px !important; }
+.conversation-empty.sparse > span { letter-spacing: .08em; }
+
+/* Sidebar fills height like mock */
+.sb { height: 100% !important; }
+.code-nav { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; }
+.list { flex: 1 1 auto !important; min-height: 0 !important; }
+
+/* Project path monochrome */
+.proj .p { color: var(--muted-foreground) !important; }
+
+/* Ensure body/html don't leak light flash */
+html[data-theme="dark"], html[data-theme="dark"] body {
+  background: #0a0a0a !important;
+  color: #f5f5f5 !important;
+}
