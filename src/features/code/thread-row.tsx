@@ -46,8 +46,6 @@ export function ThreadRow({
           {status === "failed" && <span className="pill failed">Failed</span>}
           {status === "running" && <span className="spin" aria-label="Working" />}
           {status === "completed" && !blocks && <span className="mark" aria-hidden="true">✓</span>}
-          {!blocks && status !== "running" && <span className="tm">{elapsed}</span>}
-          {blocks && <span className="tm">{elapsed}</span>}
         </div>
         <div className="rt">
           {conversation.pinnedAt ? "◆ " : ""}
@@ -56,6 +54,7 @@ export function ThreadRow({
         <div className="rb">
           <span className="br">{branchFromWorktree(conversation.worktree)}</span>
           <span className="pv" title={providerLabel(conversation.provider)}>{monogram}</span>
+          <span className="tm">{elapsed}</span>
         </div>
       </button>
       {showSettle && onSettle && (
