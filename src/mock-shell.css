@@ -352,6 +352,25 @@ html, body { height: 100%; }
   padding: 28px;
   width: min(510px, calc(100vw - 2rem));
 }
+.profile-dialog {
+  width: min(760px, calc(100vw - 2rem)) !important;
+  max-height: min(720px, calc(100vh - 2rem)) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+.profile-dialog > header {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 16px !important;
+  padding: 22px 24px 16px !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+.quick-dialog .adapter-settings {
+  max-height: min(70vh, 640px);
+}
 
 .app {
   display: flex !important;
