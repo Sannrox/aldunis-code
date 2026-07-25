@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.xai.grok-build",
+  "publisher": {
+    "name": "xAI"
+  },
+  "version": "1.0.0",
+  "aldunis": {
+    "minimumVersion": "0.1.0",
+    "maximumVersion": "0.1.0"
+  },
+  "protocol": {
+    "kind": "acp",
+    "minimumVersion": 1,
+    "maximumVersion": 1
+  },
+  "executable": {
+    "names": [
+      "grok",
+      "grok.exe"
+    ],
+    "arguments": [
+      "agent",
+      "stdio"
+    ]
+  },
+  "capabilities": {
+    "tools": true,
+    "images": false,
+    "sessionResume": true
+  },
+  "environment": [
+    {
+      "name": "HOME",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "USERPROFILE",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "XDG_RUNTIME_DIR",
+      "required": false,
+      "sensitive": true
+    }
+  ],
+  "presentation": {
+    "name": "Grok Build CLI",
+    "description": "Runs an unmodified user-installed Grok Build CLI as a direct-only ACP provider via `grok agent stdio`. xAI owns authentication, models, settings, MCP configuration, and native sessions.",
+    "website": "https://x.ai/cli"
+  }
+}

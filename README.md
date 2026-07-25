@@ -160,6 +160,26 @@ the directory. The bounded process environment also preserves the sensitive
 `HOME` or `USERPROFILE` and optional `XDG_RUNTIME_DIR` paths Kiro uses to
 locate its own provider-owned authentication and runtime state.
 
+## Grok Build CLI adapter
+
+The reviewed declarative manifest at
+`provider-adapters/grok-build-cli.json` integrates an unmodified user-installed
+`grok agent stdio` process through the built-in ACP runtime. Install it from
+**Settings → Provider adapters** by supplying the local manifest URL, its
+canonical digest from `provider-adapters/grok-build-cli.sha256`, and the
+manifest JSON for inspection. Aldunis does not bundle Grok Build or write Grok
+credentials, models, settings, MCP configuration, logs, or native sessions.
+
+The adapter is direct-only. It advertises neither client filesystem nor
+terminal capabilities, passes an empty MCP server list, and never enables
+`--always-approve` or reusable trust patterns. Mutating ACP tool calls remain
+bound to the selected repository, canonical worktree, conversation, run, and
+single allow-once decision. Optional Grok `_x.ai/*` ACP extensions are ignored
+unless the built-in runtime explicitly supports them; unknown core methods and
+malformed messages fail closed. The bounded process environment preserves the
+sensitive `HOME` or `USERPROFILE` and optional `XDG_RUNTIME_DIR` paths Grok
+uses to locate its own provider-owned authentication under `~/.grok`.
+
 Use **Changed files** to inspect the active worktree without exposing a
 terminal. Added, modified, deleted, renamed, binary, and oversized files have
 explicit states. Text patches stay constrained to the selected worktree;

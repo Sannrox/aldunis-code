@@ -80,9 +80,12 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
   }
   const informational = new Set([
     "agent_thought_chunk",
+    "user_message_chunk",
     "plan",
     "available_commands_update",
     "current_mode_update",
+    "config_option_update",
+    "session_info_update",
     "usage_update",
     "turn_end",
   ]);
@@ -98,6 +101,14 @@ export function isOptionalKiroNotification(adapterId: string, value: unknown): b
       message.method.startsWith("_kiro.dev/")
       || message.method === "_session/terminate"
     )
+    && message.id === undefined;
+}
+
+export function isOptionalGrokNotification(adapterId: string, value: unknown): boolean {
+  const message = record(value);
+  return adapterId === "dev.xai.grok-build"
+    && typeof message?.method === "string"
+    && message.method.startsWith("_x.ai/")
     && message.id === undefined;
 }
 
@@ -438,7 +449,10 @@ export class AcpProviderAdapter {
           continue;
         }
         if (typeof message.method === "string") {
-          if (isOptionalKiroNotification(this.adapter.manifest.id, message)) {
+          if (
+            isOptionalKiroNotification(this.adapter.manifest.id, message)
+            || isOptionalGrokNotification(this.adapter.manifest.id, message)
+          ) {
             setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
             continue;
           }
