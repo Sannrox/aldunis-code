@@ -104,11 +104,23 @@ export function ProfileSettingsDialog({
         <div className="profile-dialog-body">
           <nav aria-label="Claude profiles">
             {profiles.map((profile) => (
-              <button className={selectedId === profile.id ? "active" : ""} onClick={() => edit(profile)} key={profile.id}>
-                <strong>{profile.name}</strong><small>{profile.homePath || "Default Claude home"}</small>
+              <button
+                type="button"
+                className={selectedId === profile.id ? "active" : ""}
+                onClick={() => edit(profile)}
+                key={profile.id}
+              >
+                <strong>{profile.name}</strong>
+                <small>{profile.homePath || "Default Claude home"}</small>
               </button>
             ))}
-            <button className={!selectedId ? "active add-profile" : "add-profile"} onClick={() => edit(null)}>+ New profile</button>
+            <button
+              type="button"
+              className={!selectedId ? "active add-profile" : "add-profile"}
+              onClick={() => edit(null)}
+            >
+              + New profile
+            </button>
           </nav>
           <form onSubmit={save}>
             <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
@@ -137,7 +149,9 @@ export function ProfileSettingsDialog({
               }} disabled={busy}>Delete profile</Button>}
               <span />
               <button type="button" onClick={onClose}>Cancel</button>
-              <Button variant="primary" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save profile"}</Button>
+              <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+                {busy ? "Saving…" : "Save profile"}
+              </Button>
             </footer>
           </form>
         </div>
