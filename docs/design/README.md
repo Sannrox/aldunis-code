@@ -47,8 +47,10 @@ See the local-first note in the design system.
 
 Open the running app with **`?mock=1`** to load the same sample threads,
 conversation, and settle/worktree chrome as this HTML mock (UI-only fixtures;
-nothing is written to the server). Without the flag the shell uses real local
-data and will look empty until a repository is opened.
+nothing is written to the server). Thread selection, settle/unsettle, and other
+lifecycle controls update in-memory fixtures only — they must not reload the
+server conversation list (that would wipe the mock rows). Without the flag the
+shell uses real local data and will look empty until a repository is opened.
 
 ### History
 
