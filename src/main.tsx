@@ -4,6 +4,17 @@ import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Prefer
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "./split-workspace";
+import {
+  Button,
+  CloseButton,
+  EmptyState,
+  WorkbenchDialog,
+  ModalSurface,
+  NestedDialogSurface,
+  handleNestedEscape,
+  Banner,
+  Dialog,
+} from "./components/ui";
 
 type Product = "code" | "sekai" | "chisei" | "tenkai";
 type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
@@ -329,62 +340,12 @@ function Icon({ name }: { name: IconName }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24">{paths[name]}</svg>;
 }
 
-function CloseButton({ label, ...props }: { label: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...props} aria-label={label}>×</button>;
-}
-
 const nav: Array<{ id: Product; label: string; icon: IconName; detail: string }> = [
   { id: "code", label: "Code", icon: "code", detail: "Local workbench" },
   { id: "sekai", label: "Sekai", icon: "spark", detail: "Knowledge & evidence" },
   { id: "chisei", label: "Chisei", icon: "shield", detail: "Policy & routing" },
   { id: "tenkai", label: "Tenkai", icon: "rocket", detail: "Delivery & recovery" },
 ];
-
-const DIALOG_FOCUSABLE = [
-  "[data-dialog-initial-focus]",
-  "button:not(:disabled)",
-  "input:not(:disabled)",
-  "textarea:not(:disabled)",
-  "select:not(:disabled)",
-  "[tabindex]:not([tabindex='-1'])",
-].join(", ");
-
-function useDialogFocus(open: boolean, onClose: () => void, dismissible = true) {
-  const dialogRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE) ?? [])]
-      .filter((element) => element.offsetParent !== null);
-    (focusable.find((element) => element.hasAttribute("data-dialog-initial-focus")) ?? focusable[0])?.focus();
-    return () => previouslyFocused?.focus();
-  }, [open]);
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape" && dismissible) {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE) ?? [])]
-      .filter((element) => element.offsetParent !== null);
-    if (focusable.length === 0) {
-      event.preventDefault();
-      dialogRef.current?.focus();
-      return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !dialogRef.current?.contains(document.activeElement))) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-  return { dialogRef, onKeyDown };
-}
 
 function PageHeader({
   product,
@@ -415,10 +376,10 @@ function PageHeader({
           <Icon name="chevron" />
         </span>
       </label>
-      <button className="page-settings" aria-label="Appearance and keyboard settings" onClick={onSettings}>
+      <Button variant="default" size="sm" className="page-settings" aria-label="Appearance and keyboard settings" onClick={onSettings}>
         <Icon name="settings" />
         <span>Preferences</span>
-      </button>
+      </Button>
     </header>
   );
 }
@@ -565,20 +526,17 @@ function CodeSidebar({
           </p>
         )}
       </div>
-      <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><button>Connect</button></footer>
+      <footer><span className="provider-dot" /><span><strong>Claude Code</strong><small>Not connected</small></span><Button variant="secondary" size="sm">Connect</Button></footer>
     </aside>
   );
 }
 
+
 function OverlayDialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
   return (
-    <div className="dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section ref={dialogRef} className="quick-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-dialog-title" onKeyDown={onKeyDown} tabIndex={-1}>
-        <header><h2 id="quick-dialog-title">{title}</h2><CloseButton onClick={onClose} label={`Close ${title}`} /></header>
-        {children}
-      </section>
-    </div>
+    <WorkbenchDialog open onClose={onClose} title={title} titleId="quick-dialog-title" className="quick-dialog" backdropClassName="dialog-backdrop" closeLabel={`Close ${title}`}>
+      {children}
+    </WorkbenchDialog>
   );
 }
 
@@ -711,7 +669,7 @@ function ForkConversationDialog({
             <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
             <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{["default", "sonnet", "opus", "haiku"].map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
           </> : <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>}
-          <footer><button onClick={onClose} disabled={busy}>Cancel</button><button className="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</button></footer>
+          <footer><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</Button></footer>
         </>}
         {unavailable && <p className="context-error" role="alert">The destination provider is unavailable or not authenticated.</p>}
         {error && <p className="context-error" role="alert">{error}</p>}
@@ -741,7 +699,6 @@ function ChangesPanel({
   onSendRevision: (prompt: string) => void;
   canSendRevision: boolean;
 }) {
-  const { dialogRef, onKeyDown } = useDialogFocus(true, onClose);
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -970,18 +927,16 @@ function ChangesPanel({
     if (revisionPreview) revisionPreviewRef.current?.focus();
   }, [revisionPreview]);
   return (
-    <section
-      ref={dialogRef}
+    <ModalSurface
+      open
+      onClose={onClose}
       className="changes-panel"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Changes for active conversation"
-      onKeyDown={onKeyDown}
-      tabIndex={-1}
+      ariaLabel="Changes for active conversation"
+      withBackdrop={false}
     >
       <header>
         <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
-        <div><button onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</button><CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" /></div>
+        <div><Button size="sm" onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</Button><CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" /></div>
       </header>
       <div className="changes-body">
         <nav aria-label="Changed files">
@@ -1042,11 +997,10 @@ function ChangesPanel({
                 onChange={(event) => setCommentText(event.target.value)}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void saveAnnotation();
-                  if (event.key === "Escape") {
-                    event.stopPropagation();
+                  if (handleNestedEscape(event, () => {
                     setCommentLineIndex(undefined);
                     setCommentText("");
-                  }
+                  })) return;
                 }}
                 aria-label="Review comment"
               />
@@ -1084,7 +1038,7 @@ function ChangesPanel({
             ))}
           </ul>
           {annotationError && <p className="changes-error" role="alert">{annotationError}</p>}
-          <button className="preview-revision" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</button>
+          <Button size="sm" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</Button>
         </section>
         {revisionPreview && (
           <section
@@ -1095,10 +1049,7 @@ function ChangesPanel({
             aria-modal="true"
             aria-label="Revision request preview"
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.stopPropagation();
-                setRevisionPreview(null);
-              }
+              handleNestedEscape(event, () => setRevisionPreview(null));
             }}
           >
             <header><strong>Exact provider context</strong><CloseButton onClick={() => setRevisionPreview(null)} label="Close revision preview" /></header>
@@ -1106,7 +1057,7 @@ function ChangesPanel({
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
             <footer>
               <button onClick={() => setRevisionPreview(null)}>Cancel</button>
-              <button onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</button>
+              <Button size="sm" onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</Button>
             </footer>
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
           </section>
@@ -1124,11 +1075,11 @@ function ChangesPanel({
           </div>
           {delivery?.detached && <p className="delivery-warning" role="alert">Detached HEAD cannot be delivered. Create or select a branch first.</p>}
           {deliveryError && <p className="delivery-warning" role="alert">{deliveryError}</p>}
-          {plan && <div className="delivery-approval"><strong>{plan.summary}</strong><small>{plan.repository} · {plan.worktree} · {plan.branch}</small><ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul><footer><button onClick={() => setPlan(null)}>Cancel</button><button className="allow-once" disabled={deliveryBusy} onClick={() => void executeDelivery()}>Approve once</button></footer></div>}
+          {plan && <div className="delivery-approval"><strong>{plan.summary}</strong><small>{plan.repository} · {plan.worktree} · {plan.branch}</small><ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul><footer><Button onClick={() => setPlan(null)}>Cancel</Button><Button variant="primary" size="sm" disabled={deliveryBusy} onClick={() => void executeDelivery()}>Approve once</Button></footer></div>}
         </section>
         </div>
       </div>
-    </section>
+    </ModalSurface>
   );
 }
 
@@ -1152,7 +1103,6 @@ function RepositoryDialog({
   const [includeHidden, setIncludeHidden] = useState(false);
   const [pickerBusy, setPickerBusy] = useState(false);
   const browseController = useRef<AbortController | null>(null);
-  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
   const browse = async (nextPath?: string, hidden = includeHidden) => {
     browseController.current?.abort();
     const controller = new AbortController();
@@ -1200,14 +1150,13 @@ function RepositoryDialog({
     onSubmit(path);
   };
   return (
-    <div
-      className="dialog-backdrop"
-      onKeyDown={onKeyDown}
-      onMouseDown={(event) => {
-        if (event.currentTarget === event.target && !busy) onClose();
-      }}
+    <ModalSurface
+      open={open}
+      onClose={onClose}
+      dismissible={!busy}
+      className="repository-dialog"
+      ariaLabelledBy="repository-dialog-title"
     >
-      <section ref={dialogRef} className="repository-dialog" role="dialog" aria-modal="true" aria-labelledby="repository-dialog-title" tabIndex={-1}>
         <p className="eyebrow">Local access</p>
         <h2 id="repository-dialog-title">Open a repository</h2>
         <p>Choose a local directory or enter an absolute path. Every selection is canonicalized and validated before the active repository changes.</p>
@@ -1267,7 +1216,7 @@ function RepositoryDialog({
           {listing && (
             <footer>
               <small>{listing.truncated ? `Showing the first ${listing.limits.maxEntries} directories.` : "Directory metadata only."}</small>
-              <button type="button" onClick={() => setPath(listing.path)} disabled={busy}>Use this directory</button>
+              <Button type="button" size="sm" onClick={() => setPath(listing.path)} disabled={busy}>Use this directory</Button>
             </footer>
           )}
         </section>
@@ -1283,14 +1232,13 @@ function RepositoryDialog({
           />
           {(browseError || error) && <div className="repository-error" role="alert">{browseError ?? error}</div>}
           <footer>
-            <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
-            <button className="primary" type="submit" disabled={busy || !path.trim()}>
+            <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button variant="primary" type="submit" disabled={busy || !path.trim()}>
               {busy ? "Inspecting…" : "Open repository"}
-            </button>
+            </Button>
           </footer>
         </form>
-      </section>
-    </div>
+    </ModalSurface>
   );
 }
 
@@ -1313,7 +1261,6 @@ function WorktreeDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = repository !== null && selectedPath !== undefined;
-  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
   useEffect(() => {
     setPlan(null);
     setError(null);
@@ -1379,10 +1326,13 @@ function WorktreeDialog({
   };
 
   return (
-    <div className="dialog-backdrop" onKeyDown={onKeyDown} onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !busy) onClose();
-    }}>
-      <section ref={dialogRef} className="repository-dialog worktree-dialog" role="dialog" aria-modal="true" aria-labelledby="worktree-dialog-title" tabIndex={-1}>
+    <ModalSurface
+      open={open}
+      onClose={onClose}
+      dismissible={!busy}
+      className="repository-dialog worktree-dialog"
+      ariaLabelledBy="worktree-dialog-title"
+    >
         <p className="eyebrow">Isolated conversation workspace</p>
         <h2 id="worktree-dialog-title">{selected ? "Manage worktree" : "Create worktree"}</h2>
         {selected ? (
@@ -1395,9 +1345,9 @@ function WorktreeDialog({
             </dl>
             {selected.ownership === "user" && <p>This worktree remains selectable, but Aldunis Code does not claim or remove it.</p>}
             {selected.ownership === "aldunis" && !plan && (
-              <button className="danger worktree-remove" onClick={() => void previewRemove()} disabled={busy || selected.recovery !== "available"}>
+              <Button variant="danger" size="sm" className="worktree-remove" onClick={() => void previewRemove()} disabled={busy || selected.recovery !== "available"}>
                 {busy ? "Inspecting…" : "Preview worktree removal"}
-              </button>
+              </Button>
             )}
           </>
         ) : (
@@ -1408,7 +1358,7 @@ function WorktreeDialog({
             <input id="worktree-branch" value={branch} onChange={(event) => { setBranch(event.target.value); setPlan(null); }} placeholder="codex/26-isolated-worktree" disabled={busy} />
             <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
             <input id="worktree-path" value={path} onChange={(event) => { setPath(event.target.value); setPlan(null); }} placeholder="Managed application path" disabled={busy} />
-            {!plan && <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !base.trim() || !branch.trim()}>{busy ? "Validating…" : "Preview creation"}</button></footer>}
+            {!plan && <footer><Button type="button" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !base.trim() || !branch.trim()}>{busy ? "Validating…" : "Preview creation"}</Button></footer>}
           </form>
         )}
         {plan && (
@@ -1424,17 +1374,16 @@ function WorktreeDialog({
               ? "Approval is single-use. The conversation will be bound to the canonical result."
               : "Only the clean checkout is removed. The branch, commits, remotes, and conversation history remain."}</p>
             <footer>
-              <button onClick={() => setPlan(null)} disabled={busy}>Back</button>
-              <button className={plan.action === "remove" ? "danger" : "primary"} onClick={() => void confirm()} disabled={busy}>
+              <Button onClick={() => setPlan(null)} disabled={busy}>Back</Button>
+              <Button variant={plan.action === "remove" ? "danger" : "primary"} size="sm" onClick={() => void confirm()} disabled={busy}>
                 {busy ? "Revalidating…" : "Approve once"}
-              </button>
+              </Button>
             </footer>
           </section>
         )}
         {error && <div className="repository-error" role="alert">{error}</div>}
-        {selected && !plan && <footer><button onClick={onClose}>Close</button></footer>}
-      </section>
-    </div>
+        {selected && !plan && <footer><Button onClick={onClose}>Close</Button></footer>}
+    </ModalSurface>
   );
 }
 
@@ -1663,7 +1612,7 @@ function PreviewPanel({
           <div><strong>Start development server once?</strong><code>{preview.command}</code><small>{preview.worktree}</small></div>
           <footer>
             <button onClick={() => void decide("deny")}>Deny</button>
-            <button className="allow-once" onClick={() => void decide("allow_once")}>Allow once</button>
+            <Button variant="primary" size="sm" onClick={() => void decide("allow_once")}>Allow once</Button>
           </footer>
         </section>
       )}
@@ -2533,8 +2482,8 @@ function Conversation({
           >
             <Icon name="message" /><span>Fork</span>
           </button>
-          <button className="ghost" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</button>
-          {pane === "primary" && <button className="ghost" onClick={onOpenBeside} aria-label="Open a conversation beside this one">▥</button>}
+          <Button variant="ghost" size="icon" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</Button>
+          {pane === "primary" && <Button variant="ghost" size="icon" onClick={onOpenBeside} aria-label="Open a conversation beside this one">▥</Button>}
           {onClosePane && <CloseButton className="ghost" onClick={onClosePane} label={`Close ${pane} pane`} />}
           {!notificationsEnabled && typeof Notification !== "undefined" && Notification.permission !== "denied" && (
             <button
@@ -2603,7 +2552,7 @@ function Conversation({
                   {approval.state === "pending" && (
                     <footer>
                       <button onClick={() => void decideApproval(approval, "deny")}>Deny</button>
-                      <button className="allow-once" onClick={() => void decideApproval(approval, "allow_once")}>Allow once</button>
+                      <Button variant="primary" size="sm" onClick={() => void decideApproval(approval, "allow_once")}>Allow once</Button>
                     </footer>
                   )}
                 </section>
@@ -3414,7 +3363,6 @@ function ProfileSettingsDialog({
   const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { dialogRef, onKeyDown } = useDialogFocus(open, onClose, !busy);
   const edit = (profile: ClaudeProfile | null) => {
     setSelectedId(profile?.id ?? null);
     setName(profile?.name ?? "");
@@ -3466,12 +3414,13 @@ function ProfileSettingsDialog({
     await request("/api/provider/profiles/refresh", { id: profile.id, kind });
   };
   return (
-    <div
-      className="dialog-backdrop"
-      onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}
-      onKeyDown={onKeyDown}
+    <ModalSurface
+      open={open}
+      onClose={onClose}
+      dismissible={!busy}
+      className="profile-dialog"
+      ariaLabelledBy="profile-dialog-title"
     >
-      <section ref={dialogRef} className="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-dialog-title" tabIndex={-1}>
         <header>
           <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
           <CloseButton onClick={onClose} label="Close profile settings" />
@@ -3507,17 +3456,16 @@ function ProfileSettingsDialog({
             )}
             {error && <p className="repository-error" role="alert">{error}</p>}
             <footer>
-              {selected && <button type="button" className="danger" onClick={async () => {
+              {selected && <Button type="button" variant="danger" size="sm" onClick={async () => {
                 if (await request("/api/provider/profiles/delete", { id: selected.id })) edit(null);
-              }} disabled={busy}>Delete profile</button>}
+              }} disabled={busy}>Delete profile</Button>}
               <span />
               <button type="button" onClick={onClose}>Cancel</button>
-              <button className="primary" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save profile"}</button>
+              <Button variant="primary" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save profile"}</Button>
             </footer>
           </form>
         </div>
-      </section>
-    </div>
+    </ModalSurface>
   );
 }
 
@@ -3555,7 +3503,7 @@ function PreferencesDialog({
         <label>Managed worktree limit<select value={draft.managedWorktreeLimit ?? "unlimited"} onChange={(event) => update("managedWorktreeLimit", event.target.value === "unlimited" ? null : Number(event.target.value))}><option value={5}>5</option><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value="unlimited">Unlimited</option></select></label>
         <p className="preference-note">The limit applies only to Aldunis-created worktrees. Reaching it blocks creation until an eligible checkout is explicitly removed or the limit is raised.</p>
         <p className="search-scope">Shortcuts are exclusive: selecting one command-palette binding releases the other, preventing conflicts.</p>
-        <footer><button type="button" onClick={onClose}>Cancel</button><button className="primary" disabled={busy}>{busy ? "Saving…" : "Save preferences"}</button></footer>
+        <footer><Button type="button" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy}>{busy ? "Saving…" : "Save preferences"}</Button></footer>
       </form>
     </OverlayDialog>
   );
@@ -3654,7 +3602,7 @@ function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClose: () =
                   {adapter.enabled ? "Disable" : "Enable"}
                 </button>
                 <button disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/rollback`)}>Rollback</button>
-                <button className="danger" disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}>Uninstall</button>
+                <Button variant="danger" size="sm" disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}>Uninstall</Button>
               </footer>
             </article>
           ))}
