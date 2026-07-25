@@ -773,7 +773,12 @@ export function Conversation({
                       type="button"
                       className="btn btn-default btn-sm"
                       onClick={() => {
-                        if (threadId.startsWith("mock-")) return;
+                        if (threadId.startsWith("mock-")) {
+                          window.dispatchEvent(new CustomEvent("aldunis:design-mock-settle", {
+                            detail: { threadId, release: false },
+                          }));
+                          return;
+                        }
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
                           headers: { "content-type": "application/json" },
@@ -787,7 +792,12 @@ export function Conversation({
                       type="button"
                       className="btn btn-outline btn-sm"
                       onClick={() => {
-                        if (threadId.startsWith("mock-")) return;
+                        if (threadId.startsWith("mock-")) {
+                          window.dispatchEvent(new CustomEvent("aldunis:design-mock-settle", {
+                            detail: { threadId, release: true },
+                          }));
+                          return;
+                        }
                         if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",

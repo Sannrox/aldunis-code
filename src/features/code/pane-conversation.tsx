@@ -38,8 +38,11 @@ export function PaneConversation({
   const [changesOpen, setChangesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const refreshChanges = async () => {
-    if (!repository) {
+    if (!repository || conversation?.id?.startsWith("mock-") || repository.projectId === "design-mock-project") {
+      // Design fixtures and missing repository — no real worktree to inspect.
       setChanges([]);
+      setChangesError(null);
+      setChangesLoading(false);
       return;
     }
     setChangesLoading(true);
