@@ -440,12 +440,29 @@ html, body { height: 100%; }
 .tool .r { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; }
 
 /* settings dialog skin */
-.quick-dialog, .profile-dialog, .repository-dialog {
-  background: var(--popover) !important; border: 1px solid var(--border) !important;
-  color: var(--foreground) !important; border-radius: var(--radius) !important;
+.quick-dialog, .profile-dialog, .repository-dialog, .ui-dialog {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  z-index: 50 !important;
+  background: var(--popover) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--foreground) !important;
+  border-radius: var(--radius) !important;
   box-shadow: var(--shadow-popover) !important;
+  max-width: calc(100vw - 2rem) !important;
+  max-height: calc(100vh - 2rem) !important;
+  overflow: auto !important;
 }
-.dialog-backdrop, .ui-dialog-backdrop { background: rgba(0,0,0,.55) !important; }
+.dialog-backdrop, .ui-dialog-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 40 !important;
+  background: rgba(0, 0, 0, 0.55) !important;
+  /* Backdrop is a sibling of the popup — do not use grid centering here. */
+  display: block !important;
+}
 .settings-layout { display: grid; grid-template-columns: 214px 1fr; min-height: 360px; gap: 0; }
 .settings-nav { border-right: 1px solid var(--border); padding: 8px; background: var(--sidebar); }
 .settings-nav button {
