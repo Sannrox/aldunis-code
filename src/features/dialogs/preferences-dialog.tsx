@@ -277,7 +277,9 @@ export function PreferencesDialog({
             )}
             <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>
               <Button type="button" onClick={onClose}>Cancel</Button>
-              <Button variant="primary" disabled={busy}>{busy ? "Saving…" : "Save settings"}</Button>
+              <Button type="submit" variant="primary" disabled={busy}>
+                {busy ? "Saving…" : "Save settings"}
+              </Button>
             </footer>
           </form>
         </div>
