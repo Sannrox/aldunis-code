@@ -118,7 +118,14 @@ export function WorktreeDialog({
             <input id="worktree-branch" value={branch} onChange={(event) => { setBranch(event.target.value); setPlan(null); }} placeholder="codex/26-isolated-worktree" disabled={busy} />
             <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
             <input id="worktree-path" value={path} onChange={(event) => { setPath(event.target.value); setPlan(null); }} placeholder="Managed application path" disabled={busy} />
-            {!plan && <footer><Button type="button" onClick={onClose}>Cancel</Button><Button variant="primary" disabled={busy || !base.trim() || !branch.trim()}>{busy ? "Validating…" : "Preview creation"}</Button></footer>}
+            {!plan && (
+              <footer>
+                <Button type="button" onClick={onClose}>Cancel</Button>
+                <Button type="submit" variant="primary" disabled={busy || !base.trim() || !branch.trim()}>
+                  {busy ? "Validating…" : "Preview creation"}
+                </Button>
+              </footer>
+            )}
           </form>
         )}
         {plan && (
