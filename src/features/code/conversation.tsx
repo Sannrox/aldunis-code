@@ -674,33 +674,46 @@ export function Conversation({
               <path d="M3 15h18" />
             </svg>
           </button>
-          {/* Secondary actions (not in mock chrome; keep available, quiet) */}
+          {/* Product actions not in the mock chrome — icon-only, after primary mock controls */}
           <button
             type="button"
-            className="btn btn-ghost btn-sm tb-quiet"
+            className="btn btn-ghost btn-sm"
             onClick={onBrowseFiles}
             disabled={!repository}
             aria-label="Browse files"
             title="Browse files"
           >
-            Files
+            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
           </button>
           <button
             type="button"
-            className="btn btn-ghost btn-sm tb-quiet"
+            className="btn btn-ghost btn-sm"
             onClick={() => setForkOpen(true)}
             disabled={!threadId || runActive}
             aria-label="Fork conversation"
             title="Fork"
           >
-            Fork
+            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="6" cy="6" r="2" />
+              <circle cx="18" cy="6" r="2" />
+              <circle cx="12" cy="18" r="2" />
+              <path d="M6 8v4a6 6 0 0 0 6 6M18 8v2a6 6 0 0 1-6 6" />
+            </svg>
           </button>
-          <button type="button" className="btn btn-ghost btn-sm tb-quiet" onClick={onOpenProfiles} aria-label="Profiles" title="Profiles">
-            •••
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenProfiles} aria-label="Profiles" title="Profiles">
+            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M5 19a7 7 0 0 1 14 0" />
+            </svg>
           </button>
           {pane === "primary" && (
-            <button type="button" className="btn btn-ghost btn-sm tb-quiet" onClick={onOpenBeside} aria-label="Open beside" title="Open beside">
-              ▥
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBeside} aria-label="Open beside" title="Open beside">
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M12 4v16" />
+              </svg>
             </button>
           )}
           {onClosePane && (
@@ -714,7 +727,7 @@ export function Conversation({
         <div className="wrap">
         {conversationEmpty
           ? (
-            <section className="conversation-empty" aria-labelledby={`${pane}-empty-title`}>
+            <section className="conversation-empty sparse" aria-labelledby={`${pane}-empty-title`}>
               <span>New conversation</span>
               <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
               <p>{emptyState.detail}</p>
