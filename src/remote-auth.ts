@@ -145,12 +145,18 @@ export async function initializeRemoteAuthentication(): Promise<void> {
   await pairFromFragment();
   const descriptorResponse = await nativeFetch("/api/remote/descriptor", { method: "POST" });
   if (descriptorResponse.ok) {
-    const descriptor = await descriptorResponse.json() as { protocolVersion?: unknown };
-    if (descriptor.protocolVersion !== 1) {
-      throw new Error("This Aldunis host uses an incompatible remote protocol.");
-    }
-    if (!loadSession()) {
-      throw new Error("This device is not paired, or its session expired or was revoked. Create a new pairing link on the host.");
+    const descriptor = await descriptorResponse.json() as {
+      protocolVersion?: unknown;
+      remoteEnabled?: boolean;
+    };
+    // Local loopback hosts report remoteEnabled:false and need no pairing.
+    if (descriptor.remoteEnabled !== false) {
+      if (descriptor.protocolVersion !== 1) {
+        throw new Error("This Aldunis host uses an incompatible remote protocol.");
+      }
+      if (!loadSession()) {
+        throw new Error("This device is not paired, or its session expired or was revoked. Create a new pairing link on the host.");
+      }
     }
   }
   window.fetch = authorizedFetch;
