@@ -135,6 +135,8 @@ export function CodeWorkbench({
   const listedConversations = conversations.filter(
     (conversation) => showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt,
   );
+  const worktreeLimit = 10;
+  const managedWorktreeCount = repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
   const postLifecycle = async (route: string, body: Record<string, unknown>) => {
     const response = await fetch(route, {
       method: "POST",
@@ -271,6 +273,11 @@ export function CodeWorkbench({
             setSecondaryId(null);
           }
           setActivePane("primary");
+          void fetch("/api/state/conversations/visit", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ threadId: id }),
+          }).then(() => repository && loadConversationList(repository).then(setConversations)).catch(() => undefined);
         }}
         onOpenBeside={openBeside}
         onNewConversation={() => {
@@ -290,6 +297,27 @@ export function CodeWorkbench({
         showingArchived={showingArchived}
         onToggleArchived={() => setShowingArchived((value) => !value)}
         onConversationAction={(conversation, action) => { void manageConversation(conversation, action); }}
+        onSettle={(conversation) => {
+          void postLifecycle("/api/state/conversations/settle", { threadId: conversation.id })
+            .catch((error: unknown) => setLifecycleError(
+              error instanceof Error ? error.message : "Settle failed.",
+            ));
+        }}
+        onUnsettle={(conversation) => {
+          void postLifecycle("/api/state/conversations/unsettle", { threadId: conversation.id })
+            .catch((error: unknown) => setLifecycleError(
+              error instanceof Error ? error.message : "Unsettle failed.",
+            ));
+        }}
+        onReleaseWorktree={(conversation) => {
+          if (!window.confirm(`Release managed worktree for "${conversation.title}"? The conversation is kept.`)) return;
+          void postLifecycle("/api/state/conversations/release-worktree", { threadId: conversation.id, confirm: true })
+            .catch((error: unknown) => setLifecycleError(
+              error instanceof Error ? error.message : "Worktree release failed.",
+            ));
+        }}
+        worktreeLimit={worktreeLimit}
+        managedWorktreeCount={managedWorktreeCount}
       />
       <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace">
         {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}

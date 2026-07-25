@@ -57,6 +57,20 @@ export interface ThreadMetadata {
   pinnedAt: string | null;
   archivedAt: string | null;
 }
+export type ThreadStatus =
+  | "pending_approval"
+  | "awaiting_input"
+  | "running"
+  | "failed"
+  | "completed"
+  | "idle";
+
+export interface ThreadStatusProjection {
+  threadId: string;
+  status: ThreadStatus;
+  since: string;
+}
+
 export interface ConversationSummary {
   id: string;
   projectId: string;
@@ -69,6 +83,13 @@ export interface ConversationSummary {
   updatedAt: string;
   pinnedAt?: string | null;
   archivedAt?: string | null;
+  settledAt?: string | null;
+  wokeAt?: string | null;
+  lastVisitedAt?: string | null;
+  /** Derived server-side; attached by loadConversationList. */
+  status?: ThreadStatus;
+  statusSince?: string;
+  projectName?: string;
 }
 export interface ForkPreview {
   sourceThreadId: string;
