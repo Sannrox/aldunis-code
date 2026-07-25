@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { ChangedFile, FileDiff, DiffAnnotation, DeliveryContext, DeliveryPlan, DeliveryAction, ConversationSummary, RepositoryMetadata } from "../../types";
-import { Button, CloseButton, ModalSurface, NestedDialogSurface, handleNestedEscape } from "../../components/ui";
+import { Button, CloseButton, NestedDialogSurface, handleNestedEscape } from "../../components/ui";
 
 export function ChangesPanel({
   repository,
@@ -250,20 +250,25 @@ export function ChangesPanel({
   useEffect(() => {
     if (revisionPreview) revisionPreviewRef.current?.focus();
   }, [revisionPreview]);
+  const added = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const removed = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+
+  // Embedded in the conversation review dock (mock .rv) — not a portal modal.
   return (
-    <ModalSurface
-      open
-      onClose={onClose}
-      className="changes-panel"
-      ariaLabel="Changes for active conversation"
-      withBackdrop={false}
-    >
-      <header>
-        <div><span className="eyebrow">Active conversation</span><h2>Review changes</h2></div>
-        <div><Button size="sm" onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</Button><CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" /></div>
-      </header>
-      <div className="changes-body">
-        <nav aria-label="Changed files">
+    <div className="changes-panel rv-panel" aria-label="Changes for active conversation">
+      <div className="rv-h">
+        <span className="rv-t">Review</span>
+        <span className="rv-s">
+          {files.length} files
+          {(added > 0 || removed > 0) && (
+            <> · <b className="ok">+{added}</b> <b className="bad">−{removed}</b></>
+          )}
+        </span>
+        <Button size="sm" className="btn btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</Button>
+        <CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" />
+      </div>
+      <div className="changes-body rv-body">
+        <nav className="rv-files" aria-label="Changed files">
           {loading && <p className="changes-note">Inspecting worktree…</p>}
           {error && <p className="changes-error" role="alert">{error}</p>}
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
@@ -403,7 +408,7 @@ export function ChangesPanel({
         </section>
         </div>
       </div>
-    </ModalSurface>
+    </div>
   );
 }
 

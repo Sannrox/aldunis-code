@@ -333,7 +333,7 @@ export function CodeWorkbench({
       {product !== "code" ? (
         <DomainPage product={product as Exclude<import("../../types").Product, "code">} />
       ) : (
-      <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
         {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}
         {incompleteDeletionIds.map((threadId) => (
           <div className="workspace-state error" role="alert" key={threadId}>
@@ -419,7 +419,7 @@ export function CodeWorkbench({
           )}
         </div>
         </>}
-      </section>
+      </div>
       )}
       </main>
     </>
