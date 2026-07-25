@@ -2423,13 +2423,13 @@ function Conversation({
     ? {
         title: "Open a repository to begin",
         detail: "Choose an explicit local root before starting a provider conversation.",
-        action: <button onClick={onOpenRepository}>Open repository</button>,
+        action: <Button variant="primary" size="lg" onClick={onOpenRepository}>Open repository</Button>,
       }
     : provider === "claude-code" && !profileId
       ? {
           title: "Configure Claude Code to begin",
           detail: "Add a local Claude profile, then return here to describe the task.",
-          action: <button onClick={onOpenProfiles}>Configure Claude</button>,
+          action: <Button variant="primary" size="lg" onClick={onOpenProfiles}>Configure Claude</Button>,
         }
       : {
           title: "What do you want to work on?",
