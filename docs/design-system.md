@@ -172,8 +172,10 @@ Each step is independently shippable and revertable.
 4. Raise the type floor. 37 rendered elements are currently below 11px, 18 of
    them at 9.6px, with the smallest at 8px. The layout is spacious, so the
    small type buys no density.
-5. Self-host the three font families and remove the Google Fonts import at
-   `src/styles.css:1`, which contradicts the loopback-only default.
+5. Optionally self-host DM Sans / JetBrains Mono / Newsreader later for
+   closer mock parity. Remote Google Fonts imports are already removed from
+   the app shell (`index.html`, `src/styles.css`) so the workbench stays
+   local-first; system stacks are the interim.
 6. Extract primitives into `src/components/ui/`, starting with `Button`.
 7. Replace `useDialogFocus` (`src/main.tsx:352`) with `@base-ui/react`.
 
