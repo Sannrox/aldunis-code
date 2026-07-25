@@ -1,0 +1,38 @@
+{
+  "theme": "light",
+  "tokens": {
+    "--line": "#d6d3cb",
+    "--muted": "#686a70",
+    "--panel": "#f7f5ef",
+    "--panel-2": "#eeece5",
+    "--acid": "#547b00",
+    "--shadow-pop": "0 14px 34px rgba(0,0,0,.10)",
+    "--shadow-modal": "0 22px 60px rgba(0,0,0,.16)",
+    "--background": "",
+    "--foreground": "",
+    "--primary": ""
+  },
+  "body": {
+    "color": "rgb(32, 33, 38)",
+    "background-color": "rgba(0, 0, 0, 0)"
+  },
+  "app": {
+    "background-color": "rgb(243, 241, 235)",
+    "color": "rgb(32, 33, 38)"
+  },
+  "header": {
+    "background-color": "rgb(243, 241, 235)",
+    "border-bottom-color": "rgb(214, 211, 203)"
+  },
+  "sidebar": {
+    "background-color": "rgb(247, 245, 239)"
+  },
+  "conversation": {
+    "background-color": "rgb(250, 249, 245)"
+  },
+  "mark": {
+    "color": "rgb(84, 123, 0)",
+    "border-color": "rgb(68, 70, 78)"
+  },
+  "hasShell": true
+}

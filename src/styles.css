@@ -1,10 +1,27 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap");
 
+/*
+ * Semantic token table (design-system.md).
+ *
+ * Light values live on :root. The dark block redefines the same names.
+ * Nothing consumes these yet — legacy vars and literal rules below stay
+ * as the live source of truth until later migration steps.
+ *
+ * Naming notes:
+ * - --muted already means muted text in this stylesheet; the semantic
+ *   surface equivalent is --muted-bg so we do not collide.
+ * - --primary is monochrome (near-black on light, near-white on dark).
+ *   --acid remains the transitional brand/accent used by existing rules.
+ * - Status hues (amber / indigo / destructive) are for operator-blocking
+ *   states only. Diff greens/reds stay load-bearing for scan speed.
+ */
 :root {
   color: #e9e8e4;
   background: #0b0c0f;
   font-family: "Instrument Sans", sans-serif;
   font-synthesis: none;
+
+  /* Legacy tokens — still consumed by existing rules. Dark defaults. */
   --line: #292b31;
   --muted: #858791;
   --panel: #111216;
@@ -12,6 +29,87 @@
   --acid: #c5ff52;
   --shadow-pop: 0 16px 40px rgba(0,0,0,.45);
   --shadow-modal: 0 28px 80px rgba(0,0,0,.6);
+
+  /* ── Semantic table (light) ─────────────────────────────────────── */
+  --background: #f3f1eb;
+  --foreground: #202126;
+  --card: #ffffff;
+  --card-foreground: #202126;
+  --popover: #ffffff;
+  --popover-foreground: #202126;
+  --primary: #18181b;
+  --primary-foreground: #ffffff;
+  --secondary: #eeece5;
+  --secondary-foreground: #24252a;
+  --muted-bg: #f7f5ef;
+  --muted-foreground: #686a70;
+  --accent: #eeece5;
+  --accent-foreground: #24252a;
+  --destructive: #a3402f;
+  --destructive-foreground: #a3402f;
+  --destructive-bg: rgba(201, 111, 101, 0.1);
+  --border: #d6d3cb;
+  --input: #d6d3cb;
+  --ring: #18181b;
+  --amber: #b45309;
+  --indigo: #4f46e5;
+  --sky: #0284c7;
+  --violet: #7c3aed;
+  --emerald: #059669;
+  --diff-added: #2f6b3a;
+  --diff-removed: #a3402f;
+  --sidebar: #f7f5ef;
+  --sidebar-foreground: #202126;
+  --sidebar-row-hover: #eeece5;
+  --sidebar-row-selected: #ffffff;
+  --conversation: #faf9f5;
+  --radius: 0.625rem;
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --font-sans: "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --font-display: "Newsreader", "Times New Roman", serif;
+  --type-floor: 0.6875rem; /* 11px at 16px root — design-system type floor */
+}
+
+/* Dark redefines the same semantic names. App always sets data-theme. */
+[data-theme="dark"] {
+  --background: #0b0c0f;
+  --foreground: #e9e8e4;
+  --card: #111216;
+  --card-foreground: #e9e8e4;
+  --popover: #16171c;
+  --popover-foreground: #e9e8e4;
+  --primary: #f0f0ef;
+  --primary-foreground: #0a0a0a;
+  --secondary: #16171c;
+  --secondary-foreground: #e4e4df;
+  --muted-bg: #111216;
+  --muted-foreground: #858791;
+  --accent: #1b1c21;
+  --accent-foreground: #e8e8e5;
+  --destructive: #c96f65;
+  --destructive-foreground: #dba29c;
+  --destructive-bg: rgba(201, 111, 101, 0.12);
+  --border: #292b31;
+  --input: #34363c;
+  --ring: #f0f0ef;
+  --amber: #d8b276;
+  --indigo: #8db6ca;
+  --sky: #72a7c0;
+  --violet: #a992ef;
+  --emerald: #9bbf8c;
+  --diff-added: #9bbf8c;
+  --diff-removed: #c96f65;
+  --sidebar: #111216;
+  --sidebar-foreground: #e9e8e4;
+  --sidebar-row-hover: #1c1d22;
+  --sidebar-row-selected: #1c1d22;
+  --conversation: #0d0e11;
+  --shadow-popover: 0 10px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --font-sans: "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, monospace;
+  --font-display: "Newsreader", "Times New Roman", serif;
+  --type-floor: 0.6875rem;
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
