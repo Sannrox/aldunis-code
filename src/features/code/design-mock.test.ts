@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DESIGN_MOCK_CHANGED_FILES,
+  DESIGN_MOCK_DELIVERY,
   DESIGN_MOCK_MANAGED_WORKTREE_COUNT,
   DESIGN_MOCK_PRIMARY_ID,
   DESIGN_MOCK_REPOSITORY,
   DESIGN_MOCK_WORKTREE_LIMIT,
+  designMockAnnotations,
   designMockConversations,
+  designMockDiff,
+  isDesignMockRepository,
+  isDesignMockThread,
 } from "./design-mock";
 
 test("design mock fixtures cover active + settled sample list", () => {
@@ -39,4 +45,19 @@ test("local settle patch keeps list membership and marks settledAt", () => {
   assert.equal(next.length, rows.length);
   assert.equal(next.filter((row) => !row.settledAt).length, 5);
   assert.equal(next.filter((row) => row.settledAt).length, 4);
+});
+
+test("design mock review fixtures match the sample review panel", () => {
+  assert.equal(DESIGN_MOCK_CHANGED_FILES.length, 6);
+  assert.ok(DESIGN_MOCK_CHANGED_FILES.some((file) => file.path === "src/annotations.ts"));
+  assert.equal(DESIGN_MOCK_DELIVERY.branch, "feat/diff-annotations");
+  assert.ok(isDesignMockThread(DESIGN_MOCK_PRIMARY_ID));
+  assert.ok(isDesignMockRepository(DESIGN_MOCK_REPOSITORY));
+  assert.equal(isDesignMockThread("real-id"), false);
+  const diff = designMockDiff("src/annotations.ts");
+  assert.equal(diff.identity, "design-mock:src/annotations.ts");
+  assert.ok(diff.lines.some((line) => line.side === "addition"));
+  const notes = designMockAnnotations(DESIGN_MOCK_PRIMARY_ID);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].text, /region is deleted/i);
 });

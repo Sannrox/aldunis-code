@@ -2,6 +2,12 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
+import {
+  DESIGN_MOCK_CHANGED_FILES,
+  DESIGN_MOCK_PRIMARY_ID,
+  isDesignMockRepository,
+  isDesignMockThread,
+} from "./design-mock";
 
 export function PaneConversation({
   repository,
@@ -38,8 +44,14 @@ export function PaneConversation({
   const [changesOpen, setChangesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const refreshChanges = async () => {
-    if (!repository || conversation?.id?.startsWith("mock-") || repository.projectId === "design-mock-project") {
-      // Design fixtures and missing repository — no real worktree to inspect.
+    if (isDesignMockThread(conversation?.id) || isDesignMockRepository(repository)) {
+      // Design fixtures — sample review files for the primary mock thread only.
+      setChanges(conversation?.id === DESIGN_MOCK_PRIMARY_ID ? DESIGN_MOCK_CHANGED_FILES : []);
+      setChangesError(null);
+      setChangesLoading(false);
+      return;
+    }
+    if (!repository) {
       setChanges([]);
       setChangesError(null);
       setChangesLoading(false);
@@ -62,7 +74,9 @@ export function PaneConversation({
       setChangesLoading(false);
     }
   };
-  useEffect(() => { void refreshChanges(); }, [repository?.root, repository?.selectedWorktree]);
+  useEffect(() => {
+    void refreshChanges();
+  }, [repository?.root, repository?.selectedWorktree, conversation?.id]);
   useEffect(() => { if (showChangesSignal > 0) { setChangesOpen(true); void refreshChanges(); } }, [showChangesSignal]);
   useEffect(() => { if (showFilesSignal > 0) setFilesOpen(true); }, [showFilesSignal]);
   return (
