@@ -1,7 +1,5 @@
 import React from "react";
 import type { ConversationSummary } from "../../types";
-import { Icon } from "../../components/icon";
-import { Spinner } from "../../components/ui";
 import {
   branchFromWorktree,
   formatElapsed,
@@ -10,84 +8,60 @@ import {
   providerLabel,
 } from "./conversation-list";
 
-/**
- * Three-line thread row (design-system.md):
- *   project · status|time
- *   title
- *   branch · provider
- */
+/** Three-line row matching workbench-mock.html class structure. */
 export function ThreadRow({
   conversation,
   active,
   onOpen,
   onSettle,
-  onOpenBeside,
-  canOpenBeside,
   showSettle = true,
 }: {
   conversation: ConversationSummary;
   active: boolean;
   onOpen: () => void;
   onSettle?: () => void;
-  onOpenBeside?: () => void;
-  canOpenBeside?: boolean;
   showSettle?: boolean;
 }) {
   const status = conversation.status ?? "idle";
   const blocks = isBlockingStatus(status);
   const unread = isUnread(conversation);
-  const topRight = blocks
-    ? statusLabel(status)
-    : formatElapsed(conversation.statusSince ?? conversation.updatedAt);
-  const titleStrong = blocks || active;
+  const elapsed = formatElapsed(conversation.statusSince ?? conversation.updatedAt);
+  const monogram = providerMonogram(conversation.provider);
 
   return (
     <div
-      className={[
-        "thread-row",
-        active ? "active" : "",
-        blocks ? "blocks" : "",
-        unread ? "unread" : "",
-      ].filter(Boolean).join(" ")}
+      className={["row", active ? "active" : "", blocks ? "blocks" : "", unread ? "unread" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      role="listitem"
     >
-      <button
-        type="button"
-        className="thread-row__main"
-        onClick={onOpen}
-        aria-current={active ? "true" : undefined}
-        aria-label={`${conversation.title}${blocks ? `, ${statusLabel(status)}` : ""}${unread ? ", unread" : ""}`}
-      >
-        <div className="thread-row__top">
-          <span className="thread-row__project" title={conversation.projectName}>
-            <Icon name="branch" />
-            <span>{conversation.projectName ?? "Project"}</span>
-          </span>
-          <span className={`thread-row__meta ${blocks ? `status-${status}` : ""}`}>
-            {status === "running" && <Spinner size="sm" label="Working" />}
-            {status === "completed" && !blocks && <span className="thread-row__check" aria-hidden="true">✓</span>}
-            {status !== "running" && (
-              <span className={blocks ? `pill pill-${status}` : "thread-row__time"}>
-                {topRight}
-              </span>
-            )}
-          </span>
+      <button type="button" className="row-main" onClick={onOpen} aria-current={active ? "true" : undefined}>
+        <div className="rp">
+          <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span className="pn">{conversation.projectName ?? "project"}</span>
+          {status === "pending_approval" && <span className="pill approval">Approval</span>}
+          {status === "awaiting_input" && <span className="pill input">Input</span>}
+          {status === "failed" && <span className="pill failed">Failed</span>}
+          {status === "running" && <span className="spin" aria-label="Working" />}
+          {status === "completed" && !blocks && <span className="mark" aria-hidden="true">✓</span>}
+          {!blocks && status !== "running" && <span className="tm">{elapsed}</span>}
+          {blocks && <span className="tm">{elapsed}</span>}
         </div>
-        <div className={`thread-row__title ${titleStrong ? "strong" : ""}`}>
+        <div className="rt">
           {conversation.pinnedAt ? "◆ " : ""}
           {conversation.title}
-          {unread && <i className="thread-row__unread" aria-hidden="true" />}
         </div>
-        <div className="thread-row__bottom">
-          <span className="thread-row__branch" title={conversation.worktree}>
-            {branchFromWorktree(conversation.worktree)}
-          </span>
-          <span className="thread-row__provider">{providerLabel(conversation.provider)}</span>
+        <div className="rb">
+          <span className="br">{branchFromWorktree(conversation.worktree)}</span>
+          <span className="pv" title={providerLabel(conversation.provider)}>{monogram}</span>
         </div>
       </button>
       {showSettle && onSettle && (
         <button
           type="button"
-          className="thread-row__settle"
+          className="settle"
           onClick={(event) => {
             event.stopPropagation();
             onSettle();
@@ -96,37 +70,16 @@ export function ThreadRow({
           Settle
         </button>
       )}
-      {onOpenBeside && (
-        <button
-          type="button"
-          className="thread-row__beside"
-          disabled={!canOpenBeside}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenBeside();
-          }}
-          aria-label={`Open ${conversation.title} beside`}
-        >
-          ▥
-        </button>
-      )}
     </div>
   );
 }
 
-function statusLabel(status: ConversationSummary["status"]): string {
-  switch (status) {
-    case "pending_approval":
-      return "Approval";
-    case "awaiting_input":
-      return "Input";
-    case "failed":
-      return "Failed";
-    case "running":
-      return "Working";
-    case "completed":
-      return "Done";
-    default:
-      return "";
+function providerMonogram(provider: string): string {
+  if (provider === "claude-code") return "CC";
+  if (provider === "codex-cli") return "CX";
+  if (provider.startsWith("adapter:")) {
+    const id = provider.slice("adapter:".length).split("@")[0] ?? "AD";
+    return id.slice(0, 2).toUpperCase();
   }
+  return provider.slice(0, 2).toUpperCase();
 }

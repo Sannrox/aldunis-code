@@ -6,8 +6,11 @@ import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
+import { DomainPage } from "../shell/domain-page";
 
 export function CodeWorkbench({
+  product,
+  onProductChange,
   repository,
   onOpenRepository,
   profiles,
@@ -16,7 +19,10 @@ export function CodeWorkbench({
   onOpenPalette,
   onSelectWorktree,
   onManageWorktrees,
+  onSettings,
 }: {
+  product: import("../../types").Product;
+  onProductChange: (product: import("../../types").Product) => void;
   repository: RepositoryMetadata | null;
   onOpenRepository: () => void;
   profiles: ClaudeProfile[];
@@ -25,6 +31,7 @@ export function CodeWorkbench({
   onOpenPalette: () => void;
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
+  onSettings: () => void;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
@@ -249,6 +256,8 @@ export function CodeWorkbench({
   return (
     <>
       <CodeSidebar
+        product={product}
+        onProductChange={onProductChange}
         repository={repository}
         onOpenRepository={onOpenRepository}
         changes={changes}
@@ -318,8 +327,13 @@ export function CodeWorkbench({
         }}
         worktreeLimit={worktreeLimit}
         managedWorktreeCount={managedWorktreeCount}
+        onSettings={onSettings}
       />
-      <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace">
+      <main className="main">
+      {product !== "code" ? (
+        <DomainPage product={product as Exclude<import("../../types").Product, "code">} />
+      ) : (
+      <section className={`conversation-workspace active-${activePane}`} aria-label="Conversation workspace" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}
         {incompleteDeletionIds.map((threadId) => (
           <div className="workspace-state error" role="alert" key={threadId}>
@@ -406,6 +420,8 @@ export function CodeWorkbench({
         </div>
         </>}
       </section>
+      )}
+      </main>
     </>
   );
 }
