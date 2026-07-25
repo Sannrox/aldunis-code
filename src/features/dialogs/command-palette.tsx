@@ -142,6 +142,7 @@ export function CommandPalette({
               role="option"
               tabIndex={-1}
               aria-selected={index === activeIndex}
+              aria-label={`${action.label}. ${action.detail}`}
               className={index === activeIndex ? "active" : undefined}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => runAction(index)}

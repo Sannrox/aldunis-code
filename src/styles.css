@@ -1,4 +1,7 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap");
+/* Fonts: system stacks only. Remote Google Fonts contradict loopback-only /
+ * local-first defaults (see docs/design-system.md). Self-host families later
+ * without reintroducing network font loads.
+ */
 
 /*
  * Visual system aligned to docs/design/workbench-mock.html + design-system.md.
@@ -50,9 +53,9 @@
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
   --shadow-pop: var(--shadow-popover);
   --shadow-modal: 0 22px 60px rgba(0, 0, 0, 0.16);
-  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
-  --font-display: "Newsreader", "Times New Roman", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "Segoe UI Mono", Menlo, Consolas, monospace;
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
   --type-floor: 0.6875rem;
 
   /* Mock-aligned: --muted is a surface (search, badge, av). Text uses --muted-foreground. */
@@ -405,7 +408,7 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   font-family: var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
 }
 .repository-dialog h2, .profile-dialog h2, .worktree-dialog h2 {
-  margin: 0; font: 400 2rem var(--font-display, "Newsreader", serif); color: var(--foreground);
+  margin: 0; font: 400 2rem var(--font-display); color: var(--foreground);
 }
 .repository-dialog > p:not(.eyebrow), .profile-dialog > p:not(.eyebrow), .worktree-dialog > p:not(.eyebrow) {
   margin: 13px 0 24px; color: var(--muted-foreground); font-size: 13.5px; line-height: 1.6;
