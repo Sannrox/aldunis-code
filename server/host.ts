@@ -41,7 +41,13 @@ import {
   RepositoryError,
   rewindCheckpoint,
 } from "./repository.ts";
-import { LocalStateError, LocalStateStore } from "./state.ts";
+import {
+  LocalStateError,
+  LocalStateStore,
+  projectThreadStatus,
+  projectThreadStatuses,
+  type ThreadStatus,
+} from "./state.ts";
 import {
   CLAUDE_MODEL_ALIASES,
   ClaudeProfileStore,
@@ -60,6 +66,7 @@ import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
+import { WakeBroker } from "./wake.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -91,6 +98,21 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
     "x-content-type-options": "nosniff",
   });
   response.end(JSON.stringify(value));
+}
+
+async function publishThreadStatusTransition(
+  wake: WakeBroker,
+  state: LocalStateStore,
+  threadId: string,
+  previous: ThreadStatus | null,
+): Promise<void> {
+  const next = projectThreadStatus(await state.load(), threadId);
+  if (previous !== null && previous === next.status) return;
+  wake.publish({
+    threadId,
+    status: next.status,
+    at: new Date().toISOString(),
+  });
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
@@ -237,6 +259,7 @@ async function handleApi(
   directories: DirectoryBrowser,
   adapters: ProviderAdapterStore,
   activeAcp: Map<string, AcpProviderAdapter>,
+  wake: WakeBroker,
   remoteRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
@@ -244,7 +267,8 @@ async function handleApi(
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
   if (!route.startsWith("/api/")) return false;
-  if (request.method !== "POST") {
+  const isWakeStream = request.method === "GET" && route === "/api/state/events";
+  if (request.method !== "POST" && !isWakeStream) {
     response.writeHead(405, { allow: "POST" });
     response.end();
     return true;
@@ -255,6 +279,30 @@ async function handleApi(
   }
 
   try {
+    if (isWakeStream) {
+      response.writeHead(200, {
+        "content-type": "text/event-stream; charset=utf-8",
+        "cache-control": "no-store",
+        connection: "keep-alive",
+        "x-content-type-options": "nosniff",
+      });
+      response.write(": connected\n\n");
+      const unsubscribe = wake.subscribe((event) => {
+        if (response.writableEnded) return;
+        response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+      });
+      const heartbeat = setInterval(() => {
+        if (response.writableEnded) return;
+        response.write(": heartbeat\n\n");
+      }, 30_000);
+      const cleanup = () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      };
+      request.on("close", cleanup);
+      response.on("close", cleanup);
+      return true;
+    }
     if (route === "/api/providers/discover") {
       const codexReadiness = await codex.readiness().catch(() => ({
         id: "codex-cli" as const,
@@ -480,7 +528,11 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/load") {
-      sendJson(response, 200, await state.load());
+      const projection = await state.load();
+      sendJson(response, 200, {
+        ...projection,
+        threadStatuses: projectThreadStatuses(projection),
+      });
       return true;
     }
     if (route === "/api/forks/preview") {
@@ -613,6 +665,58 @@ async function handleApi(
         throw new LocalStateError("A conversation is required.", 400);
       }
       sendJson(response, 200, await state.restoreConversation(body.threadId));
+      return true;
+    }
+    if (route === "/api/state/conversations/settle") {
+      const body = await readJson(request) as { threadId?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      sendJson(response, 200, await state.settleConversation(body.threadId));
+      return true;
+    }
+    if (route === "/api/state/conversations/unsettle") {
+      const body = await readJson(request) as { threadId?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      sendJson(response, 200, await state.unsettleConversation(body.threadId));
+      return true;
+    }
+    if (route === "/api/state/conversations/visit") {
+      const body = await readJson(request) as { threadId?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      sendJson(response, 200, await state.markConversationVisited(body.threadId));
+      return true;
+    }
+    if (route === "/api/state/conversations/release-worktree") {
+      const body = await readJson(request) as { threadId?: unknown; confirm?: unknown };
+      if (typeof body.threadId !== "string" || body.confirm !== true) {
+        throw new LocalStateError("A confirmed conversation worktree release is required.", 400);
+      }
+      const projection = await state.load();
+      const thread = projection.threads.find((item) => item.id === body.threadId);
+      if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
+      const blocking = projection.turns.find((turn) => (
+        turn.threadId === thread.id
+        && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
+      ));
+      if (blocking) {
+        throw new LocalStateError(
+          "This conversation cannot release its worktree while provider work is active. Stop or resolve it, then retry.",
+          409,
+        );
+      }
+      const result = await worktrees.releaseManagedPath(thread.worktree);
+      const { preferences: currentPreferences } = await preferences.load();
+      sendJson(response, 200, {
+        threadId: thread.id,
+        released: result.released,
+        managedWorktreeCount: result.count,
+        managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
+      });
       return true;
     }
     if (route === "/api/state/conversations/delete/preview") {
@@ -1261,6 +1365,7 @@ async function handleApi(
             ? error.message
             : "The provider could not be started.",
         }, profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined);
+        await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
         const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
         if (checkpoint && checkpoint.state === "baseline") {
           await state.saveCheckpoint({
@@ -1294,6 +1399,10 @@ async function handleApi(
       });
       let completed = false;
       let historyFailed = false;
+      let previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+      // Starting a turn moves the thread to running before the first event.
+      await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
+      previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
       for await (const event of run.events) {
         try {
           await state.recordProviderEvent(
@@ -1303,6 +1412,8 @@ async function handleApi(
             event,
             profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined,
           );
+          await publishThreadStatusTransition(wake, state, persisted.thread.id, previousStatus);
+          previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
         } catch {
           if (providerId === "codex-cli") codex.cancel(run.id);
           else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
@@ -1462,6 +1573,35 @@ async function handleApi(
       }
       const context = await selectedWorktree(body.root, body.worktree);
       sendJson(response, 200, { files: await listChangedFiles(context.worktree) });
+      return true;
+    }
+    if (route === "/api/reviews/set") {
+      const body = await readJson(request) as {
+        threadId?: unknown;
+        path?: unknown;
+        previousPath?: unknown;
+        diffIdentity?: unknown;
+        reviewed?: unknown;
+      };
+      if (
+        typeof body.threadId !== "string"
+        || typeof body.path !== "string"
+        || typeof body.diffIdentity !== "string"
+        || typeof body.reviewed !== "boolean"
+        || (body.previousPath !== undefined && body.previousPath !== null && typeof body.previousPath !== "string")
+      ) {
+        throw new LocalStateError(
+          "A conversation, file path, content identity, and reviewed flag are required.",
+          400,
+        );
+      }
+      sendJson(response, 200, await state.setFileReview({
+        threadId: body.threadId,
+        path: body.path,
+        previousPath: typeof body.previousPath === "string" ? body.previousPath : null,
+        diffIdentity: body.diffIdentity,
+        reviewed: body.reviewed,
+      }));
       return true;
     }
     if (route === "/api/annotations/list") {
@@ -1853,6 +1993,7 @@ export function createLocalHost(
   const directories = new DirectoryBrowser();
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
+  const wake = new WakeBroker();
   const recovery = state.recoverInterruptedTurns();
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
@@ -1888,6 +2029,7 @@ export function createLocalHost(
         directories,
         adapters,
         activeAcp,
+        wake,
         Boolean(remoteAuth),
         remoteAuth,
         internalPermissionCallback?.url,
