@@ -321,10 +321,22 @@ export function ChangesPanel({
                     : paths.filter((path) => !stagedPaths.includes(path)));
                 }}
               />
-              <button onClick={() => setSelected(file.path)} aria-current={selected === file.path}>
+              <button
+                type="button"
+                className="changed-file-main"
+                onClick={() => setSelected(file.path)}
+                aria-current={selected === file.path}
+              >
                 <span className={`change-state ${file.state}`}>{file.state}</span>
-                <span><strong>{file.path}</strong>{file.previousPath && <small>from {file.previousPath}</small>}</span>
-                <small className="change-lines">{file.additions === null ? "—" : `+${file.additions}`} {file.deletions === null ? "—" : `−${file.deletions}`}</small>
+                <span className="changed-file-path">
+                  <strong>{file.path}</strong>
+                  {file.previousPath && <small> from {file.previousPath}</small>}
+                </span>
+                <small className="change-lines">
+                  {file.additions === null ? "—" : `+${file.additions}`}
+                  {" "}
+                  {file.deletions === null ? "—" : `−${file.deletions}`}
+                </small>
               </button>
             </div>
           ))}
@@ -377,7 +389,10 @@ export function ChangesPanel({
           )}
         </div>
         <section className="annotations-panel" aria-label="Local diff comments">
-          <header><strong>Review comments</strong><small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small></header>
+          <header className="review-section-header">
+            <strong>Review comments</strong>
+            <small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small>
+          </header>
           {annotations.length === 0 && <p>No local comments yet.</p>}
           <ul>
             {annotations.map((annotation) => (
@@ -428,7 +443,13 @@ export function ChangesPanel({
           </section>
         )}
         <section className="delivery-panel" aria-label="Commit, push, and pull request actions">
-          <header><div><strong>Reviewed delivery</strong><small>{delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}</small></div><span>{delivery?.upstream ?? "No upstream"}</span></header>
+          <header className="review-section-header delivery-header">
+            <div>
+              <strong>Reviewed delivery</strong>
+              <small>{delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}</small>
+            </div>
+            <span>{delivery?.upstream ?? "No upstream"}</span>
+          </header>
           <div className="delivery-form">
             <label>Action<select value={deliveryAction} onChange={(event) => { setDeliveryAction(event.target.value as DeliveryAction); setPlan(null); }}>
               <option value="stage">Stage selected files</option><option value="commit">Commit staged files</option><option value="push">Push branch</option><option value="pull_request">Open pull request</option>
