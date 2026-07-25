@@ -42,3 +42,14 @@ test("ui primitive classes are defined against the stylesheet", () => {
     assert.ok(css.includes(name), `missing primitive rule ${name}`);
   }
 });
+
+test("styles must not load remote Google Fonts (local-first)", () => {
+  assert.doesNotMatch(css, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
+  assert.doesNotMatch(css, /@import\s+url\(/i);
+});
+
+test("index.html must not load remote Google Fonts (local-first)", () => {
+  const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
+  const html = readFileSync(indexPath, "utf8");
+  assert.doesNotMatch(html, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
+});
