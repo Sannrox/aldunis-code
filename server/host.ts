@@ -389,8 +389,13 @@ async function handleApi(
       return true;
     }
     if (route === "/api/remote/descriptor") {
-      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
-      sendJson(response, 200, await remoteAuth.descriptor());
+      // Loopback hosts answer 200 with remoteEnabled:false so the shell does not
+      // log a console 404 on every local boot (local-first default).
+      if (!remoteAuth) {
+        sendJson(response, 200, { remoteEnabled: false });
+        return true;
+      }
+      sendJson(response, 200, { remoteEnabled: true, ...(await remoteAuth.descriptor()) });
       return true;
     }
     if (route === "/api/repositories/open") {
