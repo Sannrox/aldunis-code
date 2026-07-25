@@ -1,6 +1,13 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { ChangedFile, FileDiff, DiffAnnotation, DeliveryContext, DeliveryPlan, DeliveryAction, ConversationSummary, RepositoryMetadata } from "../../types";
 import { Button, CloseButton, NestedDialogSurface, handleNestedEscape } from "../../components/ui";
+import {
+  DESIGN_MOCK_DELIVERY,
+  designMockAnnotations,
+  designMockDiff,
+  isDesignMockRepository,
+  isDesignMockThread,
+} from "../code/design-mock";
 
 export function ChangesPanel({
   repository,
@@ -23,6 +30,7 @@ export function ChangesPanel({
   onSendRevision: (prompt: string) => void;
   canSendRevision: boolean;
 }) {
+  const designMock = isDesignMockThread(threadId) || isDesignMockRepository(repository);
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -46,6 +54,11 @@ export function ChangesPanel({
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const inspectDelivery = async () => {
+    if (designMock) {
+      setDelivery(DESIGN_MOCK_DELIVERY);
+      setRemote(DESIGN_MOCK_DELIVERY.remotes[0]?.name ?? "origin");
+      return;
+    }
     const response = await fetch("/api/delivery/inspect", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -63,8 +76,12 @@ export function ChangesPanel({
     setRemote("");
     setDeliveryError(null);
     void inspectDelivery().catch((cause) => setDeliveryError(cause instanceof Error ? cause.message : "Delivery state could not be inspected."));
-  }, [repository.root, repository.selectedWorktree]);
+  }, [repository.root, repository.selectedWorktree, designMock]);
   const prepareDelivery = async () => {
+    if (designMock) {
+      setDeliveryError("Design mock is read-only — delivery actions are not available.");
+      return;
+    }
     setDeliveryBusy(true);
     setDeliveryError(null);
     try {
@@ -92,7 +109,7 @@ export function ChangesPanel({
     }
   };
   const executeDelivery = async () => {
-    if (!plan) return;
+    if (!plan || designMock) return;
     setDeliveryBusy(true);
     setDeliveryError(null);
     try {
@@ -125,6 +142,10 @@ export function ChangesPanel({
     let active = true;
     setDiff(null);
     setDiffError(null);
+    if (designMock) {
+      setDiff(designMockDiff(selected));
+      return;
+    }
     void fetch("/api/changes/diff", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -141,10 +162,19 @@ export function ChangesPanel({
       if (active) setDiffError(cause instanceof Error ? cause.message : "Diff could not be read.");
     });
     return () => { active = false; };
-  }, [repository, selected]);
+  }, [repository, selected, designMock]);
   const loadAnnotations = async () => {
     if (!threadId) {
       setAnnotations([]);
+      return;
+    }
+    if (designMock) {
+      const loaded = designMockAnnotations(threadId);
+      setAnnotations(loaded);
+      setAnnotationError(null);
+      setSelectedAnnotationIds((current) => current.filter(
+        (id) => loaded.some((annotation) => annotation.id === id),
+      ));
       return;
     }
     const response = await fetch("/api/annotations/list", {
@@ -168,9 +198,15 @@ export function ChangesPanel({
     void loadAnnotations().catch((cause) => {
       setAnnotationError(cause instanceof Error ? cause.message : "Annotations could not be loaded.");
     });
-  }, [threadId, repository.root, repository.selectedWorktree]);
+  }, [threadId, repository.root, repository.selectedWorktree, designMock]);
   const saveAnnotation = async () => {
     if (!threadId || !selected || !diff || commentLineIndex === undefined || !commentText.trim()) return;
+    if (designMock) {
+      // Fixture mode is read-only for annotations.
+      setCommentLineIndex(undefined);
+      setCommentText("");
+      return;
+    }
     setAnnotationBusy(true);
     setAnnotationError(null);
     try {

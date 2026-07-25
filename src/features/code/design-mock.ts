@@ -3,7 +3,14 @@
  * Activated only with `?mock=1` (or localStorage aldunis.designMock=1).
  * Not persisted to the server — visual parity for design review only.
  */
-import type { ConversationSummary, RepositoryMetadata } from "../../types";
+import type {
+  ChangedFile,
+  ConversationSummary,
+  DeliveryContext,
+  DiffAnnotation,
+  FileDiff,
+  RepositoryMetadata,
+} from "../../types";
 
 export function isDesignMockEnabled(): boolean {
   if (typeof window === "undefined") return false;
@@ -199,3 +206,87 @@ export const DESIGN_MOCK_THREAD = {
 
 export const DESIGN_MOCK_WORKTREE_LIMIT = 8;
 export const DESIGN_MOCK_MANAGED_WORKTREE_COUNT = 6;
+
+/** Review panel file list from workbench-mock.html (6 files · +212 −34). */
+export const DESIGN_MOCK_CHANGED_FILES: ChangedFile[] = [
+  { path: "src/annotations.ts", previousPath: null, state: "modified", additions: 118, deletions: 0 },
+  { path: "src/annotations.test.ts", previousPath: null, state: "modified", additions: 54, deletions: 0 },
+  { path: "server/annotations.ts", previousPath: null, state: "modified", additions: 31, deletions: 12 },
+  { path: "server/changes.ts", previousPath: null, state: "modified", additions: 9, deletions: 22 },
+  { path: "src/main.tsx", previousPath: null, state: "modified", additions: 6, deletions: 0 },
+  { path: "docs/architecture.md", previousPath: null, state: "modified", additions: 4, deletions: 0 },
+];
+
+export const DESIGN_MOCK_DELIVERY: DeliveryContext = {
+  repository: DESIGN_MOCK_REPOSITORY.root,
+  worktree: "/Users/you/Projects/aldunis-code/.aldunis/wt/feat/diff-annotations",
+  branch: "feat/diff-annotations",
+  detached: false,
+  upstream: "origin/feat/diff-annotations",
+  remotes: [{ name: "origin", url: "git@github.com:you/aldunis-code.git" }],
+  staged: [],
+  unstaged: DESIGN_MOCK_CHANGED_FILES.map((file) => file.path),
+};
+
+export function designMockDiff(path: string): FileDiff {
+  const file = DESIGN_MOCK_CHANGED_FILES.find((item) => item.path === path)
+    ?? DESIGN_MOCK_CHANGED_FILES[0];
+  const isPrimary = path === "src/annotations.ts";
+  return {
+    ...file,
+    identity: `design-mock:${file.path}`,
+    message: null,
+    patch: isPrimary
+      ? "@@ -40,6 +40,18 @@ resolveAnchor\n export function resolveAnchor(\n   note: Annotation,\n-  return file.lines[note.line];\n+  const hash = hashRegion(file, note.region);\n+  return findByHash(file, hash) ?? note.fallbackLine;\n }"
+      : null,
+    lines: isPrimary
+      ? [
+          { index: 0, side: "context", oldLine: 40, newLine: 40, content: "export function resolveAnchor(" },
+          { index: 1, side: "context", oldLine: 41, newLine: 41, content: "  note: Annotation," },
+          { index: 2, side: "deletion", oldLine: 42, newLine: null, content: "  return file.lines[note.line];" },
+          { index: 3, side: "addition", oldLine: null, newLine: 42, content: "  const hash = hashRegion(file, note.region);" },
+          { index: 4, side: "addition", oldLine: null, newLine: 43, content: "  return findByHash(file, hash) ?? note.fallbackLine;" },
+          { index: 5, side: "context", oldLine: 43, newLine: 44, content: "}" },
+        ]
+      : [
+          {
+            index: 0,
+            side: "metadata",
+            oldLine: null,
+            newLine: null,
+            content: `Design fixture · ${file.additions ?? 0} additions, ${file.deletions ?? 0} deletions`,
+          },
+        ],
+  };
+}
+
+export function designMockAnnotations(threadId: string): DiffAnnotation[] {
+  return [
+    {
+      id: "mock-ann-1",
+      threadId,
+      checkpointId: null,
+      diffIdentity: "design-mock:src/annotations.ts",
+      path: "src/annotations.ts",
+      previousPath: null,
+      targetState: "modified",
+      scope: "line",
+      side: "addition",
+      oldLine: null,
+      newLine: 43,
+      text: "What happens when the region is deleted outright?",
+      capturedContext: "return findByHash(file, hash) ?? note.fallbackLine;",
+      resolution: "unresolved",
+      stale: false,
+      staleReason: null,
+    },
+  ];
+}
+
+export function isDesignMockThread(threadId: string | null | undefined): boolean {
+  return Boolean(threadId?.startsWith("mock-"));
+}
+
+export function isDesignMockRepository(repository: RepositoryMetadata | null | undefined): boolean {
+  return repository?.projectId === DESIGN_MOCK_REPOSITORY.projectId;
+}

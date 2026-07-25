@@ -46,11 +46,13 @@ See the local-first note in the design system.
 ### Live workbench parity
 
 Open the running app with **`?mock=1`** to load the same sample threads,
-conversation, and settle/worktree chrome as this HTML mock (UI-only fixtures;
-nothing is written to the server). Thread selection, settle/unsettle, and other
-lifecycle controls update in-memory fixtures only — they must not reload the
-server conversation list (that would wipe the mock rows). Without the flag the
-shell uses real local data and will look empty until a repository is opened.
+conversation, settle/worktree chrome, and review-panel sample as this HTML mock
+(UI-only fixtures; nothing is written to the server). Thread selection,
+settle/unsettle, and other lifecycle controls update in-memory fixtures only —
+they must not reload the server conversation list (that would wipe the mock
+rows). Review/delivery/annotation APIs are skipped for mock threads so the
+panel does not show “repository missing” errors. Without the flag the shell
+uses real local data and will look empty until a repository is opened.
 
 ### History
 
