@@ -191,9 +191,17 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
     && names[1] === "kiro-cli.exe"
     && argumentsValue.length === 1
     && argumentsValue[0] === "acp";
+  // Grok Build's ACP entrypoint is the fixed subcommand path `agent stdio`,
+  // not a free-form option flag. Only this exact reviewed launch is accepted.
+  const reviewedGrokLaunch = names.length === 2
+    && names[0] === "grok"
+    && names[1] === "grok.exe"
+    && argumentsValue.length === 2
+    && argumentsValue[0] === "agent"
+    && argumentsValue[1] === "stdio";
   const argumentsList = argumentsValue.map((entry, index) => {
     const argument = string(entry, `Executable arguments[${index}]`, 512);
-    if (!reviewedKiroLaunch && !SAFE_FIXED_OPTION.test(argument)) {
+    if (!reviewedKiroLaunch && !reviewedGrokLaunch && !SAFE_FIXED_OPTION.test(argument)) {
       throw new ProviderAdapterError(
         "Version 1 executable arguments may contain option flags only.",
       );
