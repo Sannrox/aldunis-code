@@ -111,6 +111,8 @@ export function ModalSurface({
   withBackdrop?: boolean;
   backdropClassName?: string;
 }) {
+  // Base UI keeps Backdrop and Popup as Portal siblings. Popup CSS must
+  // position itself (fixed + centered); nesting Popup inside Backdrop breaks focus.
   return (
     <BaseDialog.Root
       open={open}
