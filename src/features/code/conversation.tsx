@@ -631,7 +631,6 @@ export function Conversation({
   return (
     <div
       className="conv-root"
-      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0 }}
       aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}
     >
       <div className="topbar">
@@ -675,45 +674,33 @@ export function Conversation({
               <path d="M3 15h18" />
             </svg>
           </button>
+          {/* Secondary actions (not in mock chrome; keep available, quiet) */}
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm tb-quiet"
             onClick={onBrowseFiles}
             disabled={!repository}
             aria-label="Browse files"
             title="Browse files"
           >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            </svg>
+            Files
           </button>
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm tb-quiet"
             onClick={() => setForkOpen(true)}
             disabled={!threadId || runActive}
             aria-label="Fork conversation"
             title="Fork"
           >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="6" cy="6" r="2" />
-              <circle cx="18" cy="6" r="2" />
-              <circle cx="12" cy="18" r="2" />
-              <path d="M8 6h8M6 8v4a4 4 0 0 0 4 4h0M18 8v2a4 4 0 0 1-4 4" />
-            </svg>
+            Fork
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenProfiles} aria-label="Profiles" title="Profiles">
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="8" r="3.5" />
-              <path d="M5 19a7 7 0 0 1 14 0" />
-            </svg>
+          <button type="button" className="btn btn-ghost btn-sm tb-quiet" onClick={onOpenProfiles} aria-label="Profiles" title="Profiles">
+            •••
           </button>
           {pane === "primary" && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBeside} aria-label="Open beside" title="Open beside">
-              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="16" rx="2" />
-                <path d="M12 4v16" />
-              </svg>
+            <button type="button" className="btn btn-ghost btn-sm tb-quiet" onClick={onOpenBeside} aria-label="Open beside" title="Open beside">
+              ▥
             </button>
           )}
           {onClosePane && (
