@@ -28,7 +28,7 @@ const diff: FileDiff = {
 };
 
 const annotation: DiffAnnotation = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   id: "annotation-1",
   threadId: "thread-1",
   checkpointId: "checkpoint-1",
