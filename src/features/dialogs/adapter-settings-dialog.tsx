@@ -102,14 +102,57 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
           ))}
         </section>
         {administrationAvailable && (
-          <section className="adapter-import">
+          <section className="adapter-import" aria-label="Inspect a manifest">
             <h3>Inspect a manifest</h3>
-            <label>Source URL<input value={source} onChange={(event) => { setSource(event.target.value); setCandidate(null); }} placeholder="file:///… or https://…" /></label>
-            <label>Expected SHA-256 digest<input value={digest} onChange={(event) => { setDigest(event.target.value); setCandidate(null); }} placeholder="sha256:…" /></label>
-            <label>Manifest JSON<textarea value={manifestText} onChange={(event) => { setManifestText(event.target.value); setCandidate(null); }} rows={10} spellCheck={false} /></label>
-            <button disabled={busy || !source || !digest || !manifestText} onClick={() => void inspect()}>
+            <div className="adapter-import-fields">
+              <label className="adapter-field">
+                <span>Source URL</span>
+                <input
+                  value={source}
+                  onChange={(event) => {
+                    setSource(event.target.value);
+                    setCandidate(null);
+                  }}
+                  placeholder="file:///… or https://…"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="adapter-field">
+                <span>Expected SHA-256 digest</span>
+                <input
+                  value={digest}
+                  onChange={(event) => {
+                    setDigest(event.target.value);
+                    setCandidate(null);
+                  }}
+                  placeholder="sha256:…"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label className="adapter-field adapter-field-manifest">
+                <span>Manifest JSON</span>
+                <textarea
+                  value={manifestText}
+                  onChange={(event) => {
+                    setManifestText(event.target.value);
+                    setCandidate(null);
+                  }}
+                  rows={10}
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              disabled={busy || !source || !digest || !manifestText}
+              onClick={() => void inspect()}
+            >
               {busy ? "Checking…" : "Inspect compatibility"}
-            </button>
+            </Button>
           </section>
         )}
         {candidate && (
