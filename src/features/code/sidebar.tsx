@@ -122,6 +122,8 @@ export function CodeSidebar({
   }, [onProductChange]);
 
   const current = PRODUCTS.find((item) => item.id === product) ?? PRODUCTS[0];
+  // Match workbench-mock.html: Code → "Aldunis Code"; other products → "Aldunis {Name}".
+  const brandName = product === "code" ? "Aldunis Code" : `Aldunis ${current.label}`;
 
   return (
     <aside className="sb">
@@ -135,7 +137,7 @@ export function CodeSidebar({
           aria-label={`Product: ${current.label}`}
         >
           <div className="logo">{current.mark}</div>
-          <div className="sb-name">Aldunis Code</div>
+          <div className="sb-name">{brandName}</div>
           <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
             <path d="m6 9 6 6 6-6" />
           </svg>
