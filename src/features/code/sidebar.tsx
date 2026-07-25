@@ -190,7 +190,10 @@ export function CodeSidebar({
                 <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               </svg>
               <span className="b">
-                <span className="n">{repository?.name ?? "Open repository"}</span>
+                <span className="n">{repository?.name ?? "All projects"}</span>
+                {repository?.root && (
+                  <span className="p">{repository.root}</span>
+                )}
               </span>
               {repository && <span className="pcount">{repository.worktrees.length}</span>}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
@@ -203,7 +206,7 @@ export function CodeSidebar({
             <div className="glabel">
               Threads
               <span className="n">{active.length}</span>
-              <button type="button" className="glabel-action" onClick={onToggleArchived} style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>
+              <button type="button" className="glabel-action" onClick={onToggleArchived}>
                 {showingArchived ? "Active" : "Archived"}
               </button>
             </div>
