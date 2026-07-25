@@ -3,9 +3,8 @@ import { createRoot } from "react-dom/client";
 import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Preferences } from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
+import "./mock-shell.css";
 import type { ClaudeProfile, Product, RepositoryMetadata, ThreadMetadata } from "./types";
-import { PageHeader } from "./features/shell/page-header";
-import { DomainPage } from "./features/shell/domain-page";
 import { CodeWorkbench } from "./features/code/workbench";
 import { RepositoryDialog } from "./features/dialogs/repository-dialog";
 import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
@@ -106,26 +105,23 @@ function App() {
   };
   return (
     <div className="app">
-      <PageHeader product={product} onChange={setProduct} onSettings={() => setPreferencesOpen(true)} />
-      <div className="app-content">
-        <div className="code-page" hidden={product !== "code"}>
-          <CodeWorkbench
-            key={repository?.projectId ?? "no-project"}
-            repository={repository}
-            onOpenRepository={showRepositoryDialog}
-            profiles={profiles}
-            onOpenProfiles={() => setProfileDialog(true)}
-            onSearch={() => setSearchOpen(true)}
-            onOpenPalette={() => setPaletteOpen(true)}
-            onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
-            onManageWorktrees={(path) => {
-              setManagedWorktreePath(path ?? null);
-              setWorktreeDialog(true);
-            }}
-          />
-        </div>
-        {product !== "code" && <DomainPage product={product} />}
-      </div>
+      <CodeWorkbench
+        key={repository?.projectId ?? "no-project"}
+        product={product}
+        onProductChange={setProduct}
+        repository={repository}
+        onOpenRepository={showRepositoryDialog}
+        profiles={profiles}
+        onOpenProfiles={() => setProfileDialog(true)}
+        onSearch={() => setSearchOpen(true)}
+        onOpenPalette={() => setPaletteOpen(true)}
+        onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
+        onManageWorktrees={(path) => {
+          setManagedWorktreePath(path ?? null);
+          setWorktreeDialog(true);
+        }}
+        onSettings={() => setPreferencesOpen(true)}
+      />
       <RepositoryDialog
         open={repositoryDialog}
         busy={repositoryBusy}

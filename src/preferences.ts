@@ -18,7 +18,7 @@ export function resolveTheme(
 
 export const DEFAULT_PREFERENCES: Preferences = {
   schemaVersion: 1,
-  theme: "system",
+  theme: "dark",
   density: "comfortable",
   zoom: 1,
   reducedMotion: "system",

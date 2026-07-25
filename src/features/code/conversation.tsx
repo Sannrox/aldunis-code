@@ -629,55 +629,61 @@ export function Conversation({
       : { label: "Build · approve mutations", warning: true };
 
   return (
-    <main className={`conversation ${changesOpen ? "with-review" : ""}`} aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}>
-      <div className="conversation-column">
-      <header className="conversation-header">
-        <div className="conversation-identity">
-          <span className="pane-label">{pane} pane</span>
-          <span className="breadcrumb">
-            {repository?.name ?? "No project"} <b>/</b> {worktree?.branch ?? "detached"} <b>/</b> {providerName} · {profileId ? profiles.find((profile) => profile.id === profileId)?.name : "no profile"} · {model} · direct · {mode} · {stateCopy[providerState]}
-          </span>
-          <h1>{conversation?.title ?? "New conversation"}</h1>
-          <small className="conversation-binding">
-            {repository && worktree ? `${repository.root} · ${worktree.path} · ${conversationBranch}` : "No available worktree"}
-          </small>
+    <div className={`conv ${changesOpen ? "with-review" : ""}`} aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}>
+      <div className="conversation-column conv">
+      <div className="topbar">
+        <div className="crumb">
+          <b>{conversation?.title ?? "New conversation"}</b>
+          {worktree && <> · {conversationBranch}</>}
+          {repository && <> · {providerName.toLocaleLowerCase().replace(/\s+/g, "-")}</>}
+          {model !== "default" && <> · {model}</>}
         </div>
-        <div className="header-actions">
-          <button className="mobile-project" onClick={onOpenRepository} aria-label={repository ? `Change repository, current ${repository.name}` : "Open repository"}>
-            <Icon name="branch" />
-          </button>
-          <button className="mobile-worktrees" onClick={onManageWorktrees} disabled={!repository} aria-label="Create isolated conversation worktree">
-            <Icon name="plus" />
-          </button>
-          <button onClick={onShowChanges} disabled={!repository} aria-label={repository ? `Review ${changes.length} changed files` : "Review changed files"}>
-            <Icon name="diff" /><span>{changes.length} changes</span>
-          </button>
-          <button onClick={onBrowseFiles} disabled={!repository} aria-label="Browse active worktree">
-            <Icon name="search" /><span>Files</span>
-          </button>
-          <button onClick={() => setPreviewOpen(true)} disabled={!repository} aria-label="Open web preview">
-            <Icon name="code" /><span>Preview</span>
+        <div className="tb-r">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenRepository}>Open</button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={onShowChanges}
+            disabled={!repository}
+          >
+            {changes.length} changes
           </button>
           <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={onBrowseFiles}
+            disabled={!repository}
+            aria-label="Browse files"
+          >
+            Files
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => setPreviewOpen(true)}
+            disabled={!repository}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
             onClick={() => setForkOpen(true)}
             disabled={!threadId || runActive}
-            aria-label="Fork conversation to another provider"
           >
-            <Icon name="message" /><span>Fork</span>
+            Fork
           </button>
-          <Button variant="ghost" size="icon" onClick={onOpenProfiles} aria-label="Open Claude profile settings">•••</Button>
-          {pane === "primary" && <Button variant="ghost" size="icon" onClick={onOpenBeside} aria-label="Open a conversation beside this one">▥</Button>}
-          {onClosePane && <CloseButton className="ghost" onClick={onClosePane} label={`Close ${pane} pane`} />}
-          {!notificationsEnabled && typeof Notification !== "undefined" && Notification.permission !== "denied" && (
-            <button
-              className="ghost"
-              onClick={async () => setNotificationsEnabled(await Notification.requestPermission() === "granted")}
-              aria-label="Enable optional background notifications"
-            >Notify</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenProfiles} aria-label="Profiles">•••</button>
+          {pane === "primary" && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onOpenBeside} aria-label="Open beside">▥</button>
+          )}
+          {onClosePane && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>
           )}
         </div>
-      </header>
-      <section className="conversation-scroll">
+      </div>
+      <div className="thread">
+        <div className="wrap">
         {conversationEmpty
           ? (
             <section className="conversation-empty" aria-labelledby={`${pane}-empty-title`}>
@@ -687,31 +693,38 @@ export function Conversation({
               {emptyState.action}
             </section>
           )
-          : <div className="date-rule"><span>Today</span></div>}
+          : null}
         {messages.map((message, index) => (
-          <article className="user-message" key={`${message.text}-${index}`}>
-            <span className="avatar">RK</span><div><header><strong>You</strong><span className={`turn-mode ${message.mode}`}>{modeCopy[message.mode].label}</span><time>now</time></header><p>{message.text}</p></div>
-          </article>
+          <div className="turn user" key={`${message.text}-${index}`}>
+            <div className="role">
+              <span className="av you">Y</span>
+              <span className="rname">You</span>
+              <span className="rtime">now</span>
+            </div>
+            <p>{message.text}</p>
+          </div>
         ))}
         {(providerState !== "idle" || providerEvents.length > 0) && (
-          <article className="assistant-message provider-response" aria-live="polite">
-            <span className="claude-avatar">C</span>
-            <div>
-              <header><strong>{providerLabel}</strong><span className="model">{providerName}</span><time>now</time></header>
+          <div className="turn" aria-live="polite">
+            <div className="role">
+              <span className="av">CC</span>
+              <span className="rname">{providerLabel}</span>
+              <span className="rtime">now</span>
+            </div>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
-              {assistantText && <p className="provider-copy">{assistantText}</p>}
+              {assistantText && <p>{assistantText}</p>}
               {providerState === "completed" && threadId && (
-                <div className="settle-card" role="status">
+                <div className="done" role="status">
+                  <div className="h"><span className="ttl">Completed · Nothing left to do here</span></div>
                   <p>
-                    Settling keeps the managed worktree. Release it only when you no longer need this checkout.
-                    Settling does not archive the conversation.
+                    Settling keeps the worktree. You&apos;re using managed checkouts under the installation limit.
                   </p>
-                  <div className="settle-card__actions">
-                    <Button
-                      size="sm"
-                      variant="default"
+                  <div className="acts">
+                    <button
+                      type="button"
+                      className="btn btn-default btn-sm"
                       onClick={() => {
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
@@ -721,10 +734,10 @@ export function Conversation({
                       }}
                     >
                       Settle thread
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="default"
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
                       onClick={() => {
                         if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
                         void fetch("/api/state/conversations/settle", {
@@ -739,11 +752,9 @@ export function Conversation({
                       }}
                     >
                       Settle and release worktree
-                    </Button>
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm">Keep open</button>
                   </div>
-                  <p className="settle-card__note">
-                    Open question: whether finishing review should unlock settle — not decided here.
-                  </p>
                 </div>
               )}
               {toolEvents.map((event, index) => (
@@ -821,82 +832,56 @@ export function Conversation({
                   {checkpointError && <p className="checkpoint-error" role="alert">{checkpointError}</p>}
                 </section>
               )}
-            </div>
-          </article>
-        )}
-      </section>
-      <section className="composer-wrap">
-        {elementReferences.length > 0 && (
-          <div className="composer-context" aria-label="Attached element context">
-            {elementReferences.map((reference, index) => (
-              <span key={`${reference.selector}-${index}`}>
-                {reference.tag} · {reference.name ?? reference.selector}
-                <button
-                  onClick={() => setElementReferences((current) => current.filter((_, item) => item !== index))}
-                  aria-label={`Remove element reference ${reference.name ?? reference.selector}`}
-                >×</button>
-              </span>
-            ))}
           </div>
         )}
-        <div className="composer-posture">
-          <fieldset className="mode-picker" disabled={runActive}>
-            <legend>Interaction mode</legend>
-            <div>
-              {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
-                <label className={mode === candidate ? "selected" : ""} key={candidate}>
-                  <input
-                    type="radio"
-                    name="interaction-mode"
-                    value={candidate}
-                    checked={mode === candidate}
-                    onChange={() => setMode(candidate)}
-                  />
-                  <span>{modeCopy[candidate].label}</span>
-                </label>
+        </div>
+      </div>
+      <div className="cwrap">
+        <div className="cbox">
+          {elementReferences.length > 0 && (
+            <div className="composer-context" aria-label="Attached element context">
+              {elementReferences.map((reference, index) => (
+                <span key={`${reference.selector}-${index}`}>
+                  {reference.tag} · {reference.name ?? reference.selector}
+                  <button
+                    type="button"
+                    onClick={() => setElementReferences((current) => current.filter((_, item) => item !== index))}
+                    aria-label={`Remove element reference ${reference.name ?? reference.selector}`}
+                  >×</button>
+                </span>
               ))}
             </div>
-          </fieldset>
-          <span
-            className={`access-scope ${accessScope.warning ? "warning" : ""}`}
-            title={modeCopy[mode].authority}
-            aria-label={`Access scope: ${accessScope.label}. ${modeCopy[mode].authority}`}
-          >
-            <Icon name="shield" />
-            <span>{accessScope.label}</span>
-          </span>
-          <p className="composer-posture__hint" aria-live="polite">
-            {modeCopy[mode].authority}{runActive ? " · locked for active turn" : ""}
-          </p>
-        </div>
-        <div className="composer">
+          )}
           {attachments.length > 0 && (
             <div className="context-chips" aria-label="Attached local context">
               {attachments.map((path) => (
-                <span key={path}>@{path}<button onClick={() => setAttachments((current) => current.filter((item) => item !== path))} aria-label={`Remove ${path}`}>×</button></span>
+                <span key={path}>@{path}<button type="button" onClick={() => setAttachments((current) => current.filter((item) => item !== path))} aria-label={`Remove ${path}`}>×</button></span>
               ))}
             </div>
           )}
           {suggestionMode && (
-            <div className="composer-suggestions" role="listbox" aria-label={suggestionMode === "files" ? "Repository files" : "Provider commands"}>
-              {suggestions.length === 0
-                ? <p>No matching {suggestionMode === "files" ? "files" : "commands"}.</p>
-                : suggestions.map((suggestion, index) => (
-                  <button
-                    className={index === suggestionIndex ? "active" : ""}
-                    key={suggestion.value}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => selectSuggestion(suggestion.value)}
-                    role="option"
-                    aria-selected={index === suggestionIndex}
-                  >
-                    <strong>{suggestionMode === "files" ? "@" : ""}{suggestion.value}</strong>
-                    <small>{suggestion.detail}</small>
-                  </button>
-                ))}
+            <div className="composer-suggestions" role="listbox">
+              {suggestions.map((suggestion, index) => (
+                <button
+                  type="button"
+                  className={index === suggestionIndex ? "active" : ""}
+                  key={suggestion.value}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => selectSuggestion(suggestion.value)}
+                >
+                  <strong>{suggestion.value}</strong>
+                  <small>{suggestion.detail}</small>
+                </button>
+              ))}
             </div>
           )}
+          <div
+            className="cph"
+            contentEditable={false}
+            style={{ display: "none" }}
+          />
           <textarea
+            className="composer-input"
             value={draft}
             spellCheck
             onChange={(event) => setDraft(event.target.value)}
@@ -931,82 +916,57 @@ export function Conversation({
               : provider === "claude-code" && !profileId
               ? "Configure a Claude profile first…"
               : worktree
-              ? `${modeCopy[mode].label} ${providerName}… Type @ for files or / for commands`
+              ? `Reply to ${providerName}…`
               : "Open a repository with an available worktree…"}
             aria-label={`Message ${providerName}`}
-            aria-autocomplete="list"
             disabled={!worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
           />
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
-          <footer>
-            <div className="provider-selectors">
-              <span className="provider-symbol">C</span>
-              <label>
-                <span className="sr-only">Provider</span>
-                <select aria-label="Provider" value={provider} onChange={(event) => {
-                  setProvider(event.target.value as ProviderId);
-                  setModel("default");
-                }} disabled={runActive}>
-                  <option value="claude-code">Claude Code</option>
-                  <option value="codex-cli" disabled={!codex?.installed || !codex?.authenticated}>Codex CLI</option>
-                  {providers.filter((item) => item.id.startsWith("adapter:")).map((item) => (
-                    <option value={item.id} disabled={!item.enabled} key={item.id}>
-                      {item.name ?? item.id}{item.enabled ? "" : " (disabled)"}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {provider === "claude-code" && profiles.length > 0 ? (
-                <>
-                  <label>
-                    <span className="sr-only">Claude profile</span>
-                    <select value={profileId} onChange={(event) => setProfileId(event.target.value)} disabled={runActive}>
-                      {profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    <span className="sr-only">Claude model</span>
-                    <select value={model} onChange={(event) => setModel(event.target.value)} disabled={runActive}>
-                      {["default", "sonnet", "opus", "haiku"].map((option) => <option value={option} key={option}>{option}</option>)}
-                    </select>
-                  </label>
-                </>
-              ) : provider === "claude-code"
-                ? <button className="configure-profile" onClick={onOpenProfiles}>Configure Claude</button>
-                : provider === "codex-cli" ? (
-                  <>
-                    <label>
-                      <span className="sr-only">Codex model</span>
-                      <select aria-label="Codex model" value={model} onChange={(event) => {
-                        const next = event.target.value;
-                        setModel(next);
-                        const found = codex?.models?.find((item) => item.id === next);
-                        if (found) setReasoningEffort(found.defaultReasoningEffort);
-                      }} disabled={runActive}>
-                        <option value="default">Default model</option>
-                        {codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}
-                      </select>
-                    </label>
-                    {model !== "default" && (
-                      <label>
-                        <span className="sr-only">Reasoning effort</span>
-                        <select aria-label="Reasoning effort" value={reasoningEffort} onChange={(event) => setReasoningEffort(event.target.value as ReasoningEffort)} disabled={runActive}>
-                          {(selectedCodexModel?.reasoningEfforts ?? ["low", "medium", "high", "xhigh"]).map((effort) => <option value={effort} key={effort}>{effort}</option>)}
-                        </select>
-                      </label>
-                    )}
-                  </>
-                ) : <span className="context">ACP · adapter {selectedProvider?.version}</span>}
-              <span className="context">{sessionId ? "Session resumable" : stateCopy[providerState]}</span>
+          <div className="crow">
+            <button type="button" className="cc" onClick={onOpenProfiles} disabled={runActive}>
+              <span className="pv">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
+              {provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}
+              {model !== "default" ? ` · ${model}` : ""}
+            </button>
+            <span className="cdiv" />
+            <button
+              type="button"
+              className={`cc ${accessScope.warning ? "scoped" : ""}`}
+              title={modeCopy[mode].authority}
+            >
+              {accessScope.warning ? "🔒" : "○"} {accessScope.label}
+            </button>
+            <span className="cdiv" />
+            <div className="cc mode-inline">
+              {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
+                <button
+                  type="button"
+                  key={candidate}
+                  className={mode === candidate ? "on" : ""}
+                  disabled={runActive}
+                  onClick={() => setMode(candidate)}
+                >
+                  {modeCopy[candidate].label}
+                </button>
+              ))}
             </div>
             {runId
-              ? <button className="cancel-run" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel ${providerName}`}>■</button>
-              : <button className="send" onClick={() => void send()} disabled={!draft.trim() || !worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored} aria-label="Send message">↑</button>}
-          </footer>
+              ? <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel">■</button>
+              : (
+                <button
+                  type="button"
+                  className="send"
+                  onClick={() => void send()}
+                  disabled={!draft.trim() || !worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
+                  aria-label="Send message"
+                >
+                  ↑
+                </button>
+              )}
+          </div>
         </div>
-        <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
-      </section>
+      </div>
       </div>
       {changesOpen && repository && (
         <aside className="review-dock" aria-label="Review changes">
@@ -1064,7 +1024,7 @@ export function Conversation({
           onClose={onHideFiles}
         />
       )}
-    </main>
+    </div>
   );
 }
 
