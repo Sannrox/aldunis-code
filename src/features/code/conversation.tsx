@@ -622,8 +622,15 @@ export function Conversation({
     cancelled: "Turn cancelled · send another prompt to resume",
     failed: "Provider stopped · send another prompt to resume",
   };
+  const accessScope = mode === "ask"
+    ? { label: "Read-only", warning: false }
+    : mode === "plan"
+      ? { label: "Plan only", warning: true }
+      : { label: "Build · approve mutations", warning: true };
+
   return (
-    <main className="conversation" aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}>
+    <main className={`conversation ${changesOpen ? "with-review" : ""}`} aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}>
+      <div className="conversation-column">
       <header className="conversation-header">
         <div className="conversation-identity">
           <span className="pane-label">{pane} pane</span>
@@ -695,6 +702,50 @@ export function Conversation({
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantText && <p className="provider-copy">{assistantText}</p>}
+              {providerState === "completed" && threadId && (
+                <div className="settle-card" role="status">
+                  <p>
+                    Settling keeps the managed worktree. Release it only when you no longer need this checkout.
+                    Settling does not archive the conversation.
+                  </p>
+                  <div className="settle-card__actions">
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => {
+                        void fetch("/api/state/conversations/settle", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ threadId }),
+                        }).catch(() => undefined);
+                      }}
+                    >
+                      Settle thread
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => {
+                        if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
+                        void fetch("/api/state/conversations/settle", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ threadId }),
+                        }).then(() => fetch("/api/state/conversations/release-worktree", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ threadId, confirm: true }),
+                        })).catch(() => undefined);
+                      }}
+                    >
+                      Settle and release worktree
+                    </Button>
+                  </div>
+                  <p className="settle-card__note">
+                    Open question: whether finishing review should unlock settle — not decided here.
+                  </p>
+                </div>
+              )}
               {toolEvents.map((event, index) => (
                 <div className={`tool-activity ${event.kind === "tool_finished" && event.failed ? "failed" : ""}`} key={`${event.toolCallId}-${event.kind}-${index}`}>
                   <Icon name="settings" />
@@ -788,24 +839,36 @@ export function Conversation({
             ))}
           </div>
         )}
-        <fieldset className="mode-picker" disabled={runActive}>
-          <legend>Interaction mode</legend>
-          <div>
-            {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
-              <label className={mode === candidate ? "selected" : ""} key={candidate}>
-                <input
-                  type="radio"
-                  name="interaction-mode"
-                  value={candidate}
-                  checked={mode === candidate}
-                  onChange={() => setMode(candidate)}
-                />
-                <span>{modeCopy[candidate].label}</span>
-              </label>
-            ))}
-          </div>
-          <p aria-live="polite">{modeCopy[mode].authority}{runActive ? " · locked for active turn" : ""}</p>
-        </fieldset>
+        <div className="composer-posture">
+          <fieldset className="mode-picker" disabled={runActive}>
+            <legend>Interaction mode</legend>
+            <div>
+              {(Object.keys(modeCopy) as InteractionMode[]).map((candidate) => (
+                <label className={mode === candidate ? "selected" : ""} key={candidate}>
+                  <input
+                    type="radio"
+                    name="interaction-mode"
+                    value={candidate}
+                    checked={mode === candidate}
+                    onChange={() => setMode(candidate)}
+                  />
+                  <span>{modeCopy[candidate].label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <span
+            className={`access-scope ${accessScope.warning ? "warning" : ""}`}
+            title={modeCopy[mode].authority}
+            aria-label={`Access scope: ${accessScope.label}. ${modeCopy[mode].authority}`}
+          >
+            <Icon name="shield" />
+            <span>{accessScope.label}</span>
+          </span>
+          <p className="composer-posture__hint" aria-live="polite">
+            {modeCopy[mode].authority}{runActive ? " · locked for active turn" : ""}
+          </p>
+        </div>
         <div className="composer">
           {attachments.length > 0 && (
             <div className="context-chips" aria-label="Attached local context">
@@ -944,25 +1007,28 @@ export function Conversation({
         </div>
         <p className="disclaimer">Effective authority: {modeCopy[mode].authority} · local context only · @ files · / commands · Enter to send, Shift + Enter for newline</p>
       </section>
+      </div>
       {changesOpen && repository && (
-        <ChangesPanel
-          repository={repository}
-          threadId={threadId}
-          files={changes}
-          loading={changesLoading}
-          error={changesError}
-          onClose={onHideChanges}
-          onRefresh={onRefreshChanges}
-          canSendRevision={historyRestored && !runActive && (
-            provider === "codex-cli"
-              ? Boolean(codex?.installed && codex.authenticated)
-              : Boolean(profileId)
-          )}
-          onSendRevision={(prompt) => {
-            onHideChanges();
-            void send(prompt);
-          }}
-        />
+        <aside className="review-dock" aria-label="Review changes">
+          <ChangesPanel
+            repository={repository}
+            threadId={threadId}
+            files={changes}
+            loading={changesLoading}
+            error={changesError}
+            onClose={onHideChanges}
+            onRefresh={onRefreshChanges}
+            canSendRevision={historyRestored && !runActive && (
+              provider === "codex-cli"
+                ? Boolean(codex?.installed && codex.authenticated)
+                : Boolean(profileId)
+            )}
+            onSendRevision={(prompt) => {
+              onHideChanges();
+              void send(prompt);
+            }}
+          />
+        </aside>
       )}
       {forkOpen && threadId && (
         <ForkConversationDialog
