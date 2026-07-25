@@ -7,6 +7,7 @@ import {
   acpAllowOnceOption,
   acpPromptRequest,
   acpSessionRequest,
+  isOptionalGrokNotification,
   isOptionalKiroNotification,
   normalizeAcpNotification,
 } from "./acp-provider.ts";
@@ -380,6 +381,107 @@ test("Kiro optional notifications are capability-isolated from core ACP events",
     method: "_kiro.dev/compaction/status",
     params: { status: "started" },
   }), false);
+});
+
+test("the shipped Grok Build adapter is declarative, direct-only, and schema-valid", async () => {
+  const raw = await readFile(
+    new URL("../provider-adapters/grok-build-cli.json", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseProviderAdapterManifest(JSON.parse(raw));
+  const reviewedDigest = (
+    await readFile(new URL("../provider-adapters/grok-build-cli.sha256", import.meta.url), "utf8")
+  ).trim();
+  assert.equal(parsed.id, "dev.xai.grok-build");
+  assert.deepEqual(parsed.executable, {
+    names: ["grok", "grok.exe"],
+    arguments: ["agent", "stdio"],
+  });
+  assert.deepEqual(parsed.environment, [
+    { name: "HOME", required: false, sensitive: true },
+    { name: "USERPROFILE", required: false, sensitive: true },
+    { name: "XDG_RUNTIME_DIR", required: false, sensitive: true },
+  ]);
+  assert.equal(parsed.capabilities.tools, true);
+  assert.equal(parsed.capabilities.images, false);
+  assert.equal(parsed.capabilities.sessionResume, true);
+  assert.equal(adapterDigest(parsed), reviewedDigest);
+  assert.equal(raw.includes("--always-approve"), false);
+  assert.equal(raw.includes("XAI_API_KEY"), false);
+  assert.equal(raw.includes("GROK_API_KEY"), false);
+});
+
+test("Grok optional notifications are capability-isolated from core ACP events", () => {
+  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
+    jsonrpc: "2.0",
+    method: "_x.ai/mcp/servers_updated",
+    params: { mcpServers: [] },
+  }), true);
+  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
+    jsonrpc: "2.0",
+    method: "_x.ai/session/prompt_complete",
+    params: { sessionId: "s1" },
+  }), true);
+  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
+    jsonrpc: "2.0",
+    id: 4,
+    method: "_x.ai/mcp/servers_updated",
+    params: {},
+  }), false);
+  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {},
+  }), false);
+  assert.equal(isOptionalGrokNotification("dev.kiro.cli", {
+    jsonrpc: "2.0",
+    method: "_x.ai/mcp/servers_updated",
+    params: {},
+  }), false);
+});
+
+test("Grok user message echoes normalize as informational without wire exposure", () => {
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "user_message_chunk",
+        content: { type: "text", text: "echoed prompt" },
+      },
+    },
+  }), []);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "pong" },
+      },
+    },
+  }), [{ kind: "assistant_text", text: "pong" }]);
+});
+
+test("unreviewed positional launch arguments remain rejected outside Kiro and Grok", () => {
+  assert.throws(
+    () => parseProviderAdapterManifest(manifest({
+      executable: { names: ["example-agent"], arguments: ["agent", "stdio"] },
+    })),
+    /option flags only/,
+  );
+  assert.throws(
+    () => parseProviderAdapterManifest(manifest({
+      id: "dev.xai.grok-build",
+      executable: { names: ["grok", "grok.exe"], arguments: ["agent", "serve"] },
+    })),
+    /option flags only/,
+  );
+  assert.throws(
+    () => parseProviderAdapterManifest(manifest({
+      id: "dev.xai.grok-build",
+      executable: { names: ["grok", "grok.exe"], arguments: ["agent"] },
+    })),
+    /option flags only/,
+  );
 });
 
 test("Kiro session notifications normalize without exposing the wire shape", () => {
