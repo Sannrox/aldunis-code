@@ -3,15 +3,15 @@ import type { Product, IconName } from "../../types";
 import { Icon } from "../../components/icon";
 import { Button } from "../../components/ui";
 
-const nav: Array<{ id: Product; label: string; icon: IconName; detail: string }> = [
-  { id: "code", label: "Code", icon: "code", detail: "Local workbench" },
-  { id: "sekai", label: "Sekai", icon: "spark", detail: "Knowledge & evidence" },
-  { id: "chisei", label: "Chisei", icon: "shield", detail: "Policy & routing" },
-  { id: "tenkai", label: "Tenkai", icon: "rocket", detail: "Delivery & recovery" },
+const nav: Array<{ id: Product; label: string; icon: IconName; detail: string; mark: string }> = [
+  { id: "code", label: "Code", icon: "code", detail: "Local workbench", mark: "A" },
+  { id: "sekai", label: "Sekai", icon: "spark", detail: "Knowledge plane", mark: "S" },
+  { id: "chisei", label: "Chisei", icon: "shield", detail: "Governance plane", mark: "C" },
+  { id: "tenkai", label: "Tenkai", icon: "rocket", detail: "Delivery plane", mark: "T" },
 ];
 
 /**
- * Product switching on the brand mark (+ shortcuts). No extra chrome.
+ * Slim top chrome. Product switching is the brand control (mock pattern).
  */
 export function PageHeader({
   product,
@@ -30,14 +30,8 @@ export function PageHeader({
     const onKey = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
       const map: Record<string, Product> = {
-        Digit1: "code",
-        Digit2: "sekai",
-        Digit3: "chisei",
-        Digit4: "tenkai",
-        "1": "code",
-        "2": "sekai",
-        "3": "chisei",
-        "4": "tenkai",
+        Digit1: "code", Digit2: "sekai", Digit3: "chisei", Digit4: "tenkai",
+        "1": "code", "2": "sekai", "3": "chisei", "4": "tenkai",
       };
       const next = map[event.code] ?? map[event.key];
       if (!next) return;
@@ -65,20 +59,22 @@ export function PageHeader({
   }, [menuOpen]);
 
   return (
-    <header className="page-header">
+    <header className="page-header mock-topbar">
       <div className="brand-switch" ref={menuRef}>
         <button
           type="button"
-          className="aldunis-mark brand-switch__trigger"
+          className="mock-brandbtn"
           aria-label={`Product: ${current.label}. Open product switcher`}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((value) => !value)}
         >
-          {current.label.charAt(0)}
+          <span className="mock-logo sm">{current.mark}</span>
+          <span className="mock-brand-label">{current.label}</span>
+          <Icon name="chevron" />
         </button>
         {menuOpen && (
-          <div className="brand-switch__menu" role="menu" aria-label="Products">
+          <div className="brand-switch__menu mock-pswitch" role="menu" aria-label="Products">
             {nav.map((item) => (
               <button
                 type="button"
@@ -91,33 +87,25 @@ export function PageHeader({
                   setMenuOpen(false);
                 }}
               >
-                <Icon name={item.icon} />
+                <span className={`mock-logo xs ${item.id === product ? "on" : ""}`}>{item.mark}</span>
                 <span>
                   <strong>{item.label}</strong>
                   <small>{item.detail}</small>
                 </span>
+                <kbd>⌘⇧{nav.indexOf(item) + 1}</kbd>
               </button>
             ))}
-            <p className="brand-switch__hint">⌘⇧1–4 · Code · Sekai · Chisei · Tenkai</p>
           </div>
         )}
       </div>
-      <div className="page-selector page-selector--static" aria-label="Current product">
-        <span>Page</span>
-        <span className="page-selector-current">
-          <Icon name={current.icon} />
-          <span className="page-selector-label">{current.label} — {current.detail}</span>
-        </span>
-      </div>
       <Button
-        variant="default"
+        variant="ghost"
         size="sm"
-        className="page-settings"
+        className="page-settings mock-settings"
         aria-label="Settings"
         onClick={onSettings}
       >
-        <Icon name="settings" />
-        <span>Settings</span>
+        Settings
       </Button>
     </header>
   );

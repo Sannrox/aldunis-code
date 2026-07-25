@@ -5,6 +5,10 @@ import { Button } from "../../components/ui";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree } from "./conversation-list";
 
+/**
+ * Sidebar layout matching workbench-mock.html:
+ * brand · search + new · project · thread list · settled shelf
+ */
 export function CodeSidebar({
   repository,
   onOpenRepository,
@@ -57,7 +61,7 @@ export function CodeSidebar({
   worktreeLimit: number;
   managedWorktreeCount: number;
 }) {
-  const [shelfOpen, setShelfOpen] = useState(false);
+  const [shelfOpen, setShelfOpen] = useState(true);
   const { active, settled } = useMemo(() => {
     const activeList: ConversationSummary[] = [];
     const settledList: ConversationSummary[] = [];
@@ -75,42 +79,52 @@ export function CodeSidebar({
     : 0;
 
   return (
-    <aside className="context-sidebar">
-      <header className="sb-header">
-        <div>
-          <strong>ALDUNIS CODE</strong>
-          <span>Local workbench</span>
-        </div>
-        <Button
-          variant="primary"
-          size="icon-sm"
+    <aside className="context-sidebar mock-sb">
+      <div className="mock-sb-hd">
+        <div className="mock-logo" aria-hidden="true">A</div>
+        <div className="mock-sb-name">Aldunis Code</div>
+      </div>
+
+      <div className="mock-g1">
+        <button type="button" className="mock-search" onClick={onSearch}>
+          <Icon name="search" />
+          <span>Search threads</span>
+          <kbd>⌘K</kbd>
+        </button>
+        <button
+          type="button"
+          className="mock-newthr"
           aria-label="New conversation"
           onClick={onNewConversation}
         >
-          <Icon name="plus" />
-        </Button>
-      </header>
-      <button type="button" className="project-switcher" onClick={onOpenRepository}>
-        <span className="repo-glyph">{repository?.name.charAt(0).toUpperCase() ?? "+"}</span>
-        <span>
-          <strong>{repository?.name ?? "Open repository"}</strong>
-          <small>{repository?.root ?? "Select an explicit local root"}</small>
-        </span>
-        <Icon name="chevron" />
-      </button>
-      <div className="sidebar-actions">
-        <button type="button" onClick={onOpenPalette}><Icon name="spark" /> Commands <kbd>⌘ K</kbd></button>
-        <button type="button" onClick={onSearch}><Icon name="search" /> Thread search</button>
-        <button type="button" onClick={onBrowseFiles} disabled={!repository}><Icon name="search" /> Browse files</button>
-        <button type="button" onClick={() => onManageWorktrees()} disabled={!repository}>
-          <Icon name="branch" /> Worktrees <span className="count">{repository?.worktrees.length ?? "—"}</span>
-        </button>
-        <button type="button" onClick={onShowChanges} disabled={!repository}>
-          <Icon name="diff" /> Changed files <span className="change-count">{repository ? changes.length : "—"}</span>
+          +
         </button>
       </div>
-      {repository && (
-        <div className="worktree-list" aria-label="Repository worktrees">
+
+      <div className="mock-g2">
+        <button type="button" className="mock-proj" onClick={onOpenRepository}>
+          <span className="mock-fav">{repository?.name.charAt(0).toUpperCase() ?? "+"}</span>
+          <span className="mock-proj-b">
+            <span className="mock-proj-n">{repository?.name ?? "Open repository"}</span>
+            <span className="mock-proj-p">{repository?.root ?? "Select an explicit local root"}</span>
+          </span>
+          <Icon name="chevron" />
+        </button>
+      </div>
+
+      <div className="mock-tools">
+        <button type="button" onClick={onOpenPalette}>Commands</button>
+        <button type="button" onClick={onBrowseFiles} disabled={!repository}>Files</button>
+        <button type="button" onClick={() => onManageWorktrees()} disabled={!repository}>
+          Worktrees {repository ? `(${repository.worktrees.length})` : ""}
+        </button>
+        <button type="button" onClick={onShowChanges} disabled={!repository}>
+          Changes {repository ? `(${changes.length})` : ""}
+        </button>
+      </div>
+
+      {repository && repository.worktrees.length > 0 && (
+        <div className="worktree-list compact" aria-label="Repository worktrees">
           {repository.worktrees.map((worktree) => (
             <div className={repository.selectedWorktree === worktree.path ? "selected" : ""} key={worktree.path}>
               <span className={`worktree-state ${worktree.state}`} aria-hidden="true" />
@@ -136,11 +150,16 @@ export function CodeSidebar({
           ))}
         </div>
       )}
-      <div className="section-label">
+
+      <div className="mock-glabel">
         <span>{showingArchived ? "Archived" : "Threads"}</span>
-        <button type="button" onClick={onToggleArchived}>{showingArchived ? "Active" : "Archived"}</button>
+        <span className="n">{active.length}</span>
+        <button type="button" className="mock-glabel-action" onClick={onToggleArchived}>
+          {showingArchived ? "Active" : "Archived"}
+        </button>
       </div>
-      <div className="thread-list" role="list">
+
+      <div className="mock-list thread-list" role="list">
         {active.map((conversation) => (
           <ThreadRow
             key={conversation.id}
@@ -153,14 +172,19 @@ export function CodeSidebar({
             canOpenBeside={primaryConversationId !== conversation.id}
           />
         ))}
-        {repository && active.length === 0 && (
+        {active.length === 0 && (
           <p className="empty-conversations">
-            {showingArchived ? "No archived conversations." : "Send a prompt to create the first conversation."}
+            {!repository
+              ? "Open a repository to list threads."
+              : showingArchived
+                ? "No archived conversations."
+                : "No open threads. Use + to start — first send binds a managed worktree."}
           </p>
         )}
       </div>
-      {!showingArchived && settled.length > 0 && (
-        <div className="settled-shelf">
+
+      {!showingArchived && (
+        <div className="settled-shelf mock-shelf">
           <button
             type="button"
             className={`settled-shelf__toggle ${shelfOpen ? "open" : ""}`}
@@ -173,44 +197,46 @@ export function CodeSidebar({
           {shelfOpen && (
             <>
               <div className="worktree-meter" aria-label={`Managed worktrees ${managedWorktreeCount} of ${worktreeLimit}`}>
-                <span>Worktrees {managedWorktreeCount} / {worktreeLimit}</span>
+                <span>{managedWorktreeCount} / {worktreeLimit} worktrees</span>
                 <span className="worktree-meter__bar" aria-hidden="true">
                   <i style={{ width: `${meterPct}%` }} className={meterHot ? "hot" : ""} />
                 </span>
               </div>
-              <div className="settled-list">
-                {settled.map((conversation) => {
-                  const holdsWorktree = repository?.worktrees.some(
-                    (wt) => wt.path === conversation.worktree && wt.ownership === "aldunis",
-                  );
-                  return (
-                    <div className="settled-row" key={conversation.id}>
-                      <button
-                        type="button"
-                        className="settled-row__main"
-                        onClick={() => onOpenConversation(conversation.id)}
-                      >
-                        <span className="settled-row__title">{conversation.title}</span>
-                        {holdsWorktree
-                          ? <span className="settled-row__wt" title="Still holds a managed worktree"><span className="dot" />wt</span>
-                          : <span className="settled-row__branch">{branchFromWorktree(conversation.worktree)}</span>}
-                      </button>
-                      <div className="settled-row__actions">
-                        <button type="button" onClick={() => onUnsettle(conversation)}>Unsettle</button>
-                        {holdsWorktree && (
-                          <button
-                            type="button"
-                            className="release"
-                            onClick={() => onReleaseWorktree(conversation)}
-                          >
-                            Release
-                          </button>
-                        )}
+              {settled.length === 0 ? (
+                <p className="empty-conversations settled-empty">
+                  Settled threads land here. Settling keeps the worktree until released.
+                </p>
+              ) : (
+                <div className="settled-list">
+                  {settled.map((conversation) => {
+                    const holdsWorktree = repository?.worktrees.some(
+                      (wt) => wt.path === conversation.worktree && wt.ownership === "aldunis",
+                    );
+                    return (
+                      <div className="settled-row" key={conversation.id}>
+                        <button
+                          type="button"
+                          className="settled-row__main"
+                          onClick={() => onOpenConversation(conversation.id)}
+                        >
+                          <span className="settled-row__title">{conversation.title}</span>
+                          {holdsWorktree
+                            ? <span className="settled-row__wt"><span className="dot" />wt</span>
+                            : <span className="settled-row__branch">{branchFromWorktree(conversation.worktree)}</span>}
+                        </button>
+                        <div className="settled-row__actions">
+                          <button type="button" onClick={() => onUnsettle(conversation)}>Unsettle</button>
+                          {holdsWorktree && (
+                            <button type="button" className="release" onClick={() => onReleaseWorktree(conversation)}>
+                              Release
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>
