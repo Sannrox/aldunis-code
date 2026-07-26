@@ -96,19 +96,30 @@ export function Conversation({
     return () => window.removeEventListener("aldunis:adapters-changed", loadProviders);
   }, []);
   const codex = providers.find((item) => item.id === "codex-cli");
+  const shikigamiProvider = providers.find((item) => item.id === "shikigami");
   const selectedProvider = providers.find((item) => item.id === provider);
   const selectedCodexModel = codex?.models?.find((item) => item.id === model);
   const providerName = provider === "codex-cli"
     ? "Codex CLI"
     : provider === "claude-code"
     ? "Claude Code"
+    : provider === "shikigami"
+    ? "Shikigami"
     : selectedProvider?.name ?? "Provider adapter unavailable";
-  const providerLabel = provider === "codex-cli" ? "Codex" : provider === "claude-code" ? "Claude" : providerName;
+  const providerLabel = provider === "codex-cli"
+    ? "Codex"
+    : provider === "claude-code"
+    ? "Claude"
+    : provider === "shikigami"
+    ? "Shikigami"
+    : providerName;
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
   const providerChipName = provider === "claude-code"
     ? "claude-code"
     : provider === "codex-cli"
     ? "codex-cli"
+    : provider === "shikigami"
+    ? "shikigami"
     : (selectedProvider?.name ?? providerName);
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
@@ -121,6 +132,7 @@ export function Conversation({
     if (!claude || claude.installed !== false) list.push("claude-code");
     // Codex is only useful when installed *and* authenticated.
     if (codex?.installed && codex.authenticated) list.push("codex-cli");
+    if (shikigamiProvider?.installed && shikigamiProvider.authenticated) list.push("shikigami");
     for (const item of providers) {
       if (
         typeof item.id === "string"
@@ -134,7 +146,7 @@ export function Conversation({
       }
     }
     return list;
-  }, [codex?.authenticated, codex?.installed, providers]);
+  }, [codex?.authenticated, codex?.installed, shikigamiProvider?.authenticated, shikigamiProvider?.installed, providers]);
   /**
    * New conversations only, before a thread/run is created. Once threadId or
    * runId exists the provider is fixed (cross-provider moves use fork).
@@ -156,6 +168,11 @@ export function Conversation({
     } else if (next === "codex-cli") {
       const defaultModel = codex?.models?.find((entry) => entry.isDefault)?.id
         ?? codex?.models?.[0]?.id
+        ?? "default";
+      setModel(defaultModel);
+    } else if (next === "shikigami") {
+      const defaultModel = shikigamiProvider?.models?.find((entry) => entry.isDefault)?.id
+        ?? shikigamiProvider?.models?.[0]?.id
         ?? "default";
       setModel(defaultModel);
     } else {
@@ -376,6 +393,8 @@ export function Conversation({
     ? Boolean(profileId)
     : provider === "codex-cli"
       ? Boolean(codex?.installed && codex.authenticated)
+      : provider === "shikigami"
+      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
       : Boolean(
         selectedProvider
         && selectedProvider.installed !== false
@@ -475,7 +494,7 @@ export function Conversation({
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           attachments: sentAttachments,
-          profileId,
+          profileId: provider === "claude-code" ? profileId : null,
           model,
           provider,
           reasoningEffort: provider === "codex-cli" && model !== "default"
@@ -800,7 +819,7 @@ export function Conversation({
         {(providerState !== "idle" || providerEvents.length > 0) && (
           <div className="turn" aria-live="polite">
             <div className="role">
-              <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
+              <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}</span>
               <span className="rname">{providerLabel}</span>
               <span className="rtime">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "13:52" : "now"}</span>
             </div>
@@ -1101,7 +1120,7 @@ export function Conversation({
               }}
             >
               <span className="pv" aria-hidden="true">
-                {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}
+                {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
               </span>
               {conversation?.id === DESIGN_MOCK_PRIMARY_ID
                 ? "claude-code · sonnet"

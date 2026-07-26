@@ -74,6 +74,7 @@ export function formatElapsed(iso: string, now = Date.now()): string {
 export function providerLabel(provider: string): string {
   if (provider === "claude-code") return "Claude";
   if (provider === "codex-cli") return "Codex";
+  if (provider === "shikigami") return "Shikigami";
   if (provider.startsWith("adapter:")) {
     const id = provider.slice("adapter:".length).split("@")[0] ?? provider;
     return id;
