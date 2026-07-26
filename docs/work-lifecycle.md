@@ -11,7 +11,8 @@
 
 ```text
 idea -> status:triage -> shaped and dependency-ready -> status:ready
-     -> one branch and PR -> review and verification -> rebase merge
+     -> one branch -> verify-code-change + autoreview -> PR
+     -> human/CI review -> rebase merge
 ```
 
 Use one status label: `status:triage`, `status:ready`, or `status:blocked`.
@@ -23,5 +24,8 @@ handling, remote tenant context, or product ownership require a Discussion
 before implementation.
 
 Every PR records checks actually run and explicitly identifies skipped
-provider, platform, accessibility, packaging, or security evidence.
+provider, platform, accessibility, packaging, or security evidence. Agent
+delivery closeout also records structured `autoreview` via the global helper
+(command, mode, and clean/accepted findings). Deterministic verify and live UI
+stress are not a substitute. Do not vendor `autoreview` into this repository.
 
