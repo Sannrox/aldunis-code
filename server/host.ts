@@ -20,6 +20,7 @@ import {
   ProviderAdapterError,
   ProviderAdapterStore,
 } from "./provider-adapters.ts";
+import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
 import {
   annotationView,
@@ -35,10 +36,12 @@ import {
   checkpointGitDirectory,
   checkpointReference,
   checkpointDiff,
+  collapseProjectsByRepository,
   deleteCheckpointReferences,
   discoverWorktrees,
   openRepository,
   RepositoryError,
+  repositoryCommonDir,
   rewindCheckpoint,
 } from "./repository.ts";
 import {
@@ -337,6 +340,28 @@ async function handleApi(
       });
       return true;
     }
+    if (route === "/api/provider/adapters/catalog") {
+      const catalog = await listReviewedAdapters(adapters);
+      sendJson(response, 200, {
+        adapters: remoteRequest
+          ? catalog.map((entry) => ({
+            ...entry,
+            source: "Reviewed package available on host only",
+            package: null,
+            executablePath: entry.executableFound ? "available on host" : null,
+          }))
+          : catalog,
+        administrationAvailable: !remoteRequest,
+      });
+      return true;
+    }
+    if (route === "/api/provider/adapters/catalog/prepare") {
+      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
+      const body = await readJson(request) as { slug?: unknown };
+      const prepared = await prepareReviewedAdapter(adapters, body.slug);
+      sendJson(response, 200, prepared);
+      return true;
+    }
     if (route === "/api/provider/adapters/inspect") {
       const body = await readJson(request) as {
         source?: unknown;
@@ -406,13 +431,43 @@ async function handleApi(
       const repository = await openRepository(body.path);
       repository.worktrees = await worktrees.list(repository.root);
       const projection = await state.load();
-      const existing = projection.projects.find((project) => project.root === repository.root);
+      // One project record per git repository (common dir), not per worktree path.
+      let existing = projection.projects.find((project) => project.root === repository.root);
+      if (!existing) {
+        let commonDir: string | null = null;
+        try {
+          commonDir = await repositoryCommonDir(repository.selectedWorktree || repository.root);
+        } catch {
+          commonDir = null;
+        }
+        if (commonDir) {
+          for (const candidate of projection.projects) {
+            try {
+              if (await repositoryCommonDir(candidate.root) === commonDir) {
+                existing = candidate;
+                break;
+              }
+            } catch {
+              /* skip missing roots */
+            }
+          }
+        }
+      }
       const project = await state.saveProject({
         id: existing?.id ?? randomUUID(),
         name: repository.name,
         root: repository.root,
+        // Keep original registration time when reopening an existing project.
+        ...(existing ? { openedAt: existing.openedAt } : {}),
       });
       sendJson(response, 200, { ...repository, projectId: project.id });
+      return true;
+    }
+    if (route === "/api/projects/list") {
+      const projection = await state.load();
+      sendJson(response, 200, {
+        projects: await collapseProjectsByRepository(projection.projects),
+      });
       return true;
     }
     if (route === "/api/directories/browse") {
@@ -1999,9 +2054,12 @@ export function createLocalHost(
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
+  // Seed Claude Code default profile so first-run does not require Settings.
+  const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
   const recovery = state.recoverInterruptedTurns();
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
+    await profileBootstrap;
     const route = new URL(request.url ?? "/", "http://localhost").pathname;
     if (
       remoteAuth

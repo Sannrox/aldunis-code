@@ -87,12 +87,18 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
     throw new ProviderProtocolError("Claude emitted a malformed event.");
   }
 
-  if (event.type === "system" && event.subtype === "init") {
-    return [{
-      kind: "session_started",
-      sessionId: requiredString(event.session_id, "session_id"),
-      model: typeof event.model === "string" ? event.model : null,
-    }];
+  if (event.type === "system") {
+    // Claude Code emits several system subtypes (init, compact_boundary, …).
+    // Only init is required for session identity; other system lines are advisory
+    // and must not fail the turn when Claude adds new subtypes.
+    if (event.subtype === "init") {
+      return [{
+        kind: "session_started",
+        sessionId: requiredString(event.session_id, "session_id"),
+        model: typeof event.model === "string" ? event.model : null,
+      }];
+    }
+    return [];
   }
 
   if (event.type === "assistant") {

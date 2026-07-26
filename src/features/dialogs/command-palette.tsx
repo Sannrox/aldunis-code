@@ -42,8 +42,8 @@ export function CommandPalette({
     () =>
       [
         {
-          label: "Open repository",
-          detail: "Choose an explicit local repository root",
+          label: "Add project",
+          detail: "Register a local git repository once; new threads reuse it",
           run: onOpenRepository,
         },
         {

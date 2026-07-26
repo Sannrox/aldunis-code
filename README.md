@@ -108,8 +108,14 @@ are never returned to the browser.
 
 ## Claude profiles
 
-Open Settings to create named Claude Code profiles with a binary path, an
-optional Claude configuration directory, and provider-specific environment
+On first run (and whenever the profile store is empty), Aldunis Code seeds a
+built-in **Claude Code** profile that resolves the `claude` binary from `PATH`
+and uses the default Claude configuration directory. Codex CLI needs no profile:
+it is discovered from `PATH` as `codex`. Declarative ACP adapters are installed
+separately and are not auto-seeded.
+
+Open Settings to create additional named Claude Code profiles with a binary path,
+an optional Claude configuration directory, and provider-specific environment
 variables. Aldunis Code passes a custom directory as `CLAUDE_CONFIG_DIR` while
 leaving the process home unchanged.
 
@@ -142,11 +148,11 @@ closed.
 The reviewed declarative manifest at
 `provider-adapters/kiro-cli.json` integrates an unmodified user-installed
 `kiro-cli acp` process through the built-in ACP runtime. Install it from
-**Settings → Provider adapters** by supplying the local manifest URL, its
-canonical digest from `provider-adapters/kiro-cli.sha256`, and the manifest
-JSON for inspection. Aldunis does
-not bundle Kiro or write Kiro credentials, agents, models, settings, hooks,
-MCP configuration, logs, or native sessions.
+**Provider adapters → Reviewed adapters → Install Kiro CLI**, then **Approve
+and install**. Aldunis pre-fills the reviewed package and pinned digest; you
+still need `kiro-cli` on `PATH`. Advanced import remains available for custom
+manifests. Aldunis does not bundle Kiro or write Kiro credentials, agents,
+models, settings, hooks, MCP configuration, logs, or native sessions.
 
 The adapter is direct-only. It advertises neither client filesystem nor
 terminal capabilities, passes an empty MCP server list, and never enables
@@ -165,10 +171,11 @@ locate its own provider-owned authentication and runtime state.
 The reviewed declarative manifest at
 `provider-adapters/grok-build-cli.json` integrates an unmodified user-installed
 `grok agent stdio` process through the built-in ACP runtime. Install it from
-**Settings → Provider adapters** by supplying the local manifest URL, its
-canonical digest from `provider-adapters/grok-build-cli.sha256`, and the
-manifest JSON for inspection. Aldunis does not bundle Grok Build or write Grok
-credentials, models, settings, MCP configuration, logs, or native sessions.
+**Provider adapters → Reviewed adapters → Install Grok Build CLI**, then
+**Approve and install**. Aldunis pre-fills the reviewed package and pinned
+digest; you still need `grok` on `PATH`. Advanced import remains available for
+custom manifests. Aldunis does not bundle Grok Build or write Grok credentials,
+models, settings, MCP configuration, logs, or native sessions.
 
 The adapter is direct-only. It advertises neither client filesystem nor
 terminal capabilities, passes an empty MCP server list, and never enables

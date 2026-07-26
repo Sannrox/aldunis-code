@@ -15,6 +15,13 @@ test("normalizes provider lifecycle, text, tools, and completion", () => {
   assert.deepEqual(normalizeClaudeEvent({
     type: "system", subtype: "init", session_id: "session-1", model: "sonnet",
   }), [{ kind: "session_started", sessionId: "session-1", model: "sonnet" }]);
+  // Non-init system events (compact_boundary, future subtypes) must not fail the turn.
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "system", subtype: "compact_boundary", session_id: "session-1",
+  }), []);
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "system", subtype: "status", message: "working",
+  }), []);
   assert.deepEqual(normalizeClaudeEvent({
     type: "assistant",
     message: { content: [

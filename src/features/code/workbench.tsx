@@ -1,12 +1,13 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
-import { CodeSidebar } from "./sidebar";
+import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { DomainPage } from "../shell/domain-page";
+import type { SavedProject } from "../dialogs/repository-dialog";
 import {
   DESIGN_MOCK_MANAGED_WORKTREE_COUNT,
   DESIGN_MOCK_PRIMARY_ID,
@@ -16,11 +17,16 @@ import {
   isDesignMockEnabled,
 } from "./design-mock";
 
+const PROJECT_FILTER_KEY = "aldunis.projectFilter";
+
 export function CodeWorkbench({
   product,
   onProductChange,
   repository: repositoryProp,
-  onOpenRepository,
+  repositoryRestoring = false,
+  projects = [],
+  onAddProject,
+  onSelectProject,
   profiles,
   onOpenProfiles,
   onSearch,
@@ -32,7 +38,13 @@ export function CodeWorkbench({
   product: import("../../types").Product;
   onProductChange: (product: import("../../types").Product) => void;
   repository: RepositoryMetadata | null;
-  onOpenRepository: () => void;
+  /** True while boot is reopening the last project — avoid flashing empty inbox. */
+  repositoryRestoring?: boolean;
+  projects?: SavedProject[];
+  /** Opens path picker only when registering a new project (T3 "Add project"). */
+  onAddProject: () => void;
+  /** Activates a registered project by id — no directory tree. */
+  onSelectProject: (projectId: string) => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: () => void;
   onSearch: () => void;
@@ -45,6 +57,14 @@ export function CodeWorkbench({
   // Pure fixture mode: no real repository opened — never hit the server for lists/lifecycle.
   const pureMock = designMock && !repositoryProp;
   const repository = repositoryProp ?? (designMock ? DESIGN_MOCK_REPOSITORY : null);
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
+    if (typeof window === "undefined") return "all";
+    try {
+      return window.localStorage.getItem(PROJECT_FILTER_KEY) ?? "all";
+    } catch {
+      return "all";
+    }
+  });
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
   const [primaryFilesSignal, setPrimaryFilesSignal] = useState(0);
@@ -74,27 +94,29 @@ export function CodeWorkbench({
   const primaryPaneReference = useRef<HTMLDivElement>(null);
   const secondaryPaneReference = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!repository) return;
-    // Design fixtures only — do not hit the server or wipe mock rows.
+    try {
+      window.localStorage.setItem(PROJECT_FILTER_KEY, projectFilter);
+    } catch {
+      /* ignore */
+    }
+  }, [projectFilter]);
+
+  // Load the inbox once (and on explicit retry). Do not re-run when the active
+  // repository changes — selecting a chat must not reshuffle or reselect.
+  useEffect(() => {
     if (pureMock) {
       setConversations(designMockConversations());
       setPrimaryId(DESIGN_MOCK_PRIMARY_ID);
       primarySelectionReference.current = DESIGN_MOCK_PRIMARY_ID;
       setSecondaryId(null);
       setRestoreState("ready");
-      restoredProjectReference.current = repository.projectId;
+      restoredProjectReference.current = repository?.projectId ?? "design-mock-project";
       return;
     }
     let active = true;
-    restoredProjectReference.current = null;
-    secondaryIdReference.current = null;
-    setConversations([]);
-    setPrimaryId(null);
-    primarySelectionReference.current = "new:0";
-    setSecondaryId(null);
     setRestoreState("loading");
     const restore = async () => {
-      const available = await loadConversationList(repository);
+      const available = await loadConversationList(null);
       if (!active) return;
       setConversations(available);
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
@@ -106,22 +128,31 @@ export function CodeWorkbench({
           .filter((deletion) => deletion.status !== "completed")
           .map((deletion) => deletion.threadId),
       );
-      const parameters = new URLSearchParams(window.location.search);
-      const urlMatchesProject = parameters.get("project") === repository.projectId;
-      const stored = window.localStorage.getItem(`aldunis.split.${repository.projectId}`);
-      let saved: { primaryId?: string | null; secondaryId?: string | null; splitPercent?: number } = {};
-      try { saved = stored ? JSON.parse(stored) as typeof saved : {}; } catch { saved = {}; }
-      const restored = normalizeSplitWorkspaceState({
-        primaryId: (urlMatchesProject ? parameters.get("conversation") : null) ?? saved.primaryId,
-        secondaryId: (urlMatchesProject ? parameters.get("beside") : null) ?? saved.secondaryId,
-        splitPercent: saved.splitPercent,
-      }, available[0]?.id ?? null);
-      setPrimaryId(restored.primaryId);
-      primarySelectionReference.current = restored.primaryId ?? `new:${primaryNewKey}`;
-      setSecondaryId(restored.secondaryId);
-      secondaryIdReference.current = restored.secondaryId;
-      setSplitPercent(restored.splitPercent);
-      restoredProjectReference.current = repository.projectId;
+      // Only apply stored selection on the first successful load.
+      if (restoredProjectReference.current === null) {
+        const parameters = new URLSearchParams(window.location.search);
+        const preferredProjectId = repository?.projectId
+          ?? parameters.get("project")
+          ?? projects[0]?.id
+          ?? null;
+        const stored = preferredProjectId
+          ? window.localStorage.getItem(`aldunis.split.${preferredProjectId}`)
+          : null;
+        let saved: { primaryId?: string | null; secondaryId?: string | null; splitPercent?: number } = {};
+        try { saved = stored ? JSON.parse(stored) as typeof saved : {}; } catch { saved = {}; }
+        const urlConversation = parameters.get("conversation");
+        const restored = normalizeSplitWorkspaceState({
+          primaryId: urlConversation ?? saved.primaryId,
+          secondaryId: parameters.get("beside") ?? saved.secondaryId,
+          splitPercent: saved.splitPercent,
+        }, available[0]?.id ?? null);
+        setPrimaryId(restored.primaryId);
+        primarySelectionReference.current = restored.primaryId ?? `new:${primaryNewKey}`;
+        setSecondaryId(restored.secondaryId);
+        secondaryIdReference.current = restored.secondaryId;
+        setSplitPercent(restored.splitPercent);
+      }
+      restoredProjectReference.current = repository?.projectId ?? "inbox";
       setRestoreState("ready");
     };
     void restore().catch(() => {
@@ -130,7 +161,14 @@ export function CodeWorkbench({
       setRestoreState("failed");
     });
     return () => { active = false; };
-  }, [repository?.projectId, repositoryProp, pureMock, restoreAttempt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/retry only; repo switches must not reshuffle
+  }, [pureMock, restoreAttempt]);
+
+  // Track the bound project for split persistence without resetting the inbox selection.
+  useEffect(() => {
+    if (!repository || pureMock) return;
+    restoredProjectReference.current = repository.projectId;
+  }, [repository?.projectId, pureMock]);
   useEffect(() => {
     if (!repository || restoredProjectReference.current !== repository.projectId) return;
     if (pureMock) return; // keep ?mock=1 in the URL; no localStorage/history rewrite
@@ -176,9 +214,18 @@ export function CodeWorkbench({
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const listedConversations = conversations.filter(
-    (conversation) => showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt,
-  );
+  const listedConversations = useMemo(() => {
+    const memberIds = projectFilter === "all"
+      ? null
+      : new Set(
+        projects.find((project) => project.id === projectFilter)?.memberIds
+          ?? [projectFilter],
+      );
+    return conversations.filter((conversation) => {
+      if (memberIds && !memberIds.has(conversation.projectId)) return false;
+      return showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt;
+    });
+  }, [conversations, projectFilter, projects, showingArchived]);
   const worktreeLimit = pureMock ? DESIGN_MOCK_WORKTREE_LIMIT : 10;
   const managedWorktreeCount = pureMock
     ? DESIGN_MOCK_MANAGED_WORKTREE_COUNT
@@ -204,7 +251,7 @@ export function CodeWorkbench({
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    if (repository) setConversations(await loadConversationList(repository));
+    setConversations(await loadConversationList(null));
     return result;
   };
   const manageConversation = async (
@@ -343,7 +390,12 @@ export function CodeWorkbench({
         product={product}
         onProductChange={onProductChange}
         repository={repository}
-        onOpenRepository={onOpenRepository}
+        repositoryRestoring={repositoryRestoring}
+        projects={projects}
+        projectFilter={projectFilter}
+        onProjectFilterChange={setProjectFilter}
+        onAddProject={onAddProject}
+        onSelectProject={onSelectProject}
         changes={changes}
         onShowChanges={() => {
           void refresh();
@@ -359,6 +411,18 @@ export function CodeWorkbench({
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
         onOpenConversation={(id) => {
+          const thread = conversations.find((item) => item.id === id);
+          // Activate the thread's repository for runs/tools, but do not change the
+          // project chip filter — inbox "All" must stay on All when clicking a chat.
+          if (thread) {
+            const activeIds = new Set([
+              repository?.projectId,
+              ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+            ].filter(Boolean) as string[]);
+            if (!activeIds.has(thread.projectId)) {
+              onSelectProject(thread.projectId);
+            }
+          }
           primarySelectionReference.current = id;
           setPrimaryId(id);
           if (secondaryId === id) {
@@ -371,14 +435,30 @@ export function CodeWorkbench({
             patchMockConversation(id, { lastVisitedAt: new Date().toISOString() });
             return;
           }
+          // Patch visit locally — do not reload/resort the inbox on every selection.
+          const visitedAt = new Date().toISOString();
+          setConversations((current) => current.map((item) => (
+            item.id === id ? { ...item, lastVisitedAt: visitedAt } : item
+          )));
           void fetch("/api/state/conversations/visit", {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ threadId: id }),
-          }).then(() => repository && loadConversationList(repository).then(setConversations)).catch(() => undefined);
+          }).catch(() => undefined);
         }}
         onOpenBeside={openBeside}
         onNewConversation={() => {
+          // New thread uses the active/filter project for runs — never opens a path tree,
+          // and never rewrites the chip filter (especially "All").
+          if (projectFilter !== "all") {
+            onSelectProject(projectFilter);
+          } else if (!repository) {
+            if (projects[0]) onSelectProject(projects[0].id);
+            else {
+              onAddProject();
+              return;
+            }
+          }
           primarySelectionReference.current = `new:${primaryNewKey + 1}`;
           setPrimaryId(null);
           setPrimaryNewKey((value) => value + 1);
@@ -477,13 +557,13 @@ export function CodeWorkbench({
                   primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
                   setPrimaryId(id);
                 }} />
-              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
                   }
                   if (pureMock) return;
-                  if (repository) void loadConversationList(repository).then(setConversations).catch(() => {});
+                  void loadConversationList(null).then(setConversations).catch(() => {});
                 }} />}
           </div>
           {secondaryId && (
@@ -506,7 +586,7 @@ export function CodeWorkbench({
               <div className="conversation-pane secondary-pane" tabIndex={-1} ref={secondaryPaneReference} onFocusCapture={() => setActivePane("secondary")}>
                 {!secondary && !secondaryId.startsWith("new:")
                   ? <MissingConversation pane="secondary" conversations={conversations.filter((item) => item.id !== primaryId)} onReplace={setSecondaryId} onClose={() => setSecondaryId(null)} />
-                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onOpenRepository} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");
@@ -515,7 +595,7 @@ export function CodeWorkbench({
                       secondaryIdReference.current = id;
                       setSecondaryId(id);
                       if (pureMock) return;
-                      if (repository) void loadConversationList(repository).then(setConversations).catch(() => {});
+                      void loadConversationList(null).then(setConversations).catch(() => {});
                     }} />}
               </div>
             </>
