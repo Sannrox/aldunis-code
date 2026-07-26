@@ -14,7 +14,8 @@ with context) rather than standalone new-chat-per-run automations.
 ### In scope
 
 - Target: existing `threadId` only
-- Schedule: interval (≥ 60s) or 5-field cron (UTC)
+- Schedule: interval (≥ 60s) or 5-field cron (UTC). When both day-of-month and
+  day-of-week are restricted, matching uses POSIX OR (either field may hit).
 - Scheduler: host process while the host is listening
 - First evaluation **seeds** `lastRun` and does not fire (use **Run now**)
 - Skip when the target thread is busy; do not advance `lastRun` on scheduled

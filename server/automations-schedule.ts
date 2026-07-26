@@ -93,23 +93,40 @@ interface CronFields {
   dom: Set<number>;
   months: Set<number>;
   dow: Set<number>;
+  /** True when the day-of-month field is unrestricted (`*` / full range). */
+  domAny: boolean;
+  /** True when the day-of-week field is unrestricted (`*` / full range). */
+  dowAny: boolean;
 }
 
 function parseCronFields(expr: string): CronFields | null {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return null;
   try {
+    const domRaw = parts[2]!;
+    const dowRaw = parts[4]!;
     return {
       minutes: expandField(parts[0]!, 0, 59),
       hours: expandField(parts[1]!, 0, 23),
-      dom: expandField(parts[2]!, 1, 31),
+      dom: expandField(domRaw, 1, 31),
       months: expandField(parts[3]!, 1, 12),
       // Accept 0-7 where 0 and 7 are Sunday.
-      dow: expandDow(parts[4]!),
+      dow: expandDow(dowRaw),
+      // POSIX: restricted DOM and DOW combine with OR, not AND.
+      domAny: isUnrestrictedField(domRaw),
+      dowAny: isUnrestrictedField(dowRaw),
     };
   } catch {
     return null;
   }
+}
+
+// Star or star-slash-N over the full domain — not a restricted list/range.
+function isUnrestrictedField(field: string): boolean {
+  const trimmed = field.trim();
+  if (trimmed === "*") return true;
+  // Star-step still means every k-th unit across the full domain.
+  return /^\*\/\d+$/.test(trimmed);
 }
 
 function expandDow(field: string): Set<number> {
@@ -165,9 +182,15 @@ function matchesCron(fields: CronFields, date: Date): boolean {
   const dom = date.getUTCDate();
   const month = date.getUTCMonth() + 1;
   const dow = date.getUTCDay(); // 0=Sunday
-  return fields.minutes.has(minute)
-    && fields.hours.has(hour)
-    && fields.dom.has(dom)
-    && fields.months.has(month)
-    && fields.dow.has(dow);
+  if (!fields.minutes.has(minute) || !fields.hours.has(hour) || !fields.months.has(month)) {
+    return false;
+  }
+  // POSIX/Vixie: when both DOM and DOW are restricted, match if either hits.
+  // When either is unrestricted, require the restricted field(s) as usual.
+  const domOk = fields.dom.has(dom);
+  const dowOk = fields.dow.has(dow);
+  if (!fields.domAny && !fields.dowAny) return domOk || dowOk;
+  if (!fields.domAny) return domOk;
+  if (!fields.dowAny) return dowOk;
+  return true;
 }

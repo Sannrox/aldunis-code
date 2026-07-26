@@ -74,3 +74,14 @@ test("parseSchedule accepts a valid cron expression", () => {
     { type: "cron", expr: "0 9 * * 1-5" },
   );
 });
+
+test("cron DOM+DOW uses POSIX OR when both fields are restricted", () => {
+  // 0 9 15 * 1 → 09:00 on the 15th OR on Mondays (not only Mondays that are the 15th).
+  const expr = "0 9 15 * 1";
+  // 2026-01-15 is a Thursday → DOM match only.
+  const afterDom = Date.parse("2026-01-15T08:00:00Z");
+  assert.equal(nextCronOccurrenceMs(expr, afterDom), Date.parse("2026-01-15T09:00:00Z"));
+  // Next Monday after Jan 15 is Jan 19 → DOW match.
+  const afterDow = Date.parse("2026-01-15T10:00:00Z");
+  assert.equal(nextCronOccurrenceMs(expr, afterDow), Date.parse("2026-01-19T09:00:00Z"));
+});

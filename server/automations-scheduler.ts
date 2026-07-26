@@ -66,6 +66,9 @@ export class AutomationsScheduler {
       const { items } = await this.#store.load();
       const nowMs = this.#now();
       const nowIso = new Date(nowMs).toISOString();
+      // Collect due fires first, then run them concurrently so one long provider
+      // turn does not delay evaluation of other due automations.
+      const due: Automation[] = [];
       for (const automation of items) {
         if (!automation.enabled) continue;
         if (this.#inflightThreads.has(automation.threadId)) continue;
@@ -85,9 +88,11 @@ export class AutomationsScheduler {
           continue;
         }
         if (decision !== "due") continue;
-
-        await this.#execute(automation, nowIso, /* advanceOnBusy */ false);
+        due.push(automation);
       }
+      await Promise.all(
+        due.map((automation) => this.#execute(automation, nowIso, /* advanceOnBusy */ false)),
+      );
     } finally {
       this.#ticking = false;
     }
