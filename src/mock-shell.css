@@ -915,6 +915,45 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     grid-template-columns: 1fr !important;
   }
 }
+.preview-policy {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.preview-policy strong {
+  flex: 0 0 auto !important;
+  display: inline-block !important;
+}
+.preview-setup {
+  display: grid !important;
+  grid-template-columns: 1fr auto !important;
+  gap: 10px !important;
+}
+.preview-setup label {
+  grid-column: 1 / -1 !important;
+  display: block !important;
+}
+@media (max-width: 900px) {
+  .preview-policy {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+  .preview-workspace,
+  .preview-workspace:has(.element-reference) {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 42px minmax(240px, 1fr) auto !important;
+  }
+  .preview-workspace iframe {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+  }
+  .element-reference {
+    grid-column: 1 !important;
+    grid-row: 3 !important;
+    border-left: 0 !important;
+    border-top: 1px solid var(--border) !important;
+  }
+}
 
 
 /* ── Flex chain: match mock main column geometry exactly ─────────── */
