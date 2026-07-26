@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { InstalledProviderAdapter, ReviewedAdapterCatalogEntry } from "../../types";
 import { Button } from "../../components/ui";
 import { OverlayDialog } from "./overlay-dialog";
@@ -20,6 +20,8 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const reviewRef = useRef<HTMLElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   const request = async (route: string, body: unknown = {}) => {
     const response = await fetch(route, {
@@ -50,6 +52,22 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
     if (!open) return;
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : "Adapters could not be loaded."));
   }, [open]);
+  // Install review is appended below the catalog — bring it into view so Approve is reachable.
+  useEffect(() => {
+    if (!candidate || !pendingPackage) return;
+    const node = reviewRef.current;
+    const body = bodyRef.current;
+    if (!node) return;
+    // Prefer scrolling the dialog body; fall back to scrollIntoView.
+    window.requestAnimationFrame(() => {
+      if (body) {
+        const top = node.offsetTop - 12;
+        body.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+      } else {
+        node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+    });
+  }, [candidate, pendingPackage]);
   if (!open) return null;
 
   const inspect = async () => {
@@ -172,7 +190,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
 
   return (
     <OverlayDialog title="Provider adapters" onClose={onClose}>
-      <div className="adapter-settings">
+      <div className="adapter-settings" ref={bodyRef}>
         <p className="adapter-policy">
           Reviewed adapters install in one click with an explicit approve step. Aldunis verifies the
           pinned digest, rejects executable package code, and keeps authority inside its ACP runtime
@@ -271,7 +289,11 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
         </section>
 
         {candidate && pendingPackage && (
-          <section className="adapter-review" aria-label="Adapter approval review">
+          <section
+            className="adapter-review"
+            aria-label="Adapter approval review"
+            ref={reviewRef}
+          >
             <h3>
               {pendingPackage.mode === "update"
                 ? "Review update"
@@ -282,18 +304,73 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                 : "Review installation"}
             </h3>
             <dl>
-              <div><dt>Source</dt><dd>{candidate.source}</dd></div>
-              <div><dt>Publisher claim</dt><dd>{candidate.manifest.publisher.name} · not endorsed by Aldunis</dd></div>
-              <div><dt>Integrity</dt><dd>{candidate.digest}</dd></div>
-              <div><dt>Compatibility</dt><dd>Aldunis {candidate.manifest.aldunis.minimumVersion}–{candidate.manifest.aldunis.maximumVersion}; ACP {candidate.manifest.protocol.minimumVersion}</dd></div>
-              <div><dt>Executable</dt><dd>{candidate.manifest.executable.names.join(", ")}</dd></div>
-              <div><dt>Fixed arguments</dt><dd>{candidate.manifest.executable.arguments.join(" ") || "None"}</dd></div>
-              <div><dt>Environment names</dt><dd>{candidate.manifest.environment.map((item) => `${item.name}${item.required ? " (required)" : ""}`).join(", ") || "None"}</dd></div>
-              <div><dt>Declared capabilities</dt><dd>{Object.entries(candidate.manifest.capabilities).filter(([, enabled]) => enabled).map(([name]) => name).join(", ") || "None"}</dd></div>
-              <div><dt>Working directory</dt><dd>Canonical conversation worktree</dd></div>
-              <div><dt>Provider process authority</dt><dd>Runs as your local OS user. Aldunis bounds cwd and environment, but does not sandbox native filesystem, process, or network access.</dd></div>
-              <div><dt>Tool authority</dt><dd>Cannot grant Aldunis tool authority; ACP mutations still require allow-once approval</dd></div>
-              {existing && <div><dt>Currently installed</dt><dd>{existing.manifest.version} · {existing.digest}</dd></div>}
+              <div>
+                <dt>Source</dt>
+                <dd>{candidate.source}</dd>
+              </div>
+              <div>
+                <dt>Publisher claim</dt>
+                <dd>{candidate.manifest.publisher.name} · not endorsed by Aldunis</dd>
+              </div>
+              <div>
+                <dt>Integrity</dt>
+                <dd>{candidate.digest}</dd>
+              </div>
+              <div>
+                <dt>Compatibility</dt>
+                <dd>
+                  Aldunis {candidate.manifest.aldunis.minimumVersion}–{candidate.manifest.aldunis.maximumVersion}; ACP{" "}
+                  {candidate.manifest.protocol.minimumVersion}
+                </dd>
+              </div>
+              <div>
+                <dt>Executable</dt>
+                <dd>{candidate.manifest.executable.names.join(", ")}</dd>
+              </div>
+              <div>
+                <dt>Fixed arguments</dt>
+                <dd>{candidate.manifest.executable.arguments.join(" ") || "None"}</dd>
+              </div>
+              <div>
+                <dt>Environment names</dt>
+                <dd>
+                  {candidate.manifest.environment
+                    .map((item) => `${item.name}${item.required ? " (required)" : ""}`)
+                    .join(", ") || "None"}
+                </dd>
+              </div>
+              <div>
+                <dt>Declared capabilities</dt>
+                <dd>
+                  {Object.entries(candidate.manifest.capabilities)
+                    .filter(([, enabled]) => enabled)
+                    .map(([name]) => name)
+                    .join(", ") || "None"}
+                </dd>
+              </div>
+              <div>
+                <dt>Working directory</dt>
+                <dd>Canonical conversation worktree</dd>
+              </div>
+              <div>
+                <dt>Provider process authority</dt>
+                <dd>
+                  Runs as your local OS user. Aldunis bounds cwd and environment, but does not sandbox native
+                  filesystem, process, or network access.
+                </dd>
+              </div>
+              <div>
+                <dt>Tool authority</dt>
+                <dd>Cannot grant Aldunis tool authority; ACP mutations still require allow-once approval</dd>
+              </div>
+              {existing && (
+                <div>
+                  <dt>Currently installed</dt>
+                  <dd>
+                    {existing.manifest.version} · {existing.digest}
+                  </dd>
+                </div>
+              )}
             </dl>
             <div className="adapter-review-actions">
               <Button
