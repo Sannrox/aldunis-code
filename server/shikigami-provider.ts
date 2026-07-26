@@ -459,6 +459,9 @@ export class ShikigamiAdapter {
     timeout.unref();
 
     let sawTerminal = false;
+    // Buffer run_finished terminals until stdout is inspected so parked runs
+    // can replace a generic failure with CLI resume guidance.
+    let pendingTerminal: ProviderEvent | null = null;
     const toolIds = new ShikigamiToolIdTracker();
     try {
       // Do not advertise a local provider-run UUID as a shikigami resume id.
@@ -477,6 +480,7 @@ export class ShikigamiAdapter {
             events = parseShikigamiStderrLine(line, toolIds);
           } catch (error) {
             sawTerminal = true;
+            pendingTerminal = null;
             yield {
               kind: "failed",
               message: error instanceof ProviderProtocolError
@@ -493,14 +497,18 @@ export class ShikigamiAdapter {
             if (event.kind === "session_started") continue;
             if (event.kind === "turn_completed") {
               active.runId = event.sessionId;
-              sawTerminal = true;
+              pendingTerminal = event;
+              continue;
             }
-            if (event.kind === "failed") sawTerminal = true;
+            if (event.kind === "failed") {
+              pendingTerminal = event;
+              continue;
+            }
             yield event;
           }
         }
       } catch (error) {
-        if (!sawTerminal) {
+        if (!sawTerminal && !pendingTerminal) {
           sawTerminal = true;
           yield {
             kind: "failed",
@@ -512,14 +520,20 @@ export class ShikigamiAdapter {
       }
 
       const stdout = await stdoutPromise.catch(() => "");
-      if (!active.cancelled || !sawTerminal) {
+      if (!active.cancelled || (!sawTerminal && !pendingTerminal)) {
         const runMatch = stdout.match(/run\s+([0-9a-f-]{36})/i);
         if (runMatch) active.runId = runMatch[1];
-        if (/parked reason=/i.test(stdout) && !sawTerminal) {
+        if (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout)) {
           sawTerminal = true;
+          pendingTerminal = null;
+          const resumeId = active.runId ?? "<run-id>";
+          const reasonMatch = stdout.match(/parked reason=(.+)/i);
+          const reason = reasonMatch?.[1]?.trim();
           yield {
             kind: "failed",
-            message: "Shikigami parked awaiting an operator answer. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume <id> --answer \"...\".",
+            message: reason
+              ? `Shikigami parked: ${reason}. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`
+              : `Shikigami parked awaiting an operator answer. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`,
           };
         }
       }
@@ -538,14 +552,22 @@ export class ShikigamiAdapter {
       });
 
       if (active.spawnFailed) {
-        if (!sawTerminal) yield { kind: "failed", message: "Shikigami could not be started." };
+        if (!sawTerminal && !pendingTerminal) {
+          yield { kind: "failed", message: "Shikigami could not be started." };
+        } else if (pendingTerminal?.kind === "failed") {
+          sawTerminal = true;
+          yield pendingTerminal;
+        }
         return;
       }
       if (active.cancelled) {
         if (!sawTerminal) yield { kind: "cancelled" };
         return;
       }
-      if (!sawTerminal) {
+      if (pendingTerminal) {
+        sawTerminal = true;
+        yield pendingTerminal;
+      } else if (!sawTerminal) {
         const code = active.child.exitCode;
         if (code === 0) {
           yield {
