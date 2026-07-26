@@ -394,10 +394,10 @@ export function ChangesPanel({
             <small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small>
           </header>
           {annotations.length === 0 && <p>No local comments yet.</p>}
-          <ul>
+          <ul className="annotation-list">
             {annotations.map((annotation) => (
-              <li className={`${annotation.resolution} ${annotation.stale ? "stale" : ""}`} key={annotation.id}>
-                <label>
+              <li className={`annotation-item ${annotation.resolution} ${annotation.stale ? "stale" : ""}`} key={annotation.id}>
+                <label className="annotation-select">
                   <input
                     type="checkbox"
                     checked={selectedAnnotationIds.includes(annotation.id)}
@@ -405,13 +405,29 @@ export function ChangesPanel({
                       ? [...current, annotation.id]
                       : current.filter((id) => id !== annotation.id))}
                   />
-                  <span>
-                    <strong>{annotation.path} · {annotation.scope === "file" ? "file" : annotation.side === "deletion" ? `old line ${annotation.oldLine}` : `new line ${annotation.newLine}`}</strong>
-                    <small>{annotation.stale ? annotation.staleReason : annotation.checkpointId ? "Checkpoint-bound target" : "Diff-bound target"}</small>
-                    <em>{annotation.text}</em>
+                  <span className="annotation-body">
+                    <strong className="annotation-target">
+                      {annotation.path}
+                      <span className="annotation-scope">
+                        {" "}· {annotation.scope === "file" ? "file" : annotation.side === "deletion" ? `old line ${annotation.oldLine}` : `new line ${annotation.newLine}`}
+                      </span>
+                    </strong>
+                    <small className="annotation-meta">
+                      {annotation.stale
+                        ? annotation.staleReason
+                        : annotation.checkpointId
+                          ? "Checkpoint-bound target"
+                          : "Diff-bound target"}
+                    </small>
+                    <p className="annotation-text">{annotation.text}</p>
                   </span>
                 </label>
-                <button onClick={() => void setResolution(annotation)} disabled={annotationBusy}>
+                <button
+                  type="button"
+                  className="annotation-resolve"
+                  onClick={() => void setResolution(annotation)}
+                  disabled={annotationBusy}
+                >
                   {annotation.resolution === "unresolved" ? "Resolve" : "Reopen"}
                 </button>
               </li>
