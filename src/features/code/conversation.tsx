@@ -104,6 +104,12 @@ export function Conversation({
     ? "Claude Code"
     : selectedProvider?.name ?? "Provider adapter unavailable";
   const providerLabel = provider === "codex-cli" ? "Codex" : provider === "claude-code" ? "Claude" : providerName;
+  /** Compact composer chip text — adapters use presentation names, not raw ids. */
+  const providerChipName = provider === "claude-code"
+    ? "claude-code"
+    : provider === "codex-cli"
+    ? "codex-cli"
+    : (selectedProvider?.name ?? providerName);
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
    * stored provider (cross-provider moves go through the reviewed fork flow).
@@ -1081,7 +1087,7 @@ export function Conversation({
               }
               aria-label={
                 canSwitchProvider
-                  ? `Provider ${provider}. Click to switch among ${availableProviders.length} providers.`
+                  ? `Provider ${providerName}. Click to switch among ${availableProviders.length} providers.`
                   : "Open Claude profiles"
               }
               onClick={(event) => {
@@ -1099,7 +1105,7 @@ export function Conversation({
               </span>
               {conversation?.id === DESIGN_MOCK_PRIMARY_ID
                 ? "claude-code · sonnet"
-                : `${provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}${model !== "default" ? ` · ${model}` : ""}`}
+                : `${providerChipName}${model !== "default" ? ` · ${model}` : ""}`}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <button
