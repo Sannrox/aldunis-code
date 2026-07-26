@@ -394,9 +394,11 @@ export class ShikigamiAdapter {
       "--state",
       stateDir,
       "run",
-      options.prompt,
       // inplace workspaces must not be deleted; keep_workspace is still set for safety.
       "--keep-workspace",
+      // Terminate option parsing so prompts starting with `-` are task text.
+      "--",
+      options.prompt,
     ];
     // Each Code message is a fresh harness run. Checkpoint --resume is for
     // mid-run park recovery, not multi-turn chat continuation.
