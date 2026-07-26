@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   acpAllowOnceOption,
   acpPromptRequest,
+  acpReadTextFile,
   acpSessionRequest,
   isOptionalGrokNotification,
   isOptionalKiroNotification,
@@ -322,6 +323,38 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
       },
     },
   }), [{ kind: "tool_finished", toolCallId: "tool-1", failed: true }]);
+  // Grok Build emits metadata-only tool_call_update frames without status.
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-2",
+        kind: "read",
+        title: "Read package.json",
+      },
+    },
+  }), []);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-3",
+        status: "Success",
+      },
+    },
+  }), [{ kind: "tool_finished", toolCallId: "tool-3", failed: false }]);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-4",
+        status: "running",
+      },
+    },
+  }), []);
   assert.throws(
     () => normalizeAcpNotification({
       method: "session/update",
@@ -438,6 +471,19 @@ test("Grok optional notifications are capability-isolated from core ACP events",
     method: "_x.ai/mcp/servers_updated",
     params: {},
   }), false);
+});
+
+test("ACP fs/read_text_file is worktree-bounded and supports line windows", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-acp-fs-"));
+  await writeFile(join(root, "pkg.json"), "line1\nline2\nline3\n", "utf8");
+  const full = await acpReadTextFile(root, { path: join(root, "pkg.json") });
+  assert.equal(full.content, "line1\nline2\nline3\n");
+  const slice = await acpReadTextFile(root, { path: "pkg.json", line: 2, limit: 1 });
+  assert.equal(slice.content, "line2");
+  await assert.rejects(
+    () => acpReadTextFile(root, { path: join(root, "..", "outside.txt") }),
+    /escapes the conversation worktree|not readable/,
+  );
 });
 
 test("Grok user message echoes normalize as informational without wire exposure", () => {
