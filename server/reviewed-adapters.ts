@@ -27,6 +27,13 @@ const REVIEWED_ADAPTER_FILES = [
     requiresCliHint: "Install the Grok Build CLI and ensure `grok` is on PATH.",
     websiteFallback: "https://x.ai/cli",
   },
+  {
+    slug: "opencode-cli",
+    installLabel: "Install OpenCode",
+    updateLabel: "Review OpenCode update",
+    requiresCliHint: "Install the OpenCode CLI and ensure `opencode` is on PATH.",
+    websiteFallback: "https://opencode.ai/docs/acp/",
+  },
 ] as const;
 
 export type ReviewedAdapterSlug = (typeof REVIEWED_ADAPTER_FILES)[number]["slug"];
