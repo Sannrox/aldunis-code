@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "ai.opencode.cli",
+  "publisher": {
+    "name": "OpenCode"
+  },
+  "version": "1.0.0",
+  "aldunis": {
+    "minimumVersion": "0.1.0",
+    "maximumVersion": "0.1.0"
+  },
+  "protocol": {
+    "kind": "acp",
+    "minimumVersion": 1,
+    "maximumVersion": 1
+  },
+  "executable": {
+    "names": [
+      "opencode",
+      "opencode.exe"
+    ],
+    "arguments": [
+      "acp"
+    ]
+  },
+  "capabilities": {
+    "tools": true,
+    "images": false,
+    "sessionResume": true
+  },
+  "environment": [
+    {
+      "name": "HOME",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "USERPROFILE",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "OPENCODE_API_KEY",
+      "required": false,
+      "sensitive": true
+    },
+    {
+      "name": "XDG_CONFIG_HOME",
+      "required": false,
+      "sensitive": true
+    }
+  ],
+  "presentation": {
+    "name": "OpenCode",
+    "description": "Runs an unmodified user-installed OpenCode CLI as a direct-only ACP provider. OpenCode owns authentication, models, settings, MCP configuration, and native sessions.",
+    "website": "https://opencode.ai/docs/acp/"
+  }
+}

@@ -191,6 +191,13 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
     && names[1] === "kiro-cli.exe"
     && argumentsValue.length === 1
     && argumentsValue[0] === "acp";
+  // OpenCode's ACP entrypoint is the fixed subcommand `acp` (docs: opencode acp).
+  // Only this exact reviewed launch is accepted — not free-form positionals.
+  const reviewedOpenCodeLaunch = names.length === 2
+    && names[0] === "opencode"
+    && names[1] === "opencode.exe"
+    && argumentsValue.length === 1
+    && argumentsValue[0] === "acp";
   // Grok Build's ACP entrypoint is the fixed subcommand path `agent stdio`,
   // not a free-form option flag. Only this exact reviewed launch is accepted.
   const reviewedGrokLaunch = names.length === 2
@@ -201,7 +208,12 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
     && argumentsValue[1] === "stdio";
   const argumentsList = argumentsValue.map((entry, index) => {
     const argument = string(entry, `Executable arguments[${index}]`, 512);
-    if (!reviewedKiroLaunch && !reviewedGrokLaunch && !SAFE_FIXED_OPTION.test(argument)) {
+    if (
+      !reviewedKiroLaunch
+      && !reviewedOpenCodeLaunch
+      && !reviewedGrokLaunch
+      && !SAFE_FIXED_OPTION.test(argument)
+    ) {
       throw new ProviderAdapterError(
         "Version 1 executable arguments may contain option flags only.",
       );

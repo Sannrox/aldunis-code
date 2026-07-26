@@ -6,13 +6,13 @@ import test from "node:test";
 import { ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
 
-test("reviewed catalog exposes Kiro and Grok packages with matching digests", async () => {
+test("reviewed catalog exposes Kiro, Grok, and OpenCode packages with matching digests", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-reviewed-adapters-"));
   const store = new ProviderAdapterStore(directory);
   const catalog = await listReviewedAdapters(store);
-  assert.equal(catalog.length, 2);
+  assert.equal(catalog.length, 3);
   const slugs = catalog.map((entry) => entry.slug).sort();
-  assert.deepEqual(slugs, ["grok-build-cli", "kiro-cli"]);
+  assert.deepEqual(slugs, ["grok-build-cli", "kiro-cli", "opencode-cli"]);
   for (const entry of catalog) {
     assert.equal(entry.action, "install");
     assert.equal(entry.installed, false);
@@ -22,6 +22,9 @@ test("reviewed catalog exposes Kiro and Grok packages with matching digests", as
     assert.match(entry.source, /^file:\/\//);
     assert.ok(entry.installLabel.toLocaleLowerCase().includes("install"));
   }
+  const opencode = catalog.find((entry) => entry.slug === "opencode-cli");
+  assert.equal(opencode?.id, "ai.opencode.cli");
+  assert.deepEqual(opencode?.executableNames, ["opencode", "opencode.exe"]);
 });
 
 test("prepare and install a reviewed adapter without manual digest entry", async () => {
