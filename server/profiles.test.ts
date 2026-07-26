@@ -3,7 +3,31 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ClaudeProfileStore } from "./profiles.ts";
+import { ClaudeProfileStore, DEFAULT_CLAUDE_PROFILE_ID } from "./profiles.ts";
+
+test("profile store seeds a default Claude Code profile out of the box", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-profiles-"));
+  const store = new ClaudeProfileStore(directory);
+  const profiles = await store.list();
+  assert.equal(profiles.length, 1);
+  assert.equal(profiles[0].id, DEFAULT_CLAUDE_PROFILE_ID);
+  assert.equal(profiles[0].name, "Claude Code");
+  assert.equal(profiles[0].binaryPath, "claude");
+  assert.equal(profiles[0].homePath, "");
+  assert.deepEqual(profiles[0].environment, []);
+  // Second list is idempotent and does not duplicate defaults.
+  assert.equal((await store.list()).length, 1);
+  const runtime = await store.runtime(DEFAULT_CLAUDE_PROFILE_ID);
+  assert.equal(runtime.executable, "claude");
+
+  // Custom profiles keep the built-in default available for PATH-based Claude.
+  await store.save({ name: "Work", binaryPath: "claude" });
+  await store.delete(DEFAULT_CLAUDE_PROFILE_ID);
+  const restored = await store.list();
+  assert.equal(restored.some((profile) => profile.id === DEFAULT_CLAUDE_PROFILE_ID), true);
+  assert.equal(restored[0].id, DEFAULT_CLAUDE_PROFILE_ID);
+  assert.ok(restored.some((profile) => profile.name === "Work"));
+});
 
 test("sensitive environment values are write-only and stored separately", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-profiles-"));
@@ -72,7 +96,9 @@ test("profile deletion removes Aldunis secrets without touching the Claude home"
 
   await store.delete(saved.id);
   assert.equal(await readFile(claudeHome, "utf8"), "provider-owned-credential");
-  assert.equal((await store.list()).length, 0);
+  // Built-in default remains available after user profile deletion.
+  const remaining = await store.list();
+  assert.equal(remaining.some((profile) => profile.id === DEFAULT_CLAUDE_PROFILE_ID), true);
   assert.equal(
     (await readFile(join(directory, "provider-secrets.v1.json"), "utf8")).includes("remove-me"),
     false,

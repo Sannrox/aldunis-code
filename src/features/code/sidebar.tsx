@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
+import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree } from "./conversation-list";
+
+export type ProjectFilter = "all" | string;
 
 const PRODUCTS: Array<{ id: Product; label: string; detail: string; mark: string }> = [
   { id: "code", label: "Code", detail: "Local workbench", mark: "A" },
@@ -17,7 +20,12 @@ export function CodeSidebar({
   product,
   onProductChange,
   repository,
-  onOpenRepository,
+  repositoryRestoring = false,
+  projects,
+  projectFilter,
+  onProjectFilterChange,
+  onAddProject,
+  onSelectProject,
   changes,
   onShowChanges,
   onBrowseFiles,
@@ -41,7 +49,16 @@ export function CodeSidebar({
   product: Product;
   onProductChange: (product: Product) => void;
   repository: RepositoryMetadata | null;
-  onOpenRepository: () => void;
+  repositoryRestoring?: boolean;
+  /** Registered projects (T3-style permanent registry). */
+  projects: SavedProject[];
+  /** "all" inbox or a single project id. */
+  projectFilter: ProjectFilter;
+  onProjectFilterChange: (filter: ProjectFilter) => void;
+  /** Rare: open path picker to register a new project. */
+  onAddProject: () => void;
+  /** Switch active project by id without path browsing. */
+  onSelectProject: (projectId: string) => void;
   changes: ChangedFile[];
   onShowChanges: () => void;
   onBrowseFiles: () => void;
@@ -69,8 +86,10 @@ export function CodeSidebar({
   onSettings: () => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [shelfOpen, setShelfOpen] = useState(false);
   const brandRef = useRef<HTMLDivElement>(null);
+  const projectMenuRef = useRef<HTMLDivElement>(null);
 
   const { active, settled } = useMemo(() => {
     const activeList: ConversationSummary[] = [];
@@ -103,6 +122,32 @@ export function CodeSidebar({
       window.removeEventListener("keydown", onKey);
     };
   }, [productOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setProjectMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [projectMenuOpen]);
+
+  const selectedProject = useMemo(
+    () => (projectFilter === "all" ? null : projects.find((project) => project.id === projectFilter) ?? null),
+    [projectFilter, projects],
+  );
+  const projectFilterLabel = repositoryRestoring && projects.length === 0
+    ? "Restoring projects…"
+    : selectedProject?.name ?? "All projects";
+  const projectFilterDetail = selectedProject?.root
+    ?? (projects.length === 0 ? "Add a project to start" : `${projects.length} project${projects.length === 1 ? "" : "s"}`);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -186,22 +231,74 @@ export function CodeSidebar({
             </button>
           </div>
 
-          <div className="g2">
-            <button type="button" className="proj" onClick={onOpenRepository}>
+          {/* Compact project filter dropdown (space-efficient vs chip row). */}
+          <div className="g2 project-filter" ref={projectMenuRef}>
+            <button
+              type="button"
+              className="proj project-filter-trigger"
+              onClick={() => setProjectMenuOpen((open) => !open)}
+              aria-haspopup="listbox"
+              aria-expanded={projectMenuOpen}
+              aria-label={`Project filter: ${projectFilterLabel}`}
+              title={selectedProject?.root}
+            >
               <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               </svg>
               <span className="b">
-                <span className="n">{repository?.name ?? "All projects"}</span>
-                {repository?.root && repository.name !== "All projects" && (
-                  <span className="p">{repository.root}</span>
-                )}
+                <span className="n">{projectFilterLabel}</span>
+                <span className="p">{projectFilterDetail}</span>
               </span>
-              {repository && <span className="pcount">{repository.worktrees.length}</span>}
-              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
+              <svg className="ic ic-sm project-filter-caret" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="m6 9 6 6 6-6" />
               </svg>
             </button>
+            {projectMenuOpen && (
+              <div className="project-filter-menu" role="listbox" aria-label="Filter by project">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={projectFilter === "all"}
+                  className={`project-filter-option ${projectFilter === "all" ? "active" : ""}`}
+                  onClick={() => {
+                    onProjectFilterChange("all");
+                    setProjectMenuOpen(false);
+                  }}
+                >
+                  <span className="n">All projects</span>
+                  <span className="p">Inbox across every registered project</span>
+                </button>
+                {projects.map((project) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={projectFilter === project.id}
+                    key={project.id}
+                    className={`project-filter-option ${projectFilter === project.id ? "active" : ""}`}
+                    title={project.root}
+                    onClick={() => {
+                      onProjectFilterChange(project.id);
+                      onSelectProject(project.id);
+                      setProjectMenuOpen(false);
+                    }}
+                  >
+                    <span className="n">{project.name}</span>
+                    <span className="p">{project.root}</span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="project-filter-option add"
+                  onClick={() => {
+                    setProjectMenuOpen(false);
+                    onAddProject();
+                  }}
+                >
+                  <span className="n">Add project…</span>
+                  <span className="p">Register a local repository once</span>
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="list" id="list" role="list">
@@ -219,13 +316,11 @@ export function CodeSidebar({
                 showSettle={!showingArchived}
               />
             ))}
-            {active.length === 0 && (
+            {active.length === 0 && projects.length > 0 && (
               <p className="empty-list">
-                {!repository
-                  ? "Open a repository to list threads."
-                  : showingArchived
-                    ? "No archived conversations."
-                    : "No open threads."}
+                {showingArchived
+                  ? "No archived conversations."
+                  : "No open threads. Start a new one — it stays in this project."}
               </p>
             )}
           </div>

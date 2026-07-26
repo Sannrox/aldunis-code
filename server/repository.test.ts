@@ -149,10 +149,12 @@ test("checkpoint capture and rewind fail safely for unrelated or concurrent work
   await assert.rejects(() => captureCheckpoint(linked, true), /symlink/);
 });
 
-test("checkpoint capture refuses ignored and Git-filtered workspace content", async () => {
+test("checkpoint capture ignores gitignored paths and refuses filtered/embedded content", async () => {
   const ignored = await gitFixture();
-  await writeFile(join(ignored, ".gitignore"), "private.env\n");
+  await writeFile(join(ignored, ".gitignore"), "private.env\nnode_modules/\n");
   await writeFile(join(ignored, "private.env"), "local value\n");
+  await mkdir(join(ignored, "node_modules", "pkg"), { recursive: true });
+  await writeFile(join(ignored, "node_modules", "pkg", "index.js"), "module.exports = 1\n");
   await execFileAsync("git", ["-C", ignored, "add", ".gitignore"]);
   await execFileAsync("git", [
     "-C", ignored,
@@ -160,7 +162,12 @@ test("checkpoint capture refuses ignored and Git-filtered workspace content", as
     "-c", "user.email=fixture@example.invalid",
     "commit", "-qm", "ignore local file",
   ]);
-  await assert.rejects(() => captureCheckpoint(ignored, false), /ignored files/);
+  // Ordinary ignored trees must not block checkpoints; they stay out of the snapshot.
+  const baseline = await captureCheckpoint(ignored, false);
+  assert.match(baseline.identity, /^[0-9a-f]{40}$/);
+  const tree = await execFileAsync("git", ["-C", ignored, "ls-tree", "-r", "--name-only", baseline.identity]);
+  assert.equal(tree.stdout.includes("private.env"), false);
+  assert.equal(tree.stdout.includes("node_modules"), false);
 
   const filtered = await gitFixture();
   await writeFile(join(filtered, ".gitattributes"), "generated.bin filter=fixture\n");

@@ -203,6 +203,31 @@ export interface InstalledProviderAdapter {
   installedAt: string;
   manifest: ProviderAdapterManifest;
 }
+export interface ReviewedAdapterCatalogEntry {
+  slug: string;
+  id: string;
+  name: string;
+  description: string;
+  website: string | null;
+  version: string;
+  digest: string;
+  source: string;
+  executableNames: string[];
+  executableFound: boolean;
+  executablePath: string | null;
+  installed: boolean;
+  installedVersion: string | null;
+  installedDigest: string | null;
+  enabled: boolean | null;
+  action: "install" | "update" | "reinstall-same" | "current";
+  installLabel: string;
+  requiresCliHint: string;
+  package: {
+    source: string;
+    digest: string;
+    manifest: ProviderAdapterManifest;
+  } | null;
+}
 export type ProfileProbeKind = "availability" | "version" | "authentication" | "models";
 export interface ProfileProbe {
   state: "unknown" | "refreshing" | "ready" | "unavailable";

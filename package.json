@@ -44,6 +44,7 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "provider-adapters/**/*",
       "package.json"
     ],
     "protocols": [

@@ -6,13 +6,37 @@ import "./styles.css";
 import "./mock-shell.css";
 import type { ClaudeProfile, Product, RepositoryMetadata, ThreadMetadata } from "./types";
 import { CodeWorkbench } from "./features/code/workbench";
-import { RepositoryDialog } from "./features/dialogs/repository-dialog";
+import { RepositoryDialog, type SavedProject } from "./features/dialogs/repository-dialog";
 import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
 import { ProfileSettingsDialog } from "./features/dialogs/profile-settings-dialog";
 import { AdapterSettingsDialog } from "./features/dialogs/adapter-settings-dialog";
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
+
+const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
+
+function isDesignMockQuery(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("mock") === "1" || params.get("design") === "1";
+}
+
+function readLastRepositoryRoot(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_REPOSITORY_ROOT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeLastRepositoryRoot(root: string): void {
+  try {
+    window.localStorage.setItem(LAST_REPOSITORY_ROOT_KEY, root);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
 
 function App() {
   const [product, setProduct] = useState<Product>("code");
@@ -22,6 +46,8 @@ function App() {
   const [managedWorktreePath, setManagedWorktreePath] = useState<string | null>(null);
   const [repositoryBusy, setRepositoryBusy] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
+  const [repositoryRestoring, setRepositoryRestoring] = useState(() => !isDesignMockQuery());
+  const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [profileDialog, setProfileDialog] = useState(false);
   const [adapterDialog, setAdapterDialog] = useState(false);
@@ -37,6 +63,17 @@ function App() {
     if (response.ok) setProfiles(body.profiles ?? []);
   };
   useEffect(() => { void loadProfiles(); }, []);
+  const loadSavedProjects = async () => {
+    try {
+      // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
+      const response = await fetch("/api/projects/list", { method: "POST" });
+      if (!response.ok) return;
+      const body = await response.json() as { projects?: SavedProject[] };
+      setSavedProjects(body.projects ?? []);
+    } catch {
+      /* leave existing list */
+    }
+  };
   const loadThreads = async () => {
     const response = await fetch("/api/state/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "" }) });
     const body = await response.json() as { threads?: ThreadMetadata[] };
@@ -44,6 +81,7 @@ function App() {
   };
   useEffect(() => {
     void loadThreads();
+    void loadSavedProjects();
     void fetch("/api/preferences/load", { method: "POST" })
       .then(async (response) => response.ok ? readPreferencesResponse(await response.json()) : null)
       .then((result) => {
@@ -55,8 +93,7 @@ function App() {
   }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const designMock = new URLSearchParams(window.location.search).get("mock") === "1"
-      || new URLSearchParams(window.location.search).get("design") === "1";
+    const designMock = isDesignMockQuery();
     const applyTheme = () => {
       // Design mock is always dark (workbench-mock.html).
       document.documentElement.dataset.theme = designMock
@@ -88,9 +125,9 @@ function App() {
     setRepositoryError(null);
     setRepositoryDialog(true);
   };
-  const openRepository = async (path: string) => {
+  const openRepository = async (path: string, options?: { quiet?: boolean }) => {
     setRepositoryBusy(true);
-    setRepositoryError(null);
+    if (!options?.quiet) setRepositoryError(null);
     try {
       const response = await fetch("/api/repositories/open", {
         method: "POST",
@@ -99,23 +136,112 @@ function App() {
       });
       const body = await response.json() as RepositoryMetadata | { error?: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
-      setRepository(body as RepositoryMetadata);
-      await loadThreads();
-      setRepositoryDialog(false);
+      const next = body as RepositoryMetadata;
+      setRepository(next);
+      writeLastRepositoryRoot(next.root);
+      // Quiet opens (chat select / restore) must not reshuffle project chips.
+      if (options?.quiet) {
+        await loadThreads();
+      } else {
+        await Promise.all([loadThreads(), loadSavedProjects()]);
+        setRepositoryDialog(false);
+      }
+      return next;
     } catch (error) {
-      setRepositoryError(error instanceof Error ? error.message : "Repository discovery failed.");
+      if (!options?.quiet) {
+        setRepositoryError(error instanceof Error ? error.message : "Repository discovery failed.");
+      }
+      return null;
     } finally {
       setRepositoryBusy(false);
     }
   };
+  // Restore the last selected project after refresh/restart (not in design-mock mode).
+  useEffect(() => {
+    if (isDesignMockQuery()) {
+      setRepositoryRestoring(false);
+      return;
+    }
+    let active = true;
+    const restore = async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const urlProjectId = params.get("project");
+        const lastRoot = readLastRepositoryRoot();
+        let projects: SavedProject[] = [];
+        try {
+          const response = await fetch("/api/projects/list", { method: "POST" });
+          if (response.ok) {
+            const body = await response.json() as { projects?: SavedProject[] };
+            projects = body.projects ?? [];
+            if (active) setSavedProjects(projects);
+          }
+        } catch {
+          /* still try lastRoot below */
+        }
+        if (!active) return;
+
+        // Prefer URL project, then last root, then newest collapsed project (main checkout).
+        const rootCandidates: string[] = [];
+        if (urlProjectId) {
+          for (const project of projects) {
+            if (
+              project.id === urlProjectId
+              || project.memberIds?.includes(urlProjectId)
+            ) {
+              rootCandidates.push(project.root);
+            }
+          }
+        }
+        if (lastRoot) rootCandidates.push(lastRoot);
+        for (const project of projects) rootCandidates.push(project.root);
+
+        const seen = new Set<string>();
+        for (const root of rootCandidates) {
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          const opened = await openRepository(root, { quiet: true });
+          if (!active) return;
+          if (opened) return;
+        }
+      } catch {
+        /* leave empty shell if history cannot be restored */
+      } finally {
+        if (active) setRepositoryRestoring(false);
+      }
+    };
+    void restore();
+    return () => {
+      active = false;
+    };
+    // Run once on mount — openRepository is intentionally stable for restore.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div className="app">
       <CodeWorkbench
-        key={repository?.projectId ?? "no-project"}
         product={product}
         onProductChange={setProduct}
         repository={repository}
-        onOpenRepository={showRepositoryDialog}
+        repositoryRestoring={repositoryRestoring && !repository}
+        projects={savedProjects}
+        onAddProject={showRepositoryDialog}
+        onSelectProject={(projectId) => {
+          const project = savedProjects.find((item) =>
+            item.id === projectId || item.memberIds?.includes(projectId),
+          );
+          if (!project) return;
+          // Already on this logical project — do not re-open (bumps openedAt / reorders chips).
+          if (
+            repository
+            && (repository.projectId === project.id
+              || project.memberIds?.includes(repository.projectId)
+              || repository.root === project.root)
+          ) {
+            return;
+          }
+          void openRepository(project.root, { quiet: true });
+        }}
         profiles={profiles}
         onOpenProfiles={() => setProfileDialog(true)}
         onSearch={() => setSearchOpen(true)}
@@ -131,8 +257,10 @@ function App() {
         open={repositoryDialog}
         busy={repositoryBusy}
         error={repositoryError}
+        projects={savedProjects}
+        currentRoot={repository?.root ?? null}
         onClose={() => setRepositoryDialog(false)}
-        onSubmit={openRepository}
+        onSubmit={(path) => { void openRepository(path); }}
       />
       {worktreeDialog && (
         <WorktreeDialog

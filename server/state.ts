@@ -636,12 +636,30 @@ export class LocalStateStore {
     await operation;
   }
 
-  async saveProject(input: Omit<Project, "schemaVersion" | "openedAt">): Promise<Project> {
+  async saveProject(
+    input: Omit<Project, "schemaVersion" | "openedAt"> & { openedAt?: string },
+  ): Promise<Project> {
+    const projection = await this.load();
+    const existing = projection.projects.find((project) => project.id === input.id);
+    // Preserve first-open time on reselect so project chips do not reshuffle.
+    const openedAt = input.openedAt ?? existing?.openedAt ?? new Date().toISOString();
     const project: Project = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      ...input,
-      openedAt: new Date().toISOString(),
+      id: input.id,
+      name: input.name,
+      root: input.root,
+      openedAt,
     };
+    // Skip no-op writes (same id/name/root/openedAt) — selecting a chat must not
+    // emit project_saved events or change list order.
+    if (
+      existing
+      && existing.name === project.name
+      && existing.root === project.root
+      && existing.openedAt === project.openedAt
+    ) {
+      return existing;
+    }
     await this.#append({ type: "project_saved", project });
     return project;
   }
@@ -943,7 +961,8 @@ export class LocalStateStore {
   async markConversationVisited(threadId: string): Promise<Thread> {
     const thread = this.#requireThread(await this.load(), threadId);
     const now = new Date().toISOString();
-    const saved = { ...thread, lastVisitedAt: now, updatedAt: now };
+    // Visit is read-tracking only — do not bump updatedAt or the inbox resorts on every click.
+    const saved = { ...thread, lastVisitedAt: now };
     await this.#append({ type: "thread_saved", thread: saved });
     return saved;
   }

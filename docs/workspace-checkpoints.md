@@ -22,12 +22,17 @@ Checkpoint states are explicit:
 - `unavailable`: a safe snapshot could not be created.
 
 Capture refuses a dirty pre-turn workspace or pre-existing untracked files.
-Ignored paths, changed symlinks, submodules, untracked embedded repositories,
-Git clean/smudge filters, and working-tree encodings make checkpoints
-unavailable rather than partially captured. This prevents Aldunis Code from
-persisting sensitive ignored content or claiming it can restore bytes that Git
-transforms. A completed checkpoint can include ordinary non-ignored files
-created by the agent.
+Changed symlinks, submodules, untracked embedded repositories, Git clean/smudge
+filters, and working-tree encodings make checkpoints unavailable rather than
+partially captured. This prevents Aldunis Code from claiming it can restore
+bytes that Git transforms.
+
+Gitignored paths (for example `node_modules/`, build output, `.env`,
+`.DS_Store`) are outside checkpoint scope. They are not snapshotted, not
+rewritten on rewind, and no longer block capture merely by existing on disk—
+otherwise every ordinary project would report checkpoints as unavailable. Do
+not rely on rewind to undo agent writes into ignored paths. A completed
+checkpoint can include ordinary non-ignored files created by the agent.
 
 If a turn changes `HEAD`, its checkpoint is unavailable. Rewind restores a
 workspace and index; it never rewrites commits or branch history. Project
