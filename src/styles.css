@@ -610,6 +610,119 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
 .quick-results strong { display: block; font-size: 13.5px; font-weight: 500; }
 .quick-results small, .quick-results > p { display: block; color: var(--muted-foreground); font-size: 12px; }
 
+.automations {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px 16px;
+  min-height: 0;
+  overflow: auto;
+  max-height: min(70vh, 640px);
+}
+.automations__help {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.automations__error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--destructive-bg);
+  color: var(--destructive-foreground);
+  font-size: 13px;
+}
+.automations__toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.automations__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.automations__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.automations__item-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.automations__item-main strong {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.automations__item-main small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.automations__item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.automations__empty {
+  margin: 0;
+  padding: 16px 4px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+.automations__form {
+  display: grid;
+  gap: 12px;
+}
+.automations__field {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automations__field select,
+.automations__fieldset input[type="number"] {
+  width: 100%;
+}
+.automations__fieldset {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: grid;
+  gap: 8px;
+}
+.automations__fieldset legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.automations__inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+.automations__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .adapter-settings {
   display: flex;
   flex-direction: column;

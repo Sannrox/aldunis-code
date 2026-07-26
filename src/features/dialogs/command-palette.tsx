@@ -11,6 +11,7 @@ export function CommandPalette({
   onProviderSettings,
   onAdapterSettings,
   onManageWorktrees,
+  onAutomations,
   hasRepository = false,
 }: {
   open: boolean;
@@ -21,6 +22,7 @@ export function CommandPalette({
   onProviderSettings: () => void;
   onAdapterSettings: () => void;
   onManageWorktrees: () => void;
+  onAutomations: () => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
   hasRepository?: boolean;
 }) {
@@ -71,6 +73,11 @@ export function CommandPalette({
           detail: "Inspect and administer declarative ACP adapters",
           run: onAdapterSettings,
         },
+        {
+          label: "Automations",
+          detail: "Schedule durable prompts into existing conversations",
+          run: onAutomations,
+        },
         ...(hasRepository
           ? [
               {
@@ -87,7 +94,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAdapterSettings, onManageWorktrees, onOpenRepository, onPreferences, onProviderSettings, onSearch, query],
+    [hasRepository, onAdapterSettings, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderSettings, onSearch, query],
   );
 
   useEffect(() => {

@@ -16,6 +16,7 @@ local Aldunis Code host
     |-- repository and worktree adapter
     |-- normalized conversation/event store
     |-- permission broker
+    |-- scheduled automations (timer → existing conversation)
     `-- provider adapter
             `-- Claude Code subprocess
 
@@ -28,6 +29,11 @@ optional authenticated clients
 The browser never receives provider credentials or unrestricted filesystem
 access. The local host binds to loopback by default and resolves every
 repository operation against an explicitly opened root.
+
+Timer-only automations (interval or cron into an existing conversation) run
+inside the host process. See
+[scheduled automations](decisions/scheduled-automations.md). The host must stay
+running for schedules to fire; there is no external trigger surface in v1.
 
 Remote workbench access is not an exception to the loopback default. The
 [remote workbench recommendation](remote-workbench.md) permits a separate,

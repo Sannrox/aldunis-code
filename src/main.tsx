@@ -13,6 +13,7 @@ import { AdapterSettingsDialog } from "./features/dialogs/adapter-settings-dialo
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
+import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
 
@@ -57,6 +58,7 @@ function App() {
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
@@ -289,6 +291,10 @@ function App() {
         onPreferences={() => setPreferencesOpen(true)}
         onProviderSettings={() => setProfileDialog(true)}
         onAdapterSettings={() => setAdapterDialog(true)}
+        onAutomations={() => {
+          void loadThreads();
+          setAutomationsOpen(true);
+        }}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
           setWorktreeDialog(true);
@@ -307,6 +313,11 @@ function App() {
           setPreferencesRecovered(false);
           setPreferencesOpen(false);
         }}
+      />
+      <AutomationsDialog
+        open={automationsOpen}
+        threads={threads}
+        onClose={() => setAutomationsOpen(false)}
       />
     </div>
   );

@@ -70,6 +70,9 @@ import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
+import { AutomationsError, AutomationsStore } from "./automations.ts";
+import { AutomationsScheduler } from "./automations-scheduler.ts";
+import { fireAutomationTurn } from "./automation-fire.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -263,6 +266,8 @@ async function handleApi(
   adapters: ProviderAdapterStore,
   activeAcp: Map<string, AcpProviderAdapter>,
   wake: WakeBroker,
+  automations: AutomationsStore,
+  automationScheduler: AutomationsScheduler,
   remoteRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
@@ -825,6 +830,83 @@ async function handleApi(
     }
     if (route === "/api/preferences/save") {
       sendJson(response, 200, await preferences.save(await readJson(request)));
+      return true;
+    }
+    if (route === "/api/automations/list") {
+      const loaded = await automations.load();
+      const projection = await state.load();
+      const threadsById = new Map(projection.threads.map((thread) => [thread.id, thread]));
+      const projectsById = new Map(projection.projects.map((project) => [project.id, project]));
+      sendJson(response, 200, {
+        recovered: loaded.recovered,
+        items: loaded.items.map((item) => {
+          const thread = threadsById.get(item.threadId);
+          const project = thread ? projectsById.get(thread.projectId) : undefined;
+          return {
+            ...item,
+            threadTitle: thread?.title ?? null,
+            projectName: project?.name ?? null,
+            threadMissing: !thread,
+          };
+        }),
+      });
+      return true;
+    }
+    if (route === "/api/automations/create") {
+      const body = await readJson(request) as {
+        name?: unknown;
+        prompt?: unknown;
+        schedule?: unknown;
+        threadId?: unknown;
+        enabled?: unknown;
+      };
+      if (typeof body.threadId !== "string") {
+        throw new AutomationsError("An existing conversation is required.");
+      }
+      const projection = await state.load();
+      if (!projection.threads.some((thread) => thread.id === body.threadId)) {
+        throw new AutomationsError("The selected conversation is not available.", 404);
+      }
+      sendJson(response, 200, {
+        automation: await automations.create({
+          name: typeof body.name === "string" ? body.name : "",
+          prompt: typeof body.prompt === "string" ? body.prompt : "",
+          schedule: body.schedule,
+          threadId: body.threadId,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        }),
+      });
+      return true;
+    }
+    if (route === "/api/automations/update") {
+      const body = await readJson(request) as {
+        id?: unknown;
+        name?: unknown;
+        prompt?: unknown;
+        schedule?: unknown;
+        threadId?: unknown;
+        enabled?: unknown;
+      };
+      if (typeof body.threadId === "string") {
+        const projection = await state.load();
+        if (!projection.threads.some((thread) => thread.id === body.threadId)) {
+          throw new AutomationsError("The selected conversation is not available.", 404);
+        }
+      }
+      sendJson(response, 200, { automation: await automations.update(body) });
+      return true;
+    }
+    if (route === "/api/automations/delete") {
+      const body = await readJson(request) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutomationsError("Automation id is required.");
+      await automations.delete(body.id);
+      sendJson(response, 200, { deleted: true });
+      return true;
+    }
+    if (route === "/api/automations/run-now") {
+      const body = await readJson(request) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutomationsError("Automation id is required.");
+      sendJson(response, 200, { automation: await automationScheduler.runNow(body.id) });
       return true;
     }
     if (route === "/api/state/projects/delete") {
@@ -2011,6 +2093,7 @@ async function handleApi(
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
+      || error instanceof AutomationsError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -2022,6 +2105,7 @@ async function handleApi(
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
+      || error instanceof AutomationsError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -2074,6 +2158,35 @@ export function createLocalHost(
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
+  const automations = new AutomationsStore(state.directory);
+  // Filled after the HTTP server is constructed so automation fires can resolve the port.
+  let boundServer: ReturnType<typeof createHttpServer> | null = null;
+  const approvalUrl = async () => {
+    if (internalPermissionCallback) return internalPermissionCallback.url;
+    const address = boundServer?.address();
+    if (!address || typeof address === "string") {
+      throw new RepositoryError("The local permission broker is unavailable.", 503);
+    }
+    return `http://127.0.0.1:${address.port}/api/provider/permissions/request`;
+  };
+  const automationScheduler = new AutomationsScheduler(
+    automations,
+    (automation) => fireAutomationTurn(automation, {
+      state,
+      profiles,
+      provider,
+      codex,
+      adapters,
+      permissions,
+      activeAcp,
+      wake,
+      approvalUrl,
+      activeCheckpointWorktrees,
+      activeCheckpointProjects,
+      checkpointWorktreeKey,
+      publishThreadStatusTransition,
+    }),
+  );
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
   const recovery = state.recoverInterruptedTurns();
@@ -2113,6 +2226,8 @@ export function createLocalHost(
         adapters,
         activeAcp,
         wake,
+        automations,
+        automationScheduler,
         Boolean(remoteAuth),
         remoteAuth,
         internalPermissionCallback?.url,
@@ -2121,6 +2236,11 @@ export function createLocalHost(
     await serveStatic(request, response, dist);
   };
   const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
-  server.once("close", () => internalPermissionCallback?.server.close());
+  boundServer = server;
+  server.once("listening", () => automationScheduler.start());
+  server.once("close", () => {
+    automationScheduler.stop();
+    internalPermissionCallback?.server.close();
+  });
   return server;
 }
