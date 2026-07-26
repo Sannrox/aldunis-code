@@ -12,6 +12,7 @@ import { ProfileSettingsDialog } from "./features/dialogs/profile-settings-dialo
 import { AdapterSettingsDialog } from "./features/dialogs/adapter-settings-dialog";
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
+import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
 
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
@@ -54,6 +55,7 @@ function App() {
   const [threads, setThreads] = useState<ThreadMetadata[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
@@ -289,11 +291,17 @@ function App() {
         onPreferences={() => setPreferencesOpen(true)}
         onProviderSettings={() => setProfileDialog(true)}
         onAdapterSettings={() => setAdapterDialog(true)}
+        onAutomations={() => setAutomationsOpen(true)}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
           setWorktreeDialog(true);
         }}
         hasRepository={repository != null}
+      />
+      <AutomationsDialog
+        open={automationsOpen}
+        threads={threads.map((thread) => ({ id: thread.id, title: thread.title }))}
+        onClose={() => setAutomationsOpen(false)}
       />
       <PreferencesDialog
         open={preferencesOpen}
