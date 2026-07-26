@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-26
+- Updated: 2026-07-26 (#118 PermissionBroker pre-exec)
 
 ## Context
 
@@ -27,10 +28,12 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
    `SHIKIGAMI_API_KEY_ENV`); otherwise offline `scripted` for readiness demos.
 5. Do **not** require an ACP surface or in-process Rust embed for the first
    integration.
-6. **No mutating tools in v1** of the adapter. Shikigami does not pause for
-   Code’s PermissionBroker mid-turn; enabling write/edit/apply_patch would
-   bypass the workbench approval contract. Read/search/report/todo only until
-   a pre-exec approval bridge exists.
+6. **Mutating tools require PermissionBroker pre-exec.** Build mode may enable
+   `write_file`, `edit`, `multi_edit`, `apply_patch`, `bash`, and
+   `bash_background`. Each invocation is gated by a fail-closed shikigami
+   `pre_tool` hook that calls Code’s local permission request endpoint (same
+   allow-once / deny / cancel / expiry contract as Claude). Ask and Plan stay
+   non-mutating. Mode selection alone is not a substitute for approval.
 7. **Each Code message is a new harness run** (not checkpoint `--resume`).
    Park recovery remains CLI-side for now.
 8. Pass the user prompt via `run --task-file` (file under the host run state dir),
@@ -43,9 +46,8 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
 - Operators need the `shikigami` binary on `PATH` (tenkai/GitHub Release).
 - Park/resume is reported as a failed terminal with CLI resume guidance until
   Code grows a park-answer UX.
-- Mutating coding work still prefers Claude/Codex until shikigami approval is
-  wired; this path proves conversation + harness event integration first.
+- Pre-tool approval waits are capped by shikigami’s hook `timeout_ms` max (120s).
 - MCP and ACP remain available later if product needs them; they are not the
   default Code path.
 - Freeze-core for shikigami stays in the shikigami crate; Code only depends on
-  the CLI + stderr event contract.
+  the CLI + stderr event contract + settings hooks.
