@@ -1,0 +1,43 @@
+{
+  "dialogHeight": 720,
+  "bodyScrollable": true,
+  "bodyOverflow": "auto",
+  "cardInfo": [
+    {
+      "name": "Kiro CLI",
+      "idLine": "dev.kiro.cli@1.0.0 · Not installed",
+      "strongDisplay": "block",
+      "smallDisplay": "block",
+      "jammed": false,
+      "buttonFullyVisible": true,
+      "buttonBottom": 492,
+      "dialogBottom": 810,
+      "installLabel": "Install Kiro CLI"
+    },
+    {
+      "name": "Grok Build CLI",
+      "idLine": "dev.xai.grok-build@1.0.0 · Not installed",
+      "strongDisplay": "block",
+      "smallDisplay": "block",
+      "jammed": false,
+      "buttonFullyVisible": true,
+      "buttonBottom": 720,
+      "dialogBottom": 810,
+      "installLabel": "Install Grok Build CLI"
+    }
+  ],
+  "afterScroll": [
+    {
+      "label": "Install Kiro CLI",
+      "fullyVisible": true,
+      "buttonBottom": 429,
+      "dialogBottom": 810
+    },
+    {
+      "label": "Install Grok Build CLI",
+      "fullyVisible": true,
+      "buttonBottom": 657,
+      "dialogBottom": 810
+    }
+  ]
+}
