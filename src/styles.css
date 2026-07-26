@@ -901,6 +901,88 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
 .annotation-composer, .revision-preview {
   margin: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
 }
+.annotation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.annotation-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.annotation-item.stale {
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--border));
+}
+.annotation-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+.annotation-select > input {
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+.annotation-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.annotation-target {
+  font: 12px var(--font-mono);
+  font-weight: 500;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.annotation-scope {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.annotation-meta {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  line-height: 1.35;
+}
+.annotation-text {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.annotation-resolve {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: 1px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+}
+.annotation-resolve:hover:not(:disabled) {
+  background: var(--accent);
+}
+.annotation-resolve:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
 .provider-error { color: var(--destructive-foreground); font-size: 13px; margin-top: 8px; }
