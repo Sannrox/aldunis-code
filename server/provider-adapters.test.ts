@@ -392,6 +392,27 @@ test("the shipped Kiro adapter is declarative, direct-only, and schema-valid", a
   assert.equal(raw.includes("KIRO_API_KEY"), false);
 });
 
+test("the shipped OpenCode adapter is declarative, direct-only, and schema-valid", async () => {
+  const raw = await readFile(
+    new URL("../provider-adapters/opencode-cli.json", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseProviderAdapterManifest(JSON.parse(raw));
+  const reviewedDigest = (
+    await readFile(new URL("../provider-adapters/opencode-cli.sha256", import.meta.url), "utf8")
+  ).trim();
+  assert.equal(parsed.id, "ai.opencode.cli");
+  assert.deepEqual(parsed.executable, {
+    names: ["opencode", "opencode.exe"],
+    arguments: ["acp"],
+  });
+  assert.equal(parsed.capabilities.tools, true);
+  assert.equal(parsed.capabilities.sessionResume, true);
+  assert.equal(adapterDigest(parsed), reviewedDigest);
+  assert.equal(raw.includes("--trust-all-tools"), false);
+  assert.equal(raw.includes("--yolo"), false);
+});
+
 test("Kiro optional notifications are capability-isolated from core ACP events", () => {
   assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
     jsonrpc: "2.0",
