@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { PermissionBroker } from "./permission.ts";
 import {
@@ -9,8 +11,10 @@ import {
   ProviderProtocolError,
 } from "./provider.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
+import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
+const MAX_ACP_FS_READ_BYTES = 1024 * 1024;
 const ACP_HANDSHAKE_TIMEOUT_MS = 10_000;
 const ACP_RUN_TIMEOUT_MS = 30 * 60_000;
 type JsonRecord = Record<string, unknown>;
@@ -67,16 +71,37 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
     }];
   }
   if (updateType === "tool_call_update") {
-    const status = update.status;
-    if (status === "completed" || status === "failed") {
+    // Agents (notably Grok Build) emit metadata-only tool_call_update frames with
+    // no status — title/locations/kind enrichment. Those are progress, not terminal.
+    const rawStatus = update.status;
+    if (rawStatus === undefined || rawStatus === null || rawStatus === "") return [];
+    const status = String(rawStatus).toLowerCase();
+    if (status === "completed" || status === "success") {
       return [{
         kind: "tool_finished",
         toolCallId: requiredString(update.toolCallId, "tool call ID"),
-        failed: status === "failed",
+        failed: false,
       }];
     }
-    if (status === "pending" || status === "in_progress") return [];
-    throw new ProviderProtocolError("ACP emitted an unsupported tool status.");
+    if (status === "failed" || status === "error") {
+      return [{
+        kind: "tool_finished",
+        toolCallId: requiredString(update.toolCallId, "tool call ID"),
+        failed: true,
+      }];
+    }
+    // Intermediate / soft statuses — ignore without failing the turn.
+    if (
+      status === "pending"
+      || status === "in_progress"
+      || status === "running"
+      || status === "cancelled"
+      || status === "canceled"
+    ) {
+      return [];
+    }
+    // Unknown status strings: tolerate rather than kill the conversation.
+    return [];
   }
   const informational = new Set([
     "agent_thought_chunk",
@@ -152,6 +177,60 @@ export function acpPromptRequest(
       prompt: [{ type: "text", text: prompt }],
     },
   };
+}
+
+/**
+ * Serve ACP `fs/read_text_file` for agents that delegate reads to the client
+ * (Grok Build). Path must resolve inside the conversation worktree.
+ */
+export async function acpReadTextFile(
+  worktree: string,
+  params: unknown,
+): Promise<{ content: string }> {
+  const recordParams = record(params);
+  const requested = recordParams?.path;
+  if (typeof requested !== "string" || !requested) {
+    throw new ProviderProtocolError("ACP fs/read_text_file is missing path.");
+  }
+  const candidate = isAbsolute(requested) ? requested : resolvePath(worktree, requested);
+  let path: string;
+  try {
+    path = await constrainPath(worktree, candidate);
+  } catch (error) {
+    if (error instanceof RepositoryError) {
+      throw new ProviderProtocolError("ACP fs/read_text_file path escapes the conversation worktree.");
+    }
+    throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
+  }
+  let size: number;
+  try {
+    size = (await stat(path)).size;
+  } catch {
+    throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
+  }
+  if (size > MAX_ACP_FS_READ_BYTES) {
+    throw new ProviderProtocolError("ACP fs/read_text_file exceeds the host read size limit.");
+  }
+  let content: string;
+  try {
+    content = await readFile(path, "utf8");
+  } catch {
+    throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
+  }
+  // Optional 1-based line window (ACP clients may request a slice).
+  const line = typeof recordParams?.line === "number" && Number.isFinite(recordParams.line)
+    ? Math.max(1, Math.floor(recordParams.line))
+    : null;
+  const limit = typeof recordParams?.limit === "number" && Number.isFinite(recordParams.limit)
+    ? Math.max(0, Math.floor(recordParams.limit))
+    : null;
+  if (line !== null || limit !== null) {
+    const lines = content.split("\n");
+    const start = (line ?? 1) - 1;
+    const end = limit === null ? lines.length : start + limit;
+    content = lines.slice(Math.max(0, start), Math.max(0, end)).join("\n");
+  }
+  return { content };
 }
 
 interface ActiveRun {
@@ -302,7 +381,9 @@ export class AcpProviderAdapter {
       method: "initialize",
       params: {
         protocolVersion: 1,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+        // Grok Build delegates tool reads via client fs/read_text_file; serve
+        // worktree-bounded reads only. Writes stay disabled.
+        clientCapabilities: { fs: { readTextFile: true, writeTextFile: false }, terminal: false },
         clientInfo: { name: "aldunis-code", version: "0.1.0" },
       },
     });
@@ -361,6 +442,29 @@ export class AcpProviderAdapter {
           continue;
         }
         if (message.id !== undefined && typeof message.method === "string") {
+          if (message.method === "fs/read_text_file") {
+            setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
+            try {
+              const result = await acpReadTextFile(options.worktree, message.params);
+              this.#send(active.child, {
+                jsonrpc: "2.0",
+                id: message.id as RpcId,
+                result,
+              });
+            } catch (error) {
+              this.#send(active.child, {
+                jsonrpc: "2.0",
+                id: message.id as RpcId,
+                error: {
+                  code: -32000,
+                  message: error instanceof ProviderProtocolError
+                    ? error.message
+                    : "ACP fs/read_text_file failed.",
+                },
+              });
+            }
+            continue;
+          }
           if (message.method !== "session/request_permission") {
             this.#send(active.child, {
               jsonrpc: "2.0", id: message.id as RpcId,
