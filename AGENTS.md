@@ -66,3 +66,10 @@ flows, and operational safeguards.
 - `verify-code-change` — run proportionate UI, provider, contract, and security checks.
 - `capture-code-decision` — preserve accepted architecture outcomes.
 
+Before committing work delivered through `deliver-code-issue`, run the **global**
+`autoreview` helper (for example
+`$HOME/.grok/skills/autoreview/scripts/autoreview`, with
+`$HOME/.agents/...` or `$HOME/.claude/...` as fallbacks). Do not vendor
+`autoreview` into this repository. Deterministic verify and live UI stress
+complement it; they do not replace it.
+
