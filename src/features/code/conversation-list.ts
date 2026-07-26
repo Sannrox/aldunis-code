@@ -4,8 +4,12 @@ import type {
   ThreadStatusProjection,
 } from "../../types";
 
+/**
+ * Load threads for the inbox. Pass a project id to scope, or null/undefined for
+ * T3-style "All" (every registered project).
+ */
 export async function loadConversationList(
-  repository: RepositoryMetadata,
+  projectId?: string | null,
 ): Promise<ConversationSummary[]> {
   const response = await fetch("/api/state/load", { method: "POST" });
   if (!response.ok) throw new Error("Conversation history could not be loaded.");
@@ -17,15 +21,18 @@ export async function loadConversationList(
   const statusById = new Map(
     (projection.threadStatuses ?? []).map((item) => [item.threadId, item]),
   );
-  const projectName = projection.projects?.find((p) => p.id === repository.projectId)?.name
-    ?? repository.name;
+  const projectNames = new Map(
+    (projection.projects ?? []).map((project) => [project.id, project.name]),
+  );
   return projection.threads
-    .filter((thread) => thread.projectId === repository.projectId)
+    .filter((thread) => !projectId || thread.projectId === projectId)
     .map((thread) => {
       const status = statusById.get(thread.id);
       return {
         ...thread,
-        projectName,
+        projectName: projectNames.get(thread.projectId)
+          ?? thread.projectName
+          ?? "project",
         status: status?.status ?? "idle",
         statusSince: status?.since ?? thread.updatedAt,
       };
@@ -34,6 +41,13 @@ export async function loadConversationList(
       if (Boolean(left.pinnedAt) !== Boolean(right.pinnedAt)) return left.pinnedAt ? -1 : 1;
       return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
     });
+}
+
+/** @deprecated Prefer loadConversationList(projectId). Kept for call sites that pass a repository. */
+export async function loadConversationListForRepository(
+  repository: RepositoryMetadata,
+): Promise<ConversationSummary[]> {
+  return loadConversationList(repository.projectId);
 }
 
 export function isUnread(thread: ConversationSummary): boolean {

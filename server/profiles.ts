@@ -11,6 +11,24 @@ const PROFILE_SCHEMA_VERSION = 1;
 const DEFAULT_MODELS = ["default", "sonnet", "opus", "haiku"] as const;
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/**
+ * Built-in harness defaults that must work without manual profile setup.
+ * Claude Code is the only harness that requires a named profile for binary /
+ * config-dir / env. Codex CLI is discovered from PATH and needs no profile.
+ * Declarative ACP adapters are installed separately and are not seeded here.
+ */
+export const DEFAULT_CLAUDE_PROFILE_ID = "default:claude-code";
+
+export const BUILTIN_HARNESS_DEFAULTS = [
+  {
+    id: DEFAULT_CLAUDE_PROFILE_ID,
+    harness: "claude-code" as const,
+    name: "Claude Code",
+    binaryPath: "claude",
+    homePath: "",
+  },
+] as const;
+
 export type ProfileProbeKind = "availability" | "version" | "authentication" | "models";
 export type ProbeState = "unknown" | "refreshing" | "ready" | "unavailable";
 
@@ -166,12 +184,49 @@ export class ClaudeProfileStore {
     return { profiles, secrets };
   }
 
+  /**
+   * Ensure every built-in harness that needs a profile has a usable default.
+   * Idempotent by stable profile id: missing built-ins are added; existing
+   * user-edited rows with the same id are left alone. Codex CLI and other
+   * PATH-discovered harnesses do not use this store.
+   */
+  async ensureDefaults(): Promise<ClaudeProfileSnapshot[]> {
+    let result!: ClaudeProfileSnapshot[];
+    const operation = this.#writeQueue.then(async () => {
+      const { profiles, secrets } = await this.#documents();
+      const now = new Date().toISOString();
+      let changed = false;
+      for (const builtin of BUILTIN_HARNESS_DEFAULTS) {
+        if (builtin.harness !== "claude-code") continue;
+        if (profiles.profiles.some((profile) => profile.id === builtin.id)) continue;
+        const profile: ClaudeProfile = {
+          schemaVersion: PROFILE_SCHEMA_VERSION,
+          id: builtin.id,
+          name: builtin.name,
+          binaryPath: builtin.binaryPath,
+          homePath: builtin.homePath,
+          environment: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        // Prefer the built-in default first so the composer auto-selects it.
+        profiles.profiles.unshift(profile);
+        this.#probes.delete(profile.id);
+        changed = true;
+      }
+      if (changed) await writeDocument(this.#profilesPath, profiles);
+      result = profiles.profiles.map((profile) => ({
+        ...publicProfile(profile, secrets),
+        probes: structuredClone(this.#probes.get(profile.id) ?? emptyProbes()),
+      }));
+    });
+    this.#writeQueue = operation.catch(() => undefined);
+    await operation;
+    return result;
+  }
+
   async list(): Promise<ClaudeProfileSnapshot[]> {
-    const { profiles, secrets } = await this.#documents();
-    return profiles.profiles.map((profile) => ({
-      ...publicProfile(profile, secrets),
-      probes: structuredClone(this.#probes.get(profile.id) ?? emptyProbes()),
-    }));
+    return this.ensureDefaults();
   }
 
   async save(input: {
