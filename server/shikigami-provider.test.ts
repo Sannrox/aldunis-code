@@ -120,6 +120,46 @@ process.exit(1);
   ]);
 });
 
+test("ShikigamiAdapter surfaces park resume guidance over generic failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-park-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "version") {
+  console.log("shikigami 1.0.2");
+  process.exit(0);
+}
+if (args.includes("run")) {
+  console.error('[shikigami] {"type":"run_finished","run_id":"bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee","success":false,"summary":"need operator input"}');
+  console.log("run bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee turns=1 success=false termination=parked summary=need operator input");
+  console.log("parked reason=need operator input");
+  console.log("parked question=continue?");
+  process.exit(0);
+}
+process.exit(1);
+`);
+  await chmod(executable, 0o700);
+
+  const adapter = new ShikigamiAdapter(executable);
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "33333333-3333-4333-8333-333333333333",
+    prompt: "park me",
+    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+    mode: "build",
+  }, process.env);
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  const failed = events.find((event) => event.kind === "failed");
+  assert.equal(failed?.kind, "failed");
+  if (failed?.kind === "failed") {
+    assert.match(failed.message, /parked/i);
+    assert.match(failed.message, /--resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee/);
+    assert.match(failed.message, /need operator input/);
+  }
+});
+
 test("ShikigamiAdapter cancel stops a long-running fixture", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-cancel-"));
   const executable = join(directory, "fake-shikigami");
