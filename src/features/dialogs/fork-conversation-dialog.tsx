@@ -1,5 +1,5 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
-import type { ConversationSummary, ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
+import React, { useEffect, useState } from "react";
+import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
 import { Button } from "../../components/ui";
 import { OverlayDialog } from "./overlay-dialog";
 
@@ -18,8 +18,12 @@ export function ForkConversationDialog({
   onClose: () => void;
   onCreated: (threadId: string) => void;
 }) {
-  const destination: ProviderId = sourceProvider === "claude-code" ? "codex-cli" : "claude-code";
   const codex = providers.find((provider) => provider.id === "codex-cli");
+  const shikigamiProvider = providers.find((provider) => provider.id === "shikigami");
+  const defaultDestination: ProviderId = sourceProvider === "claude-code"
+    ? (codex?.installed && codex.authenticated ? "codex-cli" : "shikigami")
+    : "claude-code";
+  const [destination, setDestination] = useState<ProviderId>(defaultDestination);
   const [preview, setPreview] = useState<ForkPreview | null>(null);
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
   const [model, setModel] = useState("default");
@@ -63,9 +67,16 @@ export function ForkConversationDialog({
   };
   const unavailable = destination === "codex-cli"
     ? !codex?.installed || !codex.authenticated
+    : destination === "shikigami"
+    ? !shikigamiProvider?.installed || !shikigamiProvider.authenticated
     : profiles.length === 0;
+  const destinationLabel = destination === "codex-cli"
+    ? "Codex CLI"
+    : destination === "shikigami"
+    ? "Shikigami"
+    : "Claude Code";
   return (
-    <OverlayDialog title={`Fork to ${destination === "codex-cli" ? "Codex CLI" : "Claude Code"}`} onClose={onClose}>
+    <OverlayDialog title={`Fork to ${destinationLabel}`} onClose={onClose}>
       <div className="fork-dialog">
         <p>This creates a new provider-native conversation. The source and its provider session remain unchanged.</p>
         {busy && !preview && <p role="status">Preparing bounded context…</p>}
@@ -92,10 +103,37 @@ export function ForkConversationDialog({
             <summary>Always excluded</summary>
             <ul>{preview.excluded.map((item) => <li key={item}>{item}</li>)}</ul>
           </details>
+          <label>Destination provider
+            <select
+              value={destination}
+              onChange={(event) => {
+                setDestination(event.target.value as ProviderId);
+                setModel("default");
+              }}
+            >
+              <option value="claude-code" disabled={sourceProvider === "claude-code"}>Claude Code</option>
+              <option
+                value="codex-cli"
+                disabled={sourceProvider === "codex-cli" || !codex?.installed || !codex?.authenticated}
+              >
+                Codex CLI
+              </option>
+              <option
+                value="shikigami"
+                disabled={sourceProvider === "shikigami" || !shikigamiProvider?.installed || !shikigamiProvider?.authenticated}
+              >
+                Shikigami
+              </option>
+            </select>
+          </label>
           {destination === "claude-code" ? <>
             <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
             <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{["default", "sonnet", "opus", "haiku"].map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
-          </> : <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>}
+          </> : destination === "codex-cli" ? (
+            <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
+          ) : (
+            <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{shikigamiProvider?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
+          )}
           <footer><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</Button></footer>
         </>}
         {unavailable && <p className="context-error" role="alert">The destination provider is unavailable or not authenticated.</p>}
@@ -104,5 +142,3 @@ export function ForkConversationDialog({
     </OverlayDialog>
   );
 }
-
-
