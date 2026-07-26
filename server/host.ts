@@ -314,18 +314,38 @@ async function handleApi(
         version: null,
         models: [],
       }));
+      const declarativeProviders = await Promise.all(
+        (await adapters.list()).map(async (adapter) => {
+          let executableFound = false;
+          try {
+            await adapters.resolveExecutable(adapter);
+            executableFound = true;
+          } catch {
+            executableFound = false;
+          }
+          const missingRequiredEnv = adapter.manifest.environment
+            .filter((entry) => entry.required)
+            .some((entry) => {
+              const value = process.env[entry.name];
+              return value === undefined || value === "";
+            });
+          return {
+            id: adapterReference(adapter.manifest),
+            installed: true,
+            // Reuse authenticated as "run-ready" so the composer can filter adapters
+            // that cannot start (missing CLI or required env), like unauthenticated Codex.
+            authenticated: executableFound && !missingRequiredEnv,
+            version: adapter.manifest.version,
+            name: adapter.manifest.presentation.name,
+            enabled: adapter.enabled,
+          };
+        }),
+      );
       sendJson(response, 200, {
         providers: [
           { id: "claude-code", installed: true },
           codexReadiness,
-          ...(await adapters.list()).map((adapter) => ({
-            id: adapterReference(adapter.manifest),
-            installed: true,
-            authenticated: true,
-            version: adapter.manifest.version,
-            name: adapter.manifest.presentation.name,
-            enabled: adapter.enabled,
-          })),
+          ...declarativeProviders,
         ],
       });
       return true;
