@@ -27,8 +27,8 @@ import {
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
-/** inplace workspace adapter landed after 1.0.0. */
-const MIN_PATCH_FOR_INPLACE = 1;
+/** inplace workspace + --task-file for private prompts. */
+const MIN_PATCH_FOR_HOST = 2;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const RUN_TIMEOUT_MS = 30 * 60_000;
 const EVENT_PREFIX = "[shikigami] ";
@@ -74,9 +74,9 @@ export function assertSupportedShikigamiVersion(output: string): string {
   }
   const minor = Number(match[2]);
   const patch = Number(match[3]);
-  if (minor === 0 && patch < MIN_PATCH_FOR_INPLACE) {
+  if (minor === 0 && patch < MIN_PATCH_FOR_HOST) {
     throw new ProviderProtocolError(
-      "Unsupported shikigami version. Aldunis Code requires 1.0.1+ (inplace workspace adapter).",
+      "Unsupported shikigami version. Aldunis Code requires 1.0.2+ (inplace workspace + --task-file).",
     );
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
@@ -388,6 +388,9 @@ export class ShikigamiAdapter {
       "utf8",
     );
 
+    // Keep prompts off argv (process table privacy).
+    const taskPath = join(workDir, "task.txt");
+    await writeFile(taskPath, options.prompt, "utf8");
     const args = [
       "--config",
       configPath,
@@ -396,9 +399,8 @@ export class ShikigamiAdapter {
       "run",
       // inplace workspaces must not be deleted; keep_workspace is still set for safety.
       "--keep-workspace",
-      // Terminate option parsing so prompts starting with `-` are task text.
-      "--",
-      options.prompt,
+      "--task-file",
+      taskPath,
     ];
     // Each Code message is a fresh harness run. Checkpoint --resume is for
     // mid-run park recovery, not multi-turn chat continuation.

@@ -17,7 +17,7 @@ declarative ACP adapters (Kiro, Grok Build). Shikigami does not speak ACP today.
 
 Integrate shikigami as a **first-class subprocess provider** (`provider: "shikigami"`):
 
-1. Discover via `shikigami version` (major `1.x` required).
+1. Discover via `shikigami version` (**1.0.2+** required: `inplace` workspace + `--task-file`).
 2. Start runs by spawning `shikigami --config … --state … run …` with a
    generated local config (workspace = selected worktree; tools filtered by
    ask/plan/build mode).
@@ -33,7 +33,9 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
    a pre-exec approval bridge exists.
 7. **Each Code message is a new harness run** (not checkpoint `--resume`).
    Park recovery remains CLI-side for now.
-8. Governance defaults to `local`; operators may set `SHIKIGAMI_GOVERNANCE_ADAPTER`
+8. Pass the user prompt via `run --task-file` (file under the host run state dir),
+   not argv, so prompts do not appear in the process table.
+9. Governance defaults to `local`; operators may set `SHIKIGAMI_GOVERNANCE_ADAPTER`
    / `SHIKIGAMI_FAIL_CLOSED` (and plane endpoint env) for governed profiles.
 
 ## Consequences

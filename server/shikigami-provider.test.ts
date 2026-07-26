@@ -12,10 +12,10 @@ import {
   ShikigamiToolIdTracker,
 } from "./shikigami-provider.ts";
 
-test("assertSupportedShikigamiVersion accepts 1.0.1+ product lines", () => {
-  assert.equal(assertSupportedShikigamiVersion("shikigami 1.0.1"), "1.0.1");
+test("assertSupportedShikigamiVersion accepts 1.0.2+ product lines", () => {
+  assert.equal(assertSupportedShikigamiVersion("shikigami 1.0.2"), "1.0.2");
   assert.throws(() => assertSupportedShikigamiVersion("shikigami 0.2.0"), /major version 1/);
-  assert.throws(() => assertSupportedShikigamiVersion("shikigami 1.0.0"), /1\.0\.1/);
+  assert.throws(() => assertSupportedShikigamiVersion("shikigami 1.0.1"), /1\.0\.2/);
 });
 
 test("normalizeShikigamiEvent maps harness events", () => {
@@ -81,7 +81,7 @@ test("ShikigamiAdapter streams events from a fixture CLI", async () => {
   await writeFile(executable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
-  console.log("shikigami 1.0.1");
+  console.log("shikigami 1.0.2");
   process.exit(0);
 }
 if (args.includes("run")) {
@@ -99,7 +99,7 @@ process.exit(1);
   const adapter = new ShikigamiAdapter(executable);
   const readiness = await adapter.readiness(process.env);
   assert.equal(readiness.installed, true);
-  assert.equal(readiness.version, "1.0.1");
+  assert.equal(readiness.version, "1.0.2");
 
   const run = await adapter.start({
     repository: directory,
@@ -126,7 +126,7 @@ test("ShikigamiAdapter cancel stops a long-running fixture", async () => {
   await writeFile(executable, `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
-  console.log("shikigami 1.0.1");
+  console.log("shikigami 1.0.2");
   process.exit(0);
 }
 console.error('[shikigami] {"type":"status","status":"running"}');
