@@ -289,6 +289,11 @@ function App() {
         onPreferences={() => setPreferencesOpen(true)}
         onProviderSettings={() => setProfileDialog(true)}
         onAdapterSettings={() => setAdapterDialog(true)}
+        onManageWorktrees={() => {
+          setManagedWorktreePath(null);
+          setWorktreeDialog(true);
+        }}
+        hasRepository={repository != null}
       />
       <PreferencesDialog
         open={preferencesOpen}
