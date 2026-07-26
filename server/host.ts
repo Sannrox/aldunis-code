@@ -2102,7 +2102,7 @@ export function createLocalHost(
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
-  const shikigami = new ShikigamiAdapter("shikigami");
+  const shikigami = new ShikigamiAdapter("shikigami", permissions);
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);

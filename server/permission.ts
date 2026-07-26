@@ -49,6 +49,13 @@ const MUTATING_TOOLS = new Set([
   "NotebookEdit",
   "ProviderAction",
   "Write",
+  // Shikigami (snake_case) tool names.
+  "write_file",
+  "edit",
+  "multi_edit",
+  "apply_patch",
+  "bash",
+  "bash_background",
 ]);
 
 const SECRET_KEYS = /(?:authorization|cookie|credential|password|secret|token|api[_-]?key)/i;
@@ -131,12 +138,26 @@ export function describeMutation(toolName: string, inputValue: unknown): Approva
     NotebookEdit: "Edit a notebook",
     Write: "Write a file",
     ProviderAction: "Run a provider action",
+    write_file: "Write a file",
+    edit: "Edit a file",
+    multi_edit: "Edit a file",
+    apply_patch: "Apply a patch",
+    bash: "Run a command",
+    bash_background: "Start a background command",
   };
+  const defaultTarget = toolName === "write_file"
+    || toolName === "edit"
+    || toolName === "multi_edit"
+    || toolName === "apply_patch"
+    || toolName === "bash"
+    || toolName === "bash_background"
+    ? "Target provided by Shikigami"
+    : "Target provided by Claude Code";
   return {
-    summary: toolName === "Bash" && typeof input.host === "string"
+    summary: (toolName === "Bash" || toolName === "bash") && typeof input.host === "string"
       ? "Allow network access"
       : summaries[toolName] ?? `Run ${toolName}`,
-    target: targetEntry ? `${targetEntry[0]}: ${targetEntry[1]}` : "Target provided by Claude Code",
+    target: targetEntry ? `${targetEntry[0]}: ${targetEntry[1]}` : defaultTarget,
     details,
   };
 }
