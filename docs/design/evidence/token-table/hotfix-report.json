@@ -1,0 +1,37 @@
+{
+  "findings": [
+    {
+      "sev": "PASS",
+      "msg": "Catalog header stacked for Kiro CLI"
+    },
+    {
+      "sev": "PASS",
+      "msg": "Catalog header stacked for Grok Build CLI"
+    },
+    {
+      "sev": "PASS",
+      "msg": "All install buttons fully visible after scroll (or within dialog)"
+    },
+    {
+      "sev": "PASS",
+      "msg": "Adapter body scroll or all buttons initially visible"
+    },
+    {
+      "sev": "PASS",
+      "msg": "Settings density copy has no mock wording"
+    },
+    {
+      "sev": "PASS",
+      "msg": "Product menuitems have aria-labels: Code: Local workbench; Sekai: Knowledge plane; Chisei: Governance plane; Tenkai: Delivery plane"
+    },
+    {
+      "sev": "PASS",
+      "msg": "Project filter open with 6 options"
+    },
+    {
+      "sev": "PASS",
+      "msg": "No console errors"
+    }
+  ],
+  "consoleErrors": []
+}

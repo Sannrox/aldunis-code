@@ -368,8 +368,20 @@ html, body { height: 100%; }
   padding: 22px 24px 16px !important;
   border-bottom: 1px solid var(--border) !important;
 }
+/* Quick overlays (palette, adapters, profiles entry): column shell so body scrolls. */
+.quick-dialog {
+  width: min(560px, calc(100vw - 2rem)) !important;
+  max-height: min(80vh, 720px) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
 .quick-dialog .adapter-settings {
-  max-height: min(70vh, 640px);
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: auto !important;
 }
 
 .app {

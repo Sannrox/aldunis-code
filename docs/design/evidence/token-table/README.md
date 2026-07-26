@@ -24,3 +24,10 @@ node docs/design/evidence/token-table/capture.mjs before http://127.0.0.1:4180/
 # apply change, then
 node docs/design/evidence/token-table/capture.mjs after http://127.0.0.1:4180/
 ```
+
+## Live stress hotfix (no mock)
+
+`hotfix-*` captures are from the live workbench (`http://127.0.0.1:4174/`,
+no `?mock=1`). They record the adapter dialog layout fix (stacked name/id,
+install buttons fully visible, scrollable body), project filter menu, product
+switcher accessible names, and settings density copy without “mock” wording.
