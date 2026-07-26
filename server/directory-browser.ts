@@ -1,7 +1,16 @@
 import { lstat, opendir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { RepositoryError } from "./repository.ts";
+
+function expandUserPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
 
 export const DIRECTORY_BROWSE_LIMITS = {
   maxDepth: 12,
@@ -94,7 +103,7 @@ export class DirectoryBrowser {
   private async browseWithinLimits(options: BrowseOptions): Promise<DirectoryListing> {
     const startedAt = Date.now();
     const roots = await Promise.all(this.configuredRoots.map((root) => realpath(root)));
-    const requested = options.path ? resolve(options.path) : roots[0];
+    const requested = options.path ? resolve(expandUserPath(options.path)) : roots[0];
     const checkBudget = () => {
       if (options.signal?.aborted) {
         throw new RepositoryError("Directory browsing was cancelled.", 499);

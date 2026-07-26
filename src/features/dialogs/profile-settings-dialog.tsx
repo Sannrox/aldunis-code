@@ -110,7 +110,10 @@ export function ProfileSettingsDialog({
                 onClick={() => edit(profile)}
                 key={profile.id}
               >
-                <strong>{profile.name}</strong>
+                <strong>
+                  {profile.name}
+                  {profile.id === "default:claude-code" ? " · default" : ""}
+                </strong>
                 <small>{profile.homePath || "Default Claude home"}</small>
               </button>
             ))}

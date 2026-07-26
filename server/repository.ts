@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -107,19 +107,10 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
   if (submodules.split("\n").some((line) => line.startsWith("160000 "))) {
     throw new RepositoryError("Checkpoints are unavailable while the worktree contains submodules.", 409);
   }
-  const ignored = await git(worktree, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--ignored=matching",
-    "--untracked-files=all",
-  ]);
-  if (ignored.split("\0").some((entry) => entry.startsWith("!! "))) {
-    throw new RepositoryError(
-      "Checkpoints are unavailable while ignored files are present because their contents cannot be restored safely.",
-      409,
-    );
-  }
+  // Gitignored paths (node_modules, build output, .env, .DS_Store, …) are outside
+  // checkpoint scope: `git add -A` never stages them, so they are not snapshotted
+  // or rewritten on rewind. Refusing capture whenever any ignored path exists on
+  // disk made checkpoints unusable on ordinary projects. Leave them alone.
   const porcelain = await git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   const entries = porcelain.split("\0").filter(Boolean);
   if (!allowChanges && entries.length > 0) {
@@ -403,10 +394,19 @@ export async function deleteCheckpointReferences(
   }
 }
 
+function expandUserPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return join(homedir(), trimmed.slice(2));
+  }
+  return trimmed;
+}
+
 export async function canonicalizeRepositoryRoot(input: string): Promise<string> {
-  const selected = input.trim();
+  const selected = expandUserPath(input);
   if (!selected || !isAbsolute(selected)) {
-    throw new RepositoryError("Select an absolute repository path.");
+    throw new RepositoryError("Select an absolute repository path (or ~/…).");
   }
 
   let canonical: string;
@@ -501,13 +501,125 @@ export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[
   }));
 }
 
-export async function openRepository(input: string): Promise<RepositoryMetadata> {
-  const root = await canonicalizeRepositoryRoot(input);
+export async function repositoryCommonDir(worktreePath: string): Promise<string> {
+  const root = await canonicalizeRepositoryRoot(worktreePath);
+  return checkpointGitDirectory(root);
+}
+
+/** Primary checkout path for a repository (first entry from `git worktree list`). */
+export async function repositoryMainRoot(worktreePath: string): Promise<string> {
+  const root = await canonicalizeRepositoryRoot(worktreePath);
   const worktrees = await discoverWorktrees(root);
+  const primary = worktrees[0]?.path;
+  if (!primary) return root;
+  try {
+    return await realpath(primary);
+  } catch {
+    return root;
+  }
+}
+
+export interface CollapsedProject {
+  id: string;
+  name: string;
+  root: string;
+  openedAt: string;
+  /** All local project record ids that share this git repository (main + worktrees). */
+  memberIds: string[];
+}
+
+/**
+ * Collapse worktree/main checkouts of the same git repository into one project
+ * chip. Prefer the most recently opened record; expose the main worktree path
+ * as `root` when resolvable.
+ */
+export async function collapseProjectsByRepository(
+  projects: Array<{ id: string; name: string; root: string; openedAt: string }>,
+): Promise<CollapsedProject[]> {
+  const sorted = [...projects].sort(
+    (left, right) => right.openedAt.localeCompare(left.openedAt) || left.root.localeCompare(right.root),
+  );
+  const groups = new Map<string, {
+    winner: (typeof sorted)[number];
+    memberIds: string[];
+    commonDir: string;
+  }>();
+
+  for (const project of sorted) {
+    let key: string;
+    try {
+      key = await repositoryCommonDir(project.root);
+    } catch {
+      // Missing/orphaned worktree records: fold into an existing same-name
+      // repository chip instead of spawning another "aldunis-code" entry.
+      const sameName = [...groups.values()].find(
+        (group) => group.winner.name === project.name && !group.commonDir.startsWith("path:"),
+      );
+      if (sameName) {
+        sameName.memberIds.push(project.id);
+        continue;
+      }
+      if (isEphemeralWorktreePath(project.root)) {
+        // Drop unreachable agent worktrees that never had a main checkout saved.
+        continue;
+      }
+      key = `path:${project.root}`;
+    }
+    const existing = groups.get(key);
+    if (!existing) {
+      groups.set(key, { winner: project, memberIds: [project.id], commonDir: key });
+      continue;
+    }
+    existing.memberIds.push(project.id);
+    // Prefer a non-worktree-looking path when the winner is a managed/agent worktree.
+    const winnerLooksEphemeral = isEphemeralWorktreePath(existing.winner.root);
+    const candidateLooksPrimary = !isEphemeralWorktreePath(project.root);
+    if (winnerLooksEphemeral && candidateLooksPrimary) {
+      existing.winner = project;
+    }
+  }
+
+  const collapsed: CollapsedProject[] = [];
+  for (const group of groups.values()) {
+    let root = group.winner.root;
+    try {
+      root = await repositoryMainRoot(group.winner.root);
+    } catch {
+      /* keep winner root */
+    }
+    const name = root.split(sep).filter(Boolean).at(-1) ?? group.winner.name;
+    collapsed.push({
+      id: group.winner.id,
+      name,
+      root,
+      openedAt: group.winner.openedAt,
+      memberIds: [...new Set(group.memberIds)],
+    });
+  }
+
+  // Stable chip order: name, then root. Do not sort by last-selected time.
+  return collapsed.sort(
+    (left, right) => left.name.localeCompare(right.name) || left.root.localeCompare(right.root),
+  );
+}
+
+function isEphemeralWorktreePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return (
+    normalized.includes("/.codex/worktrees/")
+    || normalized.includes("/.aldunis/wt/")
+    || normalized.includes("/.git/worktrees/")
+  );
+}
+
+export async function openRepository(input: string): Promise<RepositoryMetadata> {
+  const selected = await canonicalizeRepositoryRoot(input);
+  const mainRoot = await repositoryMainRoot(selected);
+  const worktrees = await discoverWorktrees(mainRoot);
   return {
-    name: root.split(sep).filter(Boolean).at(-1) ?? root,
-    root,
-    selectedWorktree: root,
+    name: mainRoot.split(sep).filter(Boolean).at(-1) ?? selected.split(sep).filter(Boolean).at(-1) ?? mainRoot,
+    root: mainRoot,
+    selectedWorktree: selected,
     worktrees,
   };
 }
