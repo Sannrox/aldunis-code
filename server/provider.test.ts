@@ -74,6 +74,15 @@ test("unknown, malformed, and incompatible provider data fail closed", () => {
   assert.throws(() => assertSupportedClaudeVersion("not a version"), /Unsupported Claude Code version/);
 });
 
+test("Claude rate-limit and stream housekeeping events are ignored", () => {
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "allowed" },
+  }), []);
+  assert.deepEqual(normalizeClaudeEvent({ type: "stream_event" }), []);
+  assert.deepEqual(normalizeClaudeEvent({ type: "progress", message: "working" }), []);
+});
+
 test("provider errors are normalized without exposing raw diagnostics", () => {
   assert.deepEqual(normalizeClaudeEvent({
     type: "result", subtype: "error_during_execution", is_error: true,
