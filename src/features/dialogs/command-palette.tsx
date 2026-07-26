@@ -10,6 +10,8 @@ export function CommandPalette({
   onPreferences,
   onProviderSettings,
   onAdapterSettings,
+  onManageWorktrees,
+  hasRepository = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -18,6 +20,9 @@ export function CommandPalette({
   onPreferences: () => void;
   onProviderSettings: () => void;
   onAdapterSettings: () => void;
+  onManageWorktrees: () => void;
+  /** Worktree management requires an open repository; omit the action otherwise. */
+  hasRepository?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -66,10 +71,23 @@ export function CommandPalette({
           detail: "Inspect and administer declarative ACP adapters",
           run: onAdapterSettings,
         },
-      ].filter((action) =>
-        action.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
-      ),
-    [onAdapterSettings, onOpenRepository, onPreferences, onProviderSettings, onSearch, query],
+        ...(hasRepository
+          ? [
+              {
+                label: "Manage worktrees",
+                detail: "Create or remove managed conversation worktrees",
+                run: onManageWorktrees,
+              },
+            ]
+          : []),
+      ].filter((action) => {
+        const q = query.toLocaleLowerCase();
+        return (
+          action.label.toLocaleLowerCase().includes(q) ||
+          action.detail.toLocaleLowerCase().includes(q)
+        );
+      }),
+    [hasRepository, onAdapterSettings, onManageWorktrees, onOpenRepository, onPreferences, onProviderSettings, onSearch, query],
   );
 
   useEffect(() => {
