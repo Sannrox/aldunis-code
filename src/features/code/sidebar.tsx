@@ -194,6 +194,7 @@ export function CodeSidebar({
                 type="button"
                 role="menuitemradio"
                 aria-checked={item.id === product}
+                aria-label={`${item.label}: ${item.detail}`}
                 key={item.id}
                 className={`pi2 ${item.id === product ? "cur" : ""}`}
                 onClick={() => {
@@ -201,12 +202,12 @@ export function CodeSidebar({
                   setProductOpen(false);
                 }}
               >
-                <span className="m2">{item.mark}</span>
+                <span className="m2" aria-hidden="true">{item.mark}</span>
                 <span className="b2">
                   <span className="n2">{item.label}</span>
                   <span className="p2">{item.detail}</span>
                 </span>
-                <span className="k2">⌘{index + 1}</span>
+                <span className="k2" aria-hidden="true">⌘{index + 1}</span>
               </button>
             ))}
           </div>

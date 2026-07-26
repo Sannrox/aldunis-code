@@ -125,7 +125,7 @@ export function PreferencesDialog({
                 <div className="field">
                   <div className="fl">
                     <div className="fn">Density</div>
-                    <div className="fd">Comfortable is the mock default. Compact tightens rows.</div>
+                    <div className="fd">Comfortable is the default. Compact tightens rows.</div>
                   </div>
                   <div className="fc">
                     <div className="seg" role="group" aria-label="Density">
