@@ -862,6 +862,58 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: var(--background) !important;
   border-left: 1px solid var(--border) !important;
   color: var(--foreground) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+.file-browser-body {
+  display: grid !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  grid-template-columns: minmax(240px, 34%) minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+.file-browser-body > nav > button {
+  display: flex !important;
+  width: 100% !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+}
+.file-browser-body > nav > button strong,
+.file-browser-body > nav > button small {
+  display: block !important;
+}
+.probe-grid {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 8px !important;
+}
+.probe-grid > button {
+  display: grid !important;
+  grid-template-columns: 8px minmax(0, 1fr) !important;
+  text-align: left !important;
+}
+.probe-grid strong,
+.probe-grid small {
+  grid-column: 2 !important;
+  display: block !important;
+}
+/* Keep !important base rules responsive — styles.css media queries lose otherwise. */
+@media (max-width: 900px) {
+  .file-browser-body {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: minmax(160px, 38%) minmax(0, 1fr) !important;
+  }
+  .file-browser-body > nav {
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+}
+@media (max-width: 720px) {
+  .probe-grid {
+    grid-template-columns: 1fr !important;
+  }
 }
 
 

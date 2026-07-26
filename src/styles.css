@@ -607,8 +607,8 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   border-radius: 8px; background: transparent; text-align: left; color: var(--foreground);
 }
 .quick-results > button:hover, .quick-results > button:focus-visible { background: var(--accent); }
-.quick-results strong { font-size: 13.5px; font-weight: 500; }
-.quick-results small, .quick-results > p { color: var(--muted-foreground); font-size: 12px; }
+.quick-results strong { display: block; font-size: 13.5px; font-weight: 500; }
+.quick-results small, .quick-results > p { display: block; color: var(--muted-foreground); font-size: 12px; }
 
 .adapter-settings {
   display: flex;
@@ -876,6 +876,63 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   letter-spacing: 0;
   font-family: var(--font-sans);
 }
+/* Profile probe cards: kind on one line, detail below — not "availabilityNot checked". */
+.probe-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.probe-grid > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 8px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.probe-grid > button:hover:not(:disabled) {
+  background: var(--accent);
+}
+.probe-grid > button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.probe-grid strong {
+  grid-column: 2;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--foreground);
+}
+.probe-grid small {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font: 11.5px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probe-state {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.probe-state.ready { background: var(--success, #6bcf7f); }
+.probe-state.unavailable { background: var(--destructive-foreground); }
+.probe-state.refreshing { background: var(--amber); }
+@media (max-width: 720px) {
+  .probe-grid, .profile-fields { grid-template-columns: 1fr; }
+}
 
 .split-divider {
   width: 6px; flex: 0 0 6px; cursor: col-resize; position: relative; background: transparent;
@@ -888,6 +945,236 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
 .file-browser-panel, .preview-panel {
   position: absolute; z-index: 14; inset: 0; display: flex; min-width: 0; flex-direction: column;
   background: var(--background); color: var(--foreground); border-left: 1px solid var(--border);
+}
+.file-browser-panel > header {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.file-browser-panel > header .eyebrow {
+  margin: 0 0 4px;
+  color: var(--muted-foreground);
+  font: 11px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.file-browser-panel > header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.file-browser-policy {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.file-search {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.file-search svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+.file-search input {
+  min-width: 0;
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 13px var(--font-mono);
+}
+.file-search input:focus {
+  border-color: var(--ring, var(--foreground));
+  outline: 2px solid color-mix(in srgb, var(--foreground) 18%, transparent);
+  outline-offset: 1px;
+}
+.file-search kbd {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font: 11px var(--font-mono);
+}
+.file-browser-body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(240px, 34%) minmax(0, 1fr);
+  overflow: hidden;
+}
+.file-browser-body > nav {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar, var(--card));
+}
+.file-browser-body > nav:focus-visible,
+.file-preview:focus-visible {
+  outline: 2px solid var(--ring, var(--foreground));
+  outline-offset: -2px;
+}
+.file-browser-body > nav > button {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.file-browser-body > nav > button:hover,
+.file-browser-body > nav > button.active {
+  background: var(--sidebar-row-selected, var(--accent));
+}
+.file-browser-body > nav > button.active {
+  box-shadow: inset 2px 0 0 var(--foreground);
+}
+.file-browser-body > nav > button strong {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font: 12.5px var(--font-mono);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-browser-body > nav > button small {
+  display: block;
+  color: var(--muted-foreground);
+  font: 11.5px var(--font-mono);
+}
+.file-browser-note {
+  margin: 12px 10px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.file-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--background);
+}
+.file-preview > header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.file-preview > header > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.file-preview > header strong {
+  display: block;
+  overflow: hidden;
+  font: 12.5px var(--font-mono);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview > header small {
+  display: block;
+  color: var(--muted-foreground);
+  font: 11.5px var(--font-mono);
+}
+.file-preview > header button {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--primary, var(--foreground));
+  color: var(--primary-foreground, var(--background));
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.file-preview > header button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.file-preview pre {
+  margin: 0;
+  padding: 16px;
+  color: var(--foreground);
+  font: 12.5px/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.file-preview img {
+  display: block;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 86px);
+  margin: 16px auto;
+  object-fit: contain;
+}
+.file-preview-state,
+.file-browser-error {
+  width: min(430px, calc(100% - 32px));
+  margin: 32px auto;
+  padding: 18px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+.file-browser-error {
+  border-left: 2px solid var(--destructive-foreground);
+  background: var(--destructive-bg, color-mix(in srgb, var(--destructive-foreground) 10%, transparent));
+  color: var(--destructive-foreground);
+  text-align: left;
+}
+.file-preview-message {
+  margin: 0;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--amber);
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .file-browser-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(160px, 38%) minmax(0, 1fr);
+  }
+  .file-browser-body > nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
 }
 .changes-note, .changes-error { padding: 8px 12px; font-size: 12.5px; color: var(--muted-foreground); }
 .changes-error { color: var(--destructive-foreground); }

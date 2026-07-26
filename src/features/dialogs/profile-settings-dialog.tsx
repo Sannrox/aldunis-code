@@ -165,14 +165,23 @@ export function ProfileSettingsDialog({
             <label>Sensitive environment values<textarea value={sensitiveEnvironment} onChange={(event) => setSensitiveEnvironment(event.target.value)} placeholder={"ANTHROPIC_AUTH_TOKEN=write-only value"} /></label>
             <p className="secret-note">Sensitive values are write-only. Existing values appear empty and remain stored unless their line is removed.</p>
             {selected && (
-              <div className="probe-grid">
-                {(["availability", "version", "authentication", "models"] as ProfileProbeKind[]).map((kind) => (
-                  <button type="button" onClick={() => void refresh(selected, kind)} disabled={busy} key={kind}>
-                    <span className={`probe-state ${selected.probes[kind].state}`} />
-                    <strong>{kind}</strong>
-                    <small>{selected.probes[kind].detail ?? "Not checked"}</small>
-                  </button>
-                ))}
+              <div className="probe-grid" aria-label="Profile health probes">
+                {(["availability", "version", "authentication", "models"] as ProfileProbeKind[]).map((kind) => {
+                  const detail = selected.probes[kind].detail ?? "Not checked";
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => void refresh(selected, kind)}
+                      disabled={busy}
+                      key={kind}
+                      aria-label={`Check ${kind}: ${detail}`}
+                    >
+                      <span className={`probe-state ${selected.probes[kind].state}`} aria-hidden="true" />
+                      <strong>{kind}</strong>
+                      <small>{detail}</small>
+                    </button>
+                  );
+                })}
               </div>
             )}
             {error && <p className="repository-error" role="alert">{error}</p>}
