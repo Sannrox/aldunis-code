@@ -15,6 +15,7 @@ import {
 } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
+import { ShikigamiAdapter } from "./shikigami-provider.ts";
 import {
   adapterReference,
   ProviderAdapterError,
@@ -252,6 +253,7 @@ async function handleApi(
   response: ServerResponse,
   provider: ClaudeCodeAdapter,
   codex: CodexCliAdapter,
+  shikigami: ShikigamiAdapter,
   permissions: PermissionBroker,
   delivery: DeliveryBroker,
   state: LocalStateStore,
@@ -341,10 +343,19 @@ async function handleApi(
           };
         }),
       );
+      const shikigamiReadiness = await shikigami.readiness().catch(() => ({
+        id: "shikigami" as const,
+        installed: false,
+        authenticated: false,
+        version: null,
+        models: [] as Array<{ id: string; displayName: string; isDefault: boolean }>,
+        name: "Shikigami",
+      }));
       sendJson(response, 200, {
         providers: [
           { id: "claude-code", installed: true },
           codexReadiness,
+          shikigamiReadiness,
           ...declarativeProviders,
         ],
       });
@@ -637,12 +648,12 @@ async function handleApi(
       };
       if (
         typeof body.sourceThreadId !== "string"
-        || (body.provider !== "claude-code" && body.provider !== "codex-cli")
+        || (body.provider !== "claude-code" && body.provider !== "codex-cli" && body.provider !== "shikigami")
         || typeof body.model !== "string"
         || !body.model
         || typeof body.expectedDigest !== "string"
         || (body.provider === "claude-code" && typeof body.profileId !== "string")
-        || (body.provider === "codex-cli" && body.profileId !== null)
+        || ((body.provider === "codex-cli" || body.provider === "shikigami") && body.profileId !== null)
       ) {
         throw new LocalStateError(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
@@ -661,6 +672,17 @@ async function handleApi(
           throw new ProfileError("The selected Claude model is unavailable.", 409);
         }
         await profiles.runtime(body.profileId as string);
+      } else if (body.provider === "shikigami") {
+        const readiness = await shikigami.readiness();
+        if (!readiness.installed || !readiness.authenticated) {
+          throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
+        }
+        if (
+          body.model !== "default"
+          && !readiness.models.some((model) => model.id === body.model)
+        ) {
+          throw new ProviderProtocolError("The selected Shikigami model is unavailable.");
+        }
       } else {
         const readiness = await codex.readiness();
         if (!readiness.installed || !readiness.authenticated) {
@@ -1219,7 +1241,7 @@ async function handleApi(
           !Array.isArray(body.attachments)
           || body.attachments.some((path) => typeof path !== "string")
         ))
-        || (providerId !== "claude-code" && providerId !== "codex-cli" && !isDeclarativeAdapter)
+        || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
         || typeof body.model !== "string"
         || (providerId === "claude-code" && !CLAUDE_MODEL_ALIASES.includes(body.model))
@@ -1408,6 +1430,17 @@ async function handleApi(
             model: body.model === "default" ? undefined : body.model,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
           })
+          : providerId === "shikigami"
+          ? await shikigami.start({
+            repository: context.root,
+            worktree: context.worktree,
+            conversationId: body.conversationId,
+            prompt: effectiveProviderPrompt,
+            approvalUrl: await approvalUrl,
+            mode,
+            resumeSessionId: body.resumeSessionId,
+            model: body.model === "default" ? undefined : body.model,
+          })
           : installedAdapter
           ? await (async () => {
               const executable = await adapters.resolveExecutable(installedAdapter);
@@ -1463,6 +1496,7 @@ async function handleApi(
         await state.markForkStarted(persisted.thread.id);
       } catch (error) {
         if (providerId === "codex-cli") codex.cancel(run.id);
+        else if (providerId === "shikigami") shikigami.cancel(run.id);
         else if (isDeclarativeAdapter) {
           activeAcp.get(run.id)?.cancel(run.id);
           activeAcp.delete(run.id);
@@ -1496,6 +1530,7 @@ async function handleApi(
           previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
         } catch {
           if (providerId === "codex-cli") codex.cancel(run.id);
+          else if (providerId === "shikigami") shikigami.cancel(run.id);
           else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
           else provider.cancel(run.id);
           response.write(`${JSON.stringify({
@@ -1995,7 +2030,7 @@ async function handleApi(
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
       const acp = activeAcp.get(cancelMatch[1]);
-      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1]) && !acp?.cancel(cancelMatch[1])) {
+      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1]) && !shikigami.cancel(cancelMatch[1]) && !acp?.cancel(cancelMatch[1])) {
         throw new RepositoryError("The provider run is no longer active.", 404);
       }
       sendJson(response, 202, { status: "cancelling" });
@@ -2067,6 +2102,7 @@ export function createLocalHost(
   const delivery = new DeliveryBroker();
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
+  const shikigami = new ShikigamiAdapter("shikigami");
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
@@ -2102,6 +2138,7 @@ export function createLocalHost(
         response,
         provider,
         codex,
+        shikigami,
         permissions,
         delivery,
         state,

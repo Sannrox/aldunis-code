@@ -47,6 +47,7 @@ test("elapsed formatting floors to now / m / h / d", () => {
 test("provider and branch labels are display helpers only", () => {
   assert.equal(providerLabel("claude-code"), "Claude");
   assert.equal(providerLabel("codex-cli"), "Codex");
+  assert.equal(providerLabel("shikigami"), "Shikigami");
   assert.equal(providerLabel("adapter:kiro@1.0.0"), "kiro");
   assert.equal(branchFromWorktree("/tmp/repo/.aldunis/feature-x"), "feature-x");
 });

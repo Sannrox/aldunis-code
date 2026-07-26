@@ -166,7 +166,7 @@ export interface ProviderCapabilities {
     imageTypes: string[];
   };
 }
-export type ProviderId = "claude-code" | "codex-cli" | `adapter:${string}@${string}`;
+export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export interface ProviderDiscovery {
   id: ProviderId;
