@@ -67,6 +67,13 @@ import {
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
+import {
+  AutomationError,
+  AutomationScheduler,
+  AutomationStore,
+  type Automation,
+  type AutomationSchedule,
+} from "./automations.ts";
 import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
@@ -260,6 +267,8 @@ async function handleApi(
   profiles: ClaudeProfileStore,
   previews: PreviewManager,
   preferences: PreferencesStore,
+  automations: AutomationStore,
+  automationScheduler: AutomationScheduler,
   worktrees: WorktreeManager,
   directories: DirectoryBrowser,
   adapters: ProviderAdapterStore,
@@ -847,6 +856,74 @@ async function handleApi(
     }
     if (route === "/api/preferences/save") {
       sendJson(response, 200, await preferences.save(await readJson(request)));
+      return true;
+    }
+    if (route === "/api/automations/list") {
+      sendJson(response, 200, { automations: await automations.list() });
+      return true;
+    }
+    if (route === "/api/automations/create") {
+      const body = await readJson(request) as {
+        name?: unknown;
+        threadId?: unknown;
+        prompt?: unknown;
+        mode?: unknown;
+        enabled?: unknown;
+        schedule?: unknown;
+      };
+      if (
+        typeof body.name !== "string"
+        || typeof body.threadId !== "string"
+        || typeof body.prompt !== "string"
+        || !body.schedule
+        || typeof body.schedule !== "object"
+      ) {
+        throw new AutomationError("name, threadId, prompt, and schedule are required.");
+      }
+      const projection = await state.load();
+      if (!projection.threads.some((thread) => thread.id === body.threadId)) {
+        throw new AutomationError("Target conversation was not found.", 404);
+      }
+      sendJson(response, 200, await automations.create({
+        name: body.name,
+        threadId: body.threadId,
+        prompt: body.prompt,
+        mode: body.mode as InteractionMode | undefined,
+        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        schedule: body.schedule as AutomationSchedule,
+      }));
+      return true;
+    }
+    if (route === "/api/automations/update") {
+      const body = await readJson(request) as {
+        id?: unknown;
+        name?: unknown;
+        prompt?: unknown;
+        mode?: unknown;
+        enabled?: unknown;
+        schedule?: unknown;
+      };
+      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
+      sendJson(response, 200, await automations.update(body.id, {
+        name: typeof body.name === "string" ? body.name : undefined,
+        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+        mode: body.mode as InteractionMode | undefined,
+        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+        schedule: body.schedule as AutomationSchedule | undefined,
+      }));
+      return true;
+    }
+    if (route === "/api/automations/delete") {
+      const body = await readJson(request) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
+      await automations.remove(body.id);
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+    if (route === "/api/automations/run-now") {
+      const body = await readJson(request) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
+      sendJson(response, 200, await automationScheduler.runNow(body.id));
       return true;
     }
     if (route === "/api/state/projects/delete") {
@@ -2043,6 +2120,7 @@ async function handleApi(
       || error instanceof LocalStateError
       || error instanceof ProfileError
       || error instanceof PreferencesError
+      || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
@@ -2054,6 +2132,7 @@ async function handleApi(
       || error instanceof LocalStateError
       || error instanceof ProfileError
       || error instanceof PreferencesError
+      || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
       || error instanceof RemoteAuthError
@@ -2105,6 +2184,7 @@ export function createLocalHost(
   const shikigami = new ShikigamiAdapter("shikigami", permissions);
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
+  const automations = new AutomationStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
   const directories = new DirectoryBrowser();
   const adapters = new ProviderAdapterStore(state.directory);
@@ -2113,6 +2193,72 @@ export function createLocalHost(
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
   const recovery = state.recoverInterruptedTurns();
+
+  let serverRef: ReturnType<typeof createHttpServer> | null = null;
+
+  async function isThreadBusy(threadId: string): Promise<boolean> {
+    const projection = await state.load();
+    return projection.turns.some((turn) => (
+      turn.threadId === threadId
+      && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
+    ));
+  }
+
+  async function fireAutomation(automation: Automation): Promise<void> {
+    const address = serverRef?.address();
+    if (!address || typeof address === "string") {
+      throw new AutomationError("Local host is not listening yet.", 503);
+    }
+    const projection = await state.load();
+    const thread = projection.threads.find((item) => item.id === automation.threadId);
+    if (!thread) throw new AutomationError("Target conversation was not found.", 404);
+    const project = projection.projects.find((item) => item.id === thread.projectId);
+    if (!project) throw new AutomationError("Target project was not found.", 404);
+    const session = projection.providerSessions.find((item) => item.threadId === thread.id);
+    const providerId = thread.provider ?? session?.provider ?? "claude-code";
+    const model = thread.model
+      ?? session?.model
+      ?? (providerId === "claude-code" ? "default" : providerId === "shikigami" ? "scripted" : "default");
+    const profileId = thread.profileId ?? session?.profileId ?? undefined;
+    const protocol = tls ? "https" : "http";
+    const response = await fetch(`${protocol}://127.0.0.1:${address.port}/api/provider/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        root: project.root,
+        worktree: thread.worktree,
+        prompt: automation.prompt,
+        mode: automation.mode,
+        conversationId: thread.id,
+        projectId: project.id,
+        threadId: thread.id,
+        resumeSessionId: session?.sessionId,
+        provider: providerId,
+        model,
+        profileId: providerId === "claude-code" ? profileId : undefined,
+      }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      throw new AutomationError(
+        body.error ?? `Automation run failed (${response.status}).`,
+        response.status,
+      );
+    }
+    if (response.body) {
+      const reader = response.body.getReader();
+      while (true) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+    }
+  }
+
+  const automationScheduler = new AutomationScheduler(automations, {
+    isThreadBusy,
+    fire: fireAutomation,
+  });
+
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
     await recovery;
     await profileBootstrap;
@@ -2145,6 +2291,8 @@ export function createLocalHost(
         profiles,
         previews,
         preferences,
+        automations,
+        automationScheduler,
         worktrees,
         directories,
         adapters,
@@ -2158,6 +2306,11 @@ export function createLocalHost(
     await serveStatic(request, response, dist);
   };
   const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
-  server.once("close", () => internalPermissionCallback?.server.close());
+  serverRef = server;
+  automationScheduler.start();
+  server.once("close", () => {
+    automationScheduler.stop();
+    internalPermissionCallback?.server.close();
+  });
   return server;
 }
