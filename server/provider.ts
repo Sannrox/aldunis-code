@@ -158,6 +158,16 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
     }];
   }
 
+  // Claude Code emits stream housekeeping events (rate limits, progress, …)
+  // that must not abort an otherwise healthy turn.
+  if (
+    event.type === "rate_limit_event"
+    || event.type === "stream_event"
+    || event.type === "progress"
+  ) {
+    return [];
+  }
+
   throw new ProviderProtocolError(`Unsupported Claude event: ${event.type}.`);
 }
 
