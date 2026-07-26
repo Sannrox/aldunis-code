@@ -48,8 +48,30 @@ export function ProfileSettingsDialog({
     setSensitiveEnvironment(profile?.environment.filter((item) => item.sensitive).map((item) => `${item.name}=`).join("\n") ?? "");
     setError(null);
   };
+  const openedOnce = useRef(false);
   useEffect(() => {
-    if (open && selectedId && !profiles.some((profile) => profile.id === selectedId)) edit(null);
+    if (!open) {
+      openedOnce.current = false;
+      return;
+    }
+    // On open: select default/first profile so the form is not blank "New profile".
+    // Wait until profiles have loaded — marking init complete while profiles is
+    // still [] permanently stuck the dialog on empty New profile.
+    // Do not re-run this when the user later chooses "+ New profile" (selectedId null).
+    if (!openedOnce.current) {
+      if (profiles.length === 0) return;
+      openedOnce.current = true;
+      const preferred =
+        profiles.find((profile) => profile.id === "default:claude-code") ??
+        profiles[0] ??
+        null;
+      edit(preferred);
+      return;
+    }
+    // If the selected profile disappears while open, fall back cleanly.
+    if (selectedId && !profiles.some((profile) => profile.id === selectedId)) {
+      edit(profiles[0] ?? null);
+    }
   }, [open, profiles, selectedId]);
   if (!open) return null;
   const request = async (path: string, body: unknown) => {
@@ -103,24 +125,32 @@ export function ProfileSettingsDialog({
         </header>
         <div className="profile-dialog-body">
           <nav aria-label="Claude profiles">
-            {profiles.map((profile) => (
-              <button
-                type="button"
-                className={selectedId === profile.id ? "active" : ""}
-                onClick={() => edit(profile)}
-                key={profile.id}
-              >
-                <strong>
-                  {profile.name}
-                  {profile.id === "default:claude-code" ? " · default" : ""}
-                </strong>
-                <small>{profile.homePath || "Default Claude home"}</small>
-              </button>
-            ))}
+            {profiles.map((profile) => {
+              const title = `${profile.name}${profile.id === "default:claude-code" ? " · default" : ""}`;
+              const detail = profile.homePath || "Default Claude home";
+              return (
+                <button
+                  type="button"
+                  className={selectedId === profile.id ? "active" : ""}
+                  onClick={() => edit(profile)}
+                  key={profile.id}
+                  aria-label={`${title}: ${detail}`}
+                  aria-current={selectedId === profile.id ? "true" : undefined}
+                >
+                  <strong>
+                    {profile.name}
+                    {profile.id === "default:claude-code" ? " · default" : ""}
+                  </strong>
+                  <small>{detail}</small>
+                </button>
+              );
+            })}
             <button
               type="button"
               className={!selectedId ? "active add-profile" : "add-profile"}
               onClick={() => edit(null)}
+              aria-label="New profile"
+              aria-current={!selectedId ? "true" : undefined}
             >
               + New profile
             </button>
