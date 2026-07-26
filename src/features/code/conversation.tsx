@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, InteractionMode, ReasoningEffort,
@@ -104,6 +104,58 @@ export function Conversation({
     ? "Claude Code"
     : selectedProvider?.name ?? "Provider adapter unavailable";
   const providerLabel = provider === "codex-cli" ? "Codex" : provider === "claude-code" ? "Claude" : providerName;
+  /**
+   * Providers a *new* conversation can start with. Existing threads keep their
+   * stored provider (cross-provider moves go through the reviewed fork flow).
+   */
+  const availableProviders = useMemo(() => {
+    const list: ProviderId[] = [];
+    const claude = providers.find((item) => item.id === "claude-code");
+    // Keep Claude selectable when installed; empty profiles disable send, not the choice.
+    if (!claude || claude.installed !== false) list.push("claude-code");
+    // Codex is only useful when installed *and* authenticated.
+    if (codex?.installed && codex.authenticated) list.push("codex-cli");
+    for (const item of providers) {
+      if (
+        typeof item.id === "string"
+        && item.id.startsWith("adapter:")
+        && item.installed !== false
+        && item.enabled !== false
+        // Discovery sets authenticated when the adapter CLI (+ required env) is ready.
+        && item.authenticated !== false
+      ) {
+        list.push(item.id);
+      }
+    }
+    return list;
+  }, [codex?.authenticated, codex?.installed, providers]);
+  /**
+   * New conversations only, before a thread/run is created. Once threadId or
+   * runId exists the provider is fixed (cross-provider moves use fork).
+   * No automatic fallback effect — that races profile loading and can steal
+   * the Claude default mid-flight.
+   */
+  const canSwitchProvider = conversation === null
+    && !threadId
+    && !runId
+    && availableProviders.length > 1;
+  const cycleProvider = () => {
+    if (!canSwitchProvider) return;
+    const index = availableProviders.indexOf(provider);
+    const next = availableProviders[(index + 1) % availableProviders.length] ?? availableProviders[0]!;
+    setProvider(next);
+    if (next === "claude-code") {
+      setProfileId((current) => current || profiles[0]?.id || "");
+      setModel("default");
+    } else if (next === "codex-cli") {
+      const defaultModel = codex?.models?.find((entry) => entry.isDefault)?.id
+        ?? codex?.models?.[0]?.id
+        ?? "default";
+      setModel(defaultModel);
+    } else {
+      setModel("default");
+    }
+  };
   useEffect(() => {
     if (!profiles.some((profile) => profile.id === profileId)) {
       setProfileId(profiles[0]?.id ?? "");
@@ -313,6 +365,17 @@ export function Conversation({
     || providerState === "streaming"
     || providerState === "waiting_for_approval"
     || providerState === "cancelling";
+  /** Whether the selected provider can start a run right now. */
+  const providerReady = provider === "claude-code"
+    ? Boolean(profileId)
+    : provider === "codex-cli"
+      ? Boolean(codex?.installed && codex.authenticated)
+      : Boolean(
+        selectedProvider
+        && selectedProvider.installed !== false
+        && selectedProvider.enabled !== false
+        && selectedProvider.authenticated !== false,
+      );
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
@@ -373,7 +436,7 @@ export function Conversation({
       !value
       || !repository
       || !worktree
-      || (provider === "claude-code" && !profileId)
+      || !providerReady
       || runActive
       || !historyRestored
     ) return;
@@ -985,8 +1048,10 @@ export function Conversation({
                 ? ""
                 : !historyRestored
                 ? "Restoring conversation session…"
-                : provider === "claude-code" && !profileId
-                ? "Configure a Claude profile first…"
+                : !providerReady
+                ? provider === "claude-code"
+                  ? "Configure a Claude profile first…"
+                  : `${providerName} is not ready…`
                 : worktree
                 ? `Reply to ${providerName}…`
                 : "Open a repository with an available worktree…"
@@ -995,7 +1060,7 @@ export function Conversation({
             disabled={
               conversation?.id?.startsWith("mock-")
               || !worktree
-              || (provider === "claude-code" && !profileId)
+              || !providerReady
               || runActive
               || !historyRestored
             }
@@ -1003,8 +1068,35 @@ export function Conversation({
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <div className="crow">
-            <button type="button" className="cc" onClick={onOpenProfiles} disabled={runActive}>
-              <span className="pv">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}</span>
+            <button
+              type="button"
+              className="cc"
+              disabled={runActive || conversation?.id?.startsWith("mock-")}
+              title={
+                canSwitchProvider
+                  ? "Click to switch provider for this new conversation. Alt-click opens Claude profiles."
+                  : conversation
+                    ? "Provider is fixed for this conversation (use fork to change). Click opens Claude profiles."
+                    : "Open Claude profiles"
+              }
+              aria-label={
+                canSwitchProvider
+                  ? `Provider ${provider}. Click to switch among ${availableProviders.length} providers.`
+                  : "Open Claude profiles"
+              }
+              onClick={(event) => {
+                if (conversation?.id?.startsWith("mock-")) return;
+                // Alt/Option-click always opens Claude profile admin.
+                if (event.altKey || !canSwitchProvider) {
+                  onOpenProfiles();
+                  return;
+                }
+                cycleProvider();
+              }}
+            >
+              <span className="pv" aria-hidden="true">
+                {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : "AD"}
+              </span>
               {conversation?.id === DESIGN_MOCK_PRIMARY_ID
                 ? "claude-code · sonnet"
                 : `${provider === "claude-code" ? "claude-code" : provider === "codex-cli" ? "codex-cli" : provider}${model !== "default" ? ` · ${model}` : ""}`}
@@ -1069,7 +1161,7 @@ export function Conversation({
                   type="button"
                   className="send"
                   onClick={() => void send()}
-                  disabled={!draft.trim() || !worktree || (provider === "claude-code" && !profileId) || runActive || !historyRestored}
+                  disabled={!draft.trim() || !worktree || !providerReady || runActive || !historyRestored}
                   aria-label="Send message"
                 >
                   <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
@@ -1091,11 +1183,7 @@ export function Conversation({
             error={changesError}
             onClose={onHideChanges}
             onRefresh={onRefreshChanges}
-            canSendRevision={historyRestored && !runActive && (
-              provider === "codex-cli"
-                ? Boolean(codex?.installed && codex.authenticated)
-                : Boolean(profileId)
-            )}
+            canSendRevision={historyRestored && !runActive && providerReady}
             onSendRevision={(prompt) => {
               onHideChanges();
               void send(prompt);
