@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ThreadMetadata } from "../../types";
 import { Icon } from "../../components/icon";
+import { providerChipName } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
+
+function threadSearchDetail(thread: ThreadMetadata): string {
+  const provider = thread.provider
+    ? providerChipName(thread.provider, undefined)
+    : null;
+  return [thread.projectName, provider, thread.worktree].filter(Boolean).join(" · ");
+}
 
 export function ThreadSearchDialog({
   open,
@@ -74,21 +82,24 @@ export function ThreadSearchDialog({
       </label>
       <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
       <div className="quick-results" role="listbox" aria-label="Matching conversations">
-        {results.map((thread) => (
-          <button
-            type="button"
-            role="option"
-            key={thread.id}
-            aria-label={`${thread.title}: ${thread.projectName} · ${thread.worktree}`}
-            onClick={() => {
-              onSelect(thread.id);
-              onClose();
-            }}
-          >
-            <strong>{thread.title}</strong>
-            <small>{thread.projectName} · {thread.worktree}</small>
-          </button>
-        ))}
+        {results.map((thread) => {
+          const detail = threadSearchDetail(thread);
+          return (
+            <button
+              type="button"
+              role="option"
+              key={thread.id}
+              aria-label={`${thread.title}: ${detail}`}
+              onClick={() => {
+                onSelect(thread.id);
+                onClose();
+              }}
+            >
+              <strong>{thread.title}</strong>
+              <small>{detail}</small>
+            </button>
+          );
+        })}
         {results.length === 0 && <p>No matching conversations.</p>}
       </div>
     </OverlayDialog>
