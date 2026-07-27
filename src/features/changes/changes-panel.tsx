@@ -339,7 +339,7 @@ export function ChangesPanel({
                 ].filter(Boolean).join(", ")}
               >
                 <span className={`change-state ${file.state}`}>{file.state}</span>
-                <span className="changed-file-path">
+                <span className="changed-file-path" title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}>
                   <strong>{file.path}</strong>
                   {file.previousPath && <small> from {file.previousPath}</small>}
                 </span>
