@@ -67,6 +67,32 @@ export function ChangesPanel({
     setDeliveryError(null);
     void inspectDelivery().catch((cause) => setDeliveryError(cause instanceof Error ? cause.message : "Delivery state could not be inspected."));
   }, [repository.root, repository.selectedWorktree]);
+  // Match file-browser Escape: dismiss nested review first, then the dock.
+  // Skip when a true modal dialog owns the key (command palette, etc.).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (revisionPreview) {
+        setRevisionPreview(null);
+        return;
+      }
+      if (commentLineIndex !== undefined) {
+        setCommentLineIndex(undefined);
+        setCommentText("");
+        return;
+      }
+      if (plan) {
+        setPlan(null);
+        return;
+      }
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose, revisionPreview, commentLineIndex, plan]);
   const prepareDelivery = async () => {
     setDeliveryBusy(true);
     setDeliveryError(null);

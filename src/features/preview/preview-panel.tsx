@@ -159,6 +159,17 @@ export function PreviewPanel({
     }, 10_000);
   };
   const running = preview?.state === "running";
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
   return (
     <section className="preview-panel" aria-label={`Web preview, ${pane} pane`}>
       <header>
