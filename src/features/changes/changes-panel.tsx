@@ -558,15 +558,16 @@ export function ChangesPanel({
               </>
             )}
             {!plan && (
-              <button
+              <Button
                 type="button"
+                size="sm"
                 className="prepare-delivery"
                 onClick={() => void prepareDelivery()}
                 disabled={deliveryBusy || delivery?.detached}
                 aria-label={`Inspect ${deliveryAction} action for delivery`}
               >
                 Inspect action
-              </button>
+              </Button>
             )}
           </div>
           {delivery?.detached && <p className="delivery-warning" role="alert">Detached HEAD cannot be delivered. Create or select a branch first.</p>}
