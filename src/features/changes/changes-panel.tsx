@@ -5,6 +5,7 @@ import { Button, CloseButton, NestedDialogSurface, handleNestedEscape } from "..
 export function ChangesPanel({
   repository,
   threadId,
+  pane = "primary",
   files,
   loading,
   error,
@@ -15,6 +16,8 @@ export function ChangesPanel({
 }: {
   repository: RepositoryMetadata;
   threadId: string | null;
+  /** Dual-pane scope for review dock chrome labels. */
+  pane?: "primary" | "secondary";
   files: ChangedFile[];
   loading: boolean;
   error: string | null;
@@ -255,7 +258,7 @@ export function ChangesPanel({
 
   // Embedded in the conversation review dock (mock .rv) — not a portal modal.
   return (
-    <div className="changes-panel rv-panel" aria-label="Changes for active conversation">
+    <div className="changes-panel rv-panel" aria-label={`Changes for ${pane} conversation`}>
       <div className="rv-h">
         <span className="rv-t">Review</span>
         <span className="rv-s">
@@ -268,12 +271,12 @@ export function ChangesPanel({
           size="sm"
           className="btn btn-ghost btn-xs"
           style={{ marginLeft: "auto" }}
-          aria-label="Refresh changed files and review comments"
+          aria-label={`Refresh changed files and review comments, ${pane} pane`}
           onClick={() => { onRefresh(); void loadAnnotations(); }}
         >
           Refresh
         </Button>
-        <CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" />
+        <CloseButton data-dialog-initial-focus onClick={onClose} label={`Close changed files, ${pane} pane`} />
       </div>
       <div className="changes-body rv-body">
         <nav className="rv-files" aria-label="Changed files">
