@@ -441,18 +441,26 @@ export function Conversation({
   } | null>(null);
   const [checkpointBusy, setCheckpointBusy] = useState(false);
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
+  /** Hides the post-turn settle prompt until the next completed turn. */
+  const [completionDismissed, setCompletionDismissed] = useState(false);
   useEffect(() => {
     setSessionId(null);
     setHistoryRestored(conversation === null);
     setHistoryRestoreError(null);
     setThreadId(conversation?.id ?? null);
     setCheckpoint(null);
+    setCompletionDismissed(false);
     setRewindPreview(null);
     setMessages([]);
     setProviderEvents([]);
     setProviderState("idle");
     setRunId(null);
   }, [conversation?.id, repository?.projectId, repository?.selectedWorktree, provider]);
+  useEffect(() => {
+    if (providerState !== "completed" && providerState !== "cancelled") {
+      setCompletionDismissed(false);
+    }
+  }, [providerState]);
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
@@ -1168,7 +1176,7 @@ export function Conversation({
                   })}
                 </div>
               )}
-              {providerState === "completed" && threadId && (
+              {providerState === "completed" && threadId && !completionDismissed && (
                 <div className="done" role="status">
                   <div className="h">
                     <span className="pill completed"><span className="dot" />Completed</span>
@@ -1209,7 +1217,14 @@ export function Conversation({
                     >
                       Settle and release worktree
                     </button>
-                    <button type="button" className="btn btn-ghost btn-sm">Keep open</button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      aria-label={`Keep conversation open, ${pane} pane`}
+                      onClick={() => setCompletionDismissed(true)}
+                    >
+                      Keep open
+                    </button>
                   </div>
                 </div>
               )}
