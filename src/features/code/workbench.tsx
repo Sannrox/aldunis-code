@@ -505,13 +505,19 @@ export function CodeWorkbench({
       ) : (
       <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
         {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}
-        {incompleteDeletionIds.map((threadId) => (
+        {incompleteDeletionIds.map((threadId) => {
+          // Prefer title · provider over a raw UUID in the recovery banner.
+          const conversation = conversations.find((item) => item.id === threadId);
+          const deletionLabel = conversation
+            ? paneConversationLabel(conversation, "conversation")
+            : `conversation ${threadId.slice(0, 8)}`;
+          return (
           <div className="workspace-state error" role="alert" key={threadId}>
-            <span>Conversation deletion {threadId} is incomplete.</span>
+            <span>Deletion of “{deletionLabel}” is incomplete.</span>
             <Button
               type="button"
               size="sm"
-              aria-label={`Retry incomplete deletion of conversation ${threadId}`}
+              aria-label={`Retry incomplete deletion of ${deletionLabel}`}
               onClick={() => {
                 void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
                   .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
@@ -523,7 +529,8 @@ export function CodeWorkbench({
               Retry deletion
             </Button>
           </div>
-        ))}
+          );
+        })}
         {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
         {restoreState === "failed" && (
           <div className="workspace-state failed" role="alert">
