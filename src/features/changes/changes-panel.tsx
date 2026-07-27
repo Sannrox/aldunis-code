@@ -454,7 +454,7 @@ export function ChangesPanel({
                       : current.filter((id) => id !== annotation.id))}
                   />
                   <span className="annotation-body">
-                    <strong className="annotation-target">
+                    <strong className="annotation-target" title={target}>
                       {annotation.path}
                       <span className="annotation-scope">
                         {" "}· {annotation.scope === "file" ? "file" : annotation.side === "deletion" ? `old line ${annotation.oldLine}` : `new line ${annotation.newLine}`}
@@ -528,9 +528,11 @@ export function ChangesPanel({
           <header className="review-section-header delivery-header">
             <div>
               <strong>Reviewed delivery</strong>
-              <small>{delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}</small>
+              <small title={`${delivery?.branch ?? "Detached HEAD"} · ${repository.selectedWorktree}`}>
+                {delivery?.branch ?? "Detached HEAD"} · {repository.selectedWorktree}
+              </small>
             </div>
-            <span>{delivery?.upstream ?? "No upstream"}</span>
+            <span title={delivery?.upstream ?? "No upstream"}>{delivery?.upstream ?? "No upstream"}</span>
           </header>
           <div className="delivery-form">
             <label htmlFor="delivery-action">Action
