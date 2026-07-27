@@ -1,5 +1,8 @@
 # Design mocks
 
+Design-system prose lives in [../design-system.md](../design-system.md). Full
+documentation map: [../README.md](../README.md).
+
 ## workbench-mock.html
 
 A single-file, self-contained mock of the workbench. Open it directly in a
