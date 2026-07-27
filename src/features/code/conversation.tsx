@@ -1040,7 +1040,11 @@ export function Conversation({
               else onOpenRepository();
             }}
             title={repository ? "Browse worktree files" : "Open a project"}
-            aria-label={repository ? "Browse files" : "Open project"}
+            aria-label={
+              repository
+                ? `Browse files, ${pane} pane`
+                : `Open project, ${pane} pane`
+            }
           >
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
@@ -1054,6 +1058,8 @@ export function Conversation({
             onClick={onShowChanges}
             disabled={!repository}
             title="Review panel"
+            aria-label={`${changes.length} changes, ${pane} pane`}
+            aria-pressed={changesOpen}
           >
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -1067,7 +1073,7 @@ export function Conversation({
             onClick={() => setPreviewOpen(true)}
             disabled={!repository}
             title="Preview panel"
-            aria-label="Preview"
+            aria-label={`Preview, ${pane} pane`}
             aria-pressed={previewOpen}
           >
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
@@ -1714,7 +1720,7 @@ export function Conversation({
             </div>
             {runId
               ? (
-                <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel">
+                <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel, ${pane} pane`}>
                   <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
                 </button>
               )
@@ -1724,7 +1730,7 @@ export function Conversation({
                   className="send"
                   onClick={() => void send()}
                   disabled={!draft.trim() || !worktree || !providerReady || runActive || !historyRestored}
-                  aria-label="Send message"
+                  aria-label={`Send message, ${pane} pane`}
                 >
                   <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
                     <path d="M12 19V5M5 12l7-7 7 7" />
