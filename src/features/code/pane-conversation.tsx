@@ -2,12 +2,6 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
-import {
-  DESIGN_MOCK_CHANGED_FILES,
-  DESIGN_MOCK_PRIMARY_ID,
-  isDesignMockRepository,
-  isDesignMockThread,
-} from "./design-mock";
 
 export function PaneConversation({
   repository,
@@ -44,13 +38,6 @@ export function PaneConversation({
   const [changesOpen, setChangesOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const refreshChanges = async () => {
-    if (isDesignMockThread(conversation?.id) || isDesignMockRepository(repository)) {
-      // Design fixtures — sample review files for the primary mock thread only.
-      setChanges(conversation?.id === DESIGN_MOCK_PRIMARY_ID ? DESIGN_MOCK_CHANGED_FILES : []);
-      setChangesError(null);
-      setChangesLoading(false);
-      return;
-    }
     if (!repository) {
       setChanges([]);
       setChangesError(null);

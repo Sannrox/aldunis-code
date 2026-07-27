@@ -23,12 +23,6 @@ import {
 
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
 
-function isDesignMockQuery(): boolean {
-  if (typeof window === "undefined") return false;
-  const params = new URLSearchParams(window.location.search);
-  return params.get("mock") === "1" || params.get("design") === "1";
-}
-
 function readLastRepositoryRoot(): string | null {
   try {
     return window.localStorage.getItem(LAST_REPOSITORY_ROOT_KEY);
@@ -53,7 +47,7 @@ function App() {
   const [managedWorktreePath, setManagedWorktreePath] = useState<string | null>(null);
   const [repositoryBusy, setRepositoryBusy] = useState(false);
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
-  const [repositoryRestoring, setRepositoryRestoring] = useState(() => !isDesignMockQuery());
+  const [repositoryRestoring, setRepositoryRestoring] = useState(true);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [profileDialog, setProfileDialog] = useState(false);
@@ -115,12 +109,8 @@ function App() {
   }, [product, productAvailability]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const designMock = isDesignMockQuery();
     const applyTheme = () => {
-      // Design mock is always dark (workbench-mock.html).
-      document.documentElement.dataset.theme = designMock
-        ? "dark"
-        : resolveTheme(preferences.theme, media.matches);
+      document.documentElement.dataset.theme = resolveTheme(preferences.theme, media.matches);
     };
     applyTheme();
     document.documentElement.dataset.density = preferences.density;
@@ -178,12 +168,8 @@ function App() {
       setRepositoryBusy(false);
     }
   };
-  // Restore the last selected project after refresh/restart (not in design-mock mode).
+  // Restore the last selected project after refresh/restart.
   useEffect(() => {
-    if (isDesignMockQuery()) {
-      setRepositoryRestoring(false);
-      return;
-    }
     let active = true;
     const restore = async () => {
       try {
