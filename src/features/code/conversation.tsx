@@ -485,6 +485,11 @@ export function Conversation({
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
   /** Hides the post-turn settle prompt until the next completed turn. */
   const [completionDismissed, setCompletionDismissed] = useState(false);
+  /**
+   * Timestamp for the assistant turn chrome. Must not use conversation.updatedAt —
+   * pin/archive/settle bump that and would flash "now" on an old failed turn.
+   */
+  const [assistantTurnAt, setAssistantTurnAt] = useState<string | null>(null);
   // Escape cancels a workspace rewind preview without requiring the Cancel button.
   useEffect(() => {
     if (!rewindPreview) return;
@@ -512,6 +517,7 @@ export function Conversation({
     }
     setCheckpoint(null);
     setCompletionDismissed(false);
+    setAssistantTurnAt(null);
     setRewindPreview(null);
     setMessages([]);
     setProviderEvents([]);
@@ -548,6 +554,7 @@ export function Conversation({
           mode?: InteractionMode;
           providerRunId?: string;
           createdAt: string;
+          completedAt?: string | null;
         }>;
         messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
         activities?: Array<{
@@ -663,6 +670,11 @@ export function Conversation({
           return [];
         });
       setProviderEvents([...assistantEvents, ...activityEvents]);
+      const lastAssistantAt = history
+        .filter((message) => message.role === "assistant" && message.createdAt)
+        .at(-1)
+        ?.createdAt;
+      setAssistantTurnAt(latest.completedAt ?? lastAssistantAt ?? latest.createdAt);
       const nextState: ProviderState = latest.status === "active" || latest.status === "running"
         ? "streaming"
         : latest.status === "waiting_for_approval"
@@ -873,6 +885,7 @@ export function Conversation({
     if (promptOverride === undefined) setElementReferences([]);
     setProviderEvents([]);
     setProviderState("starting");
+    setAssistantTurnAt(null);
     setRunId(null);
     setCheckpoint(null);
     setRewindPreview(null);
@@ -939,7 +952,10 @@ export function Conversation({
             }
             setProviderEvents((current) => [...current, event]);
             if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
-            if (event.kind === "turn_completed") setProviderState("completed");
+            if (event.kind === "turn_completed") {
+              setProviderState("completed");
+              setAssistantTurnAt(new Date().toISOString());
+            }
             if (event.kind === "cancelled") {
               setProviderEvents((current) => current.map((candidate) => (
                 candidate.kind === "approval_pending" && candidate.state === "pending"
@@ -947,6 +963,7 @@ export function Conversation({
                   : candidate
               )));
               setProviderState("cancelled");
+              setAssistantTurnAt(new Date().toISOString());
             }
             if (event.kind === "failed") {
               setProviderEvents((current) => current.map((candidate) => (
@@ -955,6 +972,7 @@ export function Conversation({
                   : candidate
               )));
               setProviderState("failed");
+              setAssistantTurnAt(new Date().toISOString());
             }
           }
           newline = buffer.indexOf("\n");
@@ -969,6 +987,7 @@ export function Conversation({
         }
       }
     } catch (error) {
+      setAssistantTurnAt(new Date().toISOString());
       if (promptOverride === undefined) {
         setAttachments(sentAttachments);
         setElementReferences(sentElementReferences);
@@ -1347,8 +1366,8 @@ export function Conversation({
               <span className="rtime">
                 {runActive
                   ? "now"
-                  : conversation?.updatedAt
-                    ? formatElapsed(conversation.updatedAt)
+                  : assistantTurnAt
+                    ? formatElapsed(assistantTurnAt)
                     : "now"}
               </span>
             </div>
