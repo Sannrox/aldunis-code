@@ -1,7 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
 import { Button } from "../../components/ui";
+import { providerNotReadyMessage } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
+
+function isReady(provider: ProviderDiscovery | undefined): boolean {
+  return Boolean(provider?.installed && provider.authenticated !== false && provider.enabled !== false);
+}
 
 export function ForkConversationDialog({
   sourceThreadId,
@@ -20,9 +25,20 @@ export function ForkConversationDialog({
 }) {
   const codex = providers.find((provider) => provider.id === "codex-cli");
   const shikigamiProvider = providers.find((provider) => provider.id === "shikigami");
-  const defaultDestination: ProviderId = sourceProvider === "claude-code"
-    ? (codex?.installed && codex.authenticated ? "codex-cli" : "shikigami")
-    : "claude-code";
+  const claudeReady = profiles.length > 0;
+  const defaultDestination = useMemo((): ProviderId => {
+    const candidates: ProviderId[] = sourceProvider === "claude-code"
+      ? ["codex-cli", "shikigami"]
+      : sourceProvider === "codex-cli"
+      ? ["claude-code", "shikigami"]
+      : ["claude-code", "codex-cli"];
+    for (const id of candidates) {
+      if (id === "claude-code" && claudeReady) return id;
+      if (id === "codex-cli" && isReady(codex)) return id;
+      if (id === "shikigami" && isReady(shikigamiProvider)) return id;
+    }
+    return candidates[0]!;
+  }, [claudeReady, codex, shikigamiProvider, sourceProvider]);
   const [destination, setDestination] = useState<ProviderId>(defaultDestination);
   const [preview, setPreview] = useState<ForkPreview | null>(null);
   const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
@@ -65,16 +81,25 @@ export function ForkConversationDialog({
       setBusy(false);
     }
   };
-  const unavailable = destination === "codex-cli"
-    ? !codex?.installed || !codex.authenticated
+  const destinationDiscovery = destination === "codex-cli"
+    ? codex
     : destination === "shikigami"
-    ? !shikigamiProvider?.installed || !shikigamiProvider.authenticated
-    : profiles.length === 0;
+    ? shikigamiProvider
+    : { id: "claude-code" as const, installed: true };
   const destinationLabel = destination === "codex-cli"
     ? "Codex CLI"
     : destination === "shikigami"
     ? "Shikigami"
     : "Claude Code";
+  const unavailable = destination === "claude-code"
+    ? !claudeReady
+    : !isReady(destinationDiscovery);
+  const unavailableMessage = unavailable
+    ? providerNotReadyMessage(destination, destinationDiscovery, {
+      hasClaudeProfile: claudeReady,
+      providerName: destinationLabel,
+    })
+    : "";
   return (
     <OverlayDialog title={`Fork to ${destinationLabel}`} onClose={onClose}>
       <div className="fork-dialog">
@@ -111,18 +136,20 @@ export function ForkConversationDialog({
                 setModel("default");
               }}
             >
-              <option value="claude-code" disabled={sourceProvider === "claude-code"}>Claude Code</option>
+              <option value="claude-code" disabled={sourceProvider === "claude-code" || !claudeReady}>
+                Claude Code{!claudeReady ? " (configure profile)" : ""}
+              </option>
               <option
                 value="codex-cli"
-                disabled={sourceProvider === "codex-cli" || !codex?.installed || !codex?.authenticated}
+                disabled={sourceProvider === "codex-cli" || !isReady(codex)}
               >
-                Codex CLI
+                Codex CLI{codex && !isReady(codex) ? " (not ready)" : !codex ? " (not ready)" : ""}
               </option>
               <option
                 value="shikigami"
-                disabled={sourceProvider === "shikigami" || !shikigamiProvider?.installed || !shikigamiProvider?.authenticated}
+                disabled={sourceProvider === "shikigami" || !isReady(shikigamiProvider)}
               >
-                Shikigami
+                Shikigami{shikigamiProvider && !isReady(shikigamiProvider) ? " (not ready)" : !shikigamiProvider ? " (not ready)" : ""}
               </option>
             </select>
           </label>
@@ -136,7 +163,7 @@ export function ForkConversationDialog({
           )}
           <footer><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</Button></footer>
         </>}
-        {unavailable && <p className="context-error" role="alert">The destination provider is unavailable or not authenticated.</p>}
+        {unavailable && <p className="context-error" role="alert">{unavailableMessage}</p>}
         {error && <p className="context-error" role="alert">{error}</p>}
       </div>
     </OverlayDialog>
