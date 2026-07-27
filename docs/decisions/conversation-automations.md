@@ -14,7 +14,8 @@ Operators want recurring prompts into existing Aldunis Code conversations
 Ship **timer-only** automations stored outside preferences:
 
 1. Durable store `automations.v1.json` under the host state directory.
-2. Schedules: interval (≥ 60s) or 5-field **UTC** cron.
+2. Schedules: interval (≥ 60s) or 5-field **UTC** cron. When both day-of-month
+   and day-of-week are restricted, matching uses POSIX **OR** (either field may hit).
 3. Targets: existing conversation/thread only (no new-session or worktree create).
 4. Evaluate only while the local host process is running (no system-wide daemon).
 5. First evaluation **seeds** `lastRunAt` without firing; **Run now** bypasses the schedule.
@@ -34,3 +35,6 @@ Ship **timer-only** automations stored outside preferences:
 - Automations are best-effort while the workbench host is up.
 - Cron is UTC and minute-granularity; sub-minute intervals use interval schedules.
 - Operators manage automations via the Automations dialog (command palette).
+- Create / update / delete / run-now reject authenticated remote clients (same
+  posture as adapter administration); list remains available when remote-paired.
+- Due fires in one tick start concurrently so one long turn does not delay others.
