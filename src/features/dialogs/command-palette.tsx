@@ -65,7 +65,7 @@ export function CommandPalette({
         },
         {
           label: "Provider settings",
-          detail: "Configure local Claude profiles",
+          detail: "Configure local provider profiles",
           run: onProviderSettings,
         },
         {

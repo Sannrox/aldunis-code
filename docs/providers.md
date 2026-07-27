@@ -19,19 +19,28 @@ call. There is no integrated general-purpose terminal.
 
 ## First-class providers
 
+### Provider profiles
+
+Every first-class provider and every **installed** declarative adapter has a
+stable **default profile** (Settings → Provider profiles). Defaults may be
+empty: binary on `PATH`, no home override, no env. Deleting a default re-seeds
+it on the next list. Installing or updating an adapter creates
+`default:adapter:<package-id>` with required/sensitive env slots from the
+manifest (values remain empty until you set them).
+
+Sensitive environment values live in the host secret store (write-only in the UI).
+
 ### Claude Code
 
-- Discovered / configured via **named profiles** (Settings).
-- First run seeds a default profile that resolves `claude` from `PATH`.
-- Optional `CLAUDE_CONFIG_DIR` and sensitive environment variables are stored in
-  the host secret store (write-only in the UI).
+- Uses named profiles for binary, optional `CLAUDE_CONFIG_DIR`, and env.
+- First run seeds `default:claude-code` resolving `claude` from `PATH`.
 - Deleting a profile removes Aldunis-owned secrets only—never Claude’s own
   credential directory.
 - Unknown protocol events and unsupported major versions **fail closed**.
 
 ### Codex CLI
 
-- Discovered from `PATH` as `codex` (no profile store).
+- Seeds `default:codex-cli` (binary `codex`); discovery still uses `PATH`.
 - Reports install, authentication readiness, version, models, and reasoning
   efforts.
 - Build-mode network and file mutations pause for scoped approval; sandbox
@@ -39,8 +48,9 @@ call. There is no integrated general-purpose terminal.
 
 ### Shikigami
 
-First-class harness provider (`provider: "shikigami"`). Requires **shikigami
-1.0.2+** on `PATH` (`inplace` workspace + `--task-file`).
+First-class harness provider (`provider: "shikigami"`). Seeds
+`default:shikigami`. Requires **shikigami 1.0.2+** on `PATH`
+(`inplace` workspace + `--task-file`).
 
 - Code generates a run config with the selected worktree as workspace.
 - Progress is streamed from stderr events (`[shikigami] {…}`).

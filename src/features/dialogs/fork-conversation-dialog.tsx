@@ -25,7 +25,10 @@ export function ForkConversationDialog({
 }) {
   const codex = providers.find((provider) => provider.id === "codex-cli");
   const shikigamiProvider = providers.find((provider) => provider.id === "shikigami");
-  const claudeReady = profiles.length > 0;
+  const claudeProfiles = profiles.filter((profile) => (
+    profile.provider === "claude-code" || !profile.provider
+  ));
+  const claudeReady = claudeProfiles.length > 0;
   const defaultDestination = useMemo((): ProviderId => {
     const candidates: ProviderId[] = sourceProvider === "claude-code"
       ? ["codex-cli", "shikigami"]
@@ -41,7 +44,11 @@ export function ForkConversationDialog({
   }, [claudeReady, codex, shikigamiProvider, sourceProvider]);
   const [destination, setDestination] = useState<ProviderId>(defaultDestination);
   const [preview, setPreview] = useState<ForkPreview | null>(null);
-  const [profileId, setProfileId] = useState(profiles[0]?.id ?? "");
+  const [profileId, setProfileId] = useState(
+    claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
+      ?? claudeProfiles[0]?.id
+      ?? "",
+  );
   const [model, setModel] = useState("default");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
@@ -154,7 +161,7 @@ export function ForkConversationDialog({
             </select>
           </label>
           {destination === "claude-code" ? <>
-            <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
+            <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{claudeProfiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
             <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{["default", "sonnet", "opus", "haiku"].map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
           </> : destination === "codex-cli" ? (
             <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>

@@ -19,7 +19,7 @@ Typical contents (names may evolve; do not commit these files):
 | `events.v1.jsonl` | Append-only conversation history log |
 | `preferences.v1.json` | Theme, density, worktree limit, shortcuts |
 | `automations.v1.json` | Scheduled automations |
-| Profile / secret store | Claude profile metadata + env secrets |
+| Profile / secret store | Provider profile metadata (all providers + adapters) + env secrets |
 | Provider adapter metadata | Installed declarative adapters |
 | Shikigami run dirs | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
 

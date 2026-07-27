@@ -57,6 +57,7 @@ import {
   CLAUDE_MODEL_ALIASES,
   ClaudeProfileStore,
   ProfileError,
+  type AdapterProfileSeed,
   type ProfileProbeKind,
 } from "./profiles.ts";
 import {
@@ -82,6 +83,29 @@ import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function adapterProfileSeed(adapter: {
+  manifest: {
+    id: string;
+    version: string;
+    presentation: { name: string };
+    executable: { names: string[] };
+    environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
+  };
+}): AdapterProfileSeed {
+  return {
+    provider: adapterReference(adapter.manifest),
+    name: adapter.manifest.presentation.name,
+    binaryPath: adapter.manifest.executable.names[0] ?? "",
+    environment: adapter.manifest.environment
+      .filter((entry) => entry.required || entry.sensitive)
+      .map((entry) => ({
+        name: entry.name,
+        sensitive: entry.sensitive,
+        value: "",
+      })),
+  };
+}
 const MAX_BODY_BYTES = 128 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
@@ -433,9 +457,12 @@ async function handleApi(
         approved?: unknown;
       };
       if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
-      sendJson(response, 200, route.endsWith("/install")
+      const installed = route.endsWith("/install")
         ? await adapters.install(body)
-        : await adapters.update(body));
+        : await adapters.update(body);
+      // Every installed adapter gets a stable default profile (may be empty).
+      await profiles.ensureProviderDefault(adapterProfileSeed(installed));
+      sendJson(response, 200, installed);
       return true;
     }
     const adapterAction = route.match(
@@ -1245,12 +1272,18 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/list") {
-      sendJson(response, 200, { profiles: await profiles.list() });
+      const installedAdapters = await adapters.list();
+      sendJson(response, 200, {
+        profiles: await profiles.list({
+          adapters: installedAdapters.map((adapter) => adapterProfileSeed(adapter)),
+        }),
+      });
       return true;
     }
     if (route === "/api/provider/profiles/save") {
       const body = await readJson(request) as {
         id?: unknown;
+        provider?: unknown;
         name?: unknown;
         binaryPath?: unknown;
         homePath?: unknown;
@@ -1278,14 +1311,16 @@ async function handleApi(
       if (
         (body.id !== undefined && typeof body.id !== "string")
         || typeof body.name !== "string"
+        || (body.provider !== undefined && typeof body.provider !== "string")
         || (body.binaryPath !== undefined && typeof body.binaryPath !== "string")
         || (body.homePath !== undefined && typeof body.homePath !== "string")
         || (body.environment !== undefined && !Array.isArray(body.environment))
       ) {
-        throw new ProfileError("A valid Claude profile is required.");
+        throw new ProfileError("A valid provider profile is required.");
       }
       sendJson(response, 200, await profiles.save({
         ...(typeof body.id === "string" ? { id: body.id } : {}),
+        ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
         name: body.name,
         ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
         ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
@@ -1295,7 +1330,7 @@ async function handleApi(
     }
     if (route === "/api/provider/profiles/delete") {
       const body = await readJson(request) as { id?: unknown };
-      if (typeof body.id !== "string") throw new ProfileError("A Claude profile is required.");
+      if (typeof body.id !== "string") throw new ProfileError("A provider profile is required.");
       await profiles.delete(body.id);
       sendJson(response, 200, { status: "deleted" });
       return true;
