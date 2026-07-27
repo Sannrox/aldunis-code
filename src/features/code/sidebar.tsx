@@ -483,7 +483,7 @@ export function CodeSidebar({
                               : `Open settled conversation "${conversation.title}"`
                           }
                         >
-                          <span className="t">{conversation.title}</span>
+                          <span className="t" title={conversation.title}>{conversation.title}</span>
                         </button>
                         {holds
                           ? (

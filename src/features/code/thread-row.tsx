@@ -42,6 +42,7 @@ export function ThreadRow({
   const elapsed = formatElapsed(conversation.statusSince ?? conversation.updatedAt);
   const listLabel = providerLabel(conversation.provider);
   const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
+  const branch = branchFromWorktree(conversation.worktree);
   const statusLabel =
     status === "pending_approval" ? "Approval needed"
     : status === "awaiting_input" ? "Awaiting input"
@@ -55,7 +56,7 @@ export function ThreadRow({
     unread ? "Unread" : null,
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
-    branchFromWorktree(conversation.worktree),
+    branch,
     listLabel,
     elapsed,
   ].filter(Boolean).join(", ");
@@ -126,23 +127,25 @@ export function ThreadRow({
           <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </svg>
-          <span className="pn">{conversation.projectName ?? "project"}</span>
+          <span className="pn" title={conversation.projectName ?? "project"}>
+            {conversation.projectName ?? "project"}
+          </span>
           {status === "pending_approval" && <span className="pill approval">Approval</span>}
           {status === "awaiting_input" && <span className="pill input">Input</span>}
           {status === "failed" && <span className="pill failed">Failed</span>}
           {status === "running" && <span className="spin" aria-label="Working" />}
           {status === "completed" && !blocks && <span className="mark" aria-hidden="true">✓</span>}
         </div>
-        <div className="rt">
+        <div className="rt" title={conversation.title}>
           {conversation.pinnedAt ? "◆ " : ""}
           {conversation.title}
         </div>
         <div className="rb">
-          <span className="br">{branchFromWorktree(conversation.worktree)}</span>
+          <span className="br" title={branch}>{branch}</span>
           {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
           <span className="pv" title={listLabel} aria-hidden="true">{monogram}</span>
-          <span className="pl">{listLabel}</span>
-          <span className="tm">{elapsed}</span>
+          <span className="pl" title={listLabel}>{listLabel}</span>
+          <span className="tm" title={elapsed}>{elapsed}</span>
         </div>
       </button>
       <div className="row-actions">
