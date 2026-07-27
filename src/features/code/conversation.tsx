@@ -1390,14 +1390,14 @@ export function Conversation({
                     <div><dt>Host</dt><dd>{location.host}</dd></div>
                     <div><dt>Repository</dt><dd>{approval.repository}</dd></div>
                     <div><dt>Worktree</dt><dd>{approval.worktree}</dd></div>
-                    <div><dt>Provider</dt><dd>{approval.provider}</dd></div>
+                    <div><dt>Provider</dt><dd>{providerListLabel(approval.provider)}</dd></div>
                   </dl>
                   <p>{approval.scope.target}</p>
                   {approval.scope.details.length > 0 && (
                     <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
                   )}
                   <small className="approval-binding">
-                    {location.host} · {pane} pane · conversation {approval.conversationId} · {approval.repository} · {approval.worktree} · {approval.provider} · direct · {approval.toolName} · {approval.scope.target}
+                    {location.host} · {pane} pane · conversation {approval.conversationId.slice(0, 8)} · {approval.repository} · {approval.worktree} · {providerListLabel(approval.provider)} · direct · {approval.toolName} · {approval.scope.target}
                   </small>
                   {approval.state === "pending" && (
                     <footer>
