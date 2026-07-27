@@ -1117,7 +1117,16 @@ export function Conversation({
       aria-label={`${pane === "primary" ? "Primary" : "Secondary"} conversation: ${conversation?.title ?? "New conversation"}`}
     >
       <div className="topbar">
-        <div className="crumb">
+        <div
+          className="crumb"
+          title={[
+            conversation?.title ?? "New conversation",
+            worktree ? conversationBranch : null,
+            repository ? providerListLabel(provider) : null,
+            model !== "default" ? modelChipLabel : null,
+            showReasoningEffort ? reasoningEffort : null,
+          ].filter(Boolean).join(" · ")}
+        >
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
           {repository && <> · {providerListLabel(provider)}</>}
