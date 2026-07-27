@@ -224,7 +224,17 @@ export function ForkConversationDialog({
               </select>
             </label>
           )}
-          <footer><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</Button></footer>
+          <footer>
+            <Button onClick={onClose} disabled={busy} aria-label="Cancel fork">Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={() => void create()}
+              disabled={busy || unavailable}
+              aria-label={busy ? "Creating reviewed fork" : "Create reviewed fork"}
+            >
+              Create reviewed fork
+            </Button>
+          </footer>
         </>}
         {unavailable && <p className="context-error" role="alert">{unavailableMessage}</p>}
         {error && <p className="context-error" role="alert">{error}</p>}

@@ -402,11 +402,12 @@ export function RepositoryDialog({
         )}
 
         <footer>
-          <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="button" onClick={onClose} disabled={busy} aria-label="Cancel open project">Cancel</Button>
           <Button
             variant="primary"
             type="submit"
             disabled={busy || (!query.trim() && !rows[activeIndex])}
+            aria-label={busy ? "Opening project" : "Open project"}
           >
             {busy ? "Opening…" : "Open project"}
           </Button>

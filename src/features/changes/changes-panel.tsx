@@ -581,7 +581,7 @@ export function ChangesPanel({
               <small>{plan.repository} · {plan.worktree} · {plan.branch}</small>
               <ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
               <footer>
-                <Button onClick={() => setPlan(null)}>Cancel</Button>
+                <Button onClick={() => setPlan(null)} aria-label={`Cancel delivery plan, ${pane} pane`}>Cancel</Button>
                 <Button
                   variant="primary"
                   size="sm"

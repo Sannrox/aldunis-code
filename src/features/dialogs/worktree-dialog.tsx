@@ -141,7 +141,7 @@ export function WorktreeDialog({
             />
             {!plan && (
               <footer>
-                <Button type="button" onClick={onClose}>Cancel</Button>
+                <Button type="button" onClick={onClose} aria-label="Cancel worktree changes">Cancel</Button>
                 <Button type="submit" variant="primary" disabled={busy || !base.trim() || !branch.trim()}>
                   {busy ? "Validating…" : "Preview creation"}
                 </Button>
