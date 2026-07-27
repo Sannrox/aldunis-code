@@ -25,6 +25,16 @@ import {
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
+import {
+  draftForPromptHistoryIndex,
+  isBrowsingPromptHistory,
+  isComposerHistoryBoundary,
+  promptHistoryFromMessages,
+  resetPromptHistoryBrowse,
+  stepPromptHistoryDown,
+  stepPromptHistoryUp,
+  type PromptHistoryBrowse,
+} from "../../lib/composer-prompt-history";
 import { presentToolRows, shortToolCallId } from "../../lib/tool-presentation";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
@@ -79,6 +89,14 @@ export function Conversation({
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
+  /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
+  const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
+  const [promptHistoryBrowse, setPromptHistoryBrowse] = useState<PromptHistoryBrowse>(() => (
+    resetPromptHistoryBrowse([])
+  ));
+  useEffect(() => {
+    setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
+  }, [promptHistory]);
   const [mode, setMode] = useState<InteractionMode>("ask");
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
@@ -1611,7 +1629,16 @@ export function Conversation({
             className="composer-input"
             value={draft}
             spellCheck
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setDraft(value);
+              // Typing while recalling a prior prompt exits history browse (live draft).
+              setPromptHistoryBrowse((current) => (
+                isBrowsingPromptHistory(current, promptHistory)
+                  ? resetPromptHistoryBrowse(promptHistory)
+                  : current
+              ));
+            }}
             onPaste={() => setContextError(null)}
             onKeyDown={(event) => {
               if (suggestionMode && suggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
@@ -1631,6 +1658,42 @@ export function Conversation({
               if (event.key === "Escape" && suggestionMode) {
                 event.preventDefault();
                 setSuggestionMode(null);
+                return;
+              }
+              if (
+                event.key === "Escape"
+                && isBrowsingPromptHistory(promptHistoryBrowse, promptHistory)
+              ) {
+                event.preventDefault();
+                setDraft(promptHistoryBrowse.draftBeforeHistory);
+                setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
+                return;
+              }
+              // Shell-style prompt history: ↑ at start/empty (or while browsing), ↓ while browsing.
+              if (
+                !suggestionMode
+                && (event.key === "ArrowUp" || event.key === "ArrowDown")
+              ) {
+                const browsing = isBrowsingPromptHistory(promptHistoryBrowse, promptHistory);
+                if (event.key === "ArrowUp") {
+                  if (!browsing && !isComposerHistoryBoundary(event.currentTarget)) return;
+                  const next = stepPromptHistoryUp(
+                    promptHistory,
+                    promptHistoryBrowse,
+                    draft,
+                  );
+                  if (!next) return;
+                  event.preventDefault();
+                  setPromptHistoryBrowse(next);
+                  setDraft(draftForPromptHistoryIndex(promptHistory, next));
+                  return;
+                }
+                if (!browsing) return;
+                const next = stepPromptHistoryDown(promptHistory, promptHistoryBrowse);
+                if (!next) return;
+                event.preventDefault();
+                setPromptHistoryBrowse(next);
+                setDraft(draftForPromptHistoryIndex(promptHistory, next));
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey) {
