@@ -1599,7 +1599,7 @@ export function Conversation({
                 className={`cc ${accessScope.warning ? "scoped" : ""}`}
                 disabled={!canPickMode}
                 aria-haspopup="listbox"
-                aria-expanded={modeMenuOpen}
+                aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
                 title={accessScope.detail}
                 aria-label={`Access ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
                 onClick={(event) => {
@@ -1622,6 +1622,7 @@ export function Conversation({
                 disabled={!canPickMode}
                 aria-haspopup="listbox"
                 aria-expanded={modeMenuOpen}
+                aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
                 title="Open the mode menu"
                 aria-label={`Mode ${modeCopy[mode].label}. Open menu to choose Ask, Plan, or Build.`}
                 onClick={(event) => {
@@ -1636,6 +1637,7 @@ export function Conversation({
               </button>
               {modeMenuOpen && canPickMode && (
                 <div
+                  id="composer-mode-menu"
                   className="composer-provider-menu"
                   role="listbox"
                   aria-label="Choose interaction mode"
