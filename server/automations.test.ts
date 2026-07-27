@@ -49,6 +49,16 @@ test("cronMatchesUtc evaluates fields", () => {
   assert.equal(cronMatchesUtc("0 13 * * 1", noonMonday), false);
 });
 
+test("cronMatchesUtc uses POSIX OR when both DOM and DOW are restricted", () => {
+  // 0 9 15 * 1 → 09:00 on the 15th OR on Mondays (not only Mondays that are the 15th).
+  const thursday15 = new Date(Date.UTC(2026, 0, 15, 9, 0, 0)); // Thu 15th
+  const monday19 = new Date(Date.UTC(2026, 0, 19, 9, 0, 0)); // Mon 19th
+  const tuesday = new Date(Date.UTC(2026, 0, 20, 9, 0, 0)); // Tue 20th
+  assert.equal(cronMatchesUtc("0 9 15 * 1", thursday15), true);
+  assert.equal(cronMatchesUtc("0 9 15 * 1", monday19), true);
+  assert.equal(cronMatchesUtc("0 9 15 * 1", tuesday), false);
+});
+
 test("first evaluation is due for seeding without prior lastRun", () => {
   const now = new Date("2026-01-01T00:00:30.000Z");
   assert.equal(isScheduleDue(baseAutomation(), now), true);
@@ -131,6 +141,51 @@ test("scheduler seeds first tick without firing and skips busy without advancing
   assert.equal(fires, 1);
   assert.equal(current?.lastStatus, "ok");
   assert.notEqual(current?.lastRunAt, lastBeforeSkip);
+});
+
+test("tick fires multiple due automations without waiting serially", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-concurrent-"));
+  const store = new AutomationStore(directory);
+  const a = await store.create({
+    name: "A",
+    threadId: "t-a",
+    prompt: "a",
+    schedule: { kind: "interval", seconds: 60 },
+  });
+  const b = await store.create({
+    name: "B",
+    threadId: "t-b",
+    prompt: "b",
+    schedule: { kind: "interval", seconds: 60 },
+  });
+  // Seed both
+  let now = new Date("2026-06-01T00:00:00.000Z");
+  const order: string[] = [];
+  let releaseA!: () => void;
+  const gateA = new Promise<void>((resolve) => {
+    releaseA = resolve;
+  });
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async (automation) => {
+      order.push(`start:${automation.id}`);
+      if (automation.id === a.id) await gateA;
+      order.push(`end:${automation.id}`);
+    },
+    now: () => now,
+  });
+  await scheduler.tick(); // seed
+  now = new Date("2026-06-01T00:02:00.000Z");
+  const tick = scheduler.tick();
+  // B should finish while A is still gated.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(order.includes(`start:${a.id}`));
+  assert.ok(order.includes(`start:${b.id}`));
+  assert.ok(order.includes(`end:${b.id}`));
+  assert.equal(order.includes(`end:${a.id}`), false);
+  releaseA();
+  await tick;
+  assert.ok(order.includes(`end:${a.id}`));
 });
 
 test("runNow fires immediately and can report errors", async () => {
