@@ -20,6 +20,7 @@ import {
   providerNotReadyMessage,
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
+import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import { formatElapsed } from "./conversation-list";
 
 export function Conversation({
@@ -539,8 +540,10 @@ export function Conversation({
         mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
         createdAt: message.createdAt,
       })));
+      // Keep whitespace-only assistant chunks (e.g. "\n\n" from ACP streams).
+      // Dropping them via trim() glued "shikigami" + "There" into unreadable text.
       setProviderEvents(history
-        .filter((message) => message.role === "assistant" && message.text.trim().length > 0)
+        .filter((message) => message.role === "assistant" && message.text.length > 0)
         .map((message) => ({
           kind: "assistant_text" as const,
           text: message.text,
@@ -951,10 +954,11 @@ export function Conversation({
       }]);
     }
   };
-  const assistantText = providerEvents
-    .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
-    .map((event) => event.text)
-    .join("\n");
+  const assistantText = joinAssistantTextChunks(
+    providerEvents
+      .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
+      .map((event) => event.text),
+  );
   const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
   const approvals = providerEvents.filter(
     (event): event is Extract<ProviderEvent, { kind: "approval_pending" }> => event.kind === "approval_pending",
@@ -1185,7 +1189,7 @@ export function Conversation({
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
-              {assistantText && <p>{assistantText}</p>}
+              {assistantText && <p className="turn-text">{assistantText}</p>}
               {toolEvents.length > 0 && (
                 <div className="tools">
                   {toolEvents.map((event, index) => {

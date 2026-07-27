@@ -1642,6 +1642,12 @@ select.ui-input {
 }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
+/* Preserve intentional newlines from streamed assistant text (ACP chunks join
+   without separators; real line breaks live inside chunk payloads). */
+.turn-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 /* Composer provider picker (new conversations only). */
 .composer-provider {
   position: relative;
