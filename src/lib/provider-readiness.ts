@@ -111,6 +111,7 @@ export function providerAvatarInitials(
 /**
  * Compact chip label on the composer provider control.
  * Prefer human names over machine ids (claude-code / codex-cli / reverse-DNS packages).
+ * Known adapters keep a stable short label even when discovery appends "CLI".
  */
 export function providerChipName(
   provider: ProviderId,
@@ -119,13 +120,14 @@ export function providerChipName(
   if (provider === "claude-code") return "Claude";
   if (provider === "codex-cli") return "Codex";
   if (provider === "shikigami") return "Shikigami";
-  const name = discovery?.name?.trim();
-  if (name) return name;
-  // Prefer known friendly names over reverse-DNS package ids when discovery is cold.
   const packageId = typeof provider === "string" ? adapterPackageId(provider) : null;
   if (packageId) {
-    return knownAdapterDisplayName(packageId) ?? packageId;
+    const known = knownAdapterDisplayName(packageId);
+    if (known) return known;
   }
+  const name = discovery?.name?.trim();
+  if (name) return name;
+  if (packageId) return packageId;
   return providerDisplayName(provider, discovery);
 }
 
