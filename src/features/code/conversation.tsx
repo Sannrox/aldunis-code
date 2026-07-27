@@ -22,6 +22,7 @@ import {
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
+import { presentToolRows, shortToolCallId } from "../../lib/tool-presentation";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 
@@ -1240,21 +1241,16 @@ export function Conversation({
               )}
               {assistantText && <MarkdownBody text={assistantText} className="turn-md" />}
               {toolEvents.length > 0 && (
-                <div className="tools">
-                  {toolEvents.map((event, index) => {
-                    const id = event.toolCallId;
-                    const label = event.kind === "tool_started"
-                      ? event.name
-                      : id;
-                    const failed = event.kind === "tool_finished" && event.failed;
-                    return (
-                      <div className="tool" key={`${id}-${event.kind}-${index}`}>
-                        <span>{event.kind === "tool_started" ? "Run" : failed ? "Failed" : "Done"}</span>
-                        <code>{label}</code>
-                        <span className="r">{id.slice(0, 8)}</span>
-                      </div>
-                    );
-                  })}
+                <div className="tools" aria-label="Provider tool activity">
+                  {presentToolRows(toolEvents).map((row) => (
+                    <div className={`tool tool-${row.status}`} key={row.toolCallId}>
+                      <span>
+                        {row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}
+                      </span>
+                      <code>{row.name}</code>
+                      <span className="r" title={row.toolCallId}>{shortToolCallId(row.toolCallId)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
               {providerState === "completed" && threadId && !completionDismissed && (
