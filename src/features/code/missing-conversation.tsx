@@ -1,6 +1,7 @@
 import React from "react";
 import type { ConversationSummary } from "../../types";
 import { Button } from "../../components/ui";
+import { providerListLabel } from "../../lib/provider-readiness";
 
 export function MissingConversation({
   pane,
@@ -27,9 +28,17 @@ export function MissingConversation({
           onChange={(event) => { if (event.target.value) onReplace(event.target.value); }}
         >
           <option value="" disabled>Choose a conversation…</option>
-          {conversations.map((conversation) => (
-            <option value={conversation.id} key={conversation.id}>{conversation.title}</option>
-          ))}
+          {conversations.map((conversation) => {
+            const title = conversation.title.trim() || "Conversation";
+            const provider = conversation.provider
+              ? providerListLabel(conversation.provider)
+              : null;
+            return (
+              <option value={conversation.id} key={conversation.id}>
+                {provider ? `${title} · ${provider}` : title}
+              </option>
+            );
+          })}
         </select>
       </label>
       {onClose && (
