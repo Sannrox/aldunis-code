@@ -139,6 +139,7 @@ export function PreferencesDialog({
             type="button"
             key={item}
             className={`snav-i ${section === item ? "on" : ""}`}
+            aria-current={section === item ? "true" : undefined}
             onClick={() => setSection(item)}
           >
             {item === "Archived" ? "Archived threads" : item}
@@ -186,6 +187,7 @@ export function PreferencesDialog({
                           type="button"
                           key={value}
                           className={draft.theme === value ? "on" : ""}
+                          aria-pressed={draft.theme === value}
                           onClick={() => update("theme", value)}
                         >
                           {value[0]!.toUpperCase() + value.slice(1)}
@@ -206,6 +208,7 @@ export function PreferencesDialog({
                           type="button"
                           key={value}
                           className={draft.density === value ? "on" : ""}
+                          aria-pressed={draft.density === value}
                           onClick={() => update("density", value)}
                         >
                           {value[0]!.toUpperCase() + value.slice(1)}
@@ -322,6 +325,7 @@ export function PreferencesDialog({
                       <button
                         type="button"
                         className={draft.commandPaletteShortcut === "mod+k" ? "on" : ""}
+                        aria-pressed={draft.commandPaletteShortcut === "mod+k"}
                         onClick={() => update("commandPaletteShortcut", "mod+k")}
                       >
                         ⌘K
@@ -329,6 +333,7 @@ export function PreferencesDialog({
                       <button
                         type="button"
                         className={draft.commandPaletteShortcut === "mod+shift+p" ? "on" : ""}
+                        aria-pressed={draft.commandPaletteShortcut === "mod+shift+p"}
                         onClick={() => update("commandPaletteShortcut", "mod+shift+p")}
                       >
                         ⌘⇧P
