@@ -96,13 +96,29 @@ function fieldMatches(field: string, value: number, min: number, max: number): b
   return false;
 }
 
+/** Star or star-step over the full domain — not a restricted list/range. */
+function isUnrestrictedField(field: string): boolean {
+  const trimmed = field.trim();
+  if (trimmed === "*") return true;
+  return /^\*\/\d+$/.test(trimmed);
+}
+
 export function cronMatchesUtc(expression: string, date: Date): boolean {
   const [minute, hour, dom, month, dow] = expression.trim().split(/\s+/);
-  return fieldMatches(minute, date.getUTCMinutes(), 0, 59)
-    && fieldMatches(hour, date.getUTCHours(), 0, 23)
-    && fieldMatches(dom, date.getUTCDate(), 1, 31)
-    && fieldMatches(month, date.getUTCMonth() + 1, 1, 12)
-    && fieldMatches(dow, date.getUTCDay(), 0, 6);
+  if (
+    !fieldMatches(minute, date.getUTCMinutes(), 0, 59)
+    || !fieldMatches(hour, date.getUTCHours(), 0, 23)
+    || !fieldMatches(month, date.getUTCMonth() + 1, 1, 12)
+  ) {
+    return false;
+  }
+  // POSIX/Vixie: when both DOM and DOW are restricted, match if either hits.
+  const domOk = fieldMatches(dom, date.getUTCDate(), 1, 31);
+  const dowOk = fieldMatches(dow, date.getUTCDay(), 0, 6);
+  if (!isUnrestrictedField(dom) && !isUnrestrictedField(dow)) return domOk || dowOk;
+  if (!isUnrestrictedField(dom)) return domOk;
+  if (!isUnrestrictedField(dow)) return dowOk;
+  return true;
 }
 
 /**
@@ -368,6 +384,10 @@ export class AutomationScheduler {
     try {
       const now = this.options.now?.() ?? new Date();
       const items = await this.store.list();
+      // Evaluate schedules first, then fire due items concurrently so one long
+      // provider turn does not delay other due automations.
+      const due: Automation[] = [];
+      const claimedThreads = new Set<string>();
       for (const automation of items) {
         if (!isScheduleDue(automation, now)) continue;
         // First evaluation seeds lastRun without firing.
@@ -379,7 +399,10 @@ export class AutomationScheduler {
           });
           continue;
         }
-        if (await this.options.isThreadBusy(automation.threadId)) {
+        if (
+          claimedThreads.has(automation.threadId)
+          || await this.options.isThreadBusy(automation.threadId)
+        ) {
           // Skip without advancing lastRun on scheduled ticks.
           await this.store.update(automation.id, {
             lastStatus: "skipped_busy",
@@ -387,6 +410,10 @@ export class AutomationScheduler {
           });
           continue;
         }
+        claimedThreads.add(automation.threadId);
+        due.push(automation);
+      }
+      await Promise.all(due.map(async (automation) => {
         try {
           await this.options.fire(automation);
           await this.store.update(automation.id, {
@@ -401,7 +428,7 @@ export class AutomationScheduler {
             lastError: error instanceof Error ? error.message : "Automation failed.",
           });
         }
-      }
+      }));
     } finally {
       this.#running = false;
     }
