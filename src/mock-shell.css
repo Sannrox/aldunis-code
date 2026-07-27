@@ -344,7 +344,11 @@ code{font-family:var(--font-mono)}
 .field .fd{font-size:12.5px;color:var(--muted-foreground);line-height:1.5}
 .field .fc{flex:0 0 auto;padding-top:2px}
 .seg{display:inline-flex;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--muted);gap:2px}
-.seg button{padding:4px 11px;border-radius:6px;font-size:12.5px;color:var(--muted-foreground)}
+/* Theme/density segments measured ~27px with pad-only sizing. */
+.seg button{
+  min-height:28px;padding:4px 11px;border-radius:6px;font-size:12.5px;color:var(--muted-foreground);
+  display:inline-flex;align-items:center;cursor:pointer;border:0;background:transparent;
+}
 .seg button.on{background:var(--card);color:var(--foreground);font-weight:500}
 .num{width:62px;height:30px;border:1px solid var(--input);border-radius:8px;background:var(--card);
   display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:13px}
