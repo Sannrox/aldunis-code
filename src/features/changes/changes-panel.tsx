@@ -279,7 +279,7 @@ export function ChangesPanel({
         <CloseButton data-dialog-initial-focus onClick={onClose} label={`Close changed files, ${pane} pane`} />
       </div>
       <div className="changes-body rv-body">
-        <nav className="rv-files" aria-label="Changed files">
+        <nav className="rv-files" aria-label={`Changed files, ${pane} pane`}>
           {loading && <p className="changes-note">Inspecting worktree…</p>}
           {error && <p className="changes-error" role="alert">{error}</p>}
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
@@ -327,7 +327,7 @@ export function ChangesPanel({
           ))}
         </nav>
         <div className="review-workspace">
-        <div className="diff-view" tabIndex={0} aria-label={selected ? `Diff for ${selected}` : "File diff"}>
+        <div className="diff-view" tabIndex={0} aria-label={selected ? `Diff for ${selected}, ${pane} pane` : `File diff, ${pane} pane`}>
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
           {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
@@ -355,7 +355,7 @@ export function ChangesPanel({
           ))}</pre>}
           {!threadId && <p className="changes-note">Send the first conversation turn before saving review comments.</p>}
           {commentLineIndex !== undefined && diff && (
-            <section className="annotation-composer" aria-label="New local diff comment">
+            <section className="annotation-composer" aria-label={`New local diff comment, ${pane} pane`}>
               <strong>{commentLineIndex === null
                 ? `Comment on ${diff.path}`
                 : `Comment on ${diff.path} line ${diff.lines.find((line) => line.index === commentLineIndex)?.newLine
@@ -381,7 +381,7 @@ export function ChangesPanel({
                 <Button
                   type="button"
                   size="sm"
-                  aria-label="Cancel review comment"
+                  aria-label={`Cancel review comment, ${pane} pane`}
                   onClick={() => { setCommentLineIndex(undefined); setCommentText(""); }}
                 >
                   Cancel
@@ -390,7 +390,7 @@ export function ChangesPanel({
                   type="button"
                   variant="primary"
                   size="sm"
-                  aria-label="Save review comment"
+                  aria-label={`Save review comment, ${pane} pane`}
                   onClick={() => void saveAnnotation()}
                   disabled={annotationBusy || !commentText.trim()}
                 >
@@ -400,7 +400,7 @@ export function ChangesPanel({
             </section>
           )}
         </div>
-        <section className="annotations-panel" aria-label="Local diff comments">
+        <section className="annotations-panel" aria-label={`Local diff comments, ${pane} pane`}>
           <header className="review-section-header">
             <strong>Review comments</strong>
             <small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small>
@@ -466,16 +466,16 @@ export function ChangesPanel({
             className="revision-preview"
             role="dialog"
             aria-modal="true"
-            aria-label="Revision request preview"
+            aria-label={`Revision request preview, ${pane} pane`}
             onKeyDown={(event) => {
               handleNestedEscape(event, () => setRevisionPreview(null));
             }}
           >
-            <header><strong>Exact provider context</strong><CloseButton onClick={() => setRevisionPreview(null)} label="Close revision preview" /></header>
+            <header><strong>Exact provider context</strong><CloseButton onClick={() => setRevisionPreview(null)} label={`Close revision preview, ${pane} pane`} /></header>
             <pre>{revisionPreview}</pre>
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
             <footer>
-              <Button type="button" size="sm" onClick={() => setRevisionPreview(null)} aria-label="Cancel revision request">
+              <Button type="button" size="sm" onClick={() => setRevisionPreview(null)} aria-label={`Cancel revision request, ${pane} pane`}>
                 Cancel
               </Button>
               <Button size="sm" onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</Button>
@@ -483,7 +483,7 @@ export function ChangesPanel({
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
           </section>
         )}
-        <section className="delivery-panel" aria-label="Commit, push, and pull request actions">
+        <section className="delivery-panel" aria-label={`Commit, push, and pull request actions, ${pane} pane`}>
           <header className="review-section-header delivery-header">
             <div>
               <strong>Reviewed delivery</strong>
