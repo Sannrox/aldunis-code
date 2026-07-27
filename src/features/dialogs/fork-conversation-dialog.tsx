@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
 import { Button } from "../../components/ui";
+import { MarkdownBody } from "../../components/markdown-body";
 import { providerNotReadyMessage } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
@@ -124,7 +125,14 @@ export function ForkConversationDialog({
           <details open>
             <summary>Exact messages crossing the boundary</summary>
             {preview.messages.length
-              ? preview.messages.map((message) => <article key={message.id}><strong>{message.role}</strong><p>{message.text}</p></article>)
+              ? preview.messages.map((message) => (
+                <article key={message.id}>
+                  <strong>{message.role}</strong>
+                  {message.role === "assistant"
+                    ? <div className="fork-message-body"><MarkdownBody text={message.text} /></div>
+                    : <p className="fork-message-body">{message.text}</p>}
+                </article>
+              ))
               : <p>No messages will be transferred.</p>}
           </details>
           {preview.annotations.length > 0 && <details>

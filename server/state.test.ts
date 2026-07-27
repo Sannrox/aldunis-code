@@ -777,3 +777,27 @@ test("cross-provider fork fails closed when reviewed context changes", async () 
   assert.equal((await store.load()).forks.length, 0);
   assert.equal((await store.load()).threads.length, 1);
 });
+
+test("fork preview coalesces consecutive assistant stream chunks", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "How to install",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  for (const text of ["Hello", " ", "world", "!"]) {
+    await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+      kind: "assistant_text",
+      text,
+    });
+  }
+  const preview = await store.previewFork(thread.id);
+  assert.deepEqual(preview.messages.map((message) => ({ role: message.role, text: message.text })), [
+    { role: "user", text: "How to install" },
+    { role: "assistant", text: "Hello world!" },
+  ]);
+  assert.equal(preview.messages.length, 2);
+});
