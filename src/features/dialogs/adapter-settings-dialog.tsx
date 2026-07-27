@@ -281,10 +281,16 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
             <article key={adapter.manifest.id}>
               <header>
                 <div>
-                  <strong>{adapter.manifest.presentation.name}</strong>
-                  <small>{adapter.manifest.id}@{adapter.manifest.version} · {adapter.enabled ? "enabled" : "disabled"}</small>
+                  <strong title={adapter.manifest.presentation.name}>
+                    {adapter.manifest.presentation.name}
+                  </strong>
+                  <small
+                    title={`${adapter.manifest.id}@${adapter.manifest.version} · ${adapter.enabled ? "enabled" : "disabled"}`}
+                  >
+                    {adapter.manifest.id}@{adapter.manifest.version} · {adapter.enabled ? "enabled" : "disabled"}
+                  </small>
                 </div>
-                <code>{adapter.digest}</code>
+                <code title={adapter.digest}>{adapter.digest}</code>
               </header>
               <p>{adapter.manifest.presentation.description}</p>
               <footer>
