@@ -121,6 +121,7 @@ function App() {
   }, [preferences]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const modifier = event.metaKey || event.ctrlKey;
       const matches = preferences.commandPaletteShortcut === "mod+k"
         ? modifier && !event.shiftKey && event.key.toLocaleLowerCase() === "k"
