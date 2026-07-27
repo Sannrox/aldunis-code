@@ -106,8 +106,14 @@ Releasing a worktree never deletes the conversation.
 ## Permission scope
 
 The composer states the permission posture before a prompt is sent: model,
-profile, **access scope**, and mode. Access scope is rendered with a lock and
-a warning hue when it is anything other than read-only.
+profile, and a **single mode control** that shows both the interaction mode
+(Ask / Plan / Build) and the tool scope (Read-only / Plan only / Worktree
+write). The control uses a lock glyph and a warning hue when the scope is
+anything other than read-only.
+
+A separate “Access” chip next to “Mode” was tried and dropped: both opened the
+same menu, and “Access Read-only” read like conversation privacy rather than
+agent tool authority.
 
 This is the product's core claim — `AGENTS.md` requires explicit, scoped
 approval for mutating provider tools — and it previously appeared only after
