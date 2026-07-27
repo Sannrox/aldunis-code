@@ -375,19 +375,24 @@ export function ChangesPanel({
                 aria-label="Review comment"
               />
               <footer>
-                <button
+                <Button
                   type="button"
+                  size="sm"
+                  aria-label="Cancel review comment"
                   onClick={() => { setCommentLineIndex(undefined); setCommentText(""); }}
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="primary"
+                  size="sm"
+                  aria-label="Save review comment"
                   onClick={() => void saveAnnotation()}
                   disabled={annotationBusy || !commentText.trim()}
                 >
                   Save comment
-                </button>
+                </Button>
               </footer>
             </section>
           )}
