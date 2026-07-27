@@ -1327,7 +1327,11 @@ export function Conversation({
                     <span className="ttl">Nothing left to do here</span>
                   </div>
                   <p>
-                    Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out. Settling keeps the worktree.
+                    Worktree{" "}
+                    <code title={worktree?.path ?? conversation?.worktree ?? undefined}>
+                      {worktree?.path ?? conversation?.worktree}
+                    </code>{" "}
+                    is still checked out. Settling keeps the worktree.
                   </p>
                   <div className="acts">
                     <button
