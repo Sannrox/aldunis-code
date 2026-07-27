@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { ClaudeProfile, ProfileProbeKind } from "../../types";
 import { Button, CloseButton, ModalSurface } from "../../components/ui";
-import { providerDisplayName } from "../../lib/provider-readiness";
+import { providerDisplayName, providerListLabel } from "../../lib/provider-readiness";
 
 function isDefaultProfileId(id: string): boolean {
   return id.startsWith("default:");
@@ -33,9 +33,9 @@ function profileProviderLabel(provider: string): string {
   if (provider === "claude-code" || provider === "codex-cli" || provider === "shikigami") {
     return providerDisplayName(provider, undefined);
   }
+  // Prefer "Grok Build" / "Kiro CLI" over reverse-DNS package ids in profile chrome.
   if (provider.startsWith("adapter:")) {
-    const packageId = provider.slice("adapter:".length).split("@")[0] || provider;
-    return packageId;
+    return providerListLabel(provider);
   }
   return provider;
 }
