@@ -66,6 +66,8 @@ export interface ShikigamiReadiness {
   version: string | null;
   models: ShikigamiModel[];
   name: string;
+  /** Operator-facing reason when the harness is not run-ready. */
+  detail: string | null;
 }
 
 interface ActiveRun {
@@ -351,7 +353,22 @@ export class ShikigamiAdapter {
         timeout: 5_000,
         env,
       });
-      version = assertSupportedShikigamiVersion(`${result.stdout}\n${result.stderr}`);
+      try {
+        version = assertSupportedShikigamiVersion(`${result.stdout}\n${result.stderr}`);
+      } catch (error) {
+        const detail = error instanceof ProviderProtocolError
+          ? error.message
+          : "Unsupported shikigami version. Aldunis Code requires 1.0.2+.";
+        return {
+          id: this.id,
+          installed: true,
+          authenticated: false,
+          version: null,
+          models: [],
+          name: "Shikigami",
+          detail,
+        };
+      }
     } catch {
       return {
         id: this.id,
@@ -360,6 +377,7 @@ export class ShikigamiAdapter {
         version: null,
         models: [],
         name: "Shikigami",
+        detail: "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
       };
     }
     const { adapter, authenticated } = resolveModelAdapter(env);
@@ -372,6 +390,9 @@ export class ShikigamiAdapter {
           isDefault: true,
         },
       ];
+    const detail = !authenticated && adapter === "http"
+      ? "Set OPENAI_API_KEY (or the env named by SHIKIGAMI_API_KEY_ENV), or force SHIKIGAMI_MODEL_ADAPTER=scripted."
+      : null;
     return {
       id: this.id,
       installed: true,
@@ -379,6 +400,7 @@ export class ShikigamiAdapter {
       version,
       models,
       name: "Shikigami",
+      detail,
     };
   }
 
@@ -641,11 +663,15 @@ export class ShikigamiAdapter {
           const resumeId = active.runId ?? "<run-id>";
           const reasonMatch = stdout.match(/parked reason=(.+)/i);
           const reason = reasonMatch?.[1]?.trim();
+          const questionMatch = stdout.match(/parked question=(.+)/i);
+          const question = questionMatch?.[1]?.trim();
+          const lead = reason
+            ? `Shikigami parked: ${reason}.`
+            : "Shikigami parked awaiting an operator answer.";
+          const questionPart = question ? ` Question: ${question}.` : "";
           yield {
             kind: "failed",
-            message: reason
-              ? `Shikigami parked: ${reason}. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`
-              : `Shikigami parked awaiting an operator answer. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`,
+            message: `${lead}${questionPart} Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`,
           };
         }
       }

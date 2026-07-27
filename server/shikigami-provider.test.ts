@@ -111,9 +111,14 @@ process.exit(1);
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
-  const readiness = await adapter.readiness(process.env);
+  const readiness = await adapter.readiness({
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "scripted",
+  });
   assert.equal(readiness.installed, true);
+  assert.equal(readiness.authenticated, true);
   assert.equal(readiness.version, "1.0.2");
+  assert.equal(readiness.detail, null);
 
   const run = await adapter.start({
     repository: directory,
@@ -122,7 +127,7 @@ process.exit(1);
     prompt: "demo task",
     approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
     mode: "build",
-  }, process.env);
+  }, { ...process.env, SHIKIGAMI_MODEL_ADAPTER: "scripted" });
   const kinds: string[] = [];
   for await (const event of run.events) kinds.push(event.kind);
   assert.deepEqual(kinds, [
@@ -132,6 +137,48 @@ process.exit(1);
     "assistant_text",
     "turn_completed",
   ]);
+});
+
+test("ShikigamiAdapter readiness reports install detail when missing", async () => {
+  const adapter = new ShikigamiAdapter("/nonexistent/shikigami-binary-aldunis-test");
+  const readiness = await adapter.readiness(process.env);
+  assert.equal(readiness.installed, false);
+  assert.equal(readiness.authenticated, false);
+  assert.match(readiness.detail ?? "", /Install shikigami 1\.0\.2\+/);
+});
+
+test("ShikigamiAdapter readiness reports unsupported version detail", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-version-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+console.log("shikigami 1.0.1");
+`);
+  await chmod(executable, 0o700);
+  const adapter = new ShikigamiAdapter(executable);
+  const readiness = await adapter.readiness(process.env);
+  assert.equal(readiness.installed, true);
+  assert.equal(readiness.authenticated, false);
+  assert.match(readiness.detail ?? "", /1\.0\.2/);
+});
+
+test("ShikigamiAdapter readiness reports missing HTTP key when forced", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-http-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+console.log("shikigami 1.0.2");
+`);
+  await chmod(executable, 0o700);
+  const adapter = new ShikigamiAdapter(executable);
+  const env = {
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "http",
+    SHIKIGAMI_API_KEY_ENV: "OPENAI_API_KEY",
+  };
+  delete env.OPENAI_API_KEY;
+  const readiness = await adapter.readiness(env);
+  assert.equal(readiness.installed, true);
+  assert.equal(readiness.authenticated, false);
+  assert.match(readiness.detail ?? "", /OPENAI_API_KEY|SHIKIGAMI_API_KEY_ENV|scripted/);
 });
 
 test("ShikigamiAdapter surfaces park resume guidance over generic failure", async () => {
@@ -171,6 +218,7 @@ process.exit(1);
     assert.match(failed.message, /parked/i);
     assert.match(failed.message, /--resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee/);
     assert.match(failed.message, /need operator input/);
+    assert.match(failed.message, /Question: continue\?/);
   }
 });
 

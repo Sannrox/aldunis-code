@@ -11,6 +11,11 @@ import { FileBrowserPanel } from "../files/file-browser-panel";
 import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import { DESIGN_MOCK_PRIMARY_ID, DESIGN_MOCK_THREAD } from "./design-mock";
+import {
+  cycleProviderModel,
+  providerModelLabel,
+  providerNotReadyMessage,
+} from "../../lib/provider-readiness";
 
 export function Conversation({
   repository,
@@ -401,6 +406,13 @@ export function Conversation({
         && selectedProvider.enabled !== false
         && selectedProvider.authenticated !== false,
       );
+  const providerReadinessMessage = providerReady
+    ? ""
+    : providerNotReadyMessage(provider, selectedProvider, {
+      hasClaudeProfile: Boolean(profileId),
+      providerName,
+    });
+  const modelChipLabel = providerModelLabel(provider, model, selectedProvider);
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
@@ -1074,9 +1086,7 @@ export function Conversation({
                 : !historyRestored
                 ? "Restoring conversation session…"
                 : !providerReady
-                ? provider === "claude-code"
-                  ? "Configure a Claude profile first…"
-                  : `${providerName} is not ready…`
+                ? providerReadinessMessage
                 : worktree
                 ? `Reply to ${providerName}…`
                 : "Open a repository with an available worktree…"
@@ -1090,6 +1100,9 @@ export function Conversation({
               || !historyRestored
             }
           />
+          {!providerReady && historyRestored && conversation?.id !== DESIGN_MOCK_PRIMARY_ID && (
+            <div className="context-error" role="status">{providerReadinessMessage}</div>
+          )}
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <div className="crow">
@@ -1098,14 +1111,18 @@ export function Conversation({
               className="cc"
               disabled={runActive || conversation?.id?.startsWith("mock-")}
               title={
-                canSwitchProvider
+                !providerReady
+                  ? providerReadinessMessage
+                  : canSwitchProvider
                   ? "Click to switch provider for this new conversation. Alt-click opens Claude profiles."
                   : conversation
                     ? "Provider is fixed for this conversation (use fork to change). Click opens Claude profiles."
                     : "Open Claude profiles"
               }
               aria-label={
-                canSwitchProvider
+                !providerReady
+                  ? `${providerName} not ready: ${providerReadinessMessage}`
+                  : canSwitchProvider
                   ? `Provider ${providerName}. Click to switch among ${availableProviders.length} providers.`
                   : "Open Claude profiles"
               }
@@ -1124,23 +1141,21 @@ export function Conversation({
               </span>
               {conversation?.id === DESIGN_MOCK_PRIMARY_ID
                 ? "claude-code · sonnet"
-                : `${providerChipName}${model !== "default" ? ` · ${model}` : ""}`}
+                : `${providerChipName}${model !== "default" ? ` · ${modelChipLabel}` : ""}`}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <button
               type="button"
               className="cc"
               disabled={runActive || conversation?.id?.startsWith("mock-")}
+              title="Cycle model for this conversation"
+              aria-label={`Model ${modelChipLabel}. Click to cycle models.`}
               onClick={() => {
-                // Cycle reasoning/default model presentation without inventing UI
-                if (provider === "claude-code") {
-                  const order = ["default", "sonnet", "opus", "haiku"];
-                  const next = order[(order.indexOf(model) + 1) % order.length] ?? "default";
-                  setModel(next);
-                }
+                // Cycle discovered models (Claude keeps the fixed presentation set).
+                setModel(cycleProviderModel(provider, model, selectedProvider));
               }}
             >
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "default" : model === "default" ? "default" : model}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "default" : modelChipLabel}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <span className="cdiv" />
