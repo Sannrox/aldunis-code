@@ -226,13 +226,14 @@ export function ProfileSettingsDialog({
                   onClick={() => edit(profile)}
                   key={profile.id}
                   aria-label={`${title}: ${detail}`}
+                  title={`${title}: ${detail}`}
                   aria-current={selectedId === profile.id ? "true" : undefined}
                 >
-                  <strong>
+                  <strong title={title}>
                     {profile.name}
                     {isDefaultProfileId(profile.id) ? " · Default" : ""}
                   </strong>
-                  <small>{detail}</small>
+                  <small title={detail}>{detail}</small>
                 </button>
               );
             })}
