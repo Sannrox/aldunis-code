@@ -1453,7 +1453,7 @@ export function Conversation({
                   )}
                   {failureView.resumeCommand && (
                     <div className="provider-error-resume">
-                      <code>{failureView.resumeCommand}</code>
+                      <code title={failureView.resumeCommand}>{failureView.resumeCommand}</code>
                       <button
                         type="button"
                         className="btn btn-outline btn-sm"

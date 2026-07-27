@@ -206,7 +206,11 @@ export function PreviewPanel({
       {preview?.state === "approval_pending" && (
         <section className="preview-approval">
           <span><Icon name="shield" /></span>
-          <div><strong>Start development server once?</strong><code>{preview.command}</code><small>{preview.worktree}</small></div>
+          <div>
+            <strong>Start development server once?</strong>
+            <code title={preview.command}>{preview.command}</code>
+            <small title={preview.worktree}>{preview.worktree}</small>
+          </div>
           <footer>
             <Button
               type="button"
@@ -254,7 +258,7 @@ export function PreviewPanel({
           {reference && (
             <aside className="element-reference">
               <header><strong>Element context</strong><span>{reference.tag}{reference.role ? ` · ${reference.role}` : ""}</span></header>
-              <code>{reference.selector}</code>
+              <code title={reference.selector}>{reference.selector}</code>
               {reference.name && <p>Accessible name: {reference.name}</p>}
               {reference.text && <p>{reference.text}</p>}
               {reference.screenshot && <img src={reference.screenshot} alt="Selected element snapshot" />}

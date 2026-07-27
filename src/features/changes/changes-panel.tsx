@@ -620,8 +620,10 @@ export function ChangesPanel({
           {deliveryError && <p className="delivery-warning" role="alert">{deliveryError}</p>}
           {plan && (
             <div className="delivery-approval">
-              <strong>{plan.summary}</strong>
-              <small>{plan.repository} · {plan.worktree} · {plan.branch}</small>
+              <strong title={plan.summary}>{plan.summary}</strong>
+              <small title={`${plan.repository} · ${plan.worktree} · ${plan.branch}`}>
+                {plan.repository} · {plan.worktree} · {plan.branch}
+              </small>
               <ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
               <footer>
                 <Button onClick={() => setPlan(null)} aria-label={`Cancel delivery plan, ${pane} pane`}>Cancel</Button>
