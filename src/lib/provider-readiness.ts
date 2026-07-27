@@ -253,6 +253,24 @@ export function resolveDefaultProviderModel(
   return "default";
 }
 
+/**
+ * Soft humanize for machine model ids when discovery has not provided a
+ * display name yet (session restore often pins `grok-4.5` / `gpt-5.2-codex`
+ * before `/api/providers/discover` settles).
+ */
+export function prettifyModelId(id: string): string {
+  const trimmed = id.trim();
+  if (!trimmed || trimmed === "default") return trimmed || id;
+  if (!/[-_.]/.test(trimmed)) {
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+  }
+  return trimmed
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join(" ");
+}
+
 /** Models the composer chip can cycle for the selected provider. */
 export function providerModelOptions(
   provider: ProviderId,
@@ -265,7 +283,7 @@ export function providerModelOptions(
     // No list yet: show the resolved preferred id (may still be "default" until discover).
     const id = resolveDefaultProviderModel(provider, discovery);
     if (id === "default") return [{ id: "default", displayName: "Default" }];
-    return [{ id, displayName: id }];
+    return [{ id, displayName: prettifyModelId(id) }];
   }
 
   // T3-style: only real discovered models — no synthetic prepended "Default" row.
@@ -275,7 +293,7 @@ export function providerModelOptions(
   }
   return real.map((model) => ({
     id: model.id,
-    displayName: model.displayName || model.id,
+    displayName: model.displayName || prettifyModelId(model.id),
   }));
 }
 
@@ -312,7 +330,7 @@ export function providerModelLabel(
     return discovered.displayName;
   }
   if (effective === "default") return "Default";
-  return effective;
+  return prettifyModelId(effective);
 }
 
 /**
