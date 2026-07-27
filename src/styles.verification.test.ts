@@ -124,6 +124,12 @@ test("command palette search field has a usable min-height", () => {
   assert.match(css, /\.quick-search\s*>\s*input\s*\{[^}]*min-height:\s*32px/s);
 });
 
+test("bare .ui-input (including native selects) defaults to md height", () => {
+  // Automations dialog used <select class="ui-input"> without --md; base rule
+  // must supply min-height so selects are not ~21px tall.
+  assert.match(css, /\.ui-input\s*\{[^}]*min-height:\s*36px/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");

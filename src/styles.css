@@ -289,6 +289,17 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   color: var(--foreground);
   font: inherit;
 }
+/* Bare .ui-input (e.g. <select class="ui-input">) measured ~21px without a size
+   modifier. Default to md so native selects match Input --md. */
+.ui-input {
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: max(var(--type-floor), 0.7rem);
+}
+select.ui-input {
+  cursor: pointer;
+  appearance: auto;
+}
 .ui-input:focus-visible, .ui-textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .ui-input::placeholder, .ui-textarea::placeholder { color: var(--muted-foreground); }
 .ui-input--sm { min-height: 32px; padding: 0 9px; font-size: max(var(--type-floor), 0.65rem); }
