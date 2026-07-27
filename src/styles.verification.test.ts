@@ -175,6 +175,11 @@ test("preferences segment buttons meet min hit size", () => {
   assert.match(shell, /\.seg\s+button\s*\{[^}]*min-height:\s*28px/s);
 });
 
+test("annotation resolve and ui-button--xs meet min hit size", () => {
+  assert.match(css, /\.ui-button--xs\s*\{[^}]*min-height:\s*28px/s);
+  assert.match(css, /\.annotation-resolve\s*\{[^}]*min-height:\s*28px/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
