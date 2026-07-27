@@ -559,7 +559,13 @@ export function Conversation({
           message: string | null;
           createdAt: string;
         }>;
-        providerSessions: Array<{ threadId: string; provider?: ProviderId; sessionId: string }>;
+        providerSessions: Array<{
+          threadId: string;
+          provider?: ProviderId;
+          sessionId: string;
+          model?: string | null;
+          profileId?: string;
+        }>;
       };
       const thread = conversation
         ? projection.threads.find((item) => (
@@ -577,8 +583,15 @@ export function Conversation({
         setProvider(threadProvider);
         return;
       }
+      // Threads often omit model/profileId; providerSessions carries the last run binding.
+      const session = projection.providerSessions.find((item) => (
+        item.threadId === thread.id
+        && (item.provider ?? "claude-code") === threadProvider
+      ));
       if (thread.profileId) setProfileId(thread.profileId);
+      else if (session?.profileId) setProfileId(session.profileId);
       if (thread.model) setModel(thread.model);
+      else if (session?.model?.trim()) setModel(session.model.trim());
       const turns = projection.turns
         .filter((item) => item.threadId === thread.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
