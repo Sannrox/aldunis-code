@@ -345,10 +345,11 @@ export function ProfileSettingsDialog({
                       disabled={busy || probingAvailability}
                       key={kind}
                       aria-label={`Check ${kind}: ${detail}`}
+                      title={`Check ${kind}: ${detail}`}
                     >
                       <span className={`probe-state ${state}`} aria-hidden="true" />
-                      <strong>{kind}</strong>
-                      <small>{detail}</small>
+                      <strong title={kind}>{kind}</strong>
+                      <small title={detail}>{detail}</small>
                     </button>
                   );
                 })}
