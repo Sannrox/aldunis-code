@@ -502,7 +502,11 @@ export function CodeSidebar({
                             <button
                               type="button"
                               className="sbtn rel"
-                              aria-label={`Release worktree for "${conversation.title}"`}
+                              aria-label={
+                                conversation.provider
+                                  ? `Release worktree for "${conversation.title}" · ${providerListLabel(conversation.provider)}`
+                                  : `Release worktree for "${conversation.title}"`
+                              }
                               onClick={() => onReleaseWorktree(conversation)}
                             >
                               Release
@@ -511,7 +515,11 @@ export function CodeSidebar({
                           <button
                             type="button"
                             className="sbtn"
-                            aria-label={`Unsettle "${conversation.title}"`}
+                            aria-label={
+                              conversation.provider
+                                ? `Unsettle "${conversation.title}" · ${providerListLabel(conversation.provider)}`
+                                : `Unsettle "${conversation.title}"`
+                            }
                             onClick={() => onUnsettle(conversation)}
                           >
                             Unsettle

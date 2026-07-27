@@ -148,7 +148,7 @@ export function ThreadRow({
           <button
             type="button"
             className="beside"
-            aria-label={`Open "${conversation.title}" beside`}
+            aria-label={`Open "${conversation.title}" · ${listLabel} beside`}
             onClick={(event) => {
               event.stopPropagation();
               onOpenBeside();
@@ -161,7 +161,7 @@ export function ThreadRow({
           <button
             type="button"
             className="settle"
-            aria-label={`Settle "${conversation.title}"`}
+            aria-label={`Settle "${conversation.title}" · ${listLabel}`}
             onClick={(event) => {
               event.stopPropagation();
               onSettle();
@@ -175,7 +175,7 @@ export function ThreadRow({
             <button
               type="button"
               className="row-more"
-              aria-label={`More actions for "${conversation.title}"`}
+              aria-label={`More actions for "${conversation.title}" · ${listLabel}`}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-controls={menuOpen ? menuId : undefined}
@@ -191,7 +191,7 @@ export function ThreadRow({
                 id={menuId}
                 className="row-menu-pop"
                 role="menu"
-                aria-label={`Actions for ${conversation.title}`}
+                aria-label={`Actions for ${conversation.title} · ${listLabel}`}
               >
                 <button
                   type="button"
