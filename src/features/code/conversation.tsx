@@ -197,8 +197,18 @@ export function Conversation({
       setReasoningEffort("medium");
       return;
     }
-    setModel("default");
-    setReasoningEffort("medium");
+    // Declarative ACP adapters (Kiro, Grok, OpenCode, …) — use discovered models.
+    const discovery = providers.find((item) => item.id === next);
+    const defaultModel = discovery?.models?.find((entry) => entry.isDefault)?.id
+      ?? discovery?.models?.[0]?.id
+      ?? "default";
+    setModel(defaultModel);
+    const match = discovery?.models?.find((entry) => entry.id === defaultModel);
+    const efforts = match?.reasoningEfforts ?? [];
+    const preferred = match?.defaultReasoningEffort;
+    if (preferred && efforts.includes(preferred)) setReasoningEffort(preferred);
+    else if (efforts.length > 0) setReasoningEffort(efforts[0]!);
+    else setReasoningEffort("medium");
   };
   const selectProvider = (next: ProviderId, source: "menu" | "keyboard" = "menu") => {
     // Opening click must never select a provider — only an explicit menu choice.
@@ -649,7 +659,10 @@ export function Conversation({
     });
   const modelChipLabel = providerModelLabel(provider, model, selectedProvider);
   const reasoningEfforts = providerReasoningEfforts(provider, model, selectedProvider);
-  const showReasoningEffort = provider === "codex-cli" && model !== "default" && reasoningEfforts.length > 0;
+  const showReasoningEffort = (
+    (provider === "codex-cli" && model !== "default")
+    || (typeof provider === "string" && provider.startsWith("adapter:") && model !== "default")
+  ) && reasoningEfforts.length > 0;
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
@@ -746,7 +759,10 @@ export function Conversation({
           profileId: provider === "claude-code" ? profileId : null,
           model,
           provider,
-          reasoningEffort: provider === "codex-cli" && model !== "default"
+          reasoningEffort: (
+            (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
+            && model !== "default"
+          )
             ? reasoningEffort
             : undefined,
           elementReferences: sentElementReferences.map(({ screenshot: _screenshot, ...reference }) => reference),

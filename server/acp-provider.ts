@@ -11,6 +11,7 @@ import {
   ProviderProtocolError,
 } from "./provider.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
+import { acpSetModelRequest } from "./acp-models.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
@@ -421,7 +422,38 @@ export class AcpProviderAdapter {
           const result = record(message.result);
           active.sessionId = requiredString(result?.sessionId, "session ID");
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
-          yield { kind: "session_started", sessionId: active.sessionId, model: null };
+          const selectedModel = options.model?.trim() && options.model !== "default"
+            ? options.model.trim()
+            : null;
+          yield {
+            kind: "session_started",
+            sessionId: active.sessionId,
+            model: selectedModel,
+          };
+          // Apply model before the first prompt when the agent advertises models.
+          if (selectedModel) {
+            this.#send(active.child, {
+              jsonrpc: "2.0",
+              id: 3,
+              ...acpSetModelRequest(active.sessionId, selectedModel),
+            });
+            setPhaseTimeout(ACP_HANDSHAKE_TIMEOUT_MS);
+            continue;
+          }
+          this.#send(active.child, {
+            jsonrpc: "2.0",
+            id: 2,
+            ...acpPromptRequest(
+              active.sessionId,
+              options.prompt,
+            ),
+          });
+          continue;
+        }
+        if (message.method === undefined && message.id === 3) {
+          // session/set_model — proceed even if the agent rejects (best-effort).
+          if (!active.sessionId) throw new ProviderProtocolError("ACP completed without a session.");
+          setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           this.#send(active.child, {
             jsonrpc: "2.0",
             id: 2,

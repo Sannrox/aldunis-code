@@ -154,22 +154,32 @@ export function providerModelLabel(
   return match?.displayName ?? model;
 }
 
-/** Reasoning efforts advertised for the selected Codex model (empty when not Codex). */
+/**
+ * Reasoning efforts for the selected model.
+ * Codex always offers a default ladder when the model does not advertise one;
+ * ACP adapters only expose efforts when discovery listed them.
+ */
 export function providerReasoningEfforts(
   provider: ProviderId,
   model: string,
   discovery: ProviderDiscovery | undefined,
 ): ReasoningEffort[] {
-  if (provider !== "codex-cli") return [];
-  if (model === "default") return DEFAULT_REASONING_EFFORTS;
+  const isAdapter = typeof provider === "string" && provider.startsWith("adapter:");
+  if (provider !== "codex-cli" && !isAdapter) return [];
+  if (model === "default") {
+    return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
+  }
   const match = discovery?.models?.find((entry) => entry.id === model);
-  if (!match) return DEFAULT_REASONING_EFFORTS;
+  if (!match) {
+    return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
+  }
   // Explicit empty list means this model does not expose effort controls.
   if (Array.isArray(match.reasoningEfforts) && match.reasoningEfforts.length === 0) {
     return [];
   }
   const efforts = match.reasoningEfforts ?? [];
-  return efforts.length > 0 ? efforts : DEFAULT_REASONING_EFFORTS;
+  if (efforts.length > 0) return efforts;
+  return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
 }
 
 export function cycleReasoningEffort(

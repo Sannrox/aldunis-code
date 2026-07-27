@@ -85,6 +85,10 @@ Rules shared by reviewed ACP adapters:
 - Optional proprietary ACP extensions are ignored unless the runtime explicitly
   supports them; unknown core methods fail closed.
 - Advanced import remains available for custom manifests (user-approved trust).
+- **Models**: discovery probes ACP `session/new` for `models.availableModels`
+  (and `configOptions` with `category: "model"`). The composer model menu lists
+  those options; the selected model is applied with `session/set_model` before
+  the first prompt.
 
 Design notes:
 

@@ -17,6 +17,7 @@ import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { ShikigamiAdapter } from "./shikigami-provider.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
+import { probeAcpModels } from "./acp-models.ts";
 import {
   adapterReference,
   ProviderAdapterError,
@@ -354,12 +355,11 @@ async function handleApi(
       }));
       const declarativeProviders = await Promise.all(
         (await adapters.list()).map(async (adapter) => {
-          let executableFound = false;
+          let executablePath: string | null = null;
           try {
-            await adapters.resolveExecutable(adapter);
-            executableFound = true;
+            executablePath = await adapters.resolveExecutable(adapter);
           } catch {
-            executableFound = false;
+            executablePath = null;
           }
           const missingRequiredEnv = adapter.manifest.environment
             .filter((entry) => entry.required)
@@ -371,10 +371,31 @@ async function handleApi(
           const readiness = declarativeAdapterReadiness({
             name: adapter.manifest.presentation.name,
             enabled: adapter.enabled,
-            executableFound,
+            executableFound: executablePath !== null,
             executableNames: adapter.manifest.executable.names,
             missingRequiredEnv,
           });
+          let models: Array<{
+            id: string;
+            displayName: string;
+            isDefault: boolean;
+            reasoningEfforts: string[];
+            defaultReasoningEffort: string;
+          }> = [];
+          if (readiness.authenticated && executablePath) {
+            const environment: NodeJS.ProcessEnv = { ...process.env };
+            for (const reference of adapter.manifest.environment) {
+              const value = process.env[reference.name];
+              if (value !== undefined) environment[reference.name] = value;
+            }
+            models = await probeAcpModels({
+              executable: executablePath,
+              arguments: adapter.manifest.executable.arguments,
+              environment,
+              cwd: process.cwd(),
+              timeoutMs: 8_000,
+            }).catch(() => []);
+          }
           return {
             id: adapterReference(adapter.manifest),
             installed: true,
@@ -385,6 +406,7 @@ async function handleApi(
             name: adapter.manifest.presentation.name,
             enabled: adapter.enabled,
             detail: readiness.detail,
+            models,
           };
         }),
       );
@@ -1595,6 +1617,8 @@ async function handleApi(
                 approvalUrl: await approvalUrl,
                 mode,
                 resumeSessionId: body.resumeSessionId,
+                model: body.model === "default" ? undefined : body.model,
+                reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
               });
               activeAcp.set(started.id, adapter);
               return started;
