@@ -359,8 +359,13 @@ export function PreferencesDialog({
               </p>
             )}
             <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>
-              <Button type="button" onClick={onClose}>Cancel</Button>
-              <Button type="submit" variant="primary" disabled={busy}>
+              <Button type="button" onClick={onClose} aria-label="Cancel settings changes">Cancel</Button>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy}
+                aria-label={busy ? "Saving settings" : "Save settings"}
+              >
                 {busy ? "Saving…" : "Save settings"}
               </Button>
             </footer>
