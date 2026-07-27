@@ -30,9 +30,23 @@ Keep the Issue as planning truth and the PR as implementation truth.
    3. Run structured `autoreview` before committing (see below). Fix accepted
       findings and rerun the relevant checks until no material finding remains
       or a documented blocker requires maintainer judgment.
-6. Stage only intended paths, commit, push, and open a ready PR that closes the
-   Issue and records exact verification evidence, autoreview outcome, and
-   skipped checks.
+6. Stage only intended paths and create a narrow imperative commit. Never use
+   `--no-gpg-sign`; if signing fails, stop and fix GPG.
+7. Publish the topic branch with **GitHub-verified** commits via
+   `scripts/gh-verified-push.sh` (GraphQL `createCommitOnBranch`), not a plain
+   `git push`, unless the user explicitly asks for git-protocol push:
+   - New branch:
+     `scripts/gh-verified-push.sh --create-branch-from origin/main --branch <topic> --sync-local`
+   - Update existing branch:
+     `scripts/gh-verified-push.sh --branch <topic> --sync-local`
+   - Confirm `verification.verified=true` and hosted blob content matches local
+     `HEAD`.
+8. Open a ready PR that closes the Issue and records exact verification
+   evidence, autoreview outcome, and skipped checks.
+9. When the user authorizes land: re-publish review fixes with
+   `scripts/gh-verified-push.sh`, then prefer
+   `gh pr merge --squash --delete-branch` (do not use GitHub rebase-merge when
+   Verified history matters).
 
 ## Autoreview closeout (required)
 
