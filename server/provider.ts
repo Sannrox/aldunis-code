@@ -8,6 +8,7 @@ import {
   isMutatingTool,
   PermissionBroker,
 } from "./permission.ts";
+import { normalizeClaudeModelSlug } from "./profiles.ts";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_CLAUDE_MAJOR = 2;
@@ -302,7 +303,10 @@ export class ClaudeCodeAdapter {
       "mcp__aldunis__approval_prompt",
     ];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
-    if (options?.model && options.model !== "default") args.push("--model", options.model);
+    if (options?.model && options.model !== "default") {
+      // Prefer T3-style full slugs; map legacy sonnet/opus/haiku aliases first.
+      args.push("--model", normalizeClaudeModelSlug(options.model));
+    }
     const child = spawn(executable, args, {
       cwd: worktree,
       env: {

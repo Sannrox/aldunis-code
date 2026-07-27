@@ -187,7 +187,13 @@ else if (process.argv.includes("auth")) console.log(JSON.stringify({ authenticat
   assert.equal(authentication.probes.version.state, "ready");
   assert.equal(authentication.probes.authentication.authenticated, true);
   const models = await store.refresh(saved.id, "models");
-  assert.deepEqual(models.probes.models.models, ["default", "sonnet", "opus", "haiku"]);
+  assert.deepEqual(models.probes.models.models, [
+    "claude-sonnet-5",
+    "claude-opus-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5",
+  ]);
   const availability = await store.refresh(saved.id, "availability");
   assert.equal(availability.probes.availability.state, "ready");
 });

@@ -8,7 +8,54 @@ import { defaultStateDirectory } from "./state.ts";
 
 const execFileAsync = promisify(execFile);
 const PROFILE_SCHEMA_VERSION = 1;
-const DEFAULT_MODELS = ["default", "sonnet", "opus", "haiku"] as const;
+/**
+ * Claude model ids accepted on the wire. Full T3-style slugs are preferred in the UI;
+ * short aliases and "default" remain for legacy threads/clients.
+ */
+const DEFAULT_MODELS = [
+  "default",
+  "sonnet",
+  "opus",
+  "haiku",
+  "claude-sonnet-5",
+  "claude-opus-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+] as const;
+
+/** Short / legacy Claude ids → T3-style full model slugs (for `--model`). */
+const CLAUDE_MODEL_SLUG_ALIASES: Record<string, string> = {
+  default: "claude-sonnet-5",
+  sonnet: "claude-sonnet-5",
+  "sonnet-5": "claude-sonnet-5",
+  "claude-sonnet-5.0": "claude-sonnet-5",
+  "claude-sonnet-5-0": "claude-sonnet-5",
+  opus: "claude-opus-5",
+  "opus-5": "claude-opus-5",
+  "claude-opus-5.0": "claude-opus-5",
+  "claude-opus-5-0": "claude-opus-5",
+  "sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "opus-4.6": "claude-opus-4-6",
+  "claude-opus-4.6": "claude-opus-4-6",
+  haiku: "claude-haiku-4-5",
+  "haiku-4.5": "claude-haiku-4-5",
+  "claude-haiku-4.5": "claude-haiku-4-5",
+};
+
+/** Map short Claude aliases to full product slugs before invoking the CLI. */
+export function normalizeClaudeModelSlug(model: string): string {
+  const key = model.trim().toLowerCase();
+  return CLAUDE_MODEL_SLUG_ALIASES[key] ?? model.trim();
+}
+
+export function isAllowedClaudeModel(model: string): boolean {
+  const trimmed = model.trim();
+  const normalized = normalizeClaudeModelSlug(trimmed);
+  return (DEFAULT_MODELS as readonly string[]).includes(trimmed)
+    || (DEFAULT_MODELS as readonly string[]).includes(normalized);
+}
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -550,7 +597,7 @@ export class ClaudeProfileStore {
           state: "ready",
           checkedAt,
           detail: "Claude model aliases are available.",
-          models: [...DEFAULT_MODELS],
+          models: [...CLAUDE_PROBE_MODELS],
         };
       } else {
         probes.models = {
@@ -582,3 +629,12 @@ export class ClaudeProfileStore {
 }
 
 export const CLAUDE_MODEL_ALIASES: readonly string[] = DEFAULT_MODELS;
+
+/** Preferred Claude probe list (T3 full slugs first). */
+export const CLAUDE_PROBE_MODELS: readonly string[] = [
+  "claude-sonnet-5",
+  "claude-opus-5",
+  "claude-sonnet-4-6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+];
