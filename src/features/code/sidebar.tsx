@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
@@ -99,6 +99,7 @@ export function CodeSidebar({
   const [shelfOpen, setShelfOpen] = useState(false);
   const brandRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
+  const settledShelfId = useId();
 
   const { active, settled } = useMemo(() => {
     const activeList: ConversationSummary[] = [];
@@ -441,12 +442,14 @@ export function CodeSidebar({
                 className={`shelf-h ${shelfOpen ? "open" : ""}`}
                 onClick={() => setShelfOpen((v) => !v)}
                 aria-expanded={shelfOpen}
+                aria-controls={shelfOpen ? settledShelfId : undefined}
+                aria-label={`Settled conversations (${settled.length})`}
               >
-                <span className="cv">▶</span>
+                <span className="cv" aria-hidden="true">▶</span>
                 <span>Settled ({settled.length})</span>
               </button>
               {shelfOpen && (
-                <div>
+                <div id={settledShelfId} role="region" aria-label="Settled conversations">
                   <div className="meter">
                     <span>Worktrees</span>
                     <span className="mbar">
