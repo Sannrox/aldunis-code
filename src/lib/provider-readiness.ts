@@ -262,6 +262,8 @@ export function prettifyModelId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed || trimmed === "default") return trimmed || id;
   if (!/[-_.]/.test(trimmed)) {
+    // Keep short machine aliases like o3; title-case plain words (auto → Auto).
+    if (/^[a-z]+\d/i.test(trimmed) && trimmed === trimmed.toLowerCase()) return trimmed;
     return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   }
   return trimmed
@@ -293,7 +295,10 @@ export function providerModelOptions(
   }
   return real.map((model) => ({
     id: model.id,
-    displayName: model.displayName || prettifyModelId(model.id),
+    // Discovery sometimes echoes the machine id as displayName (e.g. gpt-5.2-codex).
+    displayName: model.displayName && model.displayName !== model.id
+      ? model.displayName
+      : prettifyModelId(model.id),
   }));
 }
 
@@ -326,7 +331,11 @@ export function providerModelLabel(
   if (match) return match.displayName;
   // Discovery may mark a default that was filtered from options (id "default").
   const discovered = discovery?.models?.find((entry) => entry.id === effective);
-  if (discovered?.displayName && discovered.displayName !== "default") {
+  if (
+    discovered?.displayName
+    && discovered.displayName !== "default"
+    && discovered.displayName !== discovered.id
+  ) {
     return discovered.displayName;
   }
   if (effective === "default") return "Default";

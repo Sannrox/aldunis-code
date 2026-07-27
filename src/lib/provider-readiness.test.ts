@@ -243,6 +243,27 @@ test("prettifyModelId humanizes session-restored slugs without discovery", () =>
   assert.equal(providerModelLabel("adapter:dev.kiro.cli@1.0.0", "auto", undefined), "Auto");
 });
 
+test("providerModelLabel prettifies when discovery echoes the machine id", () => {
+  const discovery: ProviderDiscovery = {
+    id: "codex-cli",
+    installed: true,
+    models: [
+      { id: "gpt-5.2-codex", displayName: "gpt-5.2-codex", isDefault: true },
+      { id: "o3", displayName: "o3", isDefault: false },
+    ],
+  };
+  assert.equal(providerModelLabel("codex-cli", "gpt-5.2-codex", discovery), "Gpt 5.2 Codex");
+  assert.equal(providerModelLabel("codex-cli", "o3", discovery), "o3");
+  // Real product labels are kept.
+  assert.equal(
+    providerModelLabel("codex-cli", "gpt-5.2-codex", {
+      ...discovery,
+      models: [{ id: "gpt-5.2-codex", displayName: "GPT-5.2 Codex", isDefault: true }],
+    }),
+    "GPT-5.2 Codex",
+  );
+});
+
 test("Codex reasoning effort cycles advertised options", () => {
   const discovery: ProviderDiscovery = {
     id: "codex-cli",
