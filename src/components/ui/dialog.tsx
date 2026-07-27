@@ -53,6 +53,7 @@ export function WorkbenchDialog({
         <BaseDialog.Backdrop className={backdropClassName} />
         <BaseDialog.Popup
           className={className}
+          aria-modal="true"
           aria-labelledby={title ? titleId : undefined}
           aria-label={ariaLabel}
         >
@@ -126,6 +127,7 @@ export function ModalSurface({
         {withBackdrop && <BaseDialog.Backdrop className={backdropClassName} />}
         <BaseDialog.Popup
           className={className}
+          aria-modal="true"
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
         >

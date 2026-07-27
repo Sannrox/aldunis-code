@@ -31,7 +31,7 @@ export function MissingConversation({
           ))}
         </select>
       </label>
-      {onClose && <button onClick={onClose}>Close pane</button>}
+      {onClose && <button type="button" onClick={onClose}>Close pane</button>}
     </section>
   );
 }
