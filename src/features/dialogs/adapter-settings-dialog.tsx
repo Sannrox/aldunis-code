@@ -244,7 +244,9 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                     variant="primary"
                     size="sm"
                     disabled={busy || !administrationAvailable || !entry.package}
-                    aria-label={`${entry.installLabel} for ${entry.name}`}
+                    // installLabel already names the product (e.g. "Install OpenCode");
+                    // avoid "Install OpenCode for OpenCode".
+                    aria-label={entry.installLabel}
                     onClick={() => void reviewCatalogEntry(entry)}
                   >
                     {entry.installLabel}
