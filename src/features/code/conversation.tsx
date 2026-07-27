@@ -105,7 +105,10 @@ export function Conversation({
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const lastAttentionState = useRef<string | null>(null);
-  const [provider, setProvider] = useState<ProviderId>("claude-code");
+  // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
+  const [provider, setProvider] = useState<ProviderId>(
+    () => conversation?.provider ?? "claude-code",
+  );
   const [providers, setProviders] = useState<ProviderDiscovery[]>([]);
   /** False until first /api/providers/discover settles — avoids “Install CLI” flash. */
   const [providersLoaded, setProvidersLoaded] = useState(false);
@@ -456,6 +459,12 @@ export function Conversation({
     setHistoryRestored(conversation === null);
     setHistoryRestoreError(null);
     setThreadId(conversation?.id ?? null);
+    // Prefer the summary provider immediately so crumb/empty state match the thread
+    // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
+    if (conversation?.provider && conversation.provider !== provider) {
+      setProvider(conversation.provider);
+      return;
+    }
     setCheckpoint(null);
     setCompletionDismissed(false);
     setRewindPreview(null);
@@ -463,7 +472,7 @@ export function Conversation({
     setProviderEvents([]);
     setProviderState("idle");
     setRunId(null);
-  }, [conversation?.id, repository?.projectId, repository?.selectedWorktree, provider]);
+  }, [conversation?.id, conversation?.provider, repository?.projectId, repository?.selectedWorktree, provider]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -1049,6 +1058,12 @@ export function Conversation({
           title: "Worktree is not available",
           detail: `This conversation is bound to ${conversation?.worktree}, which is not among the discovered worktrees for the open repository. Switch project or recreate the worktree before sending.`,
           action: <Button variant="primary" size="lg" onClick={onManageWorktrees}>Manage worktrees</Button>,
+        }
+    : conversation && !historyRestored
+      ? {
+          title: "Restoring conversation…",
+          detail: "Loading the local transcript for this thread.",
+          action: null,
         }
     : !providerReady
       ? {
