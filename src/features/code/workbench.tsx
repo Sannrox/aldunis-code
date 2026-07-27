@@ -255,8 +255,11 @@ export function CodeWorkbench({
           .filter(([, count]) => count > 0)
           .map(([name, count]) => `${count} ${name}`)
           .join(", ");
+        const deleteLabel = conversation.provider
+          ? `${conversation.title} · ${providerListLabel(conversation.provider)}`
+          : conversation.title;
         const confirmed = window.confirm(
-          `Delete "${conversation.title}"?\n\nLocal data removed: ${affected}.\n\nNot removed: ${(preview.excluded ?? []).join(", ")}.\n\nThis cannot be undone.`,
+          `Delete "${deleteLabel}"?\n\nLocal data removed: ${affected}.\n\nNot removed: ${(preview.excluded ?? []).join(", ")}.\n\nThis cannot be undone.`,
         );
         if (!confirmed) return;
         await postLifecycle("/api/state/conversations/delete", {
@@ -480,7 +483,10 @@ export function CodeWorkbench({
             ));
         }}
         onReleaseWorktree={(conversation) => {
-          if (!window.confirm(`Release managed worktree for "${conversation.title}"? The conversation is kept.`)) return;
+          const releaseLabel = conversation.provider
+            ? `${conversation.title} · ${providerListLabel(conversation.provider)}`
+            : conversation.title;
+          if (!window.confirm(`Release managed worktree for "${releaseLabel}"? The conversation is kept.`)) return;
           void postLifecycle("/api/state/conversations/release-worktree", { threadId: conversation.id, confirm: true })
             .catch((error: unknown) => setLifecycleError(
               error instanceof Error ? error.message : "Worktree release failed.",
