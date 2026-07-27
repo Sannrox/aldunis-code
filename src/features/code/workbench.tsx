@@ -225,7 +225,10 @@ export function CodeWorkbench({
     setLifecycleError(null);
     try {
       if (action === "rename") {
-        const title = window.prompt("Rename conversation:", conversation.title);
+        const renameHint = conversation.provider
+          ? `Rename conversation (${providerListLabel(conversation.provider)}):`
+          : "Rename conversation:";
+        const title = window.prompt(renameHint, conversation.title);
         if (title === null) return;
         await postLifecycle("/api/state/conversations/rename", { threadId: conversation.id, title });
       } else if (action === "pin") {
