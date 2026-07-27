@@ -533,6 +533,9 @@ html, body { height: 100%; }
   display: flex !important;
   flex-direction: column !important;
   min-height: 0 !important;
+  /* Contain tall review-workspace/delivery so they scroll inside the dock
+     instead of overflowing past the conversation column (mobile dual-pane). */
+  overflow: hidden !important;
   position: relative !important;
   inset: auto !important;
 }
@@ -544,6 +547,7 @@ html, body { height: 100%; }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: transparent !important;
   border: 0 !important;
   width: 100% !important;
@@ -833,22 +837,46 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
      crushed .conv to 0 height. Allow shrink and cap so the thread keeps room. */
   .review-dock, .rv {
     width: 100% !important;
-    flex: 0 1 min(42vh, 46%) !important;
-    max-height: min(42vh, 50%) !important;
-    min-height: 120px !important;
+    flex: 0 1 min(50vh, 55%) !important;
+    max-height: min(50vh, 58%) !important;
+    min-height: 200px !important;
     border-left: 0 !important;
     border-top: 1px solid var(--border);
+    overflow: hidden !important;
   }
   .split { flex-direction: column !important; }
   .split.with-review > .conv {
-    flex: 1 1 54% !important;
-    min-height: 140px !important;
+    flex: 1 1 45% !important;
+    min-height: 100px !important;
+  }
+  /* Short stacked dock: one scroll stream. Nested flex panes left
+     .rv-files ~8px / .review-workspace ~14px — unusable. */
+  .review-dock .changes-body,
+  .rv .changes-body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+  .review-dock .rv-files,
+  .rv .rv-files,
+  .review-dock .changes-body nav.rv-files,
+  .rv .changes-body nav.rv-files {
+    flex: 0 0 auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+  }
+  .review-dock .review-workspace,
+  .rv .review-workspace {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
   }
 }
 
 
 /* review dock file list ↔ mock .fr */
 .rv-files, .changes-body nav.rv-files {
+  flex: 0 1 auto !important;
+  min-height: 48px !important;
   padding: 0 8px 8px !important;
   max-height: 172px !important;
   overflow-y: auto !important;
@@ -1035,6 +1063,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex-direction: column !important;
   flex: 1 !important;
   min-height: 0 !important;
+  overflow: hidden !important;
   grid-template-columns: none !important;
   background: transparent !important;
 }
@@ -1042,6 +1071,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex: 1 !important;
   min-height: 0 !important;
   overflow-y: auto !important;
+}
+/* Diff + delivery live under .review-workspace (not a section). Without this
+   the block kept content height (~800px) and crushed .rv-files to ~8px on
+   stacked dual-pane docks. */
+.review-workspace {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 .tb-quiet { opacity: .7; }
 .tb-quiet:hover { opacity: 1; }

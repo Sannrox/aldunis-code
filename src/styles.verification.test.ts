@@ -84,17 +84,37 @@ test("review dock shrinks so dual-pane conversation stays usable", () => {
 
 test("narrow review dock must not use fixed 42vh basis that crushes .conv", () => {
   // At max-width 680px, flex: 0 0 42vh exceeded dual-pane column height and
-  // collapsed the conversation to 0px. Dock must shrink and .conv keeps min-height.
+  // collapsed the conversation to 0px. Dock must shrink and .conv keeps room.
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   assert.doesNotMatch(shell, /\.review-dock,\s*\.rv\s*\{[^}]*flex:\s*0\s+0\s+42vh/s);
   assert.match(
     shell,
-    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock,\s*\.rv\s*\{[^}]*flex:\s*0\s+1\s+min\(42vh,\s*46%\)/s,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock,\s*\.rv\s*\{[^}]*flex:\s*0\s+1\s+min\(50vh,\s*55%\)/s,
   );
   assert.match(
     shell,
-    /\.split\.with-review\s*>\s*\.conv\s*\{[^}]*min-height:\s*140px/s,
+    /\.split\.with-review\s*>\s*\.conv\s*\{[^}]*min-height:\s*100px/s,
+  );
+});
+
+test("review dock contains overflow; short docks use one scroll stream", () => {
+  // Stacked dual-pane left .rv-files ~8px and .review-workspace ~14px when both
+  // competed for a ~60px body. Desktop: workspace scrolls; mobile: body scrolls.
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.rv,\s*\.review-dock\s*\{[^}]*overflow:\s*hidden/s);
+  assert.match(
+    shell,
+    /\.review-workspace\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock\s+\.changes-body[\s\S]*?overflow-y:\s*auto/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock\s+\.rv-files[\s\S]*?max-height:\s*none/s,
   );
 });
 
