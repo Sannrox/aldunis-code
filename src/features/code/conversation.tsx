@@ -1044,8 +1044,16 @@ export function Conversation({
             onClick={() => {
               // Grid control is the worktree file browser. Fall back to add-project
               // only when nothing is open yet (first-run / empty workbench).
-              if (repository) onBrowseFiles();
-              else onOpenRepository();
+              if (!repository) {
+                onOpenRepository();
+                return;
+              }
+              // Toggle browse; exclusive with preview (both are full-column overlays).
+              if (filesOpen) onHideFiles();
+              else {
+                setPreviewOpen(false);
+                onBrowseFiles();
+              }
             }}
             title={repository ? "Browse worktree files" : "Open a project"}
             aria-label={
@@ -1053,6 +1061,7 @@ export function Conversation({
                 ? `Browse files, ${pane} pane`
                 : `Open project, ${pane} pane`
             }
+            aria-pressed={repository ? filesOpen : undefined}
           >
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
@@ -1063,7 +1072,10 @@ export function Conversation({
           <button
             type="button"
             className={`btn btn-ghost btn-sm ${changesOpen ? "on" : ""}`}
-            onClick={onShowChanges}
+            onClick={() => {
+              if (changesOpen) onHideChanges();
+              else onShowChanges();
+            }}
             disabled={!repository}
             title="Review panel"
             aria-label={`${changes.length} changes, ${pane} pane`}
@@ -1078,7 +1090,14 @@ export function Conversation({
           <button
             type="button"
             className={`btn btn-ghost btn-sm ${previewOpen ? "on" : ""}`}
-            onClick={() => setPreviewOpen(true)}
+            onClick={() => {
+              // Toggle preview; exclusive with browse overlay.
+              if (previewOpen) setPreviewOpen(false);
+              else {
+                onHideFiles();
+                setPreviewOpen(true);
+              }
+            }}
             disabled={!repository}
             title="Preview panel"
             aria-label={`Preview, ${pane} pane`}
