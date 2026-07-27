@@ -124,7 +124,7 @@ code{font-family:var(--font-mono)}
 .shelf-h:hover{background:var(--sidebar-row-hover);color:var(--foreground)}
 .shelf-h .cv{font-size:9px;transition:transform .15s}
 .shelf-h.open .cv{transform:rotate(90deg)}
-.srow{position:relative;display:flex;align-items:center;gap:8px;width:100%;padding:6px 9px;border-radius:8px;margin-bottom:1px}
+.srow{position:relative;display:flex;align-items:center;gap:8px;width:100%;min-height:36px;padding:4px 9px;border-radius:8px;margin-bottom:1px}
 .srow:hover{background:var(--sidebar-row-hover)}
 .srow .t{flex:1;min-width:0;font-size:12.5px;color:var(--muted-foreground);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow .w{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);opacity:.7}
@@ -471,8 +471,14 @@ html, body { height: 100%; }
 .row:focus-within .settle, .row:focus-within .beside, .row:focus-within .row-more,
 .row-menu:focus-within .row-more { opacity: 1; }
 
-.srow { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px; border-radius: 8px; margin-bottom: 1px; }
-.srow-main { flex: 1; min-width: 0; background: transparent; color: inherit; text-align: left; padding: 0; overflow: hidden; }
+.srow { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 9px; border-radius: 8px; margin-bottom: 1px; }
+/* Open-settled title button was ~22px; fill the row hit target. */
+.srow-main {
+  flex: 1; min-width: 0; min-height: 28px;
+  display: flex; align-items: center;
+  background: transparent; color: inherit; text-align: left;
+  padding: 0; overflow: hidden; border: 0; cursor: pointer;
+}
 .srow:hover { background: var(--sidebar-row-hover); }
 .sacts {
   display: flex !important;
