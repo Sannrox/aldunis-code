@@ -187,7 +187,7 @@ export function PreviewPanel({
             autoComplete="off"
             spellCheck={false}
           />
-          <Button type="submit" size="sm" aria-label="Review preview start">
+          <Button type="submit" size="sm" aria-label={`Review preview start, ${pane} pane`}>
             Review start
           </Button>
         </form>

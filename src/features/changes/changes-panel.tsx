@@ -375,7 +375,7 @@ export function ChangesPanel({
                     setCommentText("");
                   })) return;
                 }}
-                aria-label="Review comment"
+                aria-label={`Review comment, ${pane} pane`}
               />
               <footer>
                 <Button
