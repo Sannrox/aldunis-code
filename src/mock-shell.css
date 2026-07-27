@@ -278,10 +278,11 @@ code{font-family:var(--font-mono)}
 .cc.scoped .ic{color:var(--amber)}
 .cdiv{width:1px;height:16px;background:var(--border);flex:0 0 1px;margin:0 2px}
 
-/* review panel */
-.split{flex:1;display:flex;min-height:0}
-.conv{flex:1;min-width:0;display:flex;flex-direction:column}
-.rv{width:430px;flex:0 0 430px;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+/* review panel — dock prefers 430px but shrinks so .conv stays usable
+   (dual-pane + fixed 430px was collapsing the thread to ~70px). */
+.split{flex:1;display:flex;min-height:0;min-width:0}
+.conv{flex:1 1 50%;min-width:min(240px,100%);display:flex;flex-direction:column}
+.rv{width:min(430px,48%);flex:0 1 min(430px,48%);max-width:430px;min-width:0;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
 .rv-h{display:flex;align-items:center;gap:10px;padding:13px 16px 11px}
 .rv-t{font-size:13.5px;font-weight:500}
 .rv-s{font-size:12px;color:var(--muted-foreground);font-family:var(--font-mono)}
@@ -495,11 +496,13 @@ html, body { height: 100%; }
 .send:disabled { opacity: .4; }
 .cc { border: 0; cursor: pointer; background: transparent; }
 
-/* review dock wraps live ChangesPanel */
+/* review dock wraps live ChangesPanel — shrink under dual-pane / narrow
+   panes so the conversation column keeps a usable min width. */
 .rv, .review-dock {
-  width: 430px !important;
-  flex: 0 0 430px !important;
+  width: min(430px, 48%) !important;
+  flex: 0 1 min(430px, 48%) !important;
   max-width: 430px !important;
+  min-width: 0 !important;
   border-left: 1px solid var(--border) !important;
   background: var(--sidebar) !important;
   display: flex !important;
@@ -707,8 +710,12 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   background: var(--background) !important;
 }
 .conv {
-  flex: 1 !important; min-width: 0 !important; display: flex !important;
-  flex-direction: column !important; min-height: 0 !important; background: var(--background) !important;
+  flex: 1 1 50% !important;
+  min-width: min(240px, 100%) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  background: var(--background) !important;
 }
 
 .pill.completed { color: var(--muted-foreground); display: inline-flex; align-items: center; gap: 5px; }
