@@ -1735,9 +1735,32 @@ select.ui-input {
   display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;
 }
 .composer-context > span, .context-chips > span {
-  display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px;
   border: 1px solid var(--border); border-radius: 6px; background: var(--muted);
   color: var(--muted-foreground); font: 11.5px var(--font-mono);
+}
+/* Chip remove (×) measured ~13×7 without chrome — expand to a usable target. */
+.composer-context > span > button,
+.context-chips > span > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: 14px/1 var(--font-sans);
+  cursor: pointer;
+}
+.composer-context > span > button:hover,
+.context-chips > span > button:hover {
+  background: var(--accent);
+  color: var(--foreground);
 }
 .composer-suggestions {
   position: absolute; left: 8px; right: 8px; bottom: calc(100% - 2px); max-height: 220px; overflow-y: auto;
