@@ -13,8 +13,11 @@ import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import { DESIGN_MOCK_PRIMARY_ID, DESIGN_MOCK_THREAD } from "./design-mock";
 import {
   cycleProviderModel,
+  cycleReasoningEffort,
+  parseProviderFailure,
   providerModelLabel,
   providerNotReadyMessage,
+  providerReasoningEfforts,
 } from "../../lib/provider-readiness";
 
 export function Conversation({
@@ -170,18 +173,23 @@ export function Conversation({
     if (next === "claude-code") {
       setProfileId((current) => current || profiles[0]?.id || "");
       setModel("default");
+      setReasoningEffort("medium");
     } else if (next === "codex-cli") {
       const defaultModel = codex?.models?.find((entry) => entry.isDefault)?.id
         ?? codex?.models?.[0]?.id
         ?? "default";
       setModel(defaultModel);
+      const match = codex?.models?.find((entry) => entry.id === defaultModel);
+      setReasoningEffort(match?.defaultReasoningEffort ?? "medium");
     } else if (next === "shikigami") {
       const defaultModel = shikigamiProvider?.models?.find((entry) => entry.isDefault)?.id
         ?? shikigamiProvider?.models?.[0]?.id
         ?? "default";
       setModel(defaultModel);
+      setReasoningEffort("medium");
     } else {
       setModel("default");
+      setReasoningEffort("medium");
     }
   };
   useEffect(() => {
@@ -413,6 +421,8 @@ export function Conversation({
       providerName,
     });
   const modelChipLabel = providerModelLabel(provider, model, selectedProvider);
+  const reasoningEfforts = providerReasoningEfforts(provider, model, selectedProvider);
+  const showReasoningEffort = provider === "codex-cli" && model !== "default" && reasoningEfforts.length > 0;
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
@@ -706,6 +716,7 @@ export function Conversation({
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
+  const failureView = failure ? parseProviderFailure(failure.message) : null;
   const conversationEmpty = messages.length === 0
     && providerEvents.length === 0
     && providerState === "idle";
@@ -715,11 +726,13 @@ export function Conversation({
         detail: "Choose an explicit local root before starting a provider conversation.",
         action: <Button variant="primary" size="lg" onClick={onOpenRepository}>Open repository</Button>,
       }
-    : provider === "claude-code" && !profileId
+    : !providerReady
       ? {
-          title: "Configure Claude Code to begin",
-          detail: "Add a local Claude profile, then return here to describe the task.",
-          action: <Button variant="primary" size="lg" onClick={onOpenProfiles}>Configure Claude</Button>,
+          title: `${providerName} is not ready`,
+          detail: providerReadinessMessage || `Finish setup for ${providerName}, then return here.`,
+          action: provider === "claude-code"
+            ? <Button variant="primary" size="lg" onClick={onOpenProfiles}>Configure Claude</Button>
+            : null,
         }
       : {
           title: "What do you want to work on?",
@@ -752,7 +765,8 @@ export function Conversation({
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
           {repository && <> · {providerName.toLocaleLowerCase().replace(/\s+/g, "-")}</>}
-          {model !== "default" && <> · {model}</>}
+          {model !== "default" && <> · {modelChipLabel}</>}
+          {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
         <div className="tb-r">
           <button
@@ -964,7 +978,33 @@ export function Conversation({
                   )}
                 </section>
               ))}
-              {failure && <div className="provider-error" role="alert">{failure.message}</div>}
+              {failureView && (
+                <div className={`provider-error ${failureView.kind === "park" ? "provider-error-park" : ""}`} role="alert">
+                  <p>{failureView.summary}</p>
+                  {failureView.question && (
+                    <p className="provider-error-question">Question: {failureView.question}</p>
+                  )}
+                  {failureView.resumeCommand && (
+                    <div className="provider-error-resume">
+                      <code>{failureView.resumeCommand}</code>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-sm"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(failureView.resumeCommand!).catch(() => undefined);
+                        }}
+                      >
+                        Copy CLI resume
+                      </button>
+                    </div>
+                  )}
+                  {failureView.kind === "park" && (
+                    <p className="provider-error-hint">
+                      Park answers are not wired in the workbench yet. Resume from a terminal with the command above.
+                    </p>
+                  )}
+                </div>
+              )}
               {(providerState === "completed" || providerState === "cancelled")
                 && !conversation?.id?.startsWith("mock-")
                 && <p className="provider-state">{stateCopy[providerState]}</p>}
@@ -1148,14 +1188,46 @@ export function Conversation({
               type="button"
               className="cc"
               disabled={runActive || conversation?.id?.startsWith("mock-")}
-              title="Cycle model for this conversation"
-              aria-label={`Model ${modelChipLabel}. Click to cycle models.`}
-              onClick={() => {
+              title={
+                showReasoningEffort
+                  ? "Click to cycle model. Alt-click cycles Codex reasoning effort."
+                  : "Cycle model for this conversation"
+              }
+              aria-label={
+                showReasoningEffort
+                  ? `Model ${modelChipLabel}, effort ${reasoningEffort}. Click cycles model; Alt-click cycles effort.`
+                  : `Model ${modelChipLabel}. Click to cycle models.`
+              }
+              onClick={(event) => {
+                if (showReasoningEffort && event.altKey) {
+                  setReasoningEffort((current) => cycleReasoningEffort(
+                    provider,
+                    model,
+                    current,
+                    selectedProvider,
+                  ));
+                  return;
+                }
                 // Cycle discovered models (Claude keeps the fixed presentation set).
-                setModel(cycleProviderModel(provider, model, selectedProvider));
+                const nextModel = cycleProviderModel(provider, model, selectedProvider);
+                setModel(nextModel);
+                if (provider === "codex-cli" && nextModel !== "default") {
+                  const efforts = providerReasoningEfforts(provider, nextModel, selectedProvider);
+                  const match = selectedProvider?.models?.find((entry) => entry.id === nextModel);
+                  const preferred = match?.defaultReasoningEffort;
+                  if (preferred && efforts.includes(preferred)) {
+                    setReasoningEffort(preferred);
+                  } else if (efforts.length > 0 && !efforts.includes(reasoningEffort)) {
+                    setReasoningEffort(efforts[0]!);
+                  }
+                }
               }}
             >
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "default" : modelChipLabel}
+              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                ? "default"
+                : showReasoningEffort
+                ? `${modelChipLabel} · ${reasoningEffort}`
+                : modelChipLabel}
               <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             <span className="cdiv" />
