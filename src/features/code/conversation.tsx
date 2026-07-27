@@ -1094,7 +1094,7 @@ export function Conversation({
     waiting_for_approval: "Waiting for your approval…",
     cancelling: "Cancelling…",
     completed: "Turn completed",
-    cancelled: "Turn cancelled · send another prompt to resume",
+    cancelled: `${providerLabel} cancelled · send another prompt to resume`,
     failed: `${providerLabel} stopped · send another prompt to resume`,
   };
   const accessScope = {
