@@ -1455,7 +1455,7 @@ export function Conversation({
               {(providerState === "completed" || providerState === "cancelled" || providerState === "failed")
                 && <p className="provider-state">{stateCopy[providerState]}</p>}
               {checkpoint && (
-                <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint: ${checkpoint.state}`}>
+                <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint, ${pane} pane: ${checkpoint.state}`}>
                   <header>
                     <div>
                       <strong>Workspace checkpoint</strong>
