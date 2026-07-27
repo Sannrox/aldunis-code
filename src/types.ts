@@ -175,12 +175,14 @@ export interface ProviderDiscovery {
   version?: string | null;
   name?: string;
   enabled?: boolean;
+  /** Operator-facing reason when the provider is not run-ready. */
+  detail?: string | null;
   models?: Array<{
     id: string;
     displayName: string;
     isDefault: boolean;
-    reasoningEfforts: ReasoningEffort[];
-    defaultReasoningEffort: ReasoningEffort;
+    reasoningEfforts?: ReasoningEffort[];
+    defaultReasoningEffort?: ReasoningEffort;
   }>;
 }
 export interface ProviderAdapterManifest {
