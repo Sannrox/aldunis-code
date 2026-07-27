@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Field, Input, Textarea } from "../../components/ui";
 import { OverlayDialog } from "./overlay-dialog";
 
@@ -38,6 +38,7 @@ export function AutomationsDialog({
   const [intervalMinutes, setIntervalMinutes] = useState(60);
   const [cron, setCron] = useState("0 * * * *");
   const [busy, setBusy] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/automations/list", { method: "POST" });
@@ -55,6 +56,19 @@ export function AutomationsDialog({
     void load();
     if (!threadId && threads[0]) setThreadId(threads[0].id);
   }, [open, load, threadId, threads]);
+
+  useEffect(() => {
+    if (!open) return;
+    const focusName = () => nameRef.current?.focus();
+    // Dialog focus trap may land on Close; reclaim the primary form field.
+    focusName();
+    const frame = window.requestAnimationFrame(focusName);
+    const timer = window.setTimeout(focusName, 0);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -139,29 +153,56 @@ export function AutomationsDialog({
       </p>
       {error && <p role="alert" className="error-text">{error}</p>}
       <div className="stack gap-sm">
-        <Field label="Name">
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+        <Field label="Name" htmlFor="automation-name">
+          <Input
+            ref={nameRef}
+            id="automation-name"
+            name="automation-name"
+            data-dialog-initial-focus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
         </Field>
-        <Field label="Conversation">
-          <select className="ui-input" value={threadId} onChange={(event) => setThreadId(event.target.value)}>
+        <Field label="Conversation" htmlFor="automation-thread">
+          <select
+            id="automation-thread"
+            name="automation-thread"
+            className="ui-input"
+            value={threadId}
+            onChange={(event) => setThreadId(event.target.value)}
+          >
             {threads.length === 0 && <option value="">No conversations yet</option>}
             {threads.map((thread) => (
               <option key={thread.id} value={thread.id}>{thread.title || thread.id}</option>
             ))}
           </select>
         </Field>
-        <Field label="Prompt">
-          <Textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} />
+        <Field label="Prompt" htmlFor="automation-prompt">
+          <Textarea
+            id="automation-prompt"
+            name="automation-prompt"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={3}
+          />
         </Field>
-        <Field label="Mode">
-          <select className="ui-input" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}>
+        <Field label="Mode" htmlFor="automation-mode">
+          <select
+            id="automation-mode"
+            name="automation-mode"
+            className="ui-input"
+            value={mode}
+            onChange={(event) => setMode(event.target.value as typeof mode)}
+          >
             <option value="ask">Ask</option>
             <option value="plan">Plan</option>
             <option value="build">Build</option>
           </select>
         </Field>
-        <Field label="Schedule">
+        <Field label="Schedule" htmlFor="automation-schedule-kind">
           <select
+            id="automation-schedule-kind"
+            name="automation-schedule-kind"
             className="ui-input"
             value={scheduleKind}
             onChange={(event) => setScheduleKind(event.target.value as typeof scheduleKind)}
@@ -171,8 +212,10 @@ export function AutomationsDialog({
           </select>
         </Field>
         {scheduleKind === "interval" ? (
-          <Field label="Every N minutes (≥ 1)">
+          <Field label="Every N minutes (≥ 1)" htmlFor="automation-interval-minutes">
             <Input
+              id="automation-interval-minutes"
+              name="automation-interval-minutes"
               type="number"
               min={1}
               value={intervalMinutes}
@@ -180,8 +223,13 @@ export function AutomationsDialog({
             />
           </Field>
         ) : (
-          <Field label="5-field UTC cron">
-            <Input value={cron} onChange={(event) => setCron(event.target.value)} />
+          <Field label="5-field UTC cron" htmlFor="automation-cron">
+            <Input
+              id="automation-cron"
+              name="automation-cron"
+              value={cron}
+              onChange={(event) => setCron(event.target.value)}
+            />
           </Field>
         )}
         <Button
