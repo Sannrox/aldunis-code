@@ -332,6 +332,8 @@ export function ChangesPanel({
                   ?? diff.lines.find((line) => line.index === commentLineIndex)?.oldLine}`}
               </strong>
               <textarea
+                id="review-comment-text"
+                name="review-comment-text"
                 autoFocus
                 maxLength={2000}
                 value={commentText}
@@ -346,8 +348,19 @@ export function ChangesPanel({
                 aria-label="Review comment"
               />
               <footer>
-                <button onClick={() => { setCommentLineIndex(undefined); setCommentText(""); }}>Cancel</button>
-                <button onClick={() => void saveAnnotation()} disabled={annotationBusy || !commentText.trim()}>Save comment</button>
+                <button
+                  type="button"
+                  onClick={() => { setCommentLineIndex(undefined); setCommentText(""); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveAnnotation()}
+                  disabled={annotationBusy || !commentText.trim()}
+                >
+                  Save comment
+                </button>
               </footer>
             </section>
           )}

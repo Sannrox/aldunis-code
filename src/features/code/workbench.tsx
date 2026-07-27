@@ -323,7 +323,22 @@ export function CodeWorkbench({
     };
   };
   const openBeside = (id?: string) => {
-    const candidate = id ?? conversations.find((conversation) => conversation.id !== primaryId)?.id ?? `new:${crypto.randomUUID()}`;
+    // Prefer an explicit id (thread-row Beside). Topbar Open beside should stay in the
+    // active project — not open a random foreign-worktree thread that cannot send.
+    const sameProjectIds = new Set([
+      repository?.projectId,
+      ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+      primary?.projectId,
+    ].filter(Boolean) as string[]);
+    const sameProjectOther = conversations.find((conversation) => (
+      conversation.id !== primaryId
+      && !conversation.archivedAt
+      && !conversation.settledAt
+      && (sameProjectIds.size === 0 || sameProjectIds.has(conversation.projectId))
+    ));
+    const candidate = id
+      ?? sameProjectOther?.id
+      ?? `new:${crypto.randomUUID()}`;
     secondaryIdReference.current = candidate;
     setSecondaryId(candidate);
     setActivePane("secondary");

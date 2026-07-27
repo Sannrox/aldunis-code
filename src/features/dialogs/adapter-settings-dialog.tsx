@@ -278,10 +278,20 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
               </header>
               <p>{adapter.manifest.presentation.description}</p>
               <footer>
-                <button disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/${adapter.enabled ? "disable" : "enable"}`)}>
+                <button
+                  type="button"
+                  disabled={busy || !administrationAvailable}
+                  onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/${adapter.enabled ? "disable" : "enable"}`)}
+                >
                   {adapter.enabled ? "Disable" : "Enable"}
                 </button>
-                <button disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/rollback`)}>Rollback</button>
+                <button
+                  type="button"
+                  disabled={busy || !administrationAvailable}
+                  onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/rollback`)}
+                >
+                  Rollback
+                </button>
                 <Button variant="danger" size="sm" disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}>Uninstall</Button>
               </footer>
             </article>
