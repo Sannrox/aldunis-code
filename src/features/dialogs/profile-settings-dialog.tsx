@@ -43,10 +43,10 @@ function profileProviderLabel(provider: string): string {
 function profileDetail(profile: ClaudeProfile): string {
   const providerLabel = profileProviderLabel(profile.provider);
   if (profile.provider === "claude-code") {
-    return profile.homePath ? `${providerLabel} · ${profile.homePath}` : `${providerLabel} · default home`;
+    return profile.homePath ? `${providerLabel} · ${profile.homePath}` : `${providerLabel} · Default home`;
   }
   if (profile.binaryPath) return `${providerLabel} · ${profile.binaryPath}`;
-  return `${providerLabel} · empty default`;
+  return `${providerLabel} · Empty default`;
 }
 
 export function ProfileSettingsDialog({
@@ -217,7 +217,7 @@ export function ProfileSettingsDialog({
         <div className="profile-dialog-body">
           <nav aria-label="Provider profiles">
             {profiles.map((profile) => {
-              const title = `${profile.name}${isDefaultProfileId(profile.id) ? " · default" : ""}`;
+              const title = `${profile.name}${isDefaultProfileId(profile.id) ? " · Default" : ""}`;
               const detail = profileDetail(profile);
               return (
                 <button
@@ -230,7 +230,7 @@ export function ProfileSettingsDialog({
                 >
                   <strong>
                     {profile.name}
-                    {isDefaultProfileId(profile.id) ? " · default" : ""}
+                    {isDefaultProfileId(profile.id) ? " · Default" : ""}
                   </strong>
                   <small>{detail}</small>
                 </button>
@@ -274,7 +274,7 @@ export function ProfileSettingsDialog({
             {selected && (
               <p className="secret-note">
                 Provider: <strong>{profileProviderLabel(selected.provider)}</strong>
-                {isDefault ? " · system default (re-seeded if deleted)" : ""}
+                {isDefault ? " · System default (re-seeded if deleted)" : ""}
               </p>
             )}
             <label htmlFor="profile-display-name">Display name
