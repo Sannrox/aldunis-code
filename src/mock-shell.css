@@ -109,9 +109,11 @@ code{font-family:var(--font-mono)}
 .srow .w{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);opacity:.7}
 .wt{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:10.5px;color:var(--amber);flex:0 0 auto}
 .wt .dot{width:5px;height:5px}
-.sacts{position:absolute;right:7px;display:none;gap:4px}
-.srow:hover .sacts{display:flex}
-.srow:hover .w,.srow:hover .wt{visibility:hidden}
+/* Keep actions in the tab order (opacity, not display:none) so keyboard users
+   can Unsettle/Release without a hover target. */
+.sacts{position:absolute;right:7px;display:flex;gap:4px;opacity:0}
+.srow:hover .sacts,.srow:focus-within .sacts,.sacts:focus-within{opacity:1}
+.srow:hover .w,.srow:hover .wt,.srow:focus-within .w,.srow:focus-within .wt{visibility:hidden}
 .sbtn{height:20px;padding:0 7px;border-radius:6px;background:var(--card);border:1px solid var(--border);font-size:11px;color:var(--muted-foreground)}
 .sbtn:hover{color:var(--foreground);background:var(--accent)}
 .sbtn.rel:hover{color:var(--amber);border-color:var(--amber)}
@@ -443,8 +445,15 @@ html, body { height: 100%; }
 .srow { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px; border-radius: 8px; margin-bottom: 1px; }
 .srow-main { flex: 1; min-width: 0; background: transparent; color: inherit; text-align: left; padding: 0; overflow: hidden; }
 .srow:hover { background: var(--sidebar-row-hover); }
-.srow:hover .sacts { display: flex; }
-.srow:hover .w, .srow:hover .wt { visibility: hidden; }
+.sacts {
+  display: flex !important;
+  opacity: 0;
+}
+.srow:hover .sacts,
+.srow:focus-within .sacts,
+.sacts:focus-within { opacity: 1; }
+.srow:hover .w, .srow:hover .wt,
+.srow:focus-within .w, .srow:focus-within .wt { visibility: hidden; }
 .empty-list { padding: 8px 9px; color: var(--muted-foreground); font-size: 12.5px; line-height: 1.5; }
 .glabel { display: flex; align-items: center; gap: 8px; }
 .glabel .n { margin-left: 6px; margin-right: 0; font-family: var(--font-mono); font-size: 11px; }

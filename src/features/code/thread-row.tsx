@@ -61,6 +61,7 @@ export function ThreadRow({
         <button
           type="button"
           className="settle"
+          aria-label={`Settle "${conversation.title}"`}
           onClick={(event) => {
             event.stopPropagation();
             onSettle();
