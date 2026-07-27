@@ -1330,10 +1330,17 @@ export function Conversation({
             </div>
           )}
           {suggestionMode && (
-            <div className="composer-suggestions" role="listbox">
+            <div
+              className="composer-suggestions"
+              role="listbox"
+              aria-label={suggestionMode === "files" ? "File suggestions" : "Command suggestions"}
+            >
               {suggestions.map((suggestion, index) => (
                 <button
                   type="button"
+                  role="option"
+                  aria-selected={index === suggestionIndex}
+                  aria-label={`${suggestion.value}: ${suggestion.detail}`}
                   className={index === suggestionIndex ? "active" : ""}
                   key={suggestion.value}
                   onMouseDown={(event) => event.preventDefault()}
