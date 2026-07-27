@@ -53,14 +53,16 @@ export function providerDisplayName(
   if (provider === "claude-code") return "Claude Code";
   if (provider === "codex-cli") return "Codex CLI";
   if (provider === "shikigami") return "Shikigami";
-  const discovered = discovery?.name?.trim();
-  if (discovered) return discovered;
-  // Without discovery, prefer a known friendly name over reverse-DNS package ids
-  // so Grok Build / Kiro threads stay labeled after the host detail drops.
+  // Prefer stable known product names over discovery strings that append "CLI"
+  // or otherwise drift from list chrome (Grok Build / Kiro CLI).
   const packageId = typeof provider === "string" ? adapterPackageId(provider) : null;
   if (packageId) {
-    return knownAdapterDisplayName(packageId) ?? packageId;
+    const known = knownAdapterDisplayName(packageId);
+    if (known) return known;
   }
+  const discovered = discovery?.name?.trim();
+  if (discovered) return discovered;
+  if (packageId) return packageId;
   return "Provider adapter";
 }
 
