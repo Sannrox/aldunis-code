@@ -236,6 +236,7 @@ export function AutomationsDialog({
           type="button"
           variant="primary"
           disabled={busy || !threadId || !prompt.trim() || !name.trim()}
+          aria-label={name.trim() ? `Create automation ${name.trim()}` : "Create automation"}
           onClick={() => void create()}
         >
           Create automation
@@ -259,13 +260,30 @@ export function AutomationsDialog({
               {item.lastError ? ` (${item.lastError})` : ""}
             </div>
             <div className="row gap-sm">
-              <Button type="button" size="sm" onClick={() => void toggle(item)}>
+              <Button
+                type="button"
+                size="sm"
+                aria-label={`${item.enabled ? "Pause" : "Enable"} automation ${item.name}`}
+                onClick={() => void toggle(item)}
+              >
                 {item.enabled ? "Pause" : "Enable"}
               </Button>
-              <Button type="button" size="sm" disabled={busy} onClick={() => void runNow(item.id)}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                aria-label={`Run automation ${item.name} now`}
+                onClick={() => void runNow(item.id)}
+              >
                 Run now
               </Button>
-              <Button type="button" size="sm" variant="danger" onClick={() => void remove(item.id)}>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                aria-label={`Delete automation ${item.name}`}
+                onClick={() => void remove(item.id)}
+              >
                 Delete
               </Button>
             </div>
