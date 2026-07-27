@@ -7,7 +7,7 @@ import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { Button } from "../../components/ui";
-import { providerChipName } from "../../lib/provider-readiness";
+import { providerListLabel } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 
@@ -19,7 +19,7 @@ function paneConversationLabel(
   if (!conversation) return fallback;
   const title = conversation.title.trim() || "Conversation";
   if (!conversation.provider) return title;
-  return `${title} · ${providerChipName(conversation.provider, undefined)}`;
+  return `${title} · ${providerListLabel(conversation.provider)}`;
 }
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";

@@ -27,6 +27,24 @@ const CLAUDE_MODELS: ProviderModelOption[] = [
   { id: "haiku", displayName: "haiku" },
 ];
 
+/** Package id segment of `adapter:<package>@<version>`, or null. */
+export function adapterPackageId(provider: string): string | null {
+  if (!provider.startsWith("adapter:")) return null;
+  return provider.slice("adapter:".length).split("@")[0] || null;
+}
+
+/**
+ * Friendly name for known declarative ACP packages when discovery is unavailable.
+ * Matches reverse-DNS ids (dev.kiro.cli) and short package names (kiro-cli, kiro).
+ */
+export function knownAdapterDisplayName(packageId: string): string | null {
+  const id = packageId.toLowerCase();
+  if (id.includes("grok-build") || id.includes("xai.grok")) return "Grok Build";
+  if (id.includes("kiro")) return "Kiro CLI";
+  if (id.includes("opencode")) return "OpenCode";
+  return null;
+}
+
 /** Human label for a provider id (menus, empty states, chips). */
 export function providerDisplayName(
   provider: ProviderId,
@@ -37,20 +55,28 @@ export function providerDisplayName(
   if (provider === "shikigami") return "Shikigami";
   const discovered = discovery?.name?.trim();
   if (discovered) return discovered;
-  // Without discovery, prefer the package id over a generic "Provider adapter"
+  // Without discovery, prefer a known friendly name over reverse-DNS package ids
   // so Grok Build / Kiro threads stay labeled after the host detail drops.
-  if (typeof provider === "string" && provider.startsWith("adapter:")) {
-    const packageId = provider.slice("adapter:".length).split("@")[0];
-    if (packageId === "dev.xai.grok-build" || packageId === "grok-build-cli") {
-      return "Grok Build";
-    }
-    if (packageId === "dev.kiro.cli" || packageId === "kiro-cli") return "Kiro CLI";
-    if (packageId === "dev.opencode.cli" || packageId === "opencode-cli") {
-      return "OpenCode";
-    }
-    if (packageId) return packageId;
+  const packageId = typeof provider === "string" ? adapterPackageId(provider) : null;
+  if (packageId) {
+    return knownAdapterDisplayName(packageId) ?? packageId;
   }
   return "Provider adapter";
+}
+
+/**
+ * Compact list/search/pane label (Claude / Codex / Kiro CLI / …).
+ * Prefer this over raw package ids in inbox and switcher chrome.
+ */
+export function providerListLabel(provider: string): string {
+  if (provider === "claude-code") return "Claude";
+  if (provider === "codex-cli") return "Codex";
+  if (provider === "shikigami") return "Shikigami";
+  const packageId = adapterPackageId(provider);
+  if (packageId) {
+    return knownAdapterDisplayName(packageId) ?? packageId;
+  }
+  return provider;
 }
 
 /**
@@ -64,8 +90,8 @@ export function providerAvatarInitials(
   if (provider === "claude-code") return "CC";
   if (provider === "codex-cli") return "CX";
   if (provider === "shikigami") return "SK";
-  if (typeof provider === "string" && provider.startsWith("adapter:")) {
-    const packageId = provider.slice("adapter:".length).split("@")[0] ?? "";
+  const packageId = typeof provider === "string" ? adapterPackageId(provider) : null;
+  if (packageId) {
     if (packageId.includes("grok-build") || packageId.includes("xai.grok")) return "GB";
     if (packageId.includes("kiro")) return "KR";
     if (packageId.includes("opencode")) return "OC";
@@ -92,10 +118,10 @@ export function providerChipName(
   if (provider === "shikigami") return "shikigami";
   const name = discovery?.name?.trim();
   if (name) return name;
-  // Prefer the adapter package id segment over a generic fallback.
-  if (typeof provider === "string" && provider.startsWith("adapter:")) {
-    const packageId = provider.slice("adapter:".length).split("@")[0];
-    if (packageId) return packageId;
+  // Prefer known friendly names over reverse-DNS package ids when discovery is cold.
+  const packageId = typeof provider === "string" ? adapterPackageId(provider) : null;
+  if (packageId) {
+    return knownAdapterDisplayName(packageId) ?? packageId;
   }
   return providerDisplayName(provider, discovery);
 }

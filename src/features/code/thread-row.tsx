@@ -1,5 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import type { ConversationSummary } from "../../types";
+import type { ProviderId } from "../../types";
+import { providerAvatarInitials } from "../../lib/provider-readiness";
 import {
   branchFromWorktree,
   formatElapsed,
@@ -38,7 +40,8 @@ export function ThreadRow({
   const blocks = isBlockingStatus(status);
   const unread = isUnread(conversation);
   const elapsed = formatElapsed(conversation.statusSince ?? conversation.updatedAt);
-  const monogram = providerMonogram(conversation.provider);
+  const listLabel = providerLabel(conversation.provider);
+  const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
   const statusLabel =
     status === "pending_approval" ? "Approval needed"
     : status === "awaiting_input" ? "Awaiting input"
@@ -53,7 +56,7 @@ export function ThreadRow({
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
     branchFromWorktree(conversation.worktree),
-    providerLabel(conversation.provider),
+    listLabel,
     elapsed,
   ].filter(Boolean).join(", ");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -136,7 +139,7 @@ export function ThreadRow({
         </div>
         <div className="rb">
           <span className="br">{branchFromWorktree(conversation.worktree)}</span>
-          <span className="pv" title={providerLabel(conversation.provider)}>{monogram}</span>
+          <span className="pv" title={listLabel}>{monogram}</span>
           <span className="tm">{elapsed}</span>
         </div>
       </button>
@@ -258,15 +261,4 @@ export function ThreadRow({
   );
 }
 
-function providerMonogram(provider: string): string {
-  if (provider === "claude-code") return "CC";
-  if (provider === "codex-cli") return "CX";
-  if (provider === "shikigami") return "SK";
-  if (provider.startsWith("adapter:")) {
-    const id = provider.slice("adapter:".length).split("@")[0] ?? "AD";
-    // Mock uses KR for Kiro; take first + last consonant-ish letters of short ids
-    if (id.toLowerCase() === "kiro") return "KR";
-    return id.slice(0, 2).toUpperCase();
-  }
-  return provider.slice(0, 2).toUpperCase();
-}
+

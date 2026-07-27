@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ProviderId } from "../../types";
 import { Button, Field, Input, Textarea } from "../../components/ui";
-import { providerChipName } from "../../lib/provider-readiness";
+import { providerListLabel } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
 export type AutomationSchedule =
@@ -30,7 +30,7 @@ export interface AutomationThreadOption {
 function automationThreadLabel(thread: AutomationThreadOption): string {
   const title = thread.title.trim() || thread.id;
   if (!thread.provider) return title;
-  return `${title} · ${providerChipName(thread.provider, undefined)}`;
+  return `${title} · ${providerListLabel(thread.provider)}`;
 }
 
 export function AutomationsDialog({
