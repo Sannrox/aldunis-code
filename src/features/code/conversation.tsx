@@ -13,6 +13,7 @@ import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import {
   cycleReasoningEffort,
   parseProviderFailure,
+  providerAvatarInitials,
   providerChipName as formatProviderChipName,
   providerDisplayName,
   providerModelLabel,
@@ -1177,7 +1178,7 @@ export function Conversation({
         {showAssistantTurn && (
           <div className="turn" aria-live="polite">
             <div className="role">
-              <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}</span>
+              <span className="av">{providerAvatarInitials(provider, providerLabel)}</span>
               <span className="rname">{providerLabel}</span>
               <span className="rtime">
                 {runActive
