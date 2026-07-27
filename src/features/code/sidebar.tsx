@@ -250,7 +250,7 @@ export function CodeSidebar({
   const brandName = product === "code" ? "Aldunis Code" : `Aldunis ${current.label}`;
 
   return (
-    <aside className="sb">
+    <aside className="sb" aria-label="Workbench sidebar">
       <div className="sb-hd" ref={brandRef}>
         <button
           type="button"
