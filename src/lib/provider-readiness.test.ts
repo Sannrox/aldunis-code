@@ -203,23 +203,30 @@ test("resolveDefaultProviderModel prefers discovery isDefault then first real mo
     }),
     "o3",
   );
-  // Claude prefers concrete Sonnet (T3-style), not a synthetic "default" token.
-  assert.equal(resolveDefaultProviderModel("claude-code", undefined), "sonnet");
+  // Claude prefers full T3 slug claude-sonnet-5, not a short "sonnet" alias.
+  assert.equal(resolveDefaultProviderModel("claude-code", undefined), "claude-sonnet-5");
 });
 
-test("Claude model options are concrete aliases without a Default row", () => {
-  assert.equal(cycleProviderModel("claude-code", "default", undefined), "opus");
-  assert.equal(cycleProviderModel("claude-code", "haiku", undefined), "sonnet");
+test("Claude model options use T3-style full slugs and versioned labels", () => {
+  assert.equal(cycleProviderModel("claude-code", "default", undefined), "claude-opus-5");
+  assert.equal(cycleProviderModel("claude-code", "claude-haiku-4-5", undefined), "claude-sonnet-5");
   assert.deepEqual(
     providerModelOptions("claude-code", undefined).map((entry) => entry.id),
-    ["sonnet", "opus", "haiku"],
+    [
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-sonnet-4-6",
+      "claude-opus-4-6",
+      "claude-haiku-4-5",
+    ],
   );
   assert.deepEqual(
     providerModelOptions("claude-code", undefined).map((entry) => entry.displayName),
-    ["Sonnet", "Opus", "Haiku"],
+    ["Sonnet 5", "Opus 5", "Sonnet 4.6", "Opus 4.6", "Haiku 4.5"],
   );
-  assert.equal(providerModelLabel("claude-code", "sonnet", undefined), "Sonnet");
-  assert.equal(providerModelLabel("claude-code", "default", undefined), "Sonnet");
+  assert.equal(providerModelLabel("claude-code", "sonnet", undefined), "Sonnet 5");
+  assert.equal(providerModelLabel("claude-code", "default", undefined), "Sonnet 5");
+  assert.equal(providerModelLabel("claude-code", "claude-sonnet-5", undefined), "Sonnet 5");
 });
 
 test("Codex reasoning effort cycles advertised options", () => {

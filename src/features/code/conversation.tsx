@@ -19,6 +19,7 @@ import {
   providerListLabel,
   providerModelLabel,
   resolveDefaultProviderModel,
+  normalizeClaudeModelSlug,
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
@@ -256,18 +257,23 @@ export function Conversation({
     setModelMenuOpen(false);
   };
 
-  // When discovery lands, promote the unpinned "default" sentinel to a concrete model (T3-style).
+  // Promote unpinned / legacy short Claude aliases to concrete T3-style slugs.
   useEffect(() => {
-    if (model !== "default") return;
-    const resolved = resolveDefaultProviderModel(provider, selectedProvider);
-    if (resolved !== "default" && resolved !== model) {
-      setModel(resolved);
-      const match = selectedProvider?.models?.find((entry) => entry.id === resolved);
-      const efforts = providerReasoningEfforts(provider, resolved, selectedProvider);
-      const preferred = match?.defaultReasoningEffort;
-      if (preferred && efforts.includes(preferred)) setReasoningEffort(preferred);
-      else if (efforts.length > 0) setReasoningEffort(efforts[0]!);
+    let resolved = model;
+    if (provider === "claude-code") {
+      resolved = normalizeClaudeModelSlug(model === "default"
+        ? resolveDefaultProviderModel(provider, selectedProvider)
+        : model);
+    } else if (model === "default") {
+      resolved = resolveDefaultProviderModel(provider, selectedProvider);
     }
+    if (resolved === "default" || resolved === model) return;
+    setModel(resolved);
+    const match = selectedProvider?.models?.find((entry) => entry.id === resolved);
+    const efforts = providerReasoningEfforts(provider, resolved, selectedProvider);
+    const preferred = match?.defaultReasoningEffort;
+    if (preferred && efforts.includes(preferred)) setReasoningEffort(preferred);
+    else if (efforts.length > 0) setReasoningEffort(efforts[0]!);
   }, [model, provider, selectedProvider]);
   const selectMode = (nextMode: InteractionMode, source: "menu" | "keyboard" = "menu") => {
     if (source === "menu" && performance.now() < modeMenuOpenedAtRef.current) {
@@ -745,9 +751,12 @@ export function Conversation({
       hasClaudeProfile: Boolean(profileId),
       providerName,
     });
-  const effectiveModel = model === "default"
-    ? resolveDefaultProviderModel(provider, selectedProvider)
-    : model;
+  const effectiveModel = (() => {
+    const base = model === "default"
+      ? resolveDefaultProviderModel(provider, selectedProvider)
+      : model;
+    return provider === "claude-code" ? normalizeClaudeModelSlug(base) : base;
+  })();
   const modelChipLabel = providerModelLabel(provider, effectiveModel, selectedProvider);
   const reasoningEfforts = providerReasoningEfforts(provider, effectiveModel, selectedProvider);
   const showReasoningEffort = (

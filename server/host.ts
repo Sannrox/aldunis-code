@@ -55,8 +55,8 @@ import {
   type ThreadStatus,
 } from "./state.ts";
 import {
-  CLAUDE_MODEL_ALIASES,
   ClaudeProfileStore,
+  isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
   type ProfileProbeKind,
@@ -739,7 +739,7 @@ async function handleApi(
       if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
       await selectedWorktree(project.root, source.worktree);
       if (body.provider === "claude-code") {
-        if (!CLAUDE_MODEL_ALIASES.includes(body.model)) {
+        if (!isAllowedClaudeModel(body.model)) {
           throw new ProfileError("The selected Claude model is unavailable.", 409);
         }
         await profiles.runtime(body.profileId as string);
@@ -1409,7 +1409,7 @@ async function handleApi(
         || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
         || typeof body.model !== "string"
-        || (providerId === "claude-code" && !CLAUDE_MODEL_ALIASES.includes(body.model))
+        || (providerId === "claude-code" && !isAllowedClaudeModel(body.model))
         || (body.reasoningEffort !== undefined
           && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
         || (body.elementReferences !== undefined && (

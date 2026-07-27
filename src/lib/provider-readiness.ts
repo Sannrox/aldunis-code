@@ -21,22 +21,50 @@ const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [
 ];
 
 /**
- * Concrete Claude aliases offered in the composer (T3-style: no synthetic
- * "Default" row — the preferred default is Sonnet).
- * Server still accepts legacy "default" on the wire.
+ * Claude models offered in the composer — T3-style full slugs + versioned labels
+ * (see pingdotgg/t3code DEFAULT_MODEL_BY_PROVIDER / MODEL_SLUG_ALIASES for Claude).
+ * Legacy short aliases (sonnet/opus/haiku/default) normalize via {@link normalizeClaudeModelSlug}.
  */
 const CLAUDE_MODELS: ProviderModelOption[] = [
-  { id: "sonnet", displayName: "Sonnet" },
-  { id: "opus", displayName: "Opus" },
-  { id: "haiku", displayName: "Haiku" },
+  { id: "claude-sonnet-5", displayName: "Sonnet 5" },
+  { id: "claude-opus-5", displayName: "Opus 5" },
+  { id: "claude-sonnet-4-6", displayName: "Sonnet 4.6" },
+  { id: "claude-opus-4-6", displayName: "Opus 4.6" },
+  { id: "claude-haiku-4-5", displayName: "Haiku 4.5" },
 ];
+
+/** Short / legacy Claude ids → T3-style full model slugs. */
+const CLAUDE_MODEL_SLUG_ALIASES: Record<string, string> = {
+  default: "claude-sonnet-5",
+  sonnet: "claude-sonnet-5",
+  "sonnet-5": "claude-sonnet-5",
+  "claude-sonnet-5.0": "claude-sonnet-5",
+  "claude-sonnet-5-0": "claude-sonnet-5",
+  opus: "claude-opus-5",
+  "opus-5": "claude-opus-5",
+  "claude-opus-5.0": "claude-opus-5",
+  "claude-opus-5-0": "claude-opus-5",
+  "sonnet-4.6": "claude-sonnet-4-6",
+  "claude-sonnet-4.6": "claude-sonnet-4-6",
+  "opus-4.6": "claude-opus-4-6",
+  "claude-opus-4.6": "claude-opus-4-6",
+  haiku: "claude-haiku-4-5",
+  "haiku-4.5": "claude-haiku-4-5",
+  "claude-haiku-4.5": "claude-haiku-4-5",
+};
+
+/** Map short Claude aliases (and "default") to full product slugs. */
+export function normalizeClaudeModelSlug(model: string): string {
+  const key = model.trim().toLowerCase();
+  return CLAUDE_MODEL_SLUG_ALIASES[key] ?? model.trim();
+}
 
 /**
  * Preferred concrete model when discovery is empty, aligned with T3's
- * DEFAULT_MODEL_BY_PROVIDER idea (real slug, not a "default" sentinel).
+ * DEFAULT_MODEL_BY_PROVIDER (real slug, not a "default" sentinel).
  */
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<string, string>> = {
-  "claude-code": "sonnet",
+  "claude-code": "claude-sonnet-5",
 };
 
 /** Package id segment of `adapter:<package>@<version>`, or null. */
@@ -221,7 +249,7 @@ export function resolveDefaultProviderModel(
   if (marked) return marked;
   const preferred = DEFAULT_MODEL_BY_PROVIDER[provider];
   if (preferred) return preferred;
-  if (provider === "claude-code") return "sonnet";
+  if (provider === "claude-code") return "claude-sonnet-5";
   return "default";
 }
 
@@ -258,9 +286,10 @@ export function cycleProviderModel(
 ): string {
   const options = providerModelOptions(provider, discovery);
   if (options.length <= 1) return options[0]?.id ?? currentModel;
-  const effective = currentModel === "default"
+  let effective = currentModel === "default"
     ? resolveDefaultProviderModel(provider, discovery)
     : currentModel;
+  if (provider === "claude-code") effective = normalizeClaudeModelSlug(effective);
   const index = options.findIndex((entry) => entry.id === effective);
   const next = options[(index + 1) % options.length] ?? options[0]!;
   return next.id;
@@ -271,9 +300,10 @@ export function providerModelLabel(
   model: string,
   discovery: ProviderDiscovery | undefined,
 ): string {
-  const effective = model === "default"
+  let effective = model === "default"
     ? resolveDefaultProviderModel(provider, discovery)
     : model;
+  if (provider === "claude-code") effective = normalizeClaudeModelSlug(effective);
   const match = providerModelOptions(provider, discovery).find((entry) => entry.id === effective);
   if (match) return match.displayName;
   // Discovery may mark a default that was filtered from options (id "default").
