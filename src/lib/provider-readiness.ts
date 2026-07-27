@@ -1,9 +1,24 @@
-import type { ProviderDiscovery, ProviderId } from "../types";
+import type { ProviderDiscovery, ProviderId, ReasoningEffort } from "../types";
 
 export interface ProviderModelOption {
   id: string;
   displayName: string;
 }
+
+export interface ProviderFailureView {
+  kind: "park" | "generic";
+  summary: string;
+  question: string | null;
+  resumeCommand: string | null;
+}
+
+const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
 
 const CLAUDE_MODELS: ProviderModelOption[] = [
   { id: "default", displayName: "default" },
@@ -108,4 +123,73 @@ export function providerModelLabel(
   if (model === "default") return "default";
   const match = providerModelOptions(provider, discovery).find((entry) => entry.id === model);
   return match?.displayName ?? model;
+}
+
+/** Reasoning efforts advertised for the selected Codex model (empty when not Codex). */
+export function providerReasoningEfforts(
+  provider: ProviderId,
+  model: string,
+  discovery: ProviderDiscovery | undefined,
+): ReasoningEffort[] {
+  if (provider !== "codex-cli") return [];
+  if (model === "default") return DEFAULT_REASONING_EFFORTS;
+  const match = discovery?.models?.find((entry) => entry.id === model);
+  if (!match) return DEFAULT_REASONING_EFFORTS;
+  // Explicit empty list means this model does not expose effort controls.
+  if (Array.isArray(match.reasoningEfforts) && match.reasoningEfforts.length === 0) {
+    return [];
+  }
+  const efforts = match.reasoningEfforts ?? [];
+  return efforts.length > 0 ? efforts : DEFAULT_REASONING_EFFORTS;
+}
+
+export function cycleReasoningEffort(
+  provider: ProviderId,
+  model: string,
+  current: ReasoningEffort,
+  discovery: ProviderDiscovery | undefined,
+): ReasoningEffort {
+  const efforts = providerReasoningEfforts(provider, model, discovery);
+  if (efforts.length === 0) return current;
+  const index = efforts.indexOf(current);
+  return efforts[(index + 1) % efforts.length] ?? efforts[0]!;
+}
+
+/**
+ * Split provider failure text into a scannable summary and optional CLI resume
+ * command (Shikigami park). Presentation only — does not resume runs.
+ */
+export function parseProviderFailure(message: string): ProviderFailureView {
+  const trimmed = message.trim();
+  const resumeMatch = trimmed.match(
+    /(shikigami\s+run\s+--resume\s+[0-9a-fA-F-]{36}\s+--answer\s+"\.\.\.")/i,
+  );
+  const questionMatch = trimmed.match(/Question:\s*(.+?)(?:\.\s+Resume|\.\s*$)/i);
+  const isPark = /parked/i.test(trimmed) || Boolean(resumeMatch);
+  if (!isPark) {
+    return {
+      kind: "generic",
+      summary: trimmed,
+      question: null,
+      resumeCommand: null,
+    };
+  }
+  let summary = trimmed;
+  if (resumeMatch) {
+    summary = trimmed.slice(0, resumeMatch.index).trim().replace(/[.\s]+$/, "") || "Shikigami parked.";
+  }
+  const question = questionMatch?.[1]?.trim() ?? null;
+  if (question) {
+    summary = summary.replace(new RegExp(`\\s*Question:\\s*${escapeRegExp(question)}\\.?`, "i"), "").trim();
+  }
+  return {
+    kind: "park",
+    summary: summary || "Shikigami parked awaiting an operator answer.",
+    question,
+    resumeCommand: resumeMatch?.[1] ?? null,
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -325,6 +325,7 @@ async function handleApi(
         authenticated: false,
         version: null,
         models: [],
+        detail: "Install Codex CLI on PATH and sign in (codex login).",
       }));
       const declarativeProviders = await Promise.all(
         (await adapters.list()).map(async (adapter) => {
