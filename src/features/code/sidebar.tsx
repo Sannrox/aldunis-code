@@ -280,6 +280,7 @@ export function CodeSidebar({
                   type="button"
                   role="option"
                   aria-selected={projectFilter === "all"}
+                  aria-label="All projects: Inbox across every registered project"
                   className={`project-filter-option ${projectFilter === "all" ? "active" : ""}`}
                   onClick={() => {
                     onProjectFilterChange("all");
@@ -294,6 +295,7 @@ export function CodeSidebar({
                     type="button"
                     role="option"
                     aria-selected={projectFilter === project.id}
+                    aria-label={`${project.name}: ${project.root}`}
                     key={project.id}
                     className={`project-filter-option ${projectFilter === project.id ? "active" : ""}`}
                     title={project.root}
@@ -309,6 +311,9 @@ export function CodeSidebar({
                 ))}
                 <button
                   type="button"
+                  role="option"
+                  aria-selected={false}
+                  aria-label="Add project: Register a local repository once"
                   className="project-filter-option add"
                   onClick={() => {
                     setProjectMenuOpen(false);

@@ -151,17 +151,26 @@ export function FileBrowserPanel({
         >
           {loading && <p className="file-browser-note">Searching active worktree…</p>}
           {!loading && files.length === 0 && <p className="file-browser-note">No supported files match this search.</p>}
-          {files.map((file) => (
-            <button
-              className={selected === file.path ? "active" : ""}
-              key={file.path}
-              onClick={() => setSelected(file.path)}
-              aria-current={selected === file.path ? "true" : undefined}
-            >
-              <strong>{file.path}</strong>
-              <small>{file.match ? `${file.match} match · ` : ""}{file.kind}{file.size === null ? "" : ` · ${file.size.toLocaleString()} B`}</small>
-            </button>
-          ))}
+          {files.map((file) => {
+            const meta = [
+              file.match ? `${file.match} match` : null,
+              file.kind,
+              file.size === null ? null : `${file.size.toLocaleString()} B`,
+            ].filter(Boolean).join(" · ");
+            return (
+              <button
+                type="button"
+                className={selected === file.path ? "active" : ""}
+                key={file.path}
+                onClick={() => setSelected(file.path)}
+                aria-current={selected === file.path ? "true" : undefined}
+                aria-label={meta ? `${file.path}, ${meta}` : file.path}
+              >
+                <strong>{file.path}</strong>
+                <small>{meta}</small>
+              </button>
+            );
+          })}
           {truncated && <p className="file-browser-note">Results are capped. Refine the search to find more.</p>}
         </nav>
         <article className="file-preview" tabIndex={0}>
@@ -172,8 +181,14 @@ export function FileBrowserPanel({
               <header>
                 <div><strong>{preview.path}</strong><small>{preview.encoding} · {preview.size?.toLocaleString() ?? "unknown"} B</small></div>
                 <button
+                  type="button"
                   onClick={() => onAttach(preview.path)}
                   disabled={attached.includes(preview.path) || attached.length >= maxAttachments || !preview.attachable}
+                  aria-label={
+                    attached.includes(preview.path)
+                      ? `${preview.path} already attached`
+                      : `Attach ${preview.path} to composer`
+                  }
                 >
                   {attached.includes(preview.path) ? "Attached" : "Attach to composer"}
                 </button>
