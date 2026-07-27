@@ -1937,6 +1937,7 @@ export function Conversation({
       {previewOpen && repository && (
         <PreviewPanel
           repository={repository}
+          pane={pane}
           onClose={() => setPreviewOpen(false)}
           onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
         />
@@ -1944,6 +1945,7 @@ export function Conversation({
       {filesOpen && repository && (
         <FileBrowserPanel
           repository={repository}
+          pane={pane}
           attached={attachments}
           maxAttachments={capabilities?.attachments.maxCount ?? 8}
           onAttach={(path) => {

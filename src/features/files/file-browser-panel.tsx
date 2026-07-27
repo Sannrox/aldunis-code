@@ -5,12 +5,15 @@ import { Icon } from "../../components/icon";
 
 export function FileBrowserPanel({
   repository,
+  pane = "primary",
   attached,
   maxAttachments,
   onAttach,
   onClose,
 }: {
   repository: RepositoryMetadata;
+  /** Dual-pane scope for browse chrome labels. */
+  pane?: "primary" | "secondary";
   attached: string[];
   maxAttachments: number;
   onAttach: (path: string) => void;
@@ -112,10 +115,10 @@ export function FileBrowserPanel({
 
   const selectedIndex = files.findIndex(({ path }) => path === selected);
   return (
-    <section className="file-browser-panel" aria-label="Browse active worktree">
+    <section className="file-browser-panel" aria-label={`Browse active worktree, ${pane} pane`}>
       <header>
         <div><p className="eyebrow">Bounded local context</p><h2>Browse active worktree</h2></div>
-        <CloseButton onClick={onClose} label="Close file browser" />
+        <CloseButton onClick={onClose} label={`Close file browser, ${pane} pane`} />
       </header>
       <div className="file-browser-policy">
         Hidden, ignored, secret-like, and generated ignored files are excluded. Search is local, capped, and not indexed.
@@ -137,7 +140,7 @@ export function FileBrowserPanel({
       </label>
       <div className="file-browser-body">
         <nav
-          aria-label="Worktree files"
+          aria-label={`Worktree files, ${pane} pane`}
           tabIndex={0}
           onKeyDown={(event) => {
             if (!files.length || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
