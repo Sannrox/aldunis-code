@@ -191,6 +191,17 @@ export function CodeWorkbench({
   }, [secondaryId]);
   const primary = conversations.find((conversation) => conversation.id === primaryId) ?? null;
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
+  // Full labels also used as title tooltips when ellipsis truncates narrow dual-pane tabs.
+  const paneSwitcherPrimaryLabel = `Primary · ${paneConversationLabel(
+    primary,
+    primaryId ? "Replace conversation" : "New conversation",
+  )}`;
+  const paneSwitcherSecondaryLabel = secondaryId
+    ? `Secondary · ${paneConversationLabel(
+      secondary,
+      secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation",
+    )}`
+    : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
   const listedConversations = useMemo(() => {
@@ -552,23 +563,19 @@ export function CodeWorkbench({
               type="button"
               className={activePane === "primary" ? "active" : ""}
               aria-current={activePane === "primary" ? "true" : undefined}
+              title={paneSwitcherPrimaryLabel}
               onClick={() => setActivePane("primary")}
             >
-              Primary · {paneConversationLabel(
-                primary,
-                primaryId ? "Replace conversation" : "New conversation",
-              )}
+              {paneSwitcherPrimaryLabel}
             </button>
             <button
               type="button"
               className={activePane === "secondary" ? "active" : ""}
               aria-current={activePane === "secondary" ? "true" : undefined}
+              title={paneSwitcherSecondaryLabel}
               onClick={() => setActivePane("secondary")}
             >
-              Secondary · {paneConversationLabel(
-                secondary,
-                secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation",
-              )}
+              {paneSwitcherSecondaryLabel}
             </button>
           </nav>
         )}
