@@ -580,9 +580,12 @@ export function Conversation({
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
         .flatMap((activity): ProviderEvent[] => {
           if (activity.kind === "provider_failed") {
+            // Scope default copy with the thread provider so dual-pane failures
+            // are not both "Provider failed."
+            const fallback = `${providerDisplayName(provider, selectedProvider)} failed.`;
             return [{
               kind: "failed",
-              message: activity.message?.trim() || "Provider failed.",
+              message: activity.message?.trim() || fallback,
             }];
           }
           if (activity.kind === "tool_started" && activity.toolCallId) {
@@ -1092,7 +1095,7 @@ export function Conversation({
     cancelling: "Cancelling…",
     completed: "Turn completed",
     cancelled: "Turn cancelled · send another prompt to resume",
-    failed: "Provider stopped · send another prompt to resume",
+    failed: `${providerLabel} stopped · send another prompt to resume`,
   };
   const accessScope = {
     label: accessLabel,
@@ -1415,7 +1418,11 @@ export function Conversation({
               ))}
               {failureView && (
                 <div className={`provider-error ${failureView.kind === "park" ? "provider-error-park" : ""}`} role="alert">
-                  <p>{failureView.summary}</p>
+                  <p>
+                    {/^provider failed\.?$/i.test(failureView.summary.trim())
+                      ? `${providerName} failed.`
+                      : failureView.summary}
+                  </p>
                   {failureView.question && (
                     <p className="provider-error-question">Question: {failureView.question}</p>
                   )}
