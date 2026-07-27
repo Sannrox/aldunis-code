@@ -79,6 +79,7 @@ export function ThreadSearchDialog({
             type="button"
             role="option"
             key={thread.id}
+            aria-label={`${thread.title}: ${thread.projectName} · ${thread.worktree}`}
             onClick={() => {
               onSelect(thread.id);
               onClose();

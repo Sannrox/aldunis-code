@@ -317,6 +317,7 @@ export function RepositoryDialog({
                   key={`project:${row.id}`}
                   role="option"
                   aria-selected={active}
+                  aria-label={`${row.name}: ${row.root}${row.root === currentRoot ? ", current" : ""}`}
                   className={`project-switcher-row ${active ? "active" : ""} ${row.root === currentRoot ? "current" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => activate(row)}
@@ -338,6 +339,7 @@ export function RepositoryDialog({
                   key="parent"
                   role="option"
                   aria-selected={active}
+                  aria-label={`Parent directory: ${row.path}`}
                   className={`project-switcher-row ${active ? "active" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => activate(row)}
@@ -358,6 +360,7 @@ export function RepositoryDialog({
                   key={`dir:${row.path}`}
                   role="option"
                   aria-selected={active}
+                  aria-label={`${row.name}: Open folder`}
                   className={`project-switcher-row ${active ? "active" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => activate(row)}
@@ -377,6 +380,7 @@ export function RepositoryDialog({
                 key={`open:${row.path}`}
                 role="option"
                 aria-selected={active}
+                aria-label={`${row.label}: ${row.path}`}
                 className={`project-switcher-row ${active ? "active" : ""}`}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => activate(row)}
