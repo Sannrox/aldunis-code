@@ -360,6 +360,7 @@ async function handleApi(
         version: null,
         models: [] as Array<{ id: string; displayName: string; isDefault: boolean }>,
         name: "Shikigami",
+        detail: "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
       }));
       sendJson(response, 200, {
         providers: [
