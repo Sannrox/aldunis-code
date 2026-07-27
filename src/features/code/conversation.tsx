@@ -1189,12 +1189,19 @@ export function Conversation({
                     <button
                       type="button"
                       className="btn btn-default btn-sm"
+                      aria-label={`Settle thread, ${pane} pane`}
                       onClick={() => {
-                        void fetch("/api/state/conversations/settle", {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({ threadId }),
-                        }).catch(() => undefined);
+                        void (async () => {
+                          const response = await fetch("/api/state/conversations/settle", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ threadId }),
+                          });
+                          if (!response.ok) return;
+                          setCompletionDismissed(true);
+                          // Refresh sidebar so the thread moves into Settled.
+                          onConversationAvailable?.(threadId);
+                        })().catch(() => undefined);
                       }}
                     >
                       Settle thread
@@ -1202,17 +1209,25 @@ export function Conversation({
                     <button
                       type="button"
                       className="btn btn-outline btn-sm"
+                      aria-label={`Settle and release worktree, ${pane} pane`}
                       onClick={() => {
                         if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
-                        void fetch("/api/state/conversations/settle", {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({ threadId }),
-                        }).then(() => fetch("/api/state/conversations/release-worktree", {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({ threadId, confirm: true }),
-                        })).catch(() => undefined);
+                        void (async () => {
+                          const settle = await fetch("/api/state/conversations/settle", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ threadId }),
+                          });
+                          if (!settle.ok) return;
+                          const release = await fetch("/api/state/conversations/release-worktree", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ threadId, confirm: true }),
+                          });
+                          if (!release.ok) return;
+                          setCompletionDismissed(true);
+                          onConversationAvailable?.(threadId);
+                        })().catch(() => undefined);
                       }}
                     >
                       Settle and release worktree
@@ -1284,6 +1299,7 @@ export function Conversation({
                       <button
                         type="button"
                         className="btn btn-outline btn-sm"
+                        aria-label={`Copy CLI resume command: ${failureView.resumeCommand}`}
                         onClick={() => {
                           void navigator.clipboard?.writeText(failureView.resumeCommand!).catch(() => undefined);
                         }}
