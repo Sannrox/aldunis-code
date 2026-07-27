@@ -146,6 +146,14 @@ test("settled shelf open-row control meets min hit size", () => {
   assert.match(shell, /\.srow-main\s*\{[^}]*min-height:\s*28px/s);
 });
 
+test("composer context chip remove controls meet min hit size", () => {
+  // Attachment remove (×) was ~13×7 bare text.
+  assert.match(
+    css,
+    /\.context-chips\s*>\s*span\s*>\s*button\s*\{[^}]*min-width:\s*28px[^}]*min-height:\s*28px/s,
+  );
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
