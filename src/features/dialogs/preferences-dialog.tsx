@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Preferences } from "../../preferences";
 import { Button } from "../../components/ui";
 
@@ -14,6 +14,15 @@ const SECTIONS = [
 ] as const;
 
 type Section = (typeof SECTIONS)[number];
+
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "[href]",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
 
 /**
  * Full-screen settings surface matching workbench-mock.html (.settings / .snav / .sw).
@@ -35,31 +44,94 @@ export function PreferencesDialog({
   const [draft, setDraft] = useState(preferences);
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("General");
+  const rootRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
-    if (open) {
-      setDraft(preferences);
-      setSection("General");
-    }
+    if (!open) return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setDraft(preferences);
+    setSection("General");
+    const focusInitial = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      const preferred = root.querySelector<HTMLElement>("[data-dialog-initial-focus]");
+      const first = preferred
+        ?? root.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      first?.focus();
+    };
+    const frame = window.requestAnimationFrame(focusInitial);
+    const timer = window.setTimeout(focusInitial, 0);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      const restore = returnFocusRef.current;
+      returnFocusRef.current = null;
+      // Only restore if the element is still in the document and focusable.
+      if (restore?.isConnected) restore.focus();
+    };
   }, [open, preferences]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !rootRef.current) return;
+      const focusables = Array.from(
+        rootRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter((element) => {
+        if (element.hasAttribute("disabled")) return false;
+        const style = window.getComputedStyle(element);
+        return style.visibility !== "hidden" && style.display !== "none";
+      });
+      if (focusables.length === 0) return;
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement;
+      // Keep Tab cycling inside the modal (aria-modal without Base UI focus trap).
+      if (!rootRef.current.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose]);
+
   if (!open) return null;
   const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
   return (
-    <div className="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div
+      ref={rootRef}
+      className="settings"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+    >
       <nav className="snav" aria-label="Settings sections">
-        <button type="button" className="sback" onClick={onClose}>
+        <button
+          type="button"
+          className="sback"
+          data-dialog-initial-focus
+          onClick={onClose}
+        >
           ← Back to threads
         </button>
         {SECTIONS.map((item) => (
@@ -144,11 +216,13 @@ export function PreferencesDialog({
                 </div>
                 <div className="field">
                   <div className="fl">
-                    <div className="fn">Zoom</div>
+                    <label className="fn" htmlFor="preferences-zoom">Zoom</label>
                     <div className="fd">Scales the whole workbench UI.</div>
                   </div>
                   <div className="fc">
                     <select
+                      id="preferences-zoom"
+                      name="preferences-zoom"
                       className="num"
                       style={{ width: "auto", minWidth: 72, padding: "0 8px" }}
                       value={draft.zoom}
@@ -162,11 +236,13 @@ export function PreferencesDialog({
                 </div>
                 <div className="field">
                   <div className="fl">
-                    <div className="fn">Reduced motion</div>
+                    <label className="fn" htmlFor="preferences-reduced-motion">Reduced motion</label>
                     <div className="fd">Settle transitions and shelf chevrons respect this.</div>
                   </div>
                   <div className="fc">
                     <select
+                      id="preferences-reduced-motion"
+                      name="preferences-reduced-motion"
                       value={draft.reducedMotion}
                       onChange={(event) =>
                         update("reducedMotion", event.target.value as Preferences["reducedMotion"])}
@@ -189,13 +265,15 @@ export function PreferencesDialog({
               <>
                 <div className="field">
                   <div className="fl">
-                    <div className="fn">Managed worktree limit</div>
+                    <label className="fn" htmlFor="preferences-worktree-limit">Managed worktree limit</label>
                     <div className="fd">
                       Dispatch fails once this many Aldunis worktrees exist. Settled threads still count.
                     </div>
                   </div>
                   <div className="fc">
                     <select
+                      id="preferences-worktree-limit"
+                      name="preferences-worktree-limit"
                       className="num"
                       style={{ width: "auto", minWidth: 72, padding: "0 8px" }}
                       value={draft.managedWorktreeLimit ?? "unlimited"}
