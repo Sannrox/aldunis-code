@@ -68,7 +68,9 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
     return [{
       kind: "tool_started",
       toolCallId: requiredString(update.toolCallId, "tool call ID"),
-      name: typeof update.title === "string" ? update.title : "Provider tool",
+      name: typeof update.title === "string" && update.title.trim()
+        ? update.title.trim()
+        : "Tool",
     }];
   }
   if (updateType === "tool_call_update") {
