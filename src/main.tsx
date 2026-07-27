@@ -289,7 +289,16 @@ function App() {
         onChanged={loadProfiles}
       />
       <AdapterSettingsDialog open={adapterDialog} onClose={() => setAdapterDialog(false)} />
-      <ThreadSearchDialog open={searchOpen} threads={threads} onClose={() => setSearchOpen(false)} />
+      <ThreadSearchDialog
+        open={searchOpen}
+        threads={threads}
+        onClose={() => setSearchOpen(false)}
+        onSelect={(threadId) => {
+          window.dispatchEvent(
+            new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
+          );
+        }}
+      />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

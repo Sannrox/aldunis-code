@@ -3,7 +3,18 @@ import type { ThreadMetadata } from "../../types";
 import { Icon } from "../../components/icon";
 import { OverlayDialog } from "./overlay-dialog";
 
-export function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; threads: ThreadMetadata[]; onClose: () => void }) {
+export function ThreadSearchDialog({
+  open,
+  threads,
+  onClose,
+  onSelect,
+}: {
+  open: boolean;
+  threads: ThreadMetadata[];
+  onClose: () => void;
+  /** Open a search hit in the workbench (required for results to do anything). */
+  onSelect: (threadId: string) => void;
+}) {
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState<"exclude" | "include" | "only">("exclude");
   const [results, setResults] = useState<ThreadMetadata[]>(threads);
@@ -62,8 +73,21 @@ export function ThreadSearchDialog({ open, threads, onClose }: { open: boolean; 
         </select>
       </label>
       <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
-      <div className="quick-results">
-        {results.map((thread) => <button type="button" key={thread.id}><strong>{thread.title}</strong><small>{thread.projectName} · {thread.worktree}</small></button>)}
+      <div className="quick-results" role="listbox" aria-label="Matching conversations">
+        {results.map((thread) => (
+          <button
+            type="button"
+            role="option"
+            key={thread.id}
+            onClick={() => {
+              onSelect(thread.id);
+              onClose();
+            }}
+          >
+            <strong>{thread.title}</strong>
+            <small>{thread.projectName} · {thread.worktree}</small>
+          </button>
+        ))}
         {results.length === 0 && <p>No matching conversations.</p>}
       </div>
     </OverlayDialog>
