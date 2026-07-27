@@ -742,8 +742,13 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
 }
 
 /* workspace status */
-.workspace-state { margin: 12px 16px; padding: 10px 12px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: 13px; }
+.workspace-state {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin: 12px 16px; padding: 10px 12px; border-radius: 8px;
+  background: var(--muted); color: var(--muted-foreground); font-size: 13px;
+}
 .workspace-state.failed, .workspace-state.error { color: var(--destructive-foreground); border: 1px solid color-mix(in srgb, var(--destructive) 40%, var(--border)); }
+.workspace-state .ui-button { flex: 0 0 auto; }
 .pane-switcher { display: none; }
 .split-workspace.split ~ .pane-switcher,
 .conversation-workspace:has(.split-workspace.split) .pane-switcher {
