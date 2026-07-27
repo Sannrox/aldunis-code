@@ -1060,11 +1060,12 @@ export function Conversation({
           </button>
           <button
             type="button"
-            className="btn btn-ghost btn-sm"
+            className={`btn btn-ghost btn-sm ${previewOpen ? "on" : ""}`}
             onClick={() => setPreviewOpen(true)}
             disabled={!repository}
             title="Preview panel"
             aria-label="Preview"
+            aria-pressed={previewOpen}
           >
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
               <rect x="3" y="3" width="18" height="18" rx="2" />

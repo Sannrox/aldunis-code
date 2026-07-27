@@ -113,11 +113,32 @@ export function WorktreeDialog({
         ) : (
           <form onSubmit={previewCreate}>
             <label htmlFor="worktree-base">Base revision</label>
-            <input id="worktree-base" data-dialog-initial-focus value={base} onChange={(event) => { setBase(event.target.value); setPlan(null); }} disabled={busy} />
+            <input
+              id="worktree-base"
+              name="worktree-base"
+              data-dialog-initial-focus
+              value={base}
+              onChange={(event) => { setBase(event.target.value); setPlan(null); }}
+              disabled={busy}
+            />
             <label htmlFor="worktree-branch">New branch</label>
-            <input id="worktree-branch" value={branch} onChange={(event) => { setBranch(event.target.value); setPlan(null); }} placeholder="codex/26-isolated-worktree" disabled={busy} />
+            <input
+              id="worktree-branch"
+              name="worktree-branch"
+              value={branch}
+              onChange={(event) => { setBranch(event.target.value); setPlan(null); }}
+              placeholder="codex/26-isolated-worktree"
+              disabled={busy}
+            />
             <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
-            <input id="worktree-path" value={path} onChange={(event) => { setPath(event.target.value); setPlan(null); }} placeholder="Managed application path" disabled={busy} />
+            <input
+              id="worktree-path"
+              name="worktree-path"
+              value={path}
+              onChange={(event) => { setPath(event.target.value); setPlan(null); }}
+              placeholder="Managed application path"
+              disabled={busy}
+            />
             {!plan && (
               <footer>
                 <Button type="button" onClick={onClose}>Cancel</Button>

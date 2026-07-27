@@ -421,9 +421,11 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                   For third-party or local manifests. You must supply the source URL, pinned digest, and JSON yourself.
                 </p>
                 <div className="adapter-import-fields">
-                  <label className="adapter-field">
+                  <label className="adapter-field" htmlFor="adapter-source-url">
                     <span>Source URL</span>
                     <input
+                      id="adapter-source-url"
+                      name="adapter-source-url"
                       value={source}
                       onChange={(event) => {
                         setSource(event.target.value);
@@ -435,9 +437,11 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                       spellCheck={false}
                     />
                   </label>
-                  <label className="adapter-field">
+                  <label className="adapter-field" htmlFor="adapter-digest">
                     <span>Expected SHA-256 digest</span>
                     <input
+                      id="adapter-digest"
+                      name="adapter-digest"
                       value={digest}
                       onChange={(event) => {
                         setDigest(event.target.value);
@@ -449,9 +453,11 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                       spellCheck={false}
                     />
                   </label>
-                  <label className="adapter-field adapter-field-manifest">
+                  <label className="adapter-field adapter-field-manifest" htmlFor="adapter-manifest-json">
                     <span>Manifest JSON</span>
                     <textarea
+                      id="adapter-manifest-json"
+                      name="adapter-manifest-json"
                       value={manifestText}
                       onChange={(event) => {
                         setManifestText(event.target.value);

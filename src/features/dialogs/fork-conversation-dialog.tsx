@@ -135,8 +135,10 @@ export function ForkConversationDialog({
             <summary>Always excluded</summary>
             <ul>{preview.excluded.map((item) => <li key={item}>{item}</li>)}</ul>
           </details>
-          <label>Destination provider
+          <label htmlFor="fork-destination-provider">Destination provider
             <select
+              id="fork-destination-provider"
+              name="fork-destination-provider"
               value={destination}
               onChange={(event) => {
                 setDestination(event.target.value as ProviderId);
@@ -161,12 +163,58 @@ export function ForkConversationDialog({
             </select>
           </label>
           {destination === "claude-code" ? <>
-            <label>Profile<select value={profileId} onChange={(event) => setProfileId(event.target.value)}>{claudeProfiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select></label>
-            <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}>{["default", "sonnet", "opus", "haiku"].map((item) => <option value={item} key={item}>{item}</option>)}</select></label>
+            <label htmlFor="fork-profile">Profile
+              <select
+                id="fork-profile"
+                name="fork-profile"
+                value={profileId}
+                onChange={(event) => setProfileId(event.target.value)}
+              >
+                {claudeProfiles.map((profile) => (
+                  <option value={profile.id} key={profile.id}>{profile.name}</option>
+                ))}
+              </select>
+            </label>
+            <label htmlFor="fork-model-claude">Model
+              <select
+                id="fork-model-claude"
+                name="fork-model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                {["default", "sonnet", "opus", "haiku"].map((item) => (
+                  <option value={item} key={item}>{item}</option>
+                ))}
+              </select>
+            </label>
           </> : destination === "codex-cli" ? (
-            <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{codex?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
+            <label htmlFor="fork-model-codex">Model
+              <select
+                id="fork-model-codex"
+                name="fork-model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                <option value="default">Default model</option>
+                {codex?.models?.map((item) => (
+                  <option value={item.id} key={item.id}>{item.displayName}</option>
+                ))}
+              </select>
+            </label>
           ) : (
-            <label>Model<select value={model} onChange={(event) => setModel(event.target.value)}><option value="default">Default model</option>{shikigamiProvider?.models?.map((item) => <option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
+            <label htmlFor="fork-model-shikigami">Model
+              <select
+                id="fork-model-shikigami"
+                name="fork-model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                <option value="default">Default model</option>
+                {shikigamiProvider?.models?.map((item) => (
+                  <option value={item.id} key={item.id}>{item.displayName}</option>
+                ))}
+              </select>
+            </label>
           )}
           <footer><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" onClick={() => void create()} disabled={busy || unavailable}>Create reviewed fork</Button></footer>
         </>}

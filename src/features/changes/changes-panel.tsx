@@ -431,13 +431,84 @@ export function ChangesPanel({
             <span>{delivery?.upstream ?? "No upstream"}</span>
           </header>
           <div className="delivery-form">
-            <label>Action<select value={deliveryAction} onChange={(event) => { setDeliveryAction(event.target.value as DeliveryAction); setPlan(null); }}>
-              <option value="stage">Stage selected files</option><option value="commit">Commit staged files</option><option value="push">Push branch</option><option value="pull_request">Open pull request</option>
-            </select></label>
-            {deliveryAction === "commit" && <label>Commit message<input value={message} onChange={(event) => setMessage(event.target.value)} /></label>}
-            {(deliveryAction === "push" || deliveryAction === "pull_request") && <label>Remote<select value={remote} onChange={(event) => setRemote(event.target.value)}>{delivery?.remotes.map((item) => <option key={item.name} value={item.name}>{item.name} · {item.url}</option>)}</select></label>}
-            {deliveryAction === "pull_request" && <><label>Base<input value={base} onChange={(event) => setBase(event.target.value)} /></label><label>Title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label className="delivery-body">Body<textarea value={body} onChange={(event) => setBody(event.target.value)} /></label></>}
-            {!plan && <button className="prepare-delivery" onClick={() => void prepareDelivery()} disabled={deliveryBusy || delivery?.detached}>Inspect action</button>}
+            <label htmlFor="delivery-action">Action
+              <select
+                id="delivery-action"
+                name="delivery-action"
+                value={deliveryAction}
+                onChange={(event) => {
+                  setDeliveryAction(event.target.value as DeliveryAction);
+                  setPlan(null);
+                }}
+              >
+                <option value="stage">Stage selected files</option>
+                <option value="commit">Commit staged files</option>
+                <option value="push">Push branch</option>
+                <option value="pull_request">Open pull request</option>
+              </select>
+            </label>
+            {deliveryAction === "commit" && (
+              <label htmlFor="delivery-commit-message">Commit message
+                <input
+                  id="delivery-commit-message"
+                  name="delivery-commit-message"
+                  value={message}
+                  onChange={(event) => setMessage(event.target.value)}
+                />
+              </label>
+            )}
+            {(deliveryAction === "push" || deliveryAction === "pull_request") && (
+              <label htmlFor="delivery-remote">Remote
+                <select
+                  id="delivery-remote"
+                  name="delivery-remote"
+                  value={remote}
+                  onChange={(event) => setRemote(event.target.value)}
+                >
+                  {delivery?.remotes.map((item) => (
+                    <option key={item.name} value={item.name}>{item.name} · {item.url}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {deliveryAction === "pull_request" && (
+              <>
+                <label htmlFor="delivery-pr-base">Base
+                  <input
+                    id="delivery-pr-base"
+                    name="delivery-pr-base"
+                    value={base}
+                    onChange={(event) => setBase(event.target.value)}
+                  />
+                </label>
+                <label htmlFor="delivery-pr-title">Title
+                  <input
+                    id="delivery-pr-title"
+                    name="delivery-pr-title"
+                    value={title}
+                    onChange={(event) => setTitle(event.target.value)}
+                  />
+                </label>
+                <label className="delivery-body" htmlFor="delivery-pr-body">Body
+                  <textarea
+                    id="delivery-pr-body"
+                    name="delivery-pr-body"
+                    value={body}
+                    onChange={(event) => setBody(event.target.value)}
+                  />
+                </label>
+              </>
+            )}
+            {!plan && (
+              <button
+                type="button"
+                className="prepare-delivery"
+                onClick={() => void prepareDelivery()}
+                disabled={deliveryBusy || delivery?.detached}
+              >
+                Inspect action
+              </button>
+            )}
           </div>
           {delivery?.detached && <p className="delivery-warning" role="alert">Detached HEAD cannot be delivered. Create or select a branch first.</p>}
           {deliveryError && <p className="delivery-warning" role="alert">{deliveryError}</p>}

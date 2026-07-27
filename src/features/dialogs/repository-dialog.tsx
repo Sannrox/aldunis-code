@@ -246,6 +246,7 @@ export function RepositoryDialog({
         <div className="project-switcher-input-row">
           <input
             id="project-path-query"
+            name="project-path-query"
             ref={inputRef}
             data-dialog-initial-focus
             value={query}

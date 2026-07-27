@@ -49,10 +49,15 @@ test("styles must not load remote Google Fonts (local-first)", () => {
 });
 
 test("conversation overlays are contained by .conv-root", () => {
-  // File browser and web preview use absolute inset:0; without a positioned
-  // .conv-root they climb to .app and cover the product sidebar.
+  // File browser and web preview are absolute under a positioned .conv-root so
+  // they do not climb to .app and cover the product sidebar. They start below
+  // the conversation topbar so Browse / Review / Preview stay clickable.
+  assert.match(css, /--conv-topbar-height\s*:/);
   assert.match(css, /\.conv-root\s*\{[^}]*position:\s*relative/s);
-  assert.match(css, /\.file-browser-panel,\s*\.preview-panel\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s);
+  assert.match(
+    css,
+    /\.file-browser-panel,\s*\.preview-panel\s*\{[^}]*position:\s*absolute[^}]*top:\s*var\(--conv-topbar-height\)[^}]*right:\s*0[^}]*bottom:\s*0[^}]*left:\s*0/s,
+  );
 });
 
 test("index.html must not load remote Google Fonts (local-first)", () => {
