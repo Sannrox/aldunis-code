@@ -789,6 +789,12 @@ export function Conversation({
     return provider === "claude-code" ? normalizeClaudeModelSlug(base) : base;
   })();
   const modelChipLabel = providerModelLabel(provider, effectiveModel, selectedProvider);
+  // Avoid a literal "Default" flash while history rehydrate / discovery is still settling.
+  const modelChipDisplay = (
+    modelChipLabel === "Default" && (!historyRestored || !providersLoaded)
+  )
+    ? "…"
+    : modelChipLabel;
   const reasoningEfforts = providerReasoningEfforts(provider, effectiveModel, selectedProvider);
   const showReasoningEffort = (
     (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
@@ -1879,8 +1885,8 @@ export function Conversation({
                 }
                 aria-label={
                   showReasoningEffort
-                    ? `Model ${modelChipLabel}, effort ${reasoningEffort}. Open menu to choose a model; Alt-click cycles effort.`
-                    : `Model ${modelChipLabel}. Open menu to choose a model.`
+                    ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model; Alt-click cycles effort.`
+                    : `Model ${modelChipDisplay}. Open menu to choose a model.`
                 }
                 onClick={(event) => {
                   event.preventDefault();
@@ -1905,8 +1911,8 @@ export function Conversation({
                 }}
               >
                 {showReasoningEffort
-                  ? `${modelChipLabel} · ${reasoningEffort}`
-                  : modelChipLabel}
+                  ? `${modelChipDisplay} · ${reasoningEffort}`
+                  : modelChipDisplay}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               {modelMenuOpen && canPickModel && (
