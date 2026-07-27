@@ -1628,6 +1628,7 @@ export function Conversation({
                 className={`cc ${accessScope.warning ? "scoped" : ""}`}
                 disabled={!canPickMode}
                 aria-haspopup="listbox"
+                aria-expanded={modeMenuOpen}
                 aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
                 title={accessScope.detail}
                 aria-label={`Access ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
