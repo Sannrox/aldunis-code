@@ -46,6 +46,7 @@ export function CodeSidebar({
   onManageWorktrees,
   showingArchived,
   onToggleArchived,
+  onConversationAction,
   onSettle,
   onUnsettle,
   onReleaseWorktree,
@@ -323,8 +324,16 @@ export function CodeSidebar({
 
           <div className="list" id="list" role="list">
             <div className="glabel">
-              Threads
+              <span>{showingArchived ? "Archived" : "Threads"}</span>
               <span className="n">{active.length}</span>
+              <button
+                type="button"
+                className="glabel-action"
+                onClick={onToggleArchived}
+                aria-pressed={showingArchived}
+              >
+                {showingArchived ? "Show active" : "Show archived"}
+              </button>
             </div>
             {active.map((conversation) => (
               <ThreadRow
@@ -339,6 +348,8 @@ export function CodeSidebar({
                 showSettle={!showingArchived}
                 showBeside={!showingArchived}
                 onOpenBeside={() => onOpenBeside(conversation.id)}
+                archivedView={showingArchived}
+                onAction={(action) => onConversationAction(conversation, action)}
               />
             ))}
             {active.length === 0 && projects.length > 0 && (
