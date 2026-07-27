@@ -6,6 +6,7 @@ import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
+import { Button } from "../../components/ui";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 
@@ -486,8 +487,10 @@ export function CodeWorkbench({
         {incompleteDeletionIds.map((threadId) => (
           <div className="workspace-state error" role="alert" key={threadId}>
             <span>Conversation deletion {threadId} is incomplete.</span>
-            <button
+            <Button
               type="button"
+              size="sm"
+              aria-label={`Retry incomplete deletion of conversation ${threadId}`}
               onClick={() => {
                 void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
                   .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
@@ -497,14 +500,21 @@ export function CodeWorkbench({
               }}
             >
               Retry deletion
-            </button>
+            </Button>
           </div>
         ))}
         {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
         {restoreState === "failed" && (
           <div className="workspace-state failed" role="alert">
             <span>Local conversation history could not be loaded.</span>
-            <button type="button" onClick={() => setRestoreAttempt((value) => value + 1)}>Retry</button>
+            <Button
+              type="button"
+              size="sm"
+              aria-label="Retry loading local conversation history"
+              onClick={() => setRestoreAttempt((value) => value + 1)}
+            >
+              Retry
+            </Button>
           </div>
         )}
         {(restoreState === "ready" || !repository) && <>
