@@ -410,23 +410,25 @@ export function CodeSidebar({
                 {showingArchived ? "Show active" : "Show archived"}
               </button>
             </div>
-            {active.map((conversation) => (
-              <ThreadRow
-                key={conversation.id}
-                conversation={conversation}
-                active={
-                  primaryConversationId === conversation.id
-                  || secondaryConversationId === conversation.id
-                }
-                onOpen={() => onOpenConversation(conversation.id)}
-                onSettle={showingArchived ? undefined : () => onSettle(conversation)}
-                showSettle={!showingArchived}
-                showBeside={!showingArchived}
-                onOpenBeside={() => onOpenBeside(conversation.id)}
-                archivedView={showingArchived}
-                onAction={(action) => onConversationAction(conversation, action)}
-              />
-            ))}
+            {active.map((conversation) => {
+              const openInPane = primaryConversationId === conversation.id
+                || secondaryConversationId === conversation.id;
+              return (
+                <ThreadRow
+                  key={conversation.id}
+                  conversation={conversation}
+                  active={openInPane}
+                  onOpen={() => onOpenConversation(conversation.id)}
+                  onSettle={showingArchived ? undefined : () => onSettle(conversation)}
+                  showSettle={!showingArchived}
+                  // Beside is for a second column — hide when this thread is already primary or secondary.
+                  showBeside={!showingArchived && !openInPane}
+                  onOpenBeside={() => onOpenBeside(conversation.id)}
+                  archivedView={showingArchived}
+                  onAction={(action) => onConversationAction(conversation, action)}
+                />
+              );
+            })}
             {active.length === 0 && projects.length > 0 && (
               <p className="empty-list">
                 {showingArchived
