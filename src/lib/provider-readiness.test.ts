@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cycleProviderModel,
+  cycleReasoningEffort,
+  parseProviderFailure,
   providerModelLabel,
   providerModelOptions,
   providerNotReadyMessage,
+  providerReasoningEfforts,
 } from "./provider-readiness";
 import type { ProviderDiscovery } from "../types";
 
@@ -93,4 +96,48 @@ test("Claude model cycle keeps legacy presentation order", () => {
     providerModelOptions("claude-code", undefined).map((entry) => entry.id),
     ["default", "sonnet", "opus", "haiku"],
   );
+});
+
+test("Codex reasoning effort cycles advertised options", () => {
+  const discovery: ProviderDiscovery = {
+    id: "codex-cli",
+    installed: true,
+    authenticated: true,
+    models: [
+      {
+        id: "gpt-5",
+        displayName: "GPT-5",
+        isDefault: true,
+        reasoningEfforts: ["low", "medium", "high"],
+        defaultReasoningEffort: "medium",
+      },
+    ],
+  };
+  assert.deepEqual(providerReasoningEfforts("codex-cli", "gpt-5", discovery), ["low", "medium", "high"]);
+  assert.equal(cycleReasoningEffort("codex-cli", "gpt-5", "medium", discovery), "high");
+  assert.equal(cycleReasoningEffort("codex-cli", "gpt-5", "high", discovery), "low");
+  assert.deepEqual(providerReasoningEfforts("shikigami", "scripted", undefined), []);
+  assert.deepEqual(
+    providerReasoningEfforts("codex-cli", "no-effort", {
+      id: "codex-cli",
+      installed: true,
+      authenticated: true,
+      models: [{ id: "no-effort", displayName: "No effort", isDefault: false, reasoningEfforts: [] }],
+    }),
+    [],
+  );
+});
+
+test("parseProviderFailure splits park summary and resume command", () => {
+  const parsed = parseProviderFailure(
+    'Shikigami parked: need operator input. Question: continue?. Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee --answer "...".',
+  );
+  assert.equal(parsed.kind, "park");
+  assert.match(parsed.summary, /need operator input/);
+  assert.equal(parsed.question, "continue?");
+  assert.equal(
+    parsed.resumeCommand,
+    'shikigami run --resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee --answer "..."',
+  );
+  assert.equal(parseProviderFailure("Codex CLI could not start.").kind, "generic");
 });
