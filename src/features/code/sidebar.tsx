@@ -3,6 +3,7 @@ import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } fr
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree } from "./conversation-list";
+import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
@@ -463,6 +464,13 @@ export function CodeSidebar({
                     const holds = repository?.worktrees.some(
                       (wt) => wt.path === conversation.worktree && wt.ownership === "aldunis",
                     );
+                    const provider = conversation.provider
+                      ? providerListLabel(conversation.provider)
+                      : null;
+                    const branch = branchFromWorktree(conversation.worktree);
+                    const meta = [provider, holds ? "managed worktree" : branch]
+                      .filter(Boolean)
+                      .join(" · ");
                     return (
                       <div className="srow" key={conversation.id} data-wt={holds ? "1" : "0"}>
                         <button
@@ -470,16 +478,25 @@ export function CodeSidebar({
                           className="srow-main"
                           onClick={() => onOpenConversation(conversation.id)}
                           aria-label={
-                            holds
-                              ? `Open settled conversation "${conversation.title}" (holds managed worktree)`
-                              : `Open settled conversation "${conversation.title}" on ${branchFromWorktree(conversation.worktree)}`
+                            meta
+                              ? `Open settled conversation "${conversation.title}" · ${meta}`
+                              : `Open settled conversation "${conversation.title}"`
                           }
                         >
                           <span className="t">{conversation.title}</span>
                         </button>
                         {holds
-                          ? <span className="wt"><span className="dot" />worktree</span>
-                          : <span className="w">{branchFromWorktree(conversation.worktree)}</span>}
+                          ? (
+                            <span className="wt" title={meta || undefined}>
+                              <span className="dot" />
+                              {provider ? `${provider} · worktree` : "worktree"}
+                            </span>
+                          )
+                          : (
+                            <span className="w" title={meta || undefined}>
+                              {meta || branch}
+                            </span>
+                          )}
                         <div className="sacts">
                           {holds && (
                             <button
