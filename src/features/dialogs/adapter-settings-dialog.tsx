@@ -210,8 +210,8 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
             <article key={entry.slug} className="adapter-catalog-card">
               <header>
                 <div>
-                  <strong>{entry.name}</strong>
-                  <small>
+                  <strong title={entry.name}>{entry.name}</strong>
+                  <small title={`${entry.id}@${entry.version} · ${catalogStatus(entry)}`}>
                     {entry.id}@{entry.version} · {catalogStatus(entry)}
                   </small>
                 </div>
@@ -336,7 +336,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
             <dl>
               <div>
                 <dt>Source</dt>
-                <dd>{candidate.source}</dd>
+                <dd title={candidate.source}>{candidate.source}</dd>
               </div>
               <div>
                 <dt>Publisher claim</dt>
@@ -344,7 +344,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
               </div>
               <div>
                 <dt>Integrity</dt>
-                <dd>{candidate.digest}</dd>
+                <dd title={candidate.digest}>{candidate.digest}</dd>
               </div>
               <div>
                 <dt>Compatibility</dt>
