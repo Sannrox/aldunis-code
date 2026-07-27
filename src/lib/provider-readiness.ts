@@ -27,6 +27,35 @@ const CLAUDE_MODELS: ProviderModelOption[] = [
   { id: "haiku", displayName: "haiku" },
 ];
 
+/** Human label for a provider id (menus, empty states, chips). */
+export function providerDisplayName(
+  provider: ProviderId,
+  discovery: ProviderDiscovery | undefined,
+): string {
+  if (provider === "claude-code") return "Claude Code";
+  if (provider === "codex-cli") return "Codex CLI";
+  if (provider === "shikigami") return "Shikigami";
+  return discovery?.name?.trim() || "Provider adapter";
+}
+
+/** Compact chip id/label used on the composer provider control. */
+export function providerChipName(
+  provider: ProviderId,
+  discovery: ProviderDiscovery | undefined,
+): string {
+  if (provider === "claude-code") return "claude-code";
+  if (provider === "codex-cli") return "codex-cli";
+  if (provider === "shikigami") return "shikigami";
+  const name = discovery?.name?.trim();
+  if (name) return name;
+  // Prefer the adapter package id segment over a generic fallback.
+  if (typeof provider === "string" && provider.startsWith("adapter:")) {
+    const packageId = provider.slice("adapter:".length).split("@")[0];
+    if (packageId) return packageId;
+  }
+  return providerDisplayName(provider, discovery);
+}
+
 /**
  * Composer / chip copy when a selected provider cannot start a run.
  * Prefer discovery.detail when the host already explained the gap.

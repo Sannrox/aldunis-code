@@ -4,12 +4,36 @@ import {
   cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
+  providerChipName,
+  providerDisplayName,
   providerModelLabel,
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
 } from "./provider-readiness";
 import type { ProviderDiscovery } from "../types";
+
+test("providerDisplayName and providerChipName cover first-class and adapter ids", () => {
+  assert.equal(providerDisplayName("claude-code", undefined), "Claude Code");
+  assert.equal(providerChipName("codex-cli", undefined), "codex-cli");
+  assert.equal(providerChipName("shikigami", undefined), "shikigami");
+  assert.equal(
+    providerDisplayName("adapter:kiro-cli@1.0.0", {
+      id: "adapter:kiro-cli@1.0.0",
+      installed: true,
+      name: "Kiro",
+    }),
+    "Kiro",
+  );
+  assert.equal(
+    providerChipName("adapter:kiro-cli@1.0.0", {
+      id: "adapter:kiro-cli@1.0.0",
+      installed: true,
+      name: "Kiro",
+    }),
+    "Kiro",
+  );
+});
 
 test("providerNotReadyMessage prefers host detail", () => {
   const discovery: ProviderDiscovery = {

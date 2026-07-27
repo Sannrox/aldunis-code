@@ -1554,6 +1554,62 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
 }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
+/* Composer provider picker (new conversations only). */
+.composer-provider {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+.composer-provider-menu {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: min(260px, 80vw);
+  max-height: min(40vh, 280px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover, var(--card));
+  box-shadow: var(--shadow-popover, 0 8px 24px rgba(0, 0, 0, 0.18));
+  isolation: isolate;
+}
+.composer-provider-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.composer-provider-option:hover,
+.composer-provider-option:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+.composer-provider-option.active {
+  background: color-mix(in srgb, var(--accent) 70%, var(--popover));
+}
+.composer-provider-option .n {
+  font: 600 12.5px var(--font-sans, inherit);
+}
+.composer-provider-option .p {
+  color: var(--muted-foreground);
+  font: 500 11px var(--font-mono);
+}
+.composer-provider-option.add .n {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
 .provider-error { color: var(--destructive-foreground); font-size: 13px; margin-top: 8px; }
 .provider-error p { margin: 0 0 6px; }
 .provider-error-park {

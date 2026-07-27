@@ -15,6 +15,8 @@ import {
   cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
+  providerChipName as formatProviderChipName,
+  providerDisplayName,
   providerModelLabel,
   providerNotReadyMessage,
   providerReasoningEfforts,
@@ -106,29 +108,19 @@ export function Conversation({
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
   const selectedProvider = providers.find((item) => item.id === provider);
-  const selectedCodexModel = codex?.models?.find((item) => item.id === model);
-  const providerName = provider === "codex-cli"
-    ? "Codex CLI"
-    : provider === "claude-code"
-    ? "Claude Code"
-    : provider === "shikigami"
-    ? "Shikigami"
-    : selectedProvider?.name ?? "Provider adapter unavailable";
-  const providerLabel = provider === "codex-cli"
-    ? "Codex"
-    : provider === "claude-code"
+  const providerName = providerDisplayName(provider, selectedProvider);
+  /** Short role label in the transcript (Claude / Codex / …). */
+  const providerLabel = provider === "claude-code"
     ? "Claude"
+    : provider === "codex-cli"
+    ? "Codex"
     : provider === "shikigami"
     ? "Shikigami"
     : providerName;
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
-  const providerChipName = provider === "claude-code"
-    ? "claude-code"
-    : provider === "codex-cli"
-    ? "codex-cli"
-    : provider === "shikigami"
-    ? "shikigami"
-    : (selectedProvider?.name ?? providerName);
+  const providerChipName = formatProviderChipName(provider, selectedProvider);
+  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const providerMenuRef = useRef<HTMLDivElement | null>(null);
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
    * stored provider (cross-provider moves go through the reviewed fork flow).
@@ -165,10 +157,11 @@ export function Conversation({
     && !threadId
     && !runId
     && availableProviders.length > 1;
-  const cycleProvider = () => {
-    if (!canSwitchProvider) return;
-    const index = availableProviders.indexOf(provider);
-    const next = availableProviders[(index + 1) % availableProviders.length] ?? availableProviders[0]!;
+  const selectProvider = (next: ProviderId) => {
+    if (!canSwitchProvider || next === provider) {
+      setProviderMenuOpen(false);
+      return;
+    }
     setProvider(next);
     if (next === "claude-code") {
       setProfileId((current) => current || profiles[0]?.id || "");
@@ -191,7 +184,63 @@ export function Conversation({
       setModel("default");
       setReasoningEffort("medium");
     }
+    setProviderMenuOpen(false);
   };
+  useEffect(() => {
+    if (!providerMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && providerMenuRef.current?.contains(target)) return;
+      setProviderMenuOpen(false);
+    };
+    const optionButtons = () => Array.from(
+      providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[role='option']") ?? [],
+    );
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setProviderMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        options[0]?.focus();
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        options[options.length - 1]?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    // Focus the selected option when the menu opens.
+    queueMicrotask(() => {
+      const options = optionButtons();
+      const selected = options.find((button) => button.getAttribute("aria-selected") === "true");
+      (selected ?? options[0])?.focus();
+    });
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [providerMenuOpen]);
+  useEffect(() => {
+    if (!canSwitchProvider) setProviderMenuOpen(false);
+  }, [canSwitchProvider]);
   useEffect(() => {
     if (!profiles.some((profile) => profile.id === profileId)) {
       setProfileId(profiles[0]?.id ?? "");
@@ -1146,44 +1195,83 @@ export function Conversation({
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <div className="crow">
-            <button
-              type="button"
-              className="cc"
-              disabled={runActive || conversation?.id?.startsWith("mock-")}
-              title={
-                !providerReady
-                  ? providerReadinessMessage
-                  : canSwitchProvider
-                  ? "Click to switch provider for this new conversation. Alt-click opens Claude profiles."
-                  : conversation
-                    ? "Provider is fixed for this conversation (use fork to change). Click opens Claude profiles."
-                    : "Open Claude profiles"
-              }
-              aria-label={
-                !providerReady
-                  ? `${providerName} not ready: ${providerReadinessMessage}`
-                  : canSwitchProvider
-                  ? `Provider ${providerName}. Click to switch among ${availableProviders.length} providers.`
-                  : "Open Claude profiles"
-              }
-              onClick={(event) => {
-                if (conversation?.id?.startsWith("mock-")) return;
-                // Alt/Option-click always opens Claude profile admin.
-                if (event.altKey || !canSwitchProvider) {
-                  onOpenProfiles();
-                  return;
+            <div className="composer-provider" ref={providerMenuRef}>
+              <button
+                type="button"
+                className="cc"
+                disabled={runActive || conversation?.id?.startsWith("mock-")}
+                aria-haspopup={canSwitchProvider ? "listbox" : undefined}
+                aria-expanded={canSwitchProvider ? providerMenuOpen : undefined}
+                title={
+                  !providerReady
+                    ? providerReadinessMessage
+                    : canSwitchProvider
+                    ? "Click to choose a provider for this new conversation. Alt-click opens Claude profiles."
+                    : conversation
+                      ? "Provider is fixed for this conversation (use fork to change). Click opens Claude profiles."
+                      : "Open Claude profiles"
                 }
-                cycleProvider();
-              }}
-            >
-              <span className="pv" aria-hidden="true">
-                {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
-              </span>
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                ? "claude-code · sonnet"
-                : `${providerChipName}${model !== "default" ? ` · ${modelChipLabel}` : ""}`}
-              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
+                aria-label={
+                  !providerReady
+                    ? `${providerName} not ready: ${providerReadinessMessage}`
+                    : canSwitchProvider
+                    ? `Provider ${providerName}. Click to choose among ${availableProviders.length} providers.`
+                    : "Open Claude profiles"
+                }
+                onClick={(event) => {
+                  if (conversation?.id?.startsWith("mock-")) return;
+                  // Alt/Option-click always opens Claude profile admin.
+                  if (event.altKey || !canSwitchProvider) {
+                    setProviderMenuOpen(false);
+                    onOpenProfiles();
+                    return;
+                  }
+                  setProviderMenuOpen((open) => !open);
+                }}
+              >
+                <span className="pv" aria-hidden="true">
+                  {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
+                </span>
+                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                  ? "claude-code · sonnet"
+                  : `${providerChipName}${model !== "default" ? ` · ${modelChipLabel}` : ""}`}
+                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              {providerMenuOpen && canSwitchProvider && (
+                <div className="composer-provider-menu" role="listbox" aria-label="Choose provider">
+                  {availableProviders.map((id) => {
+                    const discovery = providers.find((item) => item.id === id);
+                    const label = providerDisplayName(id, discovery);
+                    const chip = formatProviderChipName(id, discovery);
+                    const selected = id === provider;
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        key={id}
+                        className={`composer-provider-option ${selected ? "active" : ""}`}
+                        onClick={() => selectProvider(id)}
+                      >
+                        <span className="n">{label}</span>
+                        <span className="p">{chip}{selected ? " · selected" : ""}</span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="composer-provider-option add"
+                    onClick={() => {
+                      setProviderMenuOpen(false);
+                      onOpenProfiles();
+                    }}
+                  >
+                    <span className="n">Claude profiles…</span>
+                    <span className="p">Manage Claude binaries and env</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               className="cc"
