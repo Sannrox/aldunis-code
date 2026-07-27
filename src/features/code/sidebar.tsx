@@ -134,15 +134,49 @@ export function CodeSidebar({
 
   useEffect(() => {
     if (!projectMenuOpen) return;
+    const root = projectMenuRef.current;
+    if (!root) return;
+    const options = () => [...root.querySelectorAll<HTMLElement>('[role="option"]')];
+    // Move focus into the listbox so arrow keys work immediately.
+    const focusSelected = () => {
+      const opts = options();
+      const selected = opts.find((option) => option.getAttribute("aria-selected") === "true") ?? opts[0];
+      selected?.focus();
+    };
+    const frame = window.requestAnimationFrame(focusSelected);
     const onDown = (event: MouseEvent) => {
-      if (!projectMenuRef.current?.contains(event.target as Node)) setProjectMenuOpen(false);
+      if (!root.contains(event.target as Node)) setProjectMenuOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProjectMenuOpen(false);
+      if (event.key === "Escape") {
+        setProjectMenuOpen(false);
+        root.querySelector<HTMLElement>(".project-filter-trigger")?.focus();
+        return;
+      }
+      const opts = options();
+      if (!opts.length) return;
+      const currentIndex = opts.indexOf(document.activeElement as HTMLElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? 0 : Math.min(opts.length - 1, currentIndex + 1);
+        opts[next]?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? opts.length - 1 : Math.max(0, currentIndex - 1);
+        opts[next]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        opts[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        opts[opts.length - 1]?.focus();
+      }
+      // Enter/Space activate the focused option via native button behavior.
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
