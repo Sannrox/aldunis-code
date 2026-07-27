@@ -46,6 +46,11 @@ First-class harness provider (`provider: "shikigami"`). Requires **shikigami
 - Progress is streamed from stderr events (`[shikigami] {…}`).
 - Build-mode mutating tools are gated by a fail-closed `pre_tool` hook into the
   PermissionBroker (same allow-once contract as other providers).
+- Discovery reports an operator-facing readiness `detail` when the binary is
+  missing, the version is unsupported, or a forced HTTP model adapter has no
+  API key. The composer surfaces that copy instead of a generic “not ready”.
+- Parked runs still end with CLI resume guidance until Code grows park-answer
+  UX (`shikigami run --resume <id> --answer "…"`).
 - Governance defaults to `local`; operators may point
   `SHIKIGAMI_GOVERNANCE_ADAPTER` at `sekai-chisei` for plane-governed runs.
 - Design record: [decisions/shikigami-provider.md](decisions/shikigami-provider.md).
