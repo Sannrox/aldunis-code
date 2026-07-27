@@ -8,14 +8,6 @@ import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
-import {
-  DESIGN_MOCK_MANAGED_WORKTREE_COUNT,
-  DESIGN_MOCK_PRIMARY_ID,
-  DESIGN_MOCK_REPOSITORY,
-  DESIGN_MOCK_WORKTREE_LIMIT,
-  designMockConversations,
-  isDesignMockEnabled,
-} from "./design-mock";
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
@@ -23,7 +15,7 @@ export function CodeWorkbench({
   product,
   onProductChange,
   productAvailability,
-  repository: repositoryProp,
+  repository,
   repositoryRestoring = false,
   projects = [],
   onAddProject,
@@ -55,10 +47,6 @@ export function CodeWorkbench({
   onManageWorktrees: (path?: string) => void;
   onSettings: () => void;
 }) {
-  const designMock = isDesignMockEnabled();
-  // Pure fixture mode: no real repository opened — never hit the server for lists/lifecycle.
-  const pureMock = designMock && !repositoryProp;
-  const repository = repositoryProp ?? (designMock ? DESIGN_MOCK_REPOSITORY : null);
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
     if (typeof window === "undefined") return "all";
     try {
@@ -72,21 +60,17 @@ export function CodeWorkbench({
   const [primaryFilesSignal, setPrimaryFilesSignal] = useState(0);
   const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
   const [secondaryFilesSignal, setSecondaryFilesSignal] = useState(0);
-  const [conversations, setConversations] = useState<ConversationSummary[]>(
-    () => (pureMock ? designMockConversations() : []),
-  );
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
-  const [primaryId, setPrimaryId] = useState<string | null>(
-    () => (pureMock ? DESIGN_MOCK_PRIMARY_ID : null),
-  );
+  const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const [secondaryId, setSecondaryId] = useState<string | null>(null);
   const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
   const [splitPercent, setSplitPercent] = useState(50);
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
-    () => (repositoryProp ? "loading" : pureMock ? "ready" : "idle"),
+    () => (repository ? "loading" : "idle"),
   );
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const splitReference = useRef<HTMLDivElement>(null);
@@ -106,15 +90,6 @@ export function CodeWorkbench({
   // Load the inbox once (and on explicit retry). Do not re-run when the active
   // repository changes — selecting a chat must not reshuffle or reselect.
   useEffect(() => {
-    if (pureMock) {
-      setConversations(designMockConversations());
-      setPrimaryId(DESIGN_MOCK_PRIMARY_ID);
-      primarySelectionReference.current = DESIGN_MOCK_PRIMARY_ID;
-      setSecondaryId(null);
-      setRestoreState("ready");
-      restoredProjectReference.current = repository?.projectId ?? "design-mock-project";
-      return;
-    }
     let active = true;
     setRestoreState("loading");
     const restore = async () => {
@@ -164,16 +139,15 @@ export function CodeWorkbench({
     });
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/retry only; repo switches must not reshuffle
-  }, [pureMock, restoreAttempt]);
+  }, [restoreAttempt]);
 
   // Track the bound project for split persistence without resetting the inbox selection.
   useEffect(() => {
-    if (!repository || pureMock) return;
+    if (!repository) return;
     restoredProjectReference.current = repository.projectId;
-  }, [repository?.projectId, pureMock]);
+  }, [repository?.projectId]);
   useEffect(() => {
     if (!repository || restoredProjectReference.current !== repository.projectId) return;
-    if (pureMock) return; // keep ?mock=1 in the URL; no localStorage/history rewrite
     window.localStorage.setItem(`aldunis.split.${repository.projectId}`, JSON.stringify({
       primaryId,
       secondaryId,
@@ -184,7 +158,7 @@ export function CodeWorkbench({
     if (primaryId) parameters.set("conversation", primaryId); else parameters.delete("conversation");
     if (secondaryId) parameters.set("beside", secondaryId); else parameters.delete("beside");
     window.history.replaceState(null, "", `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`);
-  }, [primaryId, repository?.projectId, pureMock, secondaryId, splitPercent]);
+  }, [primaryId, repository?.projectId, secondaryId, splitPercent]);
   useEffect(() => {
     const moveFocus = (event: KeyboardEvent) => {
       if (!secondaryId || !event.altKey || !event.shiftKey) return;
@@ -202,16 +176,6 @@ export function CodeWorkbench({
     window.addEventListener("keydown", moveFocus);
     return () => window.removeEventListener("keydown", moveFocus);
   }, [secondaryId]);
-  useEffect(() => {
-    if (!pureMock) return;
-    const onMockSettle = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string; release?: boolean }>).detail;
-      if (!detail?.threadId) return;
-      patchMockConversation(detail.threadId, { settledAt: new Date().toISOString() });
-    };
-    window.addEventListener("aldunis:design-mock-settle", onMockSettle);
-    return () => window.removeEventListener("aldunis:design-mock-settle", onMockSettle);
-  }, [pureMock]);
   const primary = conversations.find((conversation) => conversation.id === primaryId) ?? null;
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
@@ -228,24 +192,9 @@ export function CodeWorkbench({
       return showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt;
     });
   }, [conversations, projectFilter, projects, showingArchived]);
-  const worktreeLimit = pureMock ? DESIGN_MOCK_WORKTREE_LIMIT : 10;
-  const managedWorktreeCount = pureMock
-    ? DESIGN_MOCK_MANAGED_WORKTREE_COUNT
-    : repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
-  const patchMockConversation = (
-    threadId: string,
-    patch: Partial<ConversationSummary> | null,
-  ) => {
-    setConversations((rows) => {
-      if (patch === null) return rows.filter((row) => row.id !== threadId);
-      return rows.map((row) => (row.id === threadId ? { ...row, ...patch } : row));
-    });
-  };
+  const worktreeLimit = 10;
+  const managedWorktreeCount = repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
   const postLifecycle = async (route: string, body: Record<string, unknown>) => {
-    if (pureMock) {
-      // Fixture mode is UI-only; callers that need list updates patch state themselves.
-      return {};
-    }
     const response = await fetch(route, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -262,32 +211,6 @@ export function CodeWorkbench({
   ) => {
     setLifecycleError(null);
     try {
-      if (pureMock) {
-        if (action === "rename") {
-          const title = window.prompt("Rename conversation:", conversation.title);
-          if (title === null) return;
-          patchMockConversation(conversation.id, { title: title.trim() || conversation.title });
-        } else if (action === "pin") {
-          patchMockConversation(conversation.id, {
-            pinnedAt: conversation.pinnedAt ? null : new Date().toISOString(),
-          });
-        } else if (action === "archive") {
-          patchMockConversation(conversation.id, { archivedAt: new Date().toISOString() });
-          if (primaryId === conversation.id) setPrimaryId(null);
-          if (secondaryId === conversation.id) setSecondaryId(null);
-        } else if (action === "restore") {
-          patchMockConversation(conversation.id, { archivedAt: null });
-        } else {
-          const confirmed = window.confirm(
-            `Delete "${conversation.title}"?\n\nDesign mock only — nothing is written to local state.`,
-          );
-          if (!confirmed) return;
-          patchMockConversation(conversation.id, null);
-          if (primaryId === conversation.id) setPrimaryId(null);
-          if (secondaryId === conversation.id) setSecondaryId(null);
-        }
-        return;
-      }
       if (action === "rename") {
         const title = window.prompt("Rename conversation:", conversation.title);
         if (title === null) return;
@@ -335,7 +258,7 @@ export function CodeWorkbench({
     }
   };
   const refresh = async () => {
-    if (!repository || pureMock) {
+    if (!repository) {
       setChanges([]);
       return;
     }
@@ -433,11 +356,6 @@ export function CodeWorkbench({
             setSecondaryId(null);
           }
           setActivePane("primary");
-          if (pureMock) {
-            // Local visit only — reloading from the server would wipe fixtures.
-            patchMockConversation(id, { lastVisitedAt: new Date().toISOString() });
-            return;
-          }
           // Patch visit locally — do not reload/resort the inbox on every selection.
           const visitedAt = new Date().toISOString();
           setConversations((current) => current.map((item) => (
@@ -479,20 +397,12 @@ export function CodeWorkbench({
         onToggleArchived={() => setShowingArchived((value) => !value)}
         onConversationAction={(conversation, action) => { void manageConversation(conversation, action); }}
         onSettle={(conversation) => {
-          if (pureMock) {
-            patchMockConversation(conversation.id, { settledAt: new Date().toISOString() });
-            return;
-          }
           void postLifecycle("/api/state/conversations/settle", { threadId: conversation.id })
             .catch((error: unknown) => setLifecycleError(
               error instanceof Error ? error.message : "Settle failed.",
             ));
         }}
         onUnsettle={(conversation) => {
-          if (pureMock) {
-            patchMockConversation(conversation.id, { settledAt: null });
-            return;
-          }
           void postLifecycle("/api/state/conversations/unsettle", { threadId: conversation.id })
             .catch((error: unknown) => setLifecycleError(
               error instanceof Error ? error.message : "Unsettle failed.",
@@ -500,10 +410,6 @@ export function CodeWorkbench({
         }}
         onReleaseWorktree={(conversation) => {
           if (!window.confirm(`Release managed worktree for "${conversation.title}"? The conversation is kept.`)) return;
-          if (pureMock) {
-            // Fixture meter is fixed; releasing is a no-op beyond confirmation.
-            return;
-          }
           void postLifecycle("/api/state/conversations/release-worktree", { threadId: conversation.id, confirm: true })
             .catch((error: unknown) => setLifecycleError(
               error instanceof Error ? error.message : "Worktree release failed.",
@@ -565,7 +471,6 @@ export function CodeWorkbench({
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
                   }
-                  if (pureMock) return;
                   void loadConversationList(null).then(setConversations).catch(() => {});
                 }} />}
           </div>
@@ -597,7 +502,6 @@ export function CodeWorkbench({
                       if (secondaryIdReference.current !== secondaryId) return;
                       secondaryIdReference.current = id;
                       setSecondaryId(id);
-                      if (pureMock) return;
                       void loadConversationList(null).then(setConversations).catch(() => {});
                     }} />}
               </div>

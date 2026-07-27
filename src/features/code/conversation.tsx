@@ -10,7 +10,6 @@ import { ChangesPanel } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
 import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
-import { DESIGN_MOCK_PRIMARY_ID, DESIGN_MOCK_THREAD } from "./design-mock";
 import {
   cycleReasoningEffort,
   parseProviderFailure,
@@ -452,19 +451,6 @@ export function Conversation({
   }, [conversation?.id, repository?.projectId, repository?.selectedWorktree, provider]);
   useEffect(() => {
     if (!repository?.projectId) return;
-    // Design mock fixtures: no server history.
-    if (conversation?.id?.startsWith("mock-")) {
-      if (conversation.id === DESIGN_MOCK_PRIMARY_ID) {
-        setMessages([{ text: DESIGN_MOCK_THREAD.user, mode: "build" }]);
-        setProviderEvents([{ kind: "assistant_text", text: DESIGN_MOCK_THREAD.assistant }]);
-        setProviderState("completed");
-        setModel(DESIGN_MOCK_THREAD.model);
-        setMode("build");
-        setThreadId(conversation.id);
-      }
-      setHistoryRestored(true);
-      return;
-    }
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
@@ -632,8 +618,8 @@ export function Conversation({
     || providerState === "streaming"
     || providerState === "waiting_for_approval"
     || providerState === "cancelling";
-  const canPickModel = !runActive && !conversation?.id?.startsWith("mock-") && modelOptions.length > 0;
-  const canPickMode = !runActive && !conversation?.id?.startsWith("mock-");
+  const canPickModel = !runActive && modelOptions.length > 0;
+  const canPickMode = !runActive;
   useEffect(() => {
     if (!canPickModel) setModelMenuOpen(false);
   }, [canPickModel]);
@@ -1043,13 +1029,13 @@ export function Conversation({
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M15 3v18" />
             </svg>
-            {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? 6 : changes.length} changes
+            {changes.length} changes
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
             onClick={() => setPreviewOpen(true)}
-            disabled={!repository || conversation?.id?.startsWith("mock-")}
+            disabled={!repository}
             title="Preview panel"
             aria-label="Preview"
           >
@@ -1080,9 +1066,9 @@ export function Conversation({
         {messages.map((message, index) => (
           <div className="turn user" key={`${message.text}-${index}`}>
             <div className="role">
-              <span className="av you">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "R" : "Y"}</span>
+              <span className="av you">Y</span>
               <span className="rname">You</span>
-              <span className="rtime">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "13:10" : "now"}</span>
+              <span className="rtime">now</span>
             </div>
             <p>{message.text}</p>
           </div>
@@ -1092,24 +1078,13 @@ export function Conversation({
             <div className="role">
               <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}</span>
               <span className="rname">{providerLabel}</span>
-              <span className="rtime">{conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "13:52" : "now"}</span>
+              <span className="rtime">now</span>
             </div>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantText && <p>{assistantText}</p>}
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
-                <div className="tools">
-                  {DESIGN_MOCK_THREAD.tools.map((tool) => (
-                    <div className="tool" key={tool.code}>
-                      <span>{tool.label}</span>
-                      <code>{tool.code}</code>
-                      <span className="r" style={{ color: "var(--emerald)" }}>{tool.result}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {toolEvents.length > 0 && conversation?.id !== DESIGN_MOCK_PRIMARY_ID && (
+              {toolEvents.length > 0 && (
                 <div className="tools">
                   {toolEvents.map((event, index) => {
                     const id = event.toolCallId;
@@ -1134,21 +1109,13 @@ export function Conversation({
                     <span className="ttl">Nothing left to do here</span>
                   </div>
                   <p>
-                    {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                      ? <>{DESIGN_MOCK_THREAD.done.files} · worktree <code>{DESIGN_MOCK_THREAD.done.worktree}</code> is still checked out.</>
-                      : <>Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out. Settling keeps the worktree.</>}
+                    Worktree <code>{worktree?.path ?? conversation?.worktree}</code> is still checked out. Settling keeps the worktree.
                   </p>
                   <div className="acts">
                     <button
                       type="button"
                       className="btn btn-default btn-sm"
                       onClick={() => {
-                        if (threadId.startsWith("mock-")) {
-                          window.dispatchEvent(new CustomEvent("aldunis:design-mock-settle", {
-                            detail: { threadId, release: false },
-                          }));
-                          return;
-                        }
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
                           headers: { "content-type": "application/json" },
@@ -1162,12 +1129,6 @@ export function Conversation({
                       type="button"
                       className="btn btn-outline btn-sm"
                       onClick={() => {
-                        if (threadId.startsWith("mock-")) {
-                          window.dispatchEvent(new CustomEvent("aldunis:design-mock-settle", {
-                            detail: { threadId, release: true },
-                          }));
-                          return;
-                        }
                         if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
                         void fetch("/api/state/conversations/settle", {
                           method: "POST",
@@ -1184,12 +1145,6 @@ export function Conversation({
                     </button>
                     <button type="button" className="btn btn-ghost btn-sm">Keep open</button>
                   </div>
-                  {conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
-                    <p style={{ margin: "10px 0 0", fontSize: 12 }}>
-                      Settling keeps the worktree. You&apos;re using{" "}
-                      <b style={{ color: "var(--amber)", fontWeight: 500 }}>{DESIGN_MOCK_THREAD.done.meter}</b>.
-                    </p>
-                  )}
                 </div>
               )}
               {approvals.map((approval) => (
@@ -1251,7 +1206,6 @@ export function Conversation({
                 </div>
               )}
               {(providerState === "completed" || providerState === "cancelled")
-                && !conversation?.id?.startsWith("mock-")
                 && <p className="provider-state">{stateCopy[providerState]}</p>}
               {checkpoint && (
                 <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint: ${checkpoint.state}`}>
@@ -1331,9 +1285,6 @@ export function Conversation({
               ))}
             </div>
           )}
-          {!draft && conversation?.id === DESIGN_MOCK_PRIMARY_ID && (
-            <div className="cph" aria-hidden="true">Reply to Claude Code…</div>
-          )}
           <textarea
             className="composer-input"
             value={draft}
@@ -1366,9 +1317,7 @@ export function Conversation({
               }
             }}
             placeholder={
-              conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                ? ""
-                : !historyRestored
+              !historyRestored
                 ? "Restoring conversation session…"
                 : !providerReady
                 ? providerReadinessMessage
@@ -1378,14 +1327,13 @@ export function Conversation({
             }
             aria-label={`Message ${providerName}`}
             disabled={
-              conversation?.id?.startsWith("mock-")
-              || !worktree
+              !worktree
               || !providerReady
               || runActive
               || !historyRestored
             }
           />
-          {!providerReady && historyRestored && conversation?.id !== DESIGN_MOCK_PRIMARY_ID && (
+          {!providerReady && historyRestored && (
             <div className="context-error" role="status">{providerReadinessMessage}</div>
           )}
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
@@ -1395,7 +1343,7 @@ export function Conversation({
               <button
                 type="button"
                 className="cc"
-                disabled={runActive || conversation?.id?.startsWith("mock-")}
+                disabled={runActive}
                 aria-haspopup={canSwitchProvider ? "listbox" : undefined}
                 aria-expanded={canSwitchProvider ? providerMenuOpen : undefined}
                 title={
@@ -1417,7 +1365,6 @@ export function Conversation({
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  if (conversation?.id?.startsWith("mock-")) return;
                   // Alt/Option-click always opens provider profile admin.
                   if (event.altKey || !canSwitchProvider) {
                     closeComposerMenus();
@@ -1437,9 +1384,7 @@ export function Conversation({
                 <span className="pv" aria-hidden="true">
                   {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
                 </span>
-                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                  ? "claude-code"
-                  : providerChipName}
+                {providerChipName}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               {providerMenuOpen && canSwitchProvider && (
@@ -1547,9 +1492,7 @@ export function Conversation({
                   });
                 }}
               >
-                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                  ? "default"
-                  : showReasoningEffort
+                {showReasoningEffort
                   ? `${modelChipLabel} · ${reasoningEffort}`
                   : modelChipLabel}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
@@ -1616,7 +1559,7 @@ export function Conversation({
             <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
               <button
                 type="button"
-                className={`cc ${accessScope.warning || conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "scoped" : ""}`}
+                className={`cc ${accessScope.warning ? "scoped" : ""}`}
                 disabled={!canPickMode}
                 aria-haspopup="listbox"
                 aria-expanded={modeMenuOpen}
@@ -1633,9 +1576,7 @@ export function Conversation({
                   <rect x="3" y="11" width="18" height="10" rx="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
-                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                  ? "Worktree write"
-                  : mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
+                {mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               <button
@@ -1653,7 +1594,7 @@ export function Conversation({
                   openModeMenu();
                 }}
               >
-                {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "Build" : modeCopy[mode].label}
+                {modeCopy[mode].label}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               {modeMenuOpen && canPickMode && (
