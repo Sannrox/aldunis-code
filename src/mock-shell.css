@@ -123,7 +123,7 @@ code{font-family:var(--font-mono)}
 
 /* main */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
-.topbar{display:flex;align-items:center;gap:10px;height:52px;flex:0 0 52px;padding:0 16px;border-bottom:1px solid var(--border)}
+.topbar{display:flex;align-items:center;gap:10px;height:var(--conv-topbar-height,52px);flex:0 0 var(--conv-topbar-height,52px);padding:0 16px;border-bottom:1px solid var(--border)}
 .crumb{font-size:13px;color:var(--muted-foreground);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crumb b{color:var(--foreground);font-weight:500}
 .tb-r{margin-left:auto;display:flex;align-items:center;gap:4px}
@@ -505,9 +505,10 @@ html, body { height: 100%; }
 }
 .review-dock .eyebrow, .rv .eyebrow { display: none !important; }
 
-/* topbar */
+/* topbar — height shared with overlay offset via --conv-topbar-height */
 .topbar {
-  height: 52px !important; flex: 0 0 52px !important;
+  height: var(--conv-topbar-height, 52px) !important;
+  flex: 0 0 var(--conv-topbar-height, 52px) !important;
   background: var(--background) !important;
   border-bottom: 1px solid var(--border) !important;
 }
