@@ -992,15 +992,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex: 0 0 28px !important;
 }
 
-/* Line/file comment controls need a real hit target (bare "+" was ~7×17). */
+/* Line/file comment controls need a real hit target (bare "+" was ~7×17;
+   later 24px was only the AA floor — raise to the shell 28px target). */
 .diff-comment-button,
 .file-comment-button {
   flex: 0 0 auto !important;
   box-sizing: border-box !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-  height: 24px !important;
-  padding: 0 6px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  height: 28px !important;
+  padding: 0 8px !important;
   border: 1px solid var(--border) !important;
   border-radius: 6px !important;
   background: var(--muted) !important;
@@ -1012,7 +1013,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   cursor: pointer !important;
 }
 .diff-comment-button {
-  width: 24px !important;
+  width: 28px !important;
   padding: 0 !important;
 }
 .diff-comment-button:hover,
