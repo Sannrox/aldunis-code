@@ -141,28 +141,30 @@ export function Conversation({
    * Providers a *new* conversation can start with. Existing threads keep their
    * stored provider (cross-provider moves go through the reviewed fork flow).
    */
+  /**
+   * Providers offered in the new-conversation menu. Installed-but-not-ready
+   * entries stay selectable so the composer can show readiness detail (sign-in,
+   * upgrade) instead of hiding the choice entirely.
+   */
   const availableProviders = useMemo(() => {
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
     // Keep Claude selectable when installed; empty profiles disable send, not the choice.
     if (!claude || claude.installed !== false) list.push("claude-code");
-    // Codex is only useful when installed *and* authenticated.
-    if (codex?.installed && codex.authenticated) list.push("codex-cli");
-    if (shikigamiProvider?.installed && shikigamiProvider.authenticated) list.push("shikigami");
+    if (codex?.installed) list.push("codex-cli");
+    if (shikigamiProvider?.installed) list.push("shikigami");
     for (const item of providers) {
       if (
         typeof item.id === "string"
         && item.id.startsWith("adapter:")
         && item.installed !== false
         && item.enabled !== false
-        // Discovery sets authenticated when the adapter CLI (+ required env) is ready.
-        && item.authenticated !== false
       ) {
         list.push(item.id);
       }
     }
     return list;
-  }, [codex?.authenticated, codex?.installed, shikigamiProvider?.authenticated, shikigamiProvider?.installed, providers]);
+  }, [codex?.installed, shikigamiProvider?.installed, providers]);
   /**
    * New conversations only, before a thread/run is created. Once threadId or
    * runId exists the provider is fixed (cross-provider moves use fork).
@@ -1451,6 +1453,25 @@ export function Conversation({
                     const label = providerDisplayName(id, discovery);
                     const chip = formatProviderChipName(id, discovery);
                     const selected = id === provider;
+                    const ready = id === "claude-code"
+                      ? Boolean(profileId)
+                      : id === "codex-cli"
+                      ? Boolean(codex?.installed && codex.authenticated)
+                      : id === "shikigami"
+                      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
+                      : Boolean(
+                        discovery
+                        && discovery.installed !== false
+                        && discovery.enabled !== false
+                        && discovery.authenticated !== false,
+                      );
+                    const status = ready
+                      ? (selected ? "selected" : "ready")
+                      : (discovery?.detail?.trim()
+                        || providerNotReadyMessage(id, discovery, {
+                          hasClaudeProfile: Boolean(profileId),
+                          providerName: label,
+                        }));
                     return (
                       <button
                         type="button"
@@ -1459,7 +1480,7 @@ export function Conversation({
                         key={id}
                         data-provider-option=""
                         data-provider-id={id}
-                        className={`composer-provider-option ${selected ? "active" : ""}`}
+                        className={`composer-provider-option ${selected ? "active" : ""} ${ready ? "" : "not-ready"}`}
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
@@ -1467,7 +1488,7 @@ export function Conversation({
                         }}
                       >
                         <span className="n">{label}</span>
-                        <span className="p">{chip}{selected ? " · selected" : ""}</span>
+                        <span className="p">{chip} · {status}</span>
                       </button>
                     );
                   })}

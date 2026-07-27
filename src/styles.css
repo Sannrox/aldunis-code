@@ -1610,6 +1610,12 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   color: var(--muted-foreground);
   font-weight: 500;
 }
+.composer-provider-option.not-ready .n {
+  color: var(--muted-foreground);
+}
+.composer-provider-option.not-ready .p {
+  color: color-mix(in srgb, var(--destructive-foreground) 85%, var(--muted-foreground));
+}
 .composer-mode-group {
   gap: 6px;
   align-items: center;
