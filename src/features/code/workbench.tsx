@@ -7,8 +7,20 @@ import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { Button } from "../../components/ui";
+import { providerChipName } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
+
+/** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
+function paneConversationLabel(
+  conversation: ConversationSummary | null | undefined,
+  fallback: string,
+): string {
+  if (!conversation) return fallback;
+  const title = conversation.title.trim() || "Conversation";
+  if (!conversation.provider) return title;
+  return `${title} · ${providerChipName(conversation.provider, undefined)}`;
+}
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
@@ -526,7 +538,10 @@ export function CodeWorkbench({
               aria-current={activePane === "primary" ? "true" : undefined}
               onClick={() => setActivePane("primary")}
             >
-              Primary · {primary?.title ?? (primaryId ? "Replace conversation" : "New conversation")}
+              Primary · {paneConversationLabel(
+                primary,
+                primaryId ? "Replace conversation" : "New conversation",
+              )}
             </button>
             <button
               type="button"
@@ -534,7 +549,10 @@ export function CodeWorkbench({
               aria-current={activePane === "secondary" ? "true" : undefined}
               onClick={() => setActivePane("secondary")}
             >
-              Secondary · {secondary?.title ?? (secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation")}
+              Secondary · {paneConversationLabel(
+                secondary,
+                secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation",
+              )}
             </button>
           </nav>
         )}
