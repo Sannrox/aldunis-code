@@ -513,6 +513,7 @@ export function CodeWorkbench({
             <button
               type="button"
               className={activePane === "primary" ? "active" : ""}
+              aria-current={activePane === "primary" ? "true" : undefined}
               onClick={() => setActivePane("primary")}
             >
               Primary · {primary?.title ?? (primaryId ? "Replace conversation" : "New conversation")}
@@ -520,6 +521,7 @@ export function CodeWorkbench({
             <button
               type="button"
               className={activePane === "secondary" ? "active" : ""}
+              aria-current={activePane === "secondary" ? "true" : undefined}
               onClick={() => setActivePane("secondary")}
             >
               Secondary · {secondary?.title ?? (secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation")}
