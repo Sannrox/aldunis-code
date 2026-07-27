@@ -142,10 +142,10 @@ code{font-family:var(--font-mono)}
 
 /* main */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
-.topbar{display:flex;align-items:center;gap:10px;height:var(--conv-topbar-height,52px);flex:0 0 var(--conv-topbar-height,52px);padding:0 16px;border-bottom:1px solid var(--border)}
-.crumb{font-size:13px;color:var(--muted-foreground);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-height:var(--conv-topbar-height,52px);height:auto;flex:0 0 auto;padding:8px 16px;border-bottom:1px solid var(--border)}
+.crumb{font-size:13px;color:var(--muted-foreground);min-width:0;flex:1 1 140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crumb b{color:var(--foreground);font-weight:500}
-.tb-r{margin-left:auto;display:flex;align-items:center;gap:4px}
+.tb-r{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:4px;min-width:0;max-width:100%}
 .thread{flex:1;overflow-y:auto;padding:22px 0}
 .wrap{max-width:700px;margin:0 auto;padding:0 24px}
 .turn{margin-bottom:24px}
@@ -537,12 +537,22 @@ html, body { height: 100%; }
 }
 .review-dock .eyebrow, .rv .eyebrow { display: none !important; }
 
-/* topbar — height shared with overlay offset via --conv-topbar-height */
+/* topbar — min height still matches --conv-topbar-height; may wrap on narrow panes */
 .topbar {
-  height: var(--conv-topbar-height, 52px) !important;
-  flex: 0 0 var(--conv-topbar-height, 52px) !important;
+  min-height: var(--conv-topbar-height, 52px) !important;
+  height: auto !important;
+  flex: 0 0 auto !important;
+  flex-wrap: wrap !important;
+  gap: 6px 10px !important;
+  padding: 8px 16px !important;
   background: var(--background) !important;
   border-bottom: 1px solid var(--border) !important;
+}
+.tb-r {
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
 }
 .tb-r .btn, .tb-r .btn-ghost {
   height: 28px !important; padding: 0 10px !important; border: 0 !important;
@@ -872,6 +882,36 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   min-width: 0 !important;
   white-space: pre-wrap !important;
   word-break: break-word !important;
+}
+/* Line/file comment controls need a real hit target (bare "+" was ~7×17). */
+.diff-comment-button,
+.file-comment-button {
+  flex: 0 0 auto !important;
+  box-sizing: border-box !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  height: 24px !important;
+  padding: 0 6px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  background: var(--muted) !important;
+  color: var(--muted-foreground) !important;
+  font: 600 12px/1 var(--font-mono) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+}
+.diff-comment-button {
+  width: 24px !important;
+  padding: 0 !important;
+}
+.diff-comment-button:hover,
+.diff-comment-button:focus-visible,
+.file-comment-button:hover,
+.file-comment-button:focus-visible {
+  color: var(--foreground) !important;
+  background: var(--accent) !important;
 }
 .quick-results > button.active {
   background: var(--accent) !important;
