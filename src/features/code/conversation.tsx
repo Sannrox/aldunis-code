@@ -21,6 +21,7 @@ import {
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
+import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 
 export function Conversation({
@@ -1189,7 +1190,7 @@ export function Conversation({
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
-              {assistantText && <p className="turn-text">{assistantText}</p>}
+              {assistantText && <MarkdownBody text={assistantText} className="turn-md" />}
               {toolEvents.length > 0 && (
                 <div className="tools">
                   {toolEvents.map((event, index) => {

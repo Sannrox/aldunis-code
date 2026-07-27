@@ -1642,11 +1642,102 @@ select.ui-input {
 }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
-/* Preserve intentional newlines from streamed assistant text (ACP chunks join
-   without separators; real line breaks live inside chunk payloads). */
-.turn-text {
-  white-space: pre-wrap;
+/* Assistant markdown (react-markdown + GFM). Headings, lists, fences, tables. */
+.md-body {
   overflow-wrap: anywhere;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--foreground);
+}
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body .md-p { margin: 0 0 0.75em; }
+.md-body .md-p:last-child { margin-bottom: 0; }
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 1.1em 0 0.45em;
+  font-weight: 650;
+  line-height: 1.3;
+  color: var(--foreground);
+}
+.md-body h1 { font-size: 1.2em; }
+.md-body h2 { font-size: 1.1em; }
+.md-body h3,
+.md-body h4 { font-size: 1.02em; }
+.md-body ul,
+.md-body ol {
+  margin: 0.4em 0 0.85em;
+  padding-left: 1.35em;
+}
+.md-body li { margin: 0.2em 0; }
+.md-body li > ul,
+.md-body li > ol { margin: 0.15em 0; }
+.md-body blockquote {
+  margin: 0.6em 0;
+  padding: 0.15em 0 0.15em 0.85em;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+.md-body hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.md-body a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-body a:hover { color: var(--primary); }
+.md-body .md-code-inline {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  font: 0.9em/1.4 var(--font-mono);
+}
+.md-body .md-pre {
+  margin: 0.65em 0 0.9em;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  font: 12.5px/1.5 var(--font-mono);
+}
+.md-body .md-pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
+}
+.md-body .md-table-wrap {
+  margin: 0.65em 0 0.9em;
+  overflow-x: auto;
+}
+.md-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.md-body th,
+.md-body td {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.md-body th {
+  font-weight: 600;
+  background: var(--card);
+}
+.md-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
 }
 /* Composer provider picker (new conversations only). */
 .composer-provider {
