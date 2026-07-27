@@ -14,8 +14,14 @@ import {
 } from "./provider.ts";
 
 const execFileAsync = promisify(execFile);
+/** Major line of the app-server protocol we speak. */
 const SUPPORTED_CODEX_MAJOR = 0;
-const SUPPORTED_CODEX_MINOR = 144;
+/**
+ * Minimum minor on the 0.x line. Exact minor pins blocked working installs
+ * (e.g. 0.92 app-server still speaks initialize / account/read / model/list).
+ * Fail closed on major ≥ 1 until that line is validated.
+ */
+const MIN_CODEX_MINOR = 80;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
@@ -61,15 +67,52 @@ function string(value: unknown, field: string): string {
   return value;
 }
 
+/**
+ * Build app-server argv for a known Codex version.
+ * 0.144+ accepts --stdio / --strict-config / feature disables; 0.80–0.143
+ * speaks the same JSON-RPC over stdio without those flags (0.92 rejects them).
+ */
+export function codexAppServerArguments(version: string): string[] {
+  const minor = Number(version.split(".")[1] ?? 0);
+  const args = ["app-server"];
+  if (minor >= 144) {
+    args.push(
+      "--stdio",
+      "--strict-config",
+      // Aldunis Code has no mid-turn question UI yet, so the provider must not
+      // advertise a request type the host cannot complete.
+      "--disable",
+      "default_mode_request_user_input",
+    );
+  }
+  args.push(
+    "-c",
+    "mcp_servers={}",
+    "-c",
+    "apps._default.enabled=false",
+    "-c",
+    'web_search="disabled"',
+  );
+  return args;
+}
+
 export function assertSupportedCodexVersion(output: string): string {
   const match = output.match(/(?:codex-cli\s+)?(\d+)\.(\d+)\.(\d+)/);
-  if (
-    !match
-    || Number(match[1]) !== SUPPORTED_CODEX_MAJOR
-    || Number(match[2]) !== SUPPORTED_CODEX_MINOR
-  ) {
+  if (!match) {
     throw new ProviderProtocolError(
-      `Unsupported Codex CLI version. Aldunis Code requires ${SUPPORTED_CODEX_MAJOR}.${SUPPORTED_CODEX_MINOR}.x.`,
+      `Unsupported Codex CLI version. Aldunis Code requires ${SUPPORTED_CODEX_MAJOR}.${MIN_CODEX_MINOR}+.`,
+    );
+  }
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major !== SUPPORTED_CODEX_MAJOR) {
+    throw new ProviderProtocolError(
+      `Unsupported Codex CLI major version ${major}. Aldunis Code requires ${SUPPORTED_CODEX_MAJOR}.${MIN_CODEX_MINOR}+.`,
+    );
+  }
+  if (minor < MIN_CODEX_MINOR) {
+    throw new ProviderProtocolError(
+      `Unsupported Codex CLI version ${match[1]}.${match[2]}.${match[3]}. Aldunis Code requires ${SUPPORTED_CODEX_MAJOR}.${MIN_CODEX_MINOR}+.`,
     );
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
@@ -254,22 +297,8 @@ export class CodexCliAdapter {
     private readonly permissions = new PermissionBroker(),
   ) {}
 
-  #appServerArguments(): string[] {
-    return [
-      "app-server",
-      "--stdio",
-      "--strict-config",
-      // Aldunis Code has no mid-turn question UI yet, so the provider must not
-      // advertise a request type the host cannot complete.
-      "--disable",
-      "default_mode_request_user_input",
-      "-c",
-      "mcp_servers={}",
-      "-c",
-      "apps._default.enabled=false",
-      "-c",
-      'web_search="disabled"',
-    ];
+  #appServerArguments(version: string): string[] {
+    return codexAppServerArguments(version);
   }
 
   async readiness(): Promise<CodexReadiness> {
@@ -304,7 +333,7 @@ export class CodexCliAdapter {
         detail: "Install Codex CLI on PATH and sign in (codex login).",
       };
     }
-    const child = spawn(this.executable, this.#appServerArguments(), {
+    const child = spawn(this.executable, this.#appServerArguments(version), {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let spawnFailed = false;
@@ -404,16 +433,17 @@ export class CodexCliAdapter {
   }
 
   async start(options: ProviderStartOptions): Promise<ProviderRun> {
+    let version: string;
     try {
       const result = await execFileAsync(this.executable, ["--version"], {
         encoding: "utf8", timeout: 5_000,
       });
-      assertSupportedCodexVersion(result.stdout.trim());
+      version = assertSupportedCodexVersion(result.stdout.trim());
     } catch {
       throw new ProviderProtocolError("Codex CLI is not installed or could not be started.");
     }
     const id = randomUUID();
-    const child = spawn(this.executable, this.#appServerArguments(), {
+    const child = spawn(this.executable, this.#appServerArguments(version), {
       cwd: options.worktree,
       stdio: ["pipe", "pipe", "pipe"],
     });

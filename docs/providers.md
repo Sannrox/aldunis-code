@@ -41,8 +41,11 @@ Sensitive environment values live in the host secret store (write-only in the UI
 ### Codex CLI
 
 - Seeds `default:codex-cli` (binary `codex`); discovery still uses `PATH`.
+- Accepts Codex CLI **0.80+** on the 0.x app-server line (not an exact minor
+  pin). Major 1.x is fail-closed until validated.
 - Reports install, authentication readiness, version, models, and reasoning
-  efforts.
+  efforts. Installed-but-not-signed-in Codex stays selectable so the composer
+  can show sign-in guidance.
 - Build-mode network and file mutations pause for scoped approval; sandbox
   escapes that cannot be confined to the selected worktree are declined.
 

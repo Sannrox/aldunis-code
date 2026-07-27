@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   assertSupportedCodexVersion,
+  codexAppServerArguments,
   codexFileChangePaths,
   CodexCliAdapter,
   normalizeCodexNotification,
@@ -40,8 +41,12 @@ test("approval paths cannot escape the selected worktree", async () => {
 
 test("Codex version and native lifecycle events normalize without provider payload leakage", () => {
   assert.equal(assertSupportedCodexVersion("codex-cli 0.144.3"), "0.144.3");
-  assert.throws(() => assertSupportedCodexVersion("codex-cli 0.145.0"), ProviderProtocolError);
+  assert.equal(assertSupportedCodexVersion("codex-cli 0.92.0"), "0.92.0");
+  assert.equal(assertSupportedCodexVersion("codex-cli 0.200.1"), "0.200.1");
+  assert.throws(() => assertSupportedCodexVersion("codex-cli 0.50.0"), ProviderProtocolError);
   assert.throws(() => assertSupportedCodexVersion("codex-cli 1.0.0"), ProviderProtocolError);
+  assert.equal(codexAppServerArguments("0.92.0").includes("--stdio"), false);
+  assert.equal(codexAppServerArguments("0.144.3").includes("--stdio"), true);
   assert.deepEqual(normalizeCodexNotification({
     method: "item/started",
     params: { item: { id: "item-1", type: "commandExecution", command: "private" } },
