@@ -1065,6 +1065,12 @@ export function Conversation({
           detail: "Loading the local transcript for this thread.",
           action: null,
         }
+    : !providersLoaded
+      ? {
+          title: "Checking providers…",
+          detail: "Discovering local CLIs and adapter packages.",
+          action: null,
+        }
     : !providerReady
       ? {
           title: `${providerName} is not ready`,
@@ -1225,9 +1231,11 @@ export function Conversation({
               <span>
                 {conversation && !historyRestored
                   ? "Restoring"
-                  : conversation
-                    ? "Conversation"
-                    : "New conversation"}
+                  : !providersLoaded
+                    ? "Checking"
+                    : conversation
+                      ? "Conversation"
+                      : "New conversation"}
               </span>
               <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
               <p>{emptyState.detail}</p>
@@ -1574,7 +1582,7 @@ export function Conversation({
               || !historyRestored
             }
           />
-          {!providerReady && historyRestored && (
+          {!providerReady && historyRestored && providersLoaded && (
             <div className="context-error" role="status">{providerReadinessMessage}</div>
           )}
           {contextError && <div className="context-error" role="alert">{contextError}</div>}
@@ -1588,7 +1596,9 @@ export function Conversation({
                 aria-haspopup={canSwitchProvider ? "listbox" : undefined}
                 aria-expanded={canSwitchProvider ? providerMenuOpen : undefined}
                 title={
-                  !providerReady
+                  !providersLoaded
+                    ? "Checking provider…"
+                    : !providerReady
                     ? providerReadinessMessage
                     : canSwitchProvider
                     ? "Open the provider menu. Alt-click opens provider profiles."
@@ -1597,7 +1607,9 @@ export function Conversation({
                       : "Open provider profiles"
                 }
                 aria-label={
-                  !providerReady
+                  !providersLoaded
+                    ? `Checking ${providerName}…`
+                    : !providerReady
                     ? `${providerName} not ready: ${providerReadinessMessage}`
                     : canSwitchProvider
                     ? `Provider ${providerName}. Open menu to choose among ${availableProviders.length} providers.`
