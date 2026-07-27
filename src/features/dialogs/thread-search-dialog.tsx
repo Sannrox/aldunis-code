@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { ThreadMetadata } from "../../types";
 import { Icon } from "../../components/icon";
-import { providerChipName } from "../../lib/provider-readiness";
+import { providerListLabel } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
 function threadSearchDetail(thread: ThreadMetadata): string {
   const provider = thread.provider
-    ? providerChipName(thread.provider, undefined)
+    ? providerListLabel(thread.provider)
     : null;
   return [thread.projectName, provider, thread.worktree].filter(Boolean).join(" · ");
 }

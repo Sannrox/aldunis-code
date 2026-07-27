@@ -34,7 +34,7 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
     }),
     "Kiro",
   );
-  // Without discovery, still name known adapters from package id.
+  // Without discovery, still name known adapters from package id (incl. reverse-DNS).
   assert.equal(
     providerDisplayName("adapter:dev.xai.grok-build@1.0.0", undefined),
     "Grok Build",
@@ -43,6 +43,14 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
     providerDisplayName("adapter:kiro-cli@1.0.0", undefined),
     "Kiro CLI",
   );
+  assert.equal(
+    providerDisplayName("adapter:dev.kiro.cli@1.0.0", undefined),
+    "Kiro CLI",
+  );
+  assert.equal(
+    providerChipName("adapter:dev.xai.grok-build@1.0.0", undefined),
+    "Grok Build",
+  );
   assert.equal(providerAvatarInitials("claude-code", "Claude"), "CC");
   assert.equal(
     providerAvatarInitials("adapter:dev.xai.grok-build@1.0.0", "Grok Build"),
@@ -50,6 +58,10 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
   );
   assert.equal(
     providerAvatarInitials("adapter:kiro-cli@1.0.0", "Kiro CLI"),
+    "KR",
+  );
+  assert.equal(
+    providerAvatarInitials("adapter:dev.kiro.cli@1.0.0", "Kiro CLI"),
     "KR",
   );
 });

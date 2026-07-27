@@ -71,16 +71,7 @@ export function formatElapsed(iso: string, now = Date.now()): string {
   return `${days}d`;
 }
 
-export function providerLabel(provider: string): string {
-  if (provider === "claude-code") return "Claude";
-  if (provider === "codex-cli") return "Codex";
-  if (provider === "shikigami") return "Shikigami";
-  if (provider.startsWith("adapter:")) {
-    const id = provider.slice("adapter:".length).split("@")[0] ?? provider;
-    return id;
-  }
-  return provider;
-}
+export { providerListLabel as providerLabel } from "../../lib/provider-readiness";
 
 export function branchFromWorktree(worktree: string): string {
   const normalized = worktree.replace(/\\/g, "/");
