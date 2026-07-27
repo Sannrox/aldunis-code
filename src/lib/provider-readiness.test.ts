@@ -11,6 +11,7 @@ import {
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
+  resolveDefaultProviderModel,
 } from "./provider-readiness";
 import type { ProviderDiscovery } from "../types";
 
@@ -171,29 +172,54 @@ test("providerModelOptions and cycleProviderModel walk discovered models", () =>
     ],
   };
   const options = providerModelOptions("codex-cli", discovery);
-  assert.equal(options[0]?.id, "default");
-  assert.equal(options[0]?.displayName, "Default");
-  assert.equal(options[1]?.id, "gpt-5");
-  assert.equal(cycleProviderModel("codex-cli", "default", discovery), "gpt-5");
+  // T3-style: no synthetic "default" row — only discovered models.
+  assert.equal(options[0]?.id, "gpt-5");
+  assert.equal(options[0]?.displayName, "GPT-5");
+  assert.equal(options[1]?.id, "o3");
+  assert.equal(cycleProviderModel("codex-cli", "default", discovery), "o3");
   assert.equal(cycleProviderModel("codex-cli", "gpt-5", discovery), "o3");
-  assert.equal(cycleProviderModel("codex-cli", "o3", discovery), "default");
+  assert.equal(cycleProviderModel("codex-cli", "o3", discovery), "gpt-5");
   assert.equal(providerModelLabel("codex-cli", "gpt-5", discovery), "GPT-5");
-  assert.equal(providerModelLabel("codex-cli", "default", discovery), "Default");
+  // Unpinned "default" resolves to the discovery isDefault model label.
+  assert.equal(providerModelLabel("codex-cli", "default", discovery), "GPT-5");
 });
 
-test("Claude model cycle keeps legacy presentation order", () => {
-  assert.equal(cycleProviderModel("claude-code", "default", undefined), "sonnet");
-  assert.equal(cycleProviderModel("claude-code", "haiku", undefined), "default");
+test("resolveDefaultProviderModel prefers discovery isDefault then first real model", () => {
+  const discovery: ProviderDiscovery = {
+    id: "codex-cli",
+    installed: true,
+    authenticated: true,
+    models: [
+      { id: "o3", displayName: "o3", isDefault: false },
+      { id: "gpt-5", displayName: "GPT-5", isDefault: true },
+    ],
+  };
+  assert.equal(resolveDefaultProviderModel("codex-cli", discovery), "gpt-5");
+  assert.equal(
+    resolveDefaultProviderModel("codex-cli", {
+      id: "codex-cli",
+      installed: true,
+      models: [{ id: "o3", displayName: "o3", isDefault: false }],
+    }),
+    "o3",
+  );
+  // Claude prefers concrete Sonnet (T3-style), not a synthetic "default" token.
+  assert.equal(resolveDefaultProviderModel("claude-code", undefined), "sonnet");
+});
+
+test("Claude model options are concrete aliases without a Default row", () => {
+  assert.equal(cycleProviderModel("claude-code", "default", undefined), "opus");
+  assert.equal(cycleProviderModel("claude-code", "haiku", undefined), "sonnet");
   assert.deepEqual(
     providerModelOptions("claude-code", undefined).map((entry) => entry.id),
-    ["default", "sonnet", "opus", "haiku"],
+    ["sonnet", "opus", "haiku"],
   );
   assert.deepEqual(
     providerModelOptions("claude-code", undefined).map((entry) => entry.displayName),
-    ["Default", "Sonnet", "Opus", "Haiku"],
+    ["Sonnet", "Opus", "Haiku"],
   );
   assert.equal(providerModelLabel("claude-code", "sonnet", undefined), "Sonnet");
-  assert.equal(providerModelLabel("claude-code", "default", undefined), "Default");
+  assert.equal(providerModelLabel("claude-code", "default", undefined), "Sonnet");
 });
 
 test("Codex reasoning effort cycles advertised options", () => {

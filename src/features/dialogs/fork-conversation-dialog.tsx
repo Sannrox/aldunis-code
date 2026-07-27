@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
 import { Button } from "../../components/ui";
 import { MarkdownBody } from "../../components/markdown-body";
-import { providerModelOptions, providerNotReadyMessage } from "../../lib/provider-readiness";
+import {
+  providerModelOptions,
+  providerNotReadyMessage,
+  resolveDefaultProviderModel,
+} from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
 function isReady(provider: ProviderDiscovery | undefined): boolean {
@@ -50,7 +54,7 @@ export function ForkConversationDialog({
       ?? claudeProfiles[0]?.id
       ?? "",
   );
-  const [model, setModel] = useState("default");
+  const [model, setModel] = useState(() => resolveDefaultProviderModel(defaultDestination, providers.find((p) => p.id === defaultDestination)));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   useEffect(() => {
@@ -154,8 +158,9 @@ export function ForkConversationDialog({
               name="fork-destination-provider"
               value={destination}
               onChange={(event) => {
-                setDestination(event.target.value as ProviderId);
-                setModel("default");
+                const next = event.target.value as ProviderId;
+                setDestination(next);
+                setModel(resolveDefaultProviderModel(next, providers.find((p) => p.id === next)));
               }}
             >
               <option value="claude-code" disabled={sourceProvider === "claude-code" || !claudeReady}>
@@ -208,8 +213,7 @@ export function ForkConversationDialog({
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
               >
-                <option value="default">Default model</option>
-                {codex?.models?.map((item) => (
+                {providerModelOptions("codex-cli", codex).map((item) => (
                   <option value={item.id} key={item.id}>{item.displayName}</option>
                 ))}
               </select>
@@ -222,8 +226,7 @@ export function ForkConversationDialog({
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
               >
-                <option value="default">Default model</option>
-                {shikigamiProvider?.models?.map((item) => (
+                {providerModelOptions("shikigami", shikigamiProvider).map((item) => (
                   <option value={item.id} key={item.id}>{item.displayName}</option>
                 ))}
               </select>

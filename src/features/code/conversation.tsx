@@ -18,6 +18,7 @@ import {
   providerDisplayName,
   providerListLabel,
   providerModelLabel,
+  resolveDefaultProviderModel,
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
@@ -186,32 +187,27 @@ export function Conversation({
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
       setProfileId((current) => current || defaultClaudeProfileId);
-      setModel("default");
+      // T3-style: pin a concrete alias (Sonnet), not a synthetic "default" token.
+      setModel(resolveDefaultProviderModel("claude-code", undefined));
       setReasoningEffort("medium");
       return;
     }
     if (next === "codex-cli") {
-      const defaultModel = codex?.models?.find((entry) => entry.isDefault)?.id
-        ?? codex?.models?.[0]?.id
-        ?? "default";
+      const defaultModel = resolveDefaultProviderModel("codex-cli", codex);
       setModel(defaultModel);
       const match = codex?.models?.find((entry) => entry.id === defaultModel);
       setReasoningEffort(match?.defaultReasoningEffort ?? "medium");
       return;
     }
     if (next === "shikigami") {
-      const defaultModel = shikigamiProvider?.models?.find((entry) => entry.isDefault)?.id
-        ?? shikigamiProvider?.models?.[0]?.id
-        ?? "default";
+      const defaultModel = resolveDefaultProviderModel("shikigami", shikigamiProvider);
       setModel(defaultModel);
       setReasoningEffort("medium");
       return;
     }
     // Declarative ACP adapters (Kiro, Grok, OpenCode, …) — use discovered models.
     const discovery = providers.find((item) => item.id === next);
-    const defaultModel = discovery?.models?.find((entry) => entry.isDefault)?.id
-      ?? discovery?.models?.[0]?.id
-      ?? "default";
+    const defaultModel = resolveDefaultProviderModel(next, discovery);
     setModel(defaultModel);
     const match = discovery?.models?.find((entry) => entry.id === defaultModel);
     const efforts = match?.reasoningEfforts ?? [];
@@ -243,7 +239,10 @@ export function Conversation({
     }
     if (nextModel !== model) {
       setModel(nextModel);
-      if (provider === "codex-cli" && nextModel !== "default") {
+      if (
+        (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
+        && nextModel !== "default"
+      ) {
         const efforts = providerReasoningEfforts(provider, nextModel, selectedProvider);
         const match = selectedProvider?.models?.find((entry) => entry.id === nextModel);
         const preferred = match?.defaultReasoningEffort;
@@ -256,6 +255,20 @@ export function Conversation({
     }
     setModelMenuOpen(false);
   };
+
+  // When discovery lands, promote the unpinned "default" sentinel to a concrete model (T3-style).
+  useEffect(() => {
+    if (model !== "default") return;
+    const resolved = resolveDefaultProviderModel(provider, selectedProvider);
+    if (resolved !== "default" && resolved !== model) {
+      setModel(resolved);
+      const match = selectedProvider?.models?.find((entry) => entry.id === resolved);
+      const efforts = providerReasoningEfforts(provider, resolved, selectedProvider);
+      const preferred = match?.defaultReasoningEffort;
+      if (preferred && efforts.includes(preferred)) setReasoningEffort(preferred);
+      else if (efforts.length > 0) setReasoningEffort(efforts[0]!);
+    }
+  }, [model, provider, selectedProvider]);
   const selectMode = (nextMode: InteractionMode, source: "menu" | "keyboard" = "menu") => {
     if (source === "menu" && performance.now() < modeMenuOpenedAtRef.current) {
       return;
@@ -732,11 +745,14 @@ export function Conversation({
       hasClaudeProfile: Boolean(profileId),
       providerName,
     });
-  const modelChipLabel = providerModelLabel(provider, model, selectedProvider);
-  const reasoningEfforts = providerReasoningEfforts(provider, model, selectedProvider);
+  const effectiveModel = model === "default"
+    ? resolveDefaultProviderModel(provider, selectedProvider)
+    : model;
+  const modelChipLabel = providerModelLabel(provider, effectiveModel, selectedProvider);
+  const reasoningEfforts = providerReasoningEfforts(provider, effectiveModel, selectedProvider);
   const showReasoningEffort = (
-    (provider === "codex-cli" && model !== "default")
-    || (typeof provider === "string" && provider.startsWith("adapter:") && model !== "default")
+    (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
+    && effectiveModel !== "default"
   ) && reasoningEfforts.length > 0;
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
@@ -832,11 +848,11 @@ export function Conversation({
           resumeSessionId: sessionId ?? undefined,
           attachments: sentAttachments,
           profileId: provider === "claude-code" ? profileId : null,
-          model,
+          model: effectiveModel,
           provider,
           reasoningEffort: (
             (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
-            && model !== "default"
+            && effectiveModel !== "default"
           )
             ? reasoningEffort
             : undefined,
@@ -1123,14 +1139,14 @@ export function Conversation({
             conversation?.title ?? "New conversation",
             worktree ? conversationBranch : null,
             repository ? providerListLabel(provider) : null,
-            model !== "default" ? modelChipLabel : null,
+            effectiveModel !== "default" ? modelChipLabel : null,
             showReasoningEffort ? reasoningEffort : null,
           ].filter(Boolean).join(" · ")}
         >
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
           {repository && <> · {providerListLabel(provider)}</>}
-          {model !== "default" && <> · {modelChipLabel}</>}
+          {effectiveModel !== "default" && <> · {modelChipLabel}</>}
           {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
         <div className="tb-r">
@@ -1815,20 +1831,21 @@ export function Conversation({
                   aria-label="Choose model"
                 >
                   {modelOptions.map((option) => {
-                    const selected = option.id === model;
-                    // Synthetic default keeps a friendly primary label; avoid repeating raw "default".
-                    const detail = option.id === "default"
-                      ? (selected ? "Provider default · selected" : "Provider default")
-                      : `${option.id}${selected ? " · selected" : ""}`;
-                    const optionLabel = option.id === "default"
-                      ? `${option.displayName}${selected ? ", selected" : ""}`
-                      : `${option.displayName}: ${option.id}${selected ? ", selected" : ""}`;
+                    const selected = option.id === effectiveModel || option.id === model;
+                    const isDiscoveryDefault = selectedProvider?.models?.some(
+                      (entry) => entry.id === option.id && entry.isDefault,
+                    );
+                    const detail = [
+                      option.id,
+                      isDiscoveryDefault ? "default" : null,
+                      selected ? "selected" : null,
+                    ].filter(Boolean).join(" · ");
                     return (
                       <button
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        aria-label={optionLabel}
+                        aria-label={`${option.displayName}: ${detail}`}
                         key={option.id}
                         data-model-option=""
                         data-model-id={option.id}
