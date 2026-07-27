@@ -586,7 +586,7 @@ export function Conversation({
             return [{
               kind: "tool_started",
               toolCallId: activity.toolCallId,
-              name: activity.name?.trim() || "Provider tool",
+              name: activity.name?.trim() || "Tool",
             }];
           }
           if (activity.kind === "tool_finished" && activity.toolCallId) {

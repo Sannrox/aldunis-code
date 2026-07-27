@@ -32,7 +32,7 @@ export function presentToolRows(
   for (const event of events) {
     if (event.kind === "tool_started") {
       if (!names.has(event.toolCallId)) order.push(event.toolCallId);
-      names.set(event.toolCallId, event.name.trim() || "Provider tool");
+      names.set(event.toolCallId, event.name.trim() || "Tool");
       continue;
     }
     if (!names.has(event.toolCallId) && !finished.has(event.toolCallId)) {
@@ -44,7 +44,7 @@ export function presentToolRows(
     const failed = finished.get(toolCallId);
     return {
       toolCallId,
-      name: names.get(toolCallId) ?? "Provider tool",
+      name: names.get(toolCallId) ?? "Tool",
       status: failed === undefined ? "running" : failed ? "failed" : "done",
     };
   });
