@@ -5,10 +5,13 @@ import { Icon } from "../../components/icon";
 
 export function PreviewPanel({
   repository,
+  pane = "primary",
   onClose,
   onReference,
 }: {
   repository: RepositoryMetadata;
+  /** Dual-pane scope for preview chrome labels. */
+  pane?: "primary" | "secondary";
   onClose: () => void;
   onReference: (reference: ElementReference) => void;
 }) {
@@ -157,16 +160,16 @@ export function PreviewPanel({
   };
   const running = preview?.state === "running";
   return (
-    <section className="preview-panel" aria-label="Web preview">
+    <section className="preview-panel" aria-label={`Web preview, ${pane} pane`}>
       <header>
         <div><p className="eyebrow">CONSTRAINED PREVIEW</p><h2>Local web application</h2></div>
         <div>
           {running && (
-            <Button type="button" size="sm" onClick={() => void stop()} aria-label="Stop local web preview">
+            <Button type="button" size="sm" onClick={() => void stop()} aria-label={`Stop local web preview, ${pane} pane`}>
               Stop
             </Button>
           )}
-          <CloseButton onClick={onClose} label="Close preview" />
+          <CloseButton onClick={onClose} label={`Close preview, ${pane} pane`} />
         </div>
       </header>
       <div className="preview-policy">
