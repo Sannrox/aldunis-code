@@ -553,7 +553,25 @@ export function ChangesPanel({
           </div>
           {delivery?.detached && <p className="delivery-warning" role="alert">Detached HEAD cannot be delivered. Create or select a branch first.</p>}
           {deliveryError && <p className="delivery-warning" role="alert">{deliveryError}</p>}
-          {plan && <div className="delivery-approval"><strong>{plan.summary}</strong><small>{plan.repository} · {plan.worktree} · {plan.branch}</small><ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul><footer><Button onClick={() => setPlan(null)}>Cancel</Button><Button variant="primary" size="sm" disabled={deliveryBusy} onClick={() => void executeDelivery()}>Approve once</Button></footer></div>}
+          {plan && (
+            <div className="delivery-approval">
+              <strong>{plan.summary}</strong>
+              <small>{plan.repository} · {plan.worktree} · {plan.branch}</small>
+              <ul>{plan.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
+              <footer>
+                <Button onClick={() => setPlan(null)}>Cancel</Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={deliveryBusy}
+                  aria-label={`Approve once: ${plan.summary}`}
+                  onClick={() => void executeDelivery()}
+                >
+                  Approve once
+                </Button>
+              </footer>
+            </div>
+          )}
         </section>
         </div>
       </div>

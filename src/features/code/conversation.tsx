@@ -1238,8 +1238,21 @@ export function Conversation({
                   </small>
                   {approval.state === "pending" && (
                     <footer>
-                      <button type="button" onClick={() => void decideApproval(approval, "deny")}>Deny</button>
-                      <Button variant="primary" size="sm" onClick={() => void decideApproval(approval, "allow_once")}>Allow once</Button>
+                      <button
+                        type="button"
+                        aria-label={`Deny ${approval.toolName}: ${approval.scope.summary}`}
+                        onClick={() => void decideApproval(approval, "deny")}
+                      >
+                        Deny
+                      </button>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        aria-label={`Allow once ${approval.toolName}: ${approval.scope.summary}`}
+                        onClick={() => void decideApproval(approval, "allow_once")}
+                      >
+                        Allow once
+                      </Button>
                     </footer>
                   )}
                 </section>
