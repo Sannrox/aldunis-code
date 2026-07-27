@@ -1325,7 +1325,12 @@ export function Conversation({
                       <small>{checkpoint.state}</small>
                     </div>
                     {checkpoint.state === "completed" && !rewindPreview && (
-                      <button type="button" onClick={() => void previewRewind()} disabled={checkpointBusy}>
+                      <button
+                        type="button"
+                        aria-label={`Preview workspace rewind, ${pane} pane`}
+                        onClick={() => void previewRewind()}
+                        disabled={checkpointBusy}
+                      >
                         {checkpointBusy ? "Inspecting…" : "Preview rewind"}
                       </button>
                     )}
@@ -1343,7 +1348,13 @@ export function Conversation({
                       </ul>
                       <footer>
                         <button type="button" onClick={() => setRewindPreview(null)} disabled={checkpointBusy}>Cancel</button>
-                        <button type="button" className="rewind-confirm" onClick={() => void confirmRewind()} disabled={checkpointBusy}>
+                        <button
+                          type="button"
+                          className="rewind-confirm"
+                          aria-label={`Confirm workspace rewind, ${pane} pane`}
+                          onClick={() => void confirmRewind()}
+                          disabled={checkpointBusy}
+                        >
                           {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
                         </button>
                       </footer>

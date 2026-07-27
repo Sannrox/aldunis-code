@@ -264,7 +264,15 @@ export function ChangesPanel({
             <> · <b className="ok">+{added}</b> <b className="bad">−{removed}</b></>
           )}
         </span>
-        <Button size="sm" className="btn btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={() => { onRefresh(); void loadAnnotations(); }}>Refresh</Button>
+        <Button
+          size="sm"
+          className="btn btn-ghost btn-xs"
+          style={{ marginLeft: "auto" }}
+          aria-label="Refresh changed files and review comments"
+          onClick={() => { onRefresh(); void loadAnnotations(); }}
+        >
+          Refresh
+        </Button>
         <CloseButton data-dialog-initial-focus onClick={onClose} label="Close changed files" />
       </div>
       <div className="changes-body rv-body">
@@ -546,6 +554,7 @@ export function ChangesPanel({
                 className="prepare-delivery"
                 onClick={() => void prepareDelivery()}
                 disabled={deliveryBusy || delivery?.detached}
+                aria-label={`Inspect ${deliveryAction} action for delivery`}
               >
                 Inspect action
               </button>
