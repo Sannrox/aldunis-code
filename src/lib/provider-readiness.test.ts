@@ -4,6 +4,7 @@ import {
   cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
+  providerAvatarInitials,
   providerChipName,
   providerDisplayName,
   providerModelLabel,
@@ -41,6 +42,15 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
   assert.equal(
     providerDisplayName("adapter:kiro-cli@1.0.0", undefined),
     "Kiro CLI",
+  );
+  assert.equal(providerAvatarInitials("claude-code", "Claude"), "CC");
+  assert.equal(
+    providerAvatarInitials("adapter:dev.xai.grok-build@1.0.0", "Grok Build"),
+    "GB",
+  );
+  assert.equal(
+    providerAvatarInitials("adapter:kiro-cli@1.0.0", "Kiro CLI"),
+    "KR",
   );
 });
 

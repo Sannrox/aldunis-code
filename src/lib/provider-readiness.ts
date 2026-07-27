@@ -53,6 +53,35 @@ export function providerDisplayName(
   return "Provider adapter";
 }
 
+/**
+ * Two-letter avatar glyph for transcript role chips.
+ * Prefer known first-class codes; otherwise initials from the display label.
+ */
+export function providerAvatarInitials(
+  provider: ProviderId,
+  label: string,
+): string {
+  if (provider === "claude-code") return "CC";
+  if (provider === "codex-cli") return "CX";
+  if (provider === "shikigami") return "SK";
+  if (typeof provider === "string" && provider.startsWith("adapter:")) {
+    const packageId = provider.slice("adapter:".length).split("@")[0] ?? "";
+    if (packageId.includes("grok-build") || packageId.includes("xai.grok")) return "GB";
+    if (packageId.includes("kiro")) return "KR";
+    if (packageId.includes("opencode")) return "OC";
+  }
+  const words = label
+    .replace(/[^A-Za-z0-9\s]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length >= 2) {
+    return `${words[0]![0] ?? ""}${words[1]![0] ?? ""}`.toUpperCase() || "AD";
+  }
+  const single = (words[0] ?? "AD").replace(/[^A-Za-z0-9]/g, "");
+  return (single.slice(0, 2) || "AD").toUpperCase();
+}
+
 /** Compact chip id/label used on the composer provider control. */
 export function providerChipName(
   provider: ProviderId,
