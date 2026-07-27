@@ -35,6 +35,11 @@ import {
   stepPromptHistoryUp,
   type PromptHistoryBrowse,
 } from "../../lib/composer-prompt-history";
+import {
+  invalidateProviderDiscoveryCache,
+  loadProviderDiscovery,
+  peekProviderDiscoveryCache,
+} from "../../lib/provider-discovery-cache";
 import { presentToolRows, shortToolCallId } from "../../lib/tool-presentation";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
@@ -129,22 +134,26 @@ export function Conversation({
   const [provider, setProvider] = useState<ProviderId>(
     () => conversation?.provider ?? "claude-code",
   );
-  const [providers, setProviders] = useState<ProviderDiscovery[]>([]);
+  const [providers, setProviders] = useState<ProviderDiscovery[]>(
+    () => peekProviderDiscoveryCache() ?? [],
+  );
   /** False until first /api/providers/discover settles — avoids “Install CLI” flash. */
-  const [providersLoaded, setProvidersLoaded] = useState(false);
+  const [providersLoaded, setProvidersLoaded] = useState(
+    () => peekProviderDiscoveryCache() !== null,
+  );
   const [forkOpen, setForkOpen] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   useEffect(() => {
-    const loadProviders = () => {
-      void fetch("/api/providers/discover", { method: "POST" })
-        .then((response) => response.json())
-        .then((body: { providers?: ProviderDiscovery[] }) => setProviders(body.providers ?? []))
-        .catch(() => setProviders([{ id: "claude-code", installed: true }]))
+    const loadProviders = (force = false) => {
+      if (force) invalidateProviderDiscoveryCache();
+      void loadProviderDiscovery()
+        .then((list) => setProviders(list))
         .finally(() => setProvidersLoaded(true));
     };
-    loadProviders();
-    window.addEventListener("aldunis:adapters-changed", loadProviders);
-    return () => window.removeEventListener("aldunis:adapters-changed", loadProviders);
+    loadProviders(false);
+    const onAdaptersChanged = () => loadProviders(true);
+    window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
+    return () => window.removeEventListener("aldunis:adapters-changed", onAdaptersChanged);
   }, []);
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");

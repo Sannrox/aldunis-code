@@ -519,10 +519,19 @@ html, body { height: 100%; }
 }
 .composer-input::placeholder { color: var(--muted-foreground); }
 .cwrap { flex: 0 0 auto; }
-.crow { flex-wrap: wrap; }
+.crow { flex-wrap: wrap; min-width: 0; }
 .send { flex: 0 0 30px; border: 0; cursor: pointer; }
 .send:disabled { opacity: .4; }
 .cc { border: 0; cursor: pointer; background: transparent; }
+/* Dual-pane columns are tight; long model·effort chips were wrapping the crow
+   to ~3 rows. Cap chip width and ellipsize — full label stays in aria/title. */
+.crow .cc {
+  max-width: min(100%, 11.5rem);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* review dock wraps live ChangesPanel — shrink under dual-pane / narrow
    panes so the conversation column keeps a usable min width. */
