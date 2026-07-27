@@ -401,6 +401,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                 type="button"
                 size="sm"
                 disabled={busy}
+                aria-label="Cancel adapter review"
                 onClick={() => {
                   setCandidate(null);
                   setPendingPackage(null);
@@ -414,6 +415,15 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                   variant="primary"
                   size="sm"
                   disabled={busy}
+                  aria-label={
+                    busy
+                      ? "Working on adapter approval"
+                      : pendingPackage.mode === "update"
+                      ? "Approve and update adapter"
+                      : pendingPackage.mode === "reinstall"
+                      ? "Approve and reinstall adapter"
+                      : "Approve and install adapter"
+                  }
                   onClick={() => void approvePending()}
                 >
                   {busy
