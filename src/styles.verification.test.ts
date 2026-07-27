@@ -48,6 +48,13 @@ test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /@import\s+url\(/i);
 });
 
+test("conversation overlays are contained by .conv-root", () => {
+  // File browser and web preview use absolute inset:0; without a positioned
+  // .conv-root they climb to .app and cover the product sidebar.
+  assert.match(css, /\.conv-root\s*\{[^}]*position:\s*relative/s);
+  assert.match(css, /\.file-browser-panel,\s*\.preview-panel\s*\{[^}]*position:\s*absolute[^}]*inset:\s*0/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
