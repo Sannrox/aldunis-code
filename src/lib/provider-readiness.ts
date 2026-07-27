@@ -258,18 +258,27 @@ export function resolveDefaultProviderModel(
  * display name yet (session restore often pins `grok-4.5` / `gpt-5.2-codex`
  * before `/api/providers/discover` settles).
  */
+const MODEL_ID_ACRONYMS = new Set(["gpt", "cli", "api", "acp", "sdk", "ml"]);
+
+function titleModelPart(part: string): string {
+  if (/^\d/.test(part)) return part;
+  const lower = part.toLowerCase();
+  if (MODEL_ID_ACRONYMS.has(lower)) return lower.toUpperCase();
+  return part.charAt(0).toUpperCase() + part.slice(1);
+}
+
 export function prettifyModelId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed || trimmed === "default") return trimmed || id;
   if (!/[-_.]/.test(trimmed)) {
     // Keep short machine aliases like o3; title-case plain words (auto → Auto).
     if (/^[a-z]+\d/i.test(trimmed) && trimmed === trimmed.toLowerCase()) return trimmed;
-    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    return titleModelPart(trimmed);
   }
   return trimmed
     .split(/[-_]/)
     .filter(Boolean)
-    .map((part) => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .map(titleModelPart)
     .join(" ");
 }
 

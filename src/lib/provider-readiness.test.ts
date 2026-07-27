@@ -232,7 +232,7 @@ test("Claude model options use T3-style full slugs and versioned labels", () => 
 
 test("prettifyModelId humanizes session-restored slugs without discovery", () => {
   assert.equal(prettifyModelId("grok-4.5"), "Grok 4.5");
-  assert.equal(prettifyModelId("gpt-5.2-codex"), "Gpt 5.2 Codex");
+  assert.equal(prettifyModelId("gpt-5.2-codex"), "GPT 5.2 Codex");
   assert.equal(prettifyModelId("auto"), "Auto");
   assert.equal(prettifyModelId("default"), "default");
   // Without discovery, labels fall back to prettified ids (not the raw slug).
@@ -252,7 +252,7 @@ test("providerModelLabel prettifies when discovery echoes the machine id", () =>
       { id: "o3", displayName: "o3", isDefault: false },
     ],
   };
-  assert.equal(providerModelLabel("codex-cli", "gpt-5.2-codex", discovery), "Gpt 5.2 Codex");
+  assert.equal(providerModelLabel("codex-cli", "gpt-5.2-codex", discovery), "GPT 5.2 Codex");
   assert.equal(providerModelLabel("codex-cli", "o3", discovery), "o3");
   // Real product labels are kept.
   assert.equal(
