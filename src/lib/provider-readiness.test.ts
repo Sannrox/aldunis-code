@@ -20,13 +20,22 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
   assert.equal(providerChipName("claude-code", undefined), "Claude");
   assert.equal(providerChipName("codex-cli", undefined), "Codex");
   assert.equal(providerChipName("shikigami", undefined), "Shikigami");
+  // Known adapters keep the product label even when discovery shortens it.
   assert.equal(
     providerDisplayName("adapter:kiro-cli@1.0.0", {
       id: "adapter:kiro-cli@1.0.0",
       installed: true,
       name: "Kiro",
     }),
-    "Kiro",
+    "Kiro CLI",
+  );
+  assert.equal(
+    providerDisplayName("adapter:dev.xai.grok-build@1.0.0", {
+      id: "adapter:dev.xai.grok-build@1.0.0",
+      installed: true,
+      name: "Grok Build CLI",
+    }),
+    "Grok Build",
   );
   // Known package ids prefer the stable list label over discovery names
   // that append "CLI" or shorten the product name.

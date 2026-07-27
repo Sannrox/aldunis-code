@@ -130,14 +130,8 @@ export function Conversation({
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
   const selectedProvider = providers.find((item) => item.id === provider);
   const providerName = providerDisplayName(provider, selectedProvider);
-  /** Short role label in the transcript (Claude / Codex / …). */
-  const providerLabel = provider === "claude-code"
-    ? "Claude"
-    : provider === "codex-cli"
-    ? "Codex"
-    : provider === "shikigami"
-    ? "Shikigami"
-    : providerName;
+  /** Short role label in the transcript (Claude / Codex / Grok Build / …). */
+  const providerLabel = providerListLabel(provider);
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
   const providerChipName = formatProviderChipName(provider, selectedProvider);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
