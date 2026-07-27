@@ -324,7 +324,9 @@ export function ProfileSettingsDialog({
                 </Button>
               )}
               <span />
-              <button type="button" onClick={onClose}>Cancel</button>
+              <Button type="button" size="sm" onClick={onClose} aria-label="Cancel profile changes">
+                Cancel
+              </Button>
               <Button
                 type="submit"
                 variant="primary"
