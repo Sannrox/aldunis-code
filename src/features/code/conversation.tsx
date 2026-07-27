@@ -12,12 +12,12 @@ import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import { DESIGN_MOCK_PRIMARY_ID, DESIGN_MOCK_THREAD } from "./design-mock";
 import {
-  cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
   providerChipName as formatProviderChipName,
   providerDisplayName,
   providerModelLabel,
+  providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
@@ -127,7 +127,12 @@ export function Conversation({
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
   const providerChipName = formatProviderChipName(provider, selectedProvider);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  /** Ignore option activation that rides the same gesture that opened the menu. */
+  const providerMenuOpenedAtRef = useRef(0);
+  const modelMenuOpenedAtRef = useRef(0);
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
    * stored provider (cross-provider moves go through the reviewed fork flow).
@@ -164,45 +169,81 @@ export function Conversation({
     && !threadId
     && !runId
     && availableProviders.length > 1;
-  const selectProvider = (next: ProviderId) => {
-    if (!canSwitchProvider || next === provider) {
-      setProviderMenuOpen(false);
-      return;
-    }
-    setProvider(next);
+  const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
       setProfileId((current) => current || defaultClaudeProfileId);
       setModel("default");
       setReasoningEffort("medium");
-    } else if (next === "codex-cli") {
+      return;
+    }
+    if (next === "codex-cli") {
       const defaultModel = codex?.models?.find((entry) => entry.isDefault)?.id
         ?? codex?.models?.[0]?.id
         ?? "default";
       setModel(defaultModel);
       const match = codex?.models?.find((entry) => entry.id === defaultModel);
       setReasoningEffort(match?.defaultReasoningEffort ?? "medium");
-    } else if (next === "shikigami") {
+      return;
+    }
+    if (next === "shikigami") {
       const defaultModel = shikigamiProvider?.models?.find((entry) => entry.isDefault)?.id
         ?? shikigamiProvider?.models?.[0]?.id
         ?? "default";
       setModel(defaultModel);
       setReasoningEffort("medium");
-    } else {
-      setModel("default");
-      setReasoningEffort("medium");
+      return;
+    }
+    setModel("default");
+    setReasoningEffort("medium");
+  };
+  const selectProvider = (next: ProviderId, source: "menu" | "keyboard" = "menu") => {
+    // Opening click must never select a provider — only an explicit menu choice.
+    if (source === "menu" && performance.now() < providerMenuOpenedAtRef.current) {
+      return;
+    }
+    if (!canSwitchProvider) {
+      setProviderMenuOpen(false);
+      return;
+    }
+    if (next !== provider) {
+      setProvider(next);
+      applyProviderDefaults(next);
     }
     setProviderMenuOpen(false);
+    setModelMenuOpen(false);
   };
+  const selectModel = (nextModel: string, source: "menu" | "keyboard" = "menu") => {
+    if (source === "menu" && performance.now() < modelMenuOpenedAtRef.current) {
+      return;
+    }
+    if (nextModel !== model) {
+      setModel(nextModel);
+      if (provider === "codex-cli" && nextModel !== "default") {
+        const efforts = providerReasoningEfforts(provider, nextModel, selectedProvider);
+        const match = selectedProvider?.models?.find((entry) => entry.id === nextModel);
+        const preferred = match?.defaultReasoningEffort;
+        if (preferred && efforts.includes(preferred)) {
+          setReasoningEffort(preferred);
+        } else if (efforts.length > 0 && !efforts.includes(reasoningEffort)) {
+          setReasoningEffort(efforts[0]!);
+        }
+      }
+    }
+    setModelMenuOpen(false);
+  };
+  const modelOptions = providerModelOptions(provider, selectedProvider);
   useEffect(() => {
     if (!providerMenuOpen) return;
+    const optionButtons = () => Array.from(
+      providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-provider-option]") ?? [],
+    );
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && providerMenuRef.current?.contains(target)) return;
+      // Prevent the outside click from also activating a chip beneath the menu.
+      event.preventDefault();
       setProviderMenuOpen(false);
     };
-    const optionButtons = () => Array.from(
-      providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[role='option']") ?? [],
-    );
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -230,21 +271,71 @@ export function Conversation({
       if (event.key === "End") {
         event.preventDefault();
         options[options.length - 1]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const id = options[index]?.dataset.providerId as ProviderId | undefined;
+        if (id) selectProvider(id, "keyboard");
       }
     };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    // Focus the selected option when the menu opens.
-    queueMicrotask(() => {
-      const options = optionButtons();
-      const selected = options.find((button) => button.getAttribute("aria-selected") === "true");
-      (selected ?? options[0])?.focus();
-    });
+    // Attach after the opening gesture finishes so the open click cannot select.
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [providerMenuOpen]);
+  }, [providerMenuOpen, canSwitchProvider, provider]);
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const optionButtons = () => Array.from(
+      modelMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-model-option]") ?? [],
+    );
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && modelMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setModelMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setModelMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const id = options[index]?.dataset.modelId;
+        if (id) selectModel(id, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [modelMenuOpen, model, provider, selectedProvider, reasoningEffort]);
   useEffect(() => {
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
@@ -457,6 +548,10 @@ export function Conversation({
     || providerState === "streaming"
     || providerState === "waiting_for_approval"
     || providerState === "cancelling";
+  const canPickModel = !runActive && !conversation?.id?.startsWith("mock-") && modelOptions.length > 0;
+  useEffect(() => {
+    if (!canPickModel) setModelMenuOpen(false);
+  }, [canPickModel]);
   /** Whether the selected provider can start a run right now. */
   const providerReady = provider === "claude-code"
     ? Boolean(profileId)
@@ -1213,7 +1308,7 @@ export function Conversation({
                   !providerReady
                     ? providerReadinessMessage
                     : canSwitchProvider
-                    ? "Click to choose a provider for this new conversation. Alt-click opens provider profiles."
+                    ? "Open the provider menu. Alt-click opens provider profiles."
                     : conversation
                       ? "Provider is fixed for this conversation (use fork to change). Click opens provider profiles."
                       : "Open provider profiles"
@@ -1222,30 +1317,43 @@ export function Conversation({
                   !providerReady
                     ? `${providerName} not ready: ${providerReadinessMessage}`
                     : canSwitchProvider
-                    ? `Provider ${providerName}. Click to choose among ${availableProviders.length} providers.`
+                    ? `Provider ${providerName}. Open menu to choose among ${availableProviders.length} providers.`
                     : "Open provider profiles"
                 }
                 onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
                   if (conversation?.id?.startsWith("mock-")) return;
                   // Alt/Option-click always opens provider profile admin.
                   if (event.altKey || !canSwitchProvider) {
                     setProviderMenuOpen(false);
+                    setModelMenuOpen(false);
                     onOpenProfiles();
                     return;
                   }
-                  setProviderMenuOpen((open) => !open);
+                  setModelMenuOpen(false);
+                  setProviderMenuOpen((open) => {
+                    if (open) return false;
+                    // Block accidental option activation from the open gesture.
+                    providerMenuOpenedAtRef.current = performance.now() + 200;
+                    return true;
+                  });
                 }}
               >
                 <span className="pv" aria-hidden="true">
                   {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
                 </span>
                 {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                  ? "claude-code · sonnet"
-                  : `${providerChipName}${model !== "default" ? ` · ${modelChipLabel}` : ""}`}
+                  ? "claude-code"
+                  : providerChipName}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               {providerMenuOpen && canSwitchProvider && (
-                <div className="composer-provider-menu" role="listbox" aria-label="Choose provider">
+                <div
+                  className="composer-provider-menu"
+                  role="listbox"
+                  aria-label="Choose provider"
+                >
                   {availableProviders.map((id) => {
                     const discovery = providers.find((item) => item.id === id);
                     const label = providerDisplayName(id, discovery);
@@ -1257,8 +1365,14 @@ export function Conversation({
                         role="option"
                         aria-selected={selected}
                         key={id}
+                        data-provider-option=""
+                        data-provider-id={id}
                         className={`composer-provider-option ${selected ? "active" : ""}`}
-                        onClick={() => selectProvider(id)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectProvider(id, "menu");
+                        }}
                       >
                         <span className="n">{label}</span>
                         <span className="p">{chip}{selected ? " · selected" : ""}</span>
@@ -1268,7 +1382,9 @@ export function Conversation({
                   <button
                     type="button"
                     className="composer-provider-option add"
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
                       setProviderMenuOpen(false);
                       onOpenProfiles();
                     }}
@@ -1279,52 +1395,82 @@ export function Conversation({
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              className="cc"
-              disabled={runActive || conversation?.id?.startsWith("mock-")}
-              title={
-                showReasoningEffort
-                  ? "Click to cycle model. Alt-click cycles Codex reasoning effort."
-                  : "Cycle model for this conversation"
-              }
-              aria-label={
-                showReasoningEffort
-                  ? `Model ${modelChipLabel}, effort ${reasoningEffort}. Click cycles model; Alt-click cycles effort.`
-                  : `Model ${modelChipLabel}. Click to cycle models.`
-              }
-              onClick={(event) => {
-                if (showReasoningEffort && event.altKey) {
-                  setReasoningEffort((current) => cycleReasoningEffort(
-                    provider,
-                    model,
-                    current,
-                    selectedProvider,
-                  ));
-                  return;
+            <div className="composer-provider" ref={modelMenuRef}>
+              <button
+                type="button"
+                className="cc"
+                disabled={!canPickModel}
+                aria-haspopup="listbox"
+                aria-expanded={modelMenuOpen}
+                title={
+                  showReasoningEffort
+                    ? "Open the model menu. Alt-click cycles Codex reasoning effort."
+                    : "Open the model menu"
                 }
-                // Cycle discovered models (Claude keeps the fixed presentation set).
-                const nextModel = cycleProviderModel(provider, model, selectedProvider);
-                setModel(nextModel);
-                if (provider === "codex-cli" && nextModel !== "default") {
-                  const efforts = providerReasoningEfforts(provider, nextModel, selectedProvider);
-                  const match = selectedProvider?.models?.find((entry) => entry.id === nextModel);
-                  const preferred = match?.defaultReasoningEffort;
-                  if (preferred && efforts.includes(preferred)) {
-                    setReasoningEffort(preferred);
-                  } else if (efforts.length > 0 && !efforts.includes(reasoningEffort)) {
-                    setReasoningEffort(efforts[0]!);
+                aria-label={
+                  showReasoningEffort
+                    ? `Model ${modelChipLabel}, effort ${reasoningEffort}. Open menu to choose a model; Alt-click cycles effort.`
+                    : `Model ${modelChipLabel}. Open menu to choose a model.`
+                }
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!canPickModel) return;
+                  if (showReasoningEffort && event.altKey) {
+                    setReasoningEffort((current) => cycleReasoningEffort(
+                      provider,
+                      model,
+                      current,
+                      selectedProvider,
+                    ));
+                    return;
                   }
-                }
-              }}
-            >
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                ? "default"
-                : showReasoningEffort
-                ? `${modelChipLabel} · ${reasoningEffort}`
-                : modelChipLabel}
-              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
+                  setProviderMenuOpen(false);
+                  setModelMenuOpen((open) => {
+                    if (open) return false;
+                    modelMenuOpenedAtRef.current = performance.now() + 200;
+                    return true;
+                  });
+                }}
+              >
+                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                  ? "default"
+                  : showReasoningEffort
+                  ? `${modelChipLabel} · ${reasoningEffort}`
+                  : modelChipLabel}
+                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              {modelMenuOpen && canPickModel && (
+                <div
+                  className="composer-provider-menu"
+                  role="listbox"
+                  aria-label="Choose model"
+                >
+                  {modelOptions.map((option) => {
+                    const selected = option.id === model;
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        key={option.id}
+                        data-model-option=""
+                        data-model-id={option.id}
+                        className={`composer-provider-option ${selected ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectModel(option.id, "menu");
+                        }}
+                      >
+                        <span className="n">{option.displayName}</span>
+                        <span className="p">{option.id}{selected ? " · selected" : ""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <span className="cdiv" />
             <button
               type="button"
