@@ -21,10 +21,10 @@ const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [
 ];
 
 const CLAUDE_MODELS: ProviderModelOption[] = [
-  { id: "default", displayName: "default" },
-  { id: "sonnet", displayName: "sonnet" },
-  { id: "opus", displayName: "opus" },
-  { id: "haiku", displayName: "haiku" },
+  { id: "default", displayName: "Default" },
+  { id: "sonnet", displayName: "Sonnet" },
+  { id: "opus", displayName: "Opus" },
+  { id: "haiku", displayName: "Haiku" },
 ];
 
 /** Package id segment of `adapter:<package>@<version>`, or null. */
@@ -200,17 +200,19 @@ export function providerModelOptions(
 
   const discovered = discovery?.models ?? [];
   if (discovered.length === 0) {
-    return [{ id: "default", displayName: "default" }];
+    return [{ id: "default", displayName: "Default" }];
   }
 
   const options = discovered.map((model) => ({
     id: model.id,
-    displayName: model.displayName || model.id,
+    displayName: model.id === "default"
+      ? (model.displayName && model.displayName !== "default" ? model.displayName : "Default")
+      : (model.displayName || model.id),
   }));
 
   // Keep an explicit default entry when discovery did not list one.
   if (!options.some((entry) => entry.id === "default")) {
-    return [{ id: "default", displayName: "default" }, ...options];
+    return [{ id: "default", displayName: "Default" }, ...options];
   }
   return options;
 }
@@ -232,7 +234,7 @@ export function providerModelLabel(
   model: string,
   discovery: ProviderDiscovery | undefined,
 ): string {
-  if (model === "default") return "default";
+  if (model === "default") return "Default";
   const match = providerModelOptions(provider, discovery).find((entry) => entry.id === model);
   return match?.displayName ?? model;
 }
