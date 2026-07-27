@@ -83,6 +83,8 @@ code{font-family:var(--font-mono)}
 .row.blocks .rt,.row.active .rt{color:var(--foreground);font-weight:500}
 .rb{display:flex;align-items:center;gap:6px}
 .rb .br{flex:1;min-width:0;font-size:11.5px;color:var(--muted-foreground);font-family:var(--font-mono);opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Provider list label next to monogram — monogram alone is cryptic for same-title threads. */
+.rb .pl{flex:0 1 auto;max-width:7.5rem;font-size:11px;color:var(--muted-foreground);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tm{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);opacity:.65;flex:0 0 auto}
 .pcount{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);flex:0 0 auto}
 .proj .b{flex:1;min-width:0}

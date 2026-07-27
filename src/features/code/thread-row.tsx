@@ -139,7 +139,9 @@ export function ThreadRow({
         </div>
         <div className="rb">
           <span className="br">{branchFromWorktree(conversation.worktree)}</span>
-          <span className="pv" title={listLabel}>{monogram}</span>
+          {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
+          <span className="pv" title={listLabel} aria-hidden="true">{monogram}</span>
+          <span className="pl">{listLabel}</span>
           <span className="tm">{elapsed}</span>
         </div>
       </button>
