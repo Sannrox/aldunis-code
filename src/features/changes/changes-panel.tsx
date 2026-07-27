@@ -457,7 +457,14 @@ export function ChangesPanel({
             })}
           </ul>
           {annotationError && <p className="changes-error" role="alert">{annotationError}</p>}
-          <Button size="sm" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</Button>
+          <Button
+            size="sm"
+            onClick={() => void previewRevision()}
+            disabled={annotationBusy || selectedAnnotationIds.length === 0}
+            aria-label={`Preview revision request, ${pane} pane`}
+          >
+            Preview revision request
+          </Button>
         </section>
         {revisionPreview && (
           <section
@@ -478,7 +485,14 @@ export function ChangesPanel({
               <Button type="button" size="sm" onClick={() => setRevisionPreview(null)} aria-label={`Cancel revision request, ${pane} pane`}>
                 Cancel
               </Button>
-              <Button size="sm" onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</Button>
+              <Button
+                size="sm"
+                onClick={() => onSendRevision(revisionPreview)}
+                disabled={!canSendRevision}
+                aria-label={`Send selected comments, ${pane} pane`}
+              >
+                Send selected comments
+              </Button>
             </footer>
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
           </section>
