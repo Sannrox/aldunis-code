@@ -171,12 +171,13 @@ export function CommandPalette({
               tabIndex={-1}
               aria-selected={index === activeIndex}
               aria-label={`${action.label}. ${action.detail}`}
+              title={`${action.label} — ${action.detail}`}
               className={index === activeIndex ? "active" : undefined}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => runAction(index)}
             >
-              <strong>{action.label}</strong>
-              <small>{action.detail}</small>
+              <strong title={action.label}>{action.label}</strong>
+              <small title={action.detail}>{action.detail}</small>
             </button>
           ))}
         </div>
