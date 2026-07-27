@@ -128,11 +128,15 @@ export function Conversation({
   const providerChipName = formatProviderChipName(provider, selectedProvider);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const modeMenuRef = useRef<HTMLDivElement | null>(null);
   /** Ignore option activation that rides the same gesture that opened the menu. */
   const providerMenuOpenedAtRef = useRef(0);
   const modelMenuOpenedAtRef = useRef(0);
+  const modeMenuOpenedAtRef = useRef(0);
+  const INTERACTION_MODES: InteractionMode[] = ["ask", "plan", "build"];
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
    * stored provider (cross-provider moves go through the reviewed fork flow).
@@ -211,6 +215,7 @@ export function Conversation({
     }
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
+    setModeMenuOpen(false);
   };
   const selectModel = (nextModel: string, source: "menu" | "keyboard" = "menu") => {
     if (source === "menu" && performance.now() < modelMenuOpenedAtRef.current) {
@@ -230,6 +235,27 @@ export function Conversation({
       }
     }
     setModelMenuOpen(false);
+  };
+  const selectMode = (nextMode: InteractionMode, source: "menu" | "keyboard" = "menu") => {
+    if (source === "menu" && performance.now() < modeMenuOpenedAtRef.current) {
+      return;
+    }
+    if (nextMode !== mode) setMode(nextMode);
+    setModeMenuOpen(false);
+  };
+  const closeComposerMenus = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+  };
+  const openModeMenu = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen((open) => {
+      if (open) return false;
+      modeMenuOpenedAtRef.current = performance.now() + 200;
+      return true;
+    });
   };
   const modelOptions = providerModelOptions(provider, selectedProvider);
   useEffect(() => {
@@ -336,6 +362,52 @@ export function Conversation({
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [modelMenuOpen, model, provider, selectedProvider, reasoningEffort]);
+  useEffect(() => {
+    if (!modeMenuOpen) return;
+    const optionButtons = () => Array.from(
+      modeMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-mode-option]") ?? [],
+    );
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && modeMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setModeMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setModeMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const id = options[index]?.dataset.modeId as InteractionMode | undefined;
+        if (id === "ask" || id === "plan" || id === "build") selectMode(id, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [modeMenuOpen, mode]);
   useEffect(() => {
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
@@ -549,9 +621,13 @@ export function Conversation({
     || providerState === "waiting_for_approval"
     || providerState === "cancelling";
   const canPickModel = !runActive && !conversation?.id?.startsWith("mock-") && modelOptions.length > 0;
+  const canPickMode = !runActive && !conversation?.id?.startsWith("mock-");
   useEffect(() => {
     if (!canPickModel) setModelMenuOpen(false);
   }, [canPickModel]);
+  useEffect(() => {
+    if (!canPickMode) setModeMenuOpen(false);
+  }, [canPickMode]);
   /** Whether the selected provider can start a run right now. */
   const providerReady = provider === "claude-code"
     ? Boolean(profileId)
@@ -1326,12 +1402,12 @@ export function Conversation({
                   if (conversation?.id?.startsWith("mock-")) return;
                   // Alt/Option-click always opens provider profile admin.
                   if (event.altKey || !canSwitchProvider) {
-                    setProviderMenuOpen(false);
-                    setModelMenuOpen(false);
+                    closeComposerMenus();
                     onOpenProfiles();
                     return;
                   }
                   setModelMenuOpen(false);
+                  setModeMenuOpen(false);
                   setProviderMenuOpen((open) => {
                     if (open) return false;
                     // Block accidental option activation from the open gesture.
@@ -1426,6 +1502,7 @@ export function Conversation({
                     return;
                   }
                   setProviderMenuOpen(false);
+                  setModeMenuOpen(false);
                   setModelMenuOpen((open) => {
                     if (open) return false;
                     modelMenuOpenedAtRef.current = performance.now() + 200;
@@ -1468,41 +1545,112 @@ export function Conversation({
                       </button>
                     );
                   })}
+                  {showReasoningEffort && (
+                    <>
+                      <div className="composer-menu-section" role="presentation">Reasoning effort</div>
+                      {reasoningEfforts.map((effort) => {
+                        const selected = effort === reasoningEffort;
+                        return (
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            key={`effort-${effort}`}
+                            className={`composer-provider-option ${selected ? "active" : ""}`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (performance.now() < modelMenuOpenedAtRef.current) return;
+                              setReasoningEffort(effort);
+                              setModelMenuOpen(false);
+                            }}
+                          >
+                            <span className="n">{effort}</span>
+                            <span className="p">{selected ? "selected" : "Codex reasoning"}</span>
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
                 </div>
               )}
             </div>
             <span className="cdiv" />
-            <button
-              type="button"
-              className={`cc ${accessScope.warning || conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "scoped" : ""}`}
-              title={modeCopy[mode].authority}
-              onClick={() => {
-                if (conversation?.id?.startsWith("mock-")) return;
-                const order: InteractionMode[] = ["ask", "plan", "build"];
-                setMode(order[(order.indexOf(mode) + 1) % order.length]!);
-              }}
-            >
-              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="11" width="18" height="10" rx="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID
-                ? "Worktree write"
-                : mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
-              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-            <button
-              type="button"
-              className="cc"
-              disabled={runActive || conversation?.id?.startsWith("mock-")}
-              onClick={() => {
-                const order: InteractionMode[] = ["ask", "plan", "build"];
-                setMode(order[(order.indexOf(mode) + 1) % order.length]!);
-              }}
-            >
-              {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "Build" : modeCopy[mode].label}
-              <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
+            <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+              <button
+                type="button"
+                className={`cc ${accessScope.warning || conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "scoped" : ""}`}
+                disabled={!canPickMode}
+                aria-haspopup="listbox"
+                aria-expanded={modeMenuOpen}
+                title={modeCopy[mode].authority}
+                aria-label={`Access ${accessScope.label}. Open menu to choose Ask, Plan, or Build.`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!canPickMode) return;
+                  openModeMenu();
+                }}
+              >
+                <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="11" width="18" height="10" rx="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+                {conversation?.id === DESIGN_MOCK_PRIMARY_ID
+                  ? "Worktree write"
+                  : mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
+                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              <button
+                type="button"
+                className="cc"
+                disabled={!canPickMode}
+                aria-haspopup="listbox"
+                aria-expanded={modeMenuOpen}
+                title="Open the mode menu"
+                aria-label={`Mode ${modeCopy[mode].label}. Open menu to choose Ask, Plan, or Build.`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!canPickMode) return;
+                  openModeMenu();
+                }}
+              >
+                {conversation?.id === DESIGN_MOCK_PRIMARY_ID ? "Build" : modeCopy[mode].label}
+                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+              {modeMenuOpen && canPickMode && (
+                <div
+                  className="composer-provider-menu"
+                  role="listbox"
+                  aria-label="Choose interaction mode"
+                >
+                  {INTERACTION_MODES.map((item) => {
+                    const selected = item === mode;
+                    const scopeLabel = item === "ask" ? "Read-only" : item === "plan" ? "Plan only" : "Worktree write";
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        key={item}
+                        data-mode-option=""
+                        data-mode-id={item}
+                        className={`composer-provider-option ${selected ? "active" : ""}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectMode(item, "menu");
+                        }}
+                      >
+                        <span className="n">{modeCopy[item].label} · {scopeLabel}</span>
+                        <span className="p">{modeCopy[item].authority}{selected ? " · selected" : ""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             {runId
               ? (
                 <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label="Cancel">
