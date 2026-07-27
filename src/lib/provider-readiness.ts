@@ -35,7 +35,22 @@ export function providerDisplayName(
   if (provider === "claude-code") return "Claude Code";
   if (provider === "codex-cli") return "Codex CLI";
   if (provider === "shikigami") return "Shikigami";
-  return discovery?.name?.trim() || "Provider adapter";
+  const discovered = discovery?.name?.trim();
+  if (discovered) return discovered;
+  // Without discovery, prefer the package id over a generic "Provider adapter"
+  // so Grok Build / Kiro threads stay labeled after the host detail drops.
+  if (typeof provider === "string" && provider.startsWith("adapter:")) {
+    const packageId = provider.slice("adapter:".length).split("@")[0];
+    if (packageId === "dev.xai.grok-build" || packageId === "grok-build-cli") {
+      return "Grok Build";
+    }
+    if (packageId === "dev.kiro.cli" || packageId === "kiro-cli") return "Kiro CLI";
+    if (packageId === "dev.opencode.cli" || packageId === "opencode-cli") {
+      return "OpenCode";
+    }
+    if (packageId) return packageId;
+  }
+  return "Provider adapter";
 }
 
 /** Compact chip id/label used on the composer provider control. */
@@ -98,7 +113,13 @@ export function providerNotReadyMessage(
       return `${options.providerName} is disabled in Provider adapters…`;
     }
     if (!discovery || discovery.installed === false) {
-      return `Install the ${options.providerName} adapter CLI…`;
+      // Avoid "Install the Provider adapter adapter CLI…" when the name is the
+      // generic fallback; package-derived names already identify the CLI.
+      const name = options.providerName.trim();
+      if (!name || /^provider adapter$/i.test(name)) {
+        return "Install the provider adapter CLI…";
+      }
+      return `Install the ${name} CLI…`;
     }
     if (discovery.authenticated === false) {
       return `${options.providerName} needs its CLI on PATH and required env…`;

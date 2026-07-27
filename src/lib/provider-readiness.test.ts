@@ -33,6 +33,15 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
     }),
     "Kiro",
   );
+  // Without discovery, still name known adapters from package id.
+  assert.equal(
+    providerDisplayName("adapter:dev.xai.grok-build@1.0.0", undefined),
+    "Grok Build",
+  );
+  assert.equal(
+    providerDisplayName("adapter:kiro-cli@1.0.0", undefined),
+    "Kiro CLI",
+  );
 });
 
 test("providerNotReadyMessage prefers host detail", () => {
@@ -91,6 +100,20 @@ test("providerNotReadyMessage covers Claude, Codex, Shikigami, and adapters", ()
       providerName: "Kiro",
     }),
     /CLI on PATH/,
+  );
+  assert.equal(
+    providerNotReadyMessage("adapter:dev.xai.grok-build@1.0.0", undefined, {
+      hasClaudeProfile: true,
+      providerName: "Grok Build",
+    }),
+    "Install the Grok Build CLI…",
+  );
+  assert.equal(
+    providerNotReadyMessage("adapter:unknown@1.0.0", undefined, {
+      hasClaudeProfile: true,
+      providerName: "Provider adapter",
+    }),
+    "Install the provider adapter CLI…",
   );
 });
 
