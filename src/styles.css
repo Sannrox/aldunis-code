@@ -1000,10 +1000,25 @@ select.ui-input {
 }
 
 .split-divider {
-  width: 6px; flex: 0 0 6px; cursor: col-resize; position: relative; background: transparent;
+  width: 6px;
+  flex: 0 0 6px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+/* Visual gutter stays 6px; expand the grab target to ~16px without reflow. */
+.split-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 -5px;
 }
 .split-divider::after {
-  content: ""; position: absolute; inset: 0 2px; background: var(--border);
+  content: "";
+  position: absolute;
+  inset: 0 2px;
+  background: var(--border);
+  pointer-events: none;
 }
 .split-divider:hover::after, .split-divider:focus-visible::after { background: var(--muted-foreground); }
 
