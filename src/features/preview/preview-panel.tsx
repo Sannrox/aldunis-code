@@ -188,8 +188,21 @@ export function PreviewPanel({
           <span><Icon name="shield" /></span>
           <div><strong>Start development server once?</strong><code>{preview.command}</code><small>{preview.worktree}</small></div>
           <footer>
-            <button type="button" onClick={() => void decide("deny")}>Deny</button>
-            <Button variant="primary" size="sm" onClick={() => void decide("allow_once")}>Allow once</Button>
+            <button
+              type="button"
+              aria-label={`Deny starting preview: ${preview.command}`}
+              onClick={() => void decide("deny")}
+            >
+              Deny
+            </button>
+            <Button
+              variant="primary"
+              size="sm"
+              aria-label={`Allow once starting preview: ${preview.command}`}
+              onClick={() => void decide("allow_once")}
+            >
+              Allow once
+            </Button>
           </footer>
         </section>
       )}

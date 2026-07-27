@@ -163,7 +163,19 @@ export function WorktreeDialog({
               : "Only the clean checkout is removed. The branch, commits, remotes, and conversation history remain."}</p>
             <footer>
               <Button onClick={() => setPlan(null)} disabled={busy}>Back</Button>
-              <Button variant={plan.action === "remove" ? "danger" : "primary"} size="sm" onClick={() => void confirm()} disabled={busy}>
+              <Button
+                variant={plan.action === "remove" ? "danger" : "primary"}
+                size="sm"
+                onClick={() => void confirm()}
+                disabled={busy}
+                aria-label={
+                  busy
+                    ? "Revalidating worktree plan"
+                    : plan.action === "remove"
+                      ? `Approve once: remove worktree ${plan.branch}`
+                      : `Approve once: create worktree ${plan.branch}`
+                }
+              >
                 {busy ? "Revalidating…" : "Approve once"}
               </Button>
             </footer>
