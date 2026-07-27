@@ -180,6 +180,12 @@ test("annotation resolve and ui-button--xs meet min hit size", () => {
   assert.match(css, /\.annotation-resolve\s*\{[^}]*min-height:\s*28px/s);
 });
 
+test("split-divider expands hit target without growing layout column", () => {
+  // Layout column stays 6px; ::before overhang expands pointer grab area.
+  assert.match(css, /\.split-divider\s*\{[^}]*width:\s*6px[^}]*flex:\s*0\s+0\s+6px/s);
+  assert.match(css, /\.split-divider::before\s*\{[^}]*inset:\s*0\s+-5px/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
