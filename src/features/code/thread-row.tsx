@@ -14,13 +14,18 @@ export function ThreadRow({
   active,
   onOpen,
   onSettle,
+  onOpenBeside,
   showSettle = true,
+  showBeside = false,
 }: {
   conversation: ConversationSummary;
   active: boolean;
   onOpen: () => void;
   onSettle?: () => void;
+  onOpenBeside?: () => void;
   showSettle?: boolean;
+  /** Show "Beside" to open this thread in a split secondary pane. */
+  showBeside?: boolean;
 }) {
   const status = conversation.status ?? "idle";
   const blocks = isBlockingStatus(status);
@@ -57,19 +62,34 @@ export function ThreadRow({
           <span className="tm">{elapsed}</span>
         </div>
       </button>
-      {showSettle && onSettle && (
-        <button
-          type="button"
-          className="settle"
-          aria-label={`Settle "${conversation.title}"`}
-          onClick={(event) => {
-            event.stopPropagation();
-            onSettle();
-          }}
-        >
-          Settle
-        </button>
-      )}
+      <div className="row-actions">
+        {showBeside && onOpenBeside && (
+          <button
+            type="button"
+            className="beside"
+            aria-label={`Open "${conversation.title}" beside`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenBeside();
+            }}
+          >
+            Beside
+          </button>
+        )}
+        {showSettle && onSettle && (
+          <button
+            type="button"
+            className="settle"
+            aria-label={`Settle "${conversation.title}"`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSettle();
+            }}
+          >
+            Settle
+          </button>
+        )}
+      </div>
     </div>
   );
 }

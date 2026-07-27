@@ -1072,6 +1072,17 @@ export function Conversation({
               <path d="M3 15h18" />
             </svg>
           </button>
+          {pane === "primary" && !onClosePane && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onOpenBeside}
+              title="Open a second conversation pane"
+              aria-label="Open beside"
+            >
+              Beside
+            </button>
+          )}
           {onClosePane && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>
           )}
