@@ -78,6 +78,7 @@ import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
+import { resolveProductAvailability } from "./products.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const MAX_BODY_BYTES = 128 * 1024;
@@ -856,6 +857,10 @@ async function handleApi(
     }
     if (route === "/api/preferences/save") {
       sendJson(response, 200, await preferences.save(await readJson(request)));
+      return true;
+    }
+    if (route === "/api/products/availability") {
+      sendJson(response, 200, resolveProductAvailability());
       return true;
     }
     if (route === "/api/automations/list") {

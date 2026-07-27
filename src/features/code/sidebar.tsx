@@ -3,6 +3,11 @@ import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } fr
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree } from "./conversation-list";
+import {
+  DEFAULT_PRODUCT_AVAILABILITY,
+  isProductAvailable,
+  type ProductAvailability,
+} from "../../lib/product-availability";
 
 export type ProjectFilter = "all" | string;
 
@@ -19,6 +24,7 @@ const PRODUCTS: Array<{ id: Product; label: string; detail: string; mark: string
 export function CodeSidebar({
   product,
   onProductChange,
+  productAvailability = DEFAULT_PRODUCT_AVAILABILITY,
   repository,
   repositoryRestoring = false,
   projects,
@@ -48,6 +54,8 @@ export function CodeSidebar({
 }: {
   product: Product;
   onProductChange: (product: Product) => void;
+  /** Which planes may be selected; unconfigured planes stay visible but disabled. */
+  productAvailability?: ProductAvailability;
   repository: RepositoryMetadata | null;
   repositoryRestoring?: boolean;
   /** Registered projects (T3-style permanent registry). */
@@ -158,13 +166,13 @@ export function CodeSidebar({
         "1": "code", "2": "sekai", "3": "chisei", "4": "tenkai",
       };
       const next = map[event.code] ?? map[event.key];
-      if (!next) return;
+      if (!next || !isProductAvailable(next, productAvailability)) return;
       event.preventDefault();
       onProductChange(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onProductChange]);
+  }, [onProductChange, productAvailability]);
 
   const current = PRODUCTS.find((item) => item.id === product) ?? PRODUCTS[0];
   // Match workbench-mock.html: Code → "Aldunis Code"; other products → "Aldunis {Name}".
@@ -189,27 +197,38 @@ export function CodeSidebar({
         </button>
         {productOpen && (
           <div className="pswitch" role="menu" aria-label="Products">
-            {PRODUCTS.map((item, index) => (
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={item.id === product}
-                aria-label={`${item.label}: ${item.detail}`}
-                key={item.id}
-                className={`pi2 ${item.id === product ? "cur" : ""}`}
-                onClick={() => {
-                  onProductChange(item.id);
-                  setProductOpen(false);
-                }}
-              >
-                <span className="m2" aria-hidden="true">{item.mark}</span>
-                <span className="b2">
-                  <span className="n2">{item.label}</span>
-                  <span className="p2">{item.detail}</span>
-                </span>
-                <span className="k2" aria-hidden="true">⌘{index + 1}</span>
-              </button>
-            ))}
+            {PRODUCTS.map((item, index) => {
+              const available = isProductAvailable(item.id, productAvailability);
+              const detail = available ? item.detail : "Not configured";
+              return (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={item.id === product}
+                  aria-disabled={!available}
+                  aria-label={
+                    available
+                      ? `${item.label}: ${item.detail}`
+                      : `${item.label}: not configured`
+                  }
+                  key={item.id}
+                  disabled={!available}
+                  className={`pi2 ${item.id === product ? "cur" : ""} ${available ? "" : "dis"}`.trim()}
+                  onClick={() => {
+                    if (!available) return;
+                    onProductChange(item.id);
+                    setProductOpen(false);
+                  }}
+                >
+                  <span className="m2" aria-hidden="true">{item.mark}</span>
+                  <span className="b2">
+                    <span className="n2">{item.label}</span>
+                    <span className="p2">{detail}</span>
+                  </span>
+                  <span className="k2" aria-hidden="true">⌘{index + 1}</span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
