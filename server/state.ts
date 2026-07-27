@@ -1212,6 +1212,8 @@ export class LocalStateStore {
           toolCallId: event.kind === "failed" ? null : event.toolCallId,
           name: event.kind === "tool_started" ? event.name : null,
           failed: event.kind === "tool_finished" ? event.failed : event.kind === "failed" ? true : null,
+          // Never persist raw failure text — it can contain credentials or
+          // subprocess dumps. UI restores a generic "Provider failed." label.
           message: event.kind === "failed" ? "Provider failed." : null,
           createdAt: now,
         },
