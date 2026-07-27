@@ -1686,11 +1686,25 @@ select.ui-input {
   border-top: 1px solid var(--border);
 }
 .md-body a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 0;
   color: var(--foreground);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .md-body a:hover { color: var(--primary); }
+.mode-chip-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  white-space: nowrap;
+}
+.mode-chip-scope {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
 .md-body .md-code-inline {
   padding: 0.1em 0.35em;
   border-radius: 4px;

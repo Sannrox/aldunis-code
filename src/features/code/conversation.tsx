@@ -105,6 +105,8 @@ export function Conversation({
   const lastAttentionState = useRef<string | null>(null);
   const [provider, setProvider] = useState<ProviderId>("claude-code");
   const [providers, setProviders] = useState<ProviderDiscovery[]>([]);
+  /** False until first /api/providers/discover settles — avoids “Install CLI” flash. */
+  const [providersLoaded, setProvidersLoaded] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   useEffect(() => {
@@ -112,7 +114,8 @@ export function Conversation({
       void fetch("/api/providers/discover", { method: "POST" })
         .then((response) => response.json())
         .then((body: { providers?: ProviderDiscovery[] }) => setProviders(body.providers ?? []))
-        .catch(() => setProviders([{ id: "claude-code", installed: true }]));
+        .catch(() => setProviders([{ id: "claude-code", installed: true }]))
+        .finally(() => setProvidersLoaded(true));
     };
     loadProviders();
     window.addEventListener("aldunis:adapters-changed", loadProviders);
@@ -647,7 +650,9 @@ export function Conversation({
     if (!canPickMode) setModeMenuOpen(false);
   }, [canPickMode]);
   /** Whether the selected provider can start a run right now. */
-  const providerReady = provider === "claude-code"
+  const providerReady = !providersLoaded
+    ? false
+    : provider === "claude-code"
     ? Boolean(profileId)
     : provider === "codex-cli"
       ? Boolean(codex?.installed && codex.authenticated)
@@ -659,7 +664,9 @@ export function Conversation({
         && selectedProvider.enabled !== false
         && selectedProvider.authenticated !== false,
       );
-  const providerReadinessMessage = providerReady
+  const providerReadinessMessage = !providersLoaded
+    ? "Checking provider…"
+    : providerReady
     ? ""
     : providerNotReadyMessage(provider, selectedProvider, {
       hasClaudeProfile: Boolean(profileId),
@@ -1560,7 +1567,7 @@ export function Conversation({
                 }}
               >
                 <span className="pv" aria-hidden="true">
-                  {provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}
+                  {providerAvatarInitials(provider, providerLabel)}
                 </span>
                 {providerChipName}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
@@ -1741,6 +1748,8 @@ export function Conversation({
             </div>
             <span className="cdiv" />
             <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+              {/* Single control: mode + tool scope. Dual Access/Mode chips both
+                  opened the same menu and "Access Read-only" read like privacy. */}
               <button
                 type="button"
                 className={`cc ${accessScope.warning ? "scoped" : ""}`}
@@ -1748,8 +1757,8 @@ export function Conversation({
                 aria-haspopup="listbox"
                 aria-expanded={modeMenuOpen}
                 aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
-                title={accessScope.detail}
-                aria-label={`Access ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
+                title={`${modeCopy[mode].label} · ${accessScope.detail}`}
+                aria-label={`Mode ${modeCopy[mode].label}, tool scope ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -1761,26 +1770,10 @@ export function Conversation({
                   <rect x="3" y="11" width="18" height="10" rx="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
-                {accessScope.label}
-                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-              <button
-                type="button"
-                className="cc"
-                disabled={!canPickMode}
-                aria-haspopup="listbox"
-                aria-expanded={modeMenuOpen}
-                aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
-                title="Open the mode menu"
-                aria-label={`Mode ${modeCopy[mode].label}. Open menu to choose Ask, Plan, or Build.`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (!canPickMode) return;
-                  openModeMenu();
-                }}
-              >
-                {modeCopy[mode].label}
+                <span className="mode-chip-label">
+                  {modeCopy[mode].label}
+                  <span className="mode-chip-scope"> · {accessScope.label}</span>
+                </span>
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               {modeMenuOpen && canPickMode && (
