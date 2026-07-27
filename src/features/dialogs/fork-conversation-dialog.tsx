@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
 import { Button } from "../../components/ui";
 import { MarkdownBody } from "../../components/markdown-body";
-import { providerNotReadyMessage } from "../../lib/provider-readiness";
+import { providerModelOptions, providerNotReadyMessage } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
 function isReady(provider: ProviderDiscovery | undefined): boolean {
@@ -195,8 +195,8 @@ export function ForkConversationDialog({
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
               >
-                {["default", "sonnet", "opus", "haiku"].map((item) => (
-                  <option value={item} key={item}>{item}</option>
+                {providerModelOptions("claude-code", undefined).map((item) => (
+                  <option value={item.id} key={item.id}>{item.displayName}</option>
                 ))}
               </select>
             </label>
