@@ -1404,10 +1404,10 @@ export function Conversation({
                     <em>{approval.state.replace("_", " ")}</em>
                   </header>
                   <dl className="approval-context">
-                    <div><dt>Host</dt><dd>{location.host}</dd></div>
-                    <div><dt>Repository</dt><dd>{approval.repository}</dd></div>
-                    <div><dt>Worktree</dt><dd>{approval.worktree}</dd></div>
-                    <div><dt>Provider</dt><dd>{providerListLabel(approval.provider)}</dd></div>
+                    <div><dt>Host</dt><dd title={location.host}>{location.host}</dd></div>
+                    <div><dt>Repository</dt><dd title={approval.repository}>{approval.repository}</dd></div>
+                    <div><dt>Worktree</dt><dd title={approval.worktree}>{approval.worktree}</dd></div>
+                    <div><dt>Provider</dt><dd title={providerListLabel(approval.provider)}>{providerListLabel(approval.provider)}</dd></div>
                   </dl>
                   <p>{approval.scope.target}</p>
                   {approval.scope.details.length > 0 && (
