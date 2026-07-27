@@ -118,15 +118,49 @@ export function CodeSidebar({
 
   useEffect(() => {
     if (!productOpen) return;
+    const root = brandRef.current;
+    if (!root) return;
+    const items = () => [...root.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]')];
+    const frame = window.requestAnimationFrame(() => {
+      const list = items();
+      const selected = list.find((item) => item.getAttribute("aria-checked") === "true") ?? list[0];
+      selected?.focus();
+    });
     const onDown = (event: MouseEvent) => {
-      if (!brandRef.current?.contains(event.target as Node)) setProductOpen(false);
+      if (!root.contains(event.target as Node)) setProductOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setProductOpen(false);
+      if (event.key === "Escape") {
+        setProductOpen(false);
+        root.querySelector<HTMLElement>(".brandbtn")?.focus();
+        return;
+      }
+      const list = items();
+      if (!list.length) return;
+      // Skip disabled products when moving focus.
+      const enabled = list.filter((item) => !item.hasAttribute("disabled") && item.getAttribute("aria-disabled") !== "true");
+      const pool = enabled.length ? enabled : list;
+      const currentIndex = pool.indexOf(document.activeElement as HTMLElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? 0 : Math.min(pool.length - 1, currentIndex + 1);
+        pool[next]?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? pool.length - 1 : Math.max(0, currentIndex - 1);
+        pool[next]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        pool[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        pool[pool.length - 1]?.focus();
+      }
     };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };

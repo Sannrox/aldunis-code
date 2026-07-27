@@ -45,15 +45,44 @@ export function ThreadRow({
 
   useEffect(() => {
     if (!menuOpen) return;
+    const root = menuRef.current;
+    if (!root) return;
+    const items = () => [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const frame = window.requestAnimationFrame(() => {
+      items()[0]?.focus();
+    });
     const onPointer = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+      if (!root.contains(event.target as Node)) setMenuOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+        root.querySelector<HTMLElement>(".row-more")?.focus();
+        return;
+      }
+      const list = items();
+      if (!list.length) return;
+      const currentIndex = list.indexOf(document.activeElement as HTMLElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? 0 : Math.min(list.length - 1, currentIndex + 1);
+        list[next]?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = currentIndex < 0 ? list.length - 1 : Math.max(0, currentIndex - 1);
+        list[next]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        list[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        list[list.length - 1]?.focus();
+      }
     };
     window.addEventListener("mousedown", onPointer);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("mousedown", onPointer);
       window.removeEventListener("keydown", onKey);
     };
