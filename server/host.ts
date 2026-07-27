@@ -16,6 +16,7 @@ import {
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { ShikigamiAdapter } from "./shikigami-provider.ts";
+import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import {
   adapterReference,
   ProviderAdapterError,
@@ -338,19 +339,28 @@ async function handleApi(
           }
           const missingRequiredEnv = adapter.manifest.environment
             .filter((entry) => entry.required)
-            .some((entry) => {
+            .filter((entry) => {
               const value = process.env[entry.name];
               return value === undefined || value === "";
-            });
+            })
+            .map((entry) => entry.name);
+          const readiness = declarativeAdapterReadiness({
+            name: adapter.manifest.presentation.name,
+            enabled: adapter.enabled,
+            executableFound,
+            executableNames: adapter.manifest.executable.names,
+            missingRequiredEnv,
+          });
           return {
             id: adapterReference(adapter.manifest),
             installed: true,
             // Reuse authenticated as "run-ready" so the composer can filter adapters
             // that cannot start (missing CLI or required env), like unauthenticated Codex.
-            authenticated: executableFound && !missingRequiredEnv,
+            authenticated: readiness.authenticated,
             version: adapter.manifest.version,
             name: adapter.manifest.presentation.name,
             enabled: adapter.enabled,
+            detail: readiness.detail,
           };
         }),
       );
