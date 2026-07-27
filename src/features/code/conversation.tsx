@@ -1048,10 +1048,12 @@ export function Conversation({
                 onOpenRepository();
                 return;
               }
-              // Toggle browse; exclusive with preview (both are full-column overlays).
+              // Toggle browse; exclusive with preview overlay and the review dock
+              // (stacked dual-pane left browse + review fighting for ~100–200px).
               if (filesOpen) onHideFiles();
               else {
                 setPreviewOpen(false);
+                onHideChanges();
                 onBrowseFiles();
               }
             }}
@@ -1073,8 +1075,14 @@ export function Conversation({
             type="button"
             className={`btn btn-ghost btn-sm ${changesOpen ? "on" : ""}`}
             onClick={() => {
+              // Toggle review; exclusive with browse/preview overlays so stacked
+              // dual-pane does not keep both a full-column overlay and the dock.
               if (changesOpen) onHideChanges();
-              else onShowChanges();
+              else {
+                onHideFiles();
+                setPreviewOpen(false);
+                onShowChanges();
+              }
             }}
             disabled={!repository}
             title="Review panel"
@@ -1091,10 +1099,11 @@ export function Conversation({
             type="button"
             className={`btn btn-ghost btn-sm ${previewOpen ? "on" : ""}`}
             onClick={() => {
-              // Toggle preview; exclusive with browse overlay.
+              // Toggle preview; exclusive with browse overlay and review dock.
               if (previewOpen) setPreviewOpen(false);
               else {
                 onHideFiles();
+                onHideChanges();
                 setPreviewOpen(true);
               }
             }}
