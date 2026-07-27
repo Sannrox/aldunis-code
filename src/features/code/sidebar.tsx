@@ -38,7 +38,9 @@ export function CodeSidebar({
   onOpenPalette,
   conversations,
   primaryConversationId,
+  secondaryConversationId,
   onOpenConversation,
+  onOpenBeside,
   onNewConversation,
   onSelectWorktree,
   onManageWorktrees,
@@ -328,10 +330,15 @@ export function CodeSidebar({
               <ThreadRow
                 key={conversation.id}
                 conversation={conversation}
-                active={primaryConversationId === conversation.id}
+                active={
+                  primaryConversationId === conversation.id
+                  || secondaryConversationId === conversation.id
+                }
                 onOpen={() => onOpenConversation(conversation.id)}
                 onSettle={showingArchived ? undefined : () => onSettle(conversation)}
                 showSettle={!showingArchived}
+                showBeside={!showingArchived}
+                onOpenBeside={() => onOpenBeside(conversation.id)}
               />
             ))}
             {active.length === 0 && projects.length > 0 && (
