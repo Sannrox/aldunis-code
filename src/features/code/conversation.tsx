@@ -1222,7 +1222,13 @@ export function Conversation({
         {conversationEmpty
           ? (
             <section className="conversation-empty sparse" aria-labelledby={`${pane}-empty-title`}>
-              <span>New conversation</span>
+              <span>
+                {conversation && !historyRestored
+                  ? "Restoring"
+                  : conversation
+                    ? "Conversation"
+                    : "New conversation"}
+              </span>
               <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
               <p>{emptyState.detail}</p>
               {emptyState.action}
