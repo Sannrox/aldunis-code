@@ -172,7 +172,14 @@ export function PreviewPanel({
       {!preview && (
         <form className="preview-setup" onSubmit={(event) => { event.preventDefault(); void request(); }}>
           <label htmlFor="preview-origin">Configured preview origin</label>
-          <input id="preview-origin" value={origin} onChange={(event) => setOrigin(event.target.value)} />
+          <input
+            id="preview-origin"
+            name="preview-origin"
+            value={origin}
+            onChange={(event) => setOrigin(event.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
           <button type="submit">Review start</button>
         </form>
       )}

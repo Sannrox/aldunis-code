@@ -379,11 +379,21 @@ export function CodeSidebar({
                           : <span className="w">{branchFromWorktree(conversation.worktree)}</span>}
                         <div className="sacts">
                           {holds && (
-                            <button type="button" className="sbtn rel" onClick={() => onReleaseWorktree(conversation)}>
+                            <button
+                              type="button"
+                              className="sbtn rel"
+                              aria-label={`Release worktree for "${conversation.title}"`}
+                              onClick={() => onReleaseWorktree(conversation)}
+                            >
                               Release
                             </button>
                           )}
-                          <button type="button" className="sbtn" onClick={() => onUnsettle(conversation)}>
+                          <button
+                            type="button"
+                            className="sbtn"
+                            aria-label={`Unsettle "${conversation.title}"`}
+                            onClick={() => onUnsettle(conversation)}
+                          >
                             Unsettle
                           </button>
                         </div>
