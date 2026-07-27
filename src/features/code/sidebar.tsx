@@ -511,7 +511,13 @@ export function CodeSidebar({
       )}
 
       <div className="sb-ft">
-        <button type="button" className="btn btn-ghost btn-xs" style={{ marginLeft: "auto" }} onClick={onSettings}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs"
+          style={{ marginLeft: "auto" }}
+          onClick={onSettings}
+          aria-label="Settings"
+        >
           Settings
         </button>
       </div>
