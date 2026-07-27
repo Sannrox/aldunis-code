@@ -1331,7 +1331,13 @@ export function Conversation({
                       className="btn btn-outline btn-sm"
                       aria-label={`Settle and release worktree, ${pane} pane`}
                       onClick={() => {
-                        if (!window.confirm("Settle and release the managed worktree? The conversation is kept.")) return;
+                        const settleLabel = [
+                          conversation?.title?.trim() || "this conversation",
+                          providerListLabel(provider),
+                        ].join(" · ");
+                        if (!window.confirm(
+                          `Settle and release the managed worktree for "${settleLabel}"? The conversation is kept.`,
+                        )) return;
                         void (async () => {
                           const settle = await fetch("/api/state/conversations/settle", {
                             method: "POST",
