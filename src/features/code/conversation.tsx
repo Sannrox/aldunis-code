@@ -1086,6 +1086,18 @@ export function Conversation({
               Beside
             </button>
           )}
+          {threadId && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setForkOpen(true)}
+              disabled={runActive}
+              title="Fork this conversation to another provider"
+              aria-label="Fork conversation to another provider"
+            >
+              Fork
+            </button>
+          )}
           {onClosePane && (
             <button type="button" className="btn btn-ghost btn-sm" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>
           )}
@@ -1404,7 +1416,7 @@ export function Conversation({
                     : canSwitchProvider
                     ? "Open the provider menu. Alt-click opens provider profiles."
                     : conversation
-                      ? "Provider is fixed for this conversation (use fork to change). Click opens provider profiles."
+                      ? "Provider is fixed for this conversation. Use Fork in the top bar to change providers. Click opens provider profiles."
                       : "Open provider profiles"
                 }
                 aria-label={
@@ -1412,7 +1424,9 @@ export function Conversation({
                     ? `${providerName} not ready: ${providerReadinessMessage}`
                     : canSwitchProvider
                     ? `Provider ${providerName}. Open menu to choose among ${availableProviders.length} providers.`
-                    : "Open provider profiles"
+                    : conversation
+                      ? "Open provider profiles. Provider is fixed — use Fork to change providers."
+                      : "Open provider profiles"
                 }
                 onClick={(event) => {
                   event.preventDefault();
