@@ -168,6 +168,7 @@ export function FileBrowserPanel({
                 onClick={() => setSelected(file.path)}
                 aria-current={selected === file.path ? "true" : undefined}
                 aria-label={meta ? `${file.path}, ${meta}` : file.path}
+                title={file.path}
               >
                 <strong>{file.path}</strong>
                 <small>{meta}</small>
@@ -182,7 +183,7 @@ export function FileBrowserPanel({
           {preview && (
             <>
               <header>
-                <div><strong>{preview.path}</strong><small>{preview.encoding} · {preview.size?.toLocaleString() ?? "unknown"} B</small></div>
+                <div title={preview.path}><strong>{preview.path}</strong><small>{preview.encoding} · {preview.size?.toLocaleString() ?? "unknown"} B</small></div>
                 <button
                   type="button"
                   onClick={() => onAttach(preview.path)}
