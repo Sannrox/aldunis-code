@@ -1,6 +1,6 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { RepositoryFileResult, RepositoryFilePreview, RepositoryMetadata } from "../../types";
-import { Button, CloseButton } from "../../components/ui";
+import { CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
 
 export function FileBrowserPanel({
@@ -90,15 +90,24 @@ export function FileBrowserPanel({
   }, [repository.root, repository.selectedWorktree, selected]);
 
   useEffect(() => {
+    // Capture phase so ⌘K focuses this search instead of opening the command palette
+    // while the file browser is open (both claim mod+k).
     const shortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k" && !event.shiftKey) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         searchRef.current?.focus();
+        return;
       }
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        // Overlay dialogs (command palette, etc.) must dismiss first.
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        event.preventDefault();
+        onClose();
+      }
     };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
   }, [onClose]);
 
   const selectedIndex = files.findIndex(({ path }) => path === selected);
@@ -116,12 +125,15 @@ export function FileBrowserPanel({
         <span className="sr-only">Search file names and text content</span>
         <input
           ref={searchRef}
+          id="file-browser-search"
+          name="file-browser-search"
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search file names and supported text content"
+          aria-keyshortcuts="Meta+K Control+K"
         />
-        <kbd>⌘ K</kbd>
+        <kbd aria-hidden="true">⌘ K</kbd>
       </label>
       <div className="file-browser-body">
         <nav
