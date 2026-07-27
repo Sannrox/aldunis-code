@@ -50,7 +50,9 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 1. Create a branch. Agent-created branches use the `codex/` prefix.
 2. Keep scope to one Issue outcome. Link the Issue (`Closes #N`).
 3. Record verification actually run (and what you skipped).
-4. Prefer **rebase merge**; delete the branch after merge.
+4. Publish PR tips with `scripts/gh-verified-push.sh` for GitHub-**Verified**
+   commits. Prefer **squash merge** (`gh pr merge --squash --delete-branch`);
+   avoid rebase-merge when Verified history matters.
 5. Do not commit credentials, provider transcripts, customer code, unredacted
    logs, local databases, or runtime state directories.
 
