@@ -1488,6 +1488,7 @@ export function Conversation({
                         type="button"
                         role="option"
                         aria-selected={selected}
+                        aria-label={`${label}: ${chip} · ${status}`}
                         key={id}
                         data-provider-option=""
                         data-provider-id={id}
@@ -1505,6 +1506,9 @@ export function Conversation({
                   })}
                   <button
                     type="button"
+                    role="option"
+                    aria-selected={false}
+                    aria-label="Provider profiles: Manage binaries and env for each provider"
                     className="composer-provider-option add"
                     onClick={(event) => {
                       event.preventDefault();
@@ -1576,6 +1580,7 @@ export function Conversation({
                         type="button"
                         role="option"
                         aria-selected={selected}
+                        aria-label={`${option.displayName}: ${option.id}${selected ? ", selected" : ""}`}
                         key={option.id}
                         data-model-option=""
                         data-model-id={option.id}
@@ -1601,6 +1606,7 @@ export function Conversation({
                             type="button"
                             role="option"
                             aria-selected={selected}
+                            aria-label={`Reasoning effort ${effort}${selected ? ", selected" : ""}`}
                             key={`effort-${effort}`}
                             className={`composer-provider-option ${selected ? "active" : ""}`}
                             onClick={(event) => {
@@ -1680,6 +1686,7 @@ export function Conversation({
                         type="button"
                         role="option"
                         aria-selected={selected}
+                        aria-label={`${modeCopy[item].label} · ${scopeLabel}: ${modeCopy[item].authority}${selected ? ", selected" : ""}`}
                         key={item}
                         data-mode-option=""
                         data-mode-id={item}
