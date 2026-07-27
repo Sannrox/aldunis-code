@@ -226,14 +226,19 @@ export function AutomationsDialog({
           </select>
         </Field>
         {scheduleKind === "interval" ? (
-          <Field label="Every N minutes (≥ 1)" htmlFor="automation-interval-minutes">
+          <Field label="Every N minutes (1–10080)" htmlFor="automation-interval-minutes">
             <Input
               id="automation-interval-minutes"
               name="automation-interval-minutes"
               type="number"
               min={1}
+              max={10080}
+              step={1}
               value={intervalMinutes}
-              onChange={(event) => setIntervalMinutes(Number(event.target.value) || 1)}
+              onChange={(event) => {
+                const next = Number(event.target.value) || 1;
+                setIntervalMinutes(Math.min(10080, Math.max(1, Math.floor(next))));
+              }}
             />
           </Field>
         ) : (
