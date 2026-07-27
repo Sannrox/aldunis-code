@@ -42,20 +42,14 @@ const components: Components = {
   // Avoid nesting <p> inside our turn layout; block content owns spacing.
   p: ({ children }) => <p className="md-p">{children}</p>,
   pre: ({ children }) => <pre className="md-pre">{children}</pre>,
-  code: ({ className, children, ...props }) => {
+  // Drop react-markdown's AST `node` (and other non-DOM props) so they never
+  // leak into the DOM as node="[object Object]".
+  code: ({ className, children }) => {
     const isBlock = typeof className === "string" && className.includes("language-");
     if (isBlock) {
-      return (
-        <code className={className} {...props}>
-          {children}
-        </code>
-      );
+      return <code className={className}>{children}</code>;
     }
-    return (
-      <code className="md-code-inline" {...props}>
-        {children}
-      </code>
-    );
+    return <code className="md-code-inline">{children}</code>;
   },
   table: ({ children }) => (
     <div className="md-table-wrap">
