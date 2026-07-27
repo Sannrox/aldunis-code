@@ -93,9 +93,13 @@ code{font-family:var(--font-mono)}
 .spin{width:9px;height:9px;flex:0 0 9px;border-radius:50%;border:1.5px solid var(--muted-foreground);border-top-color:transparent;opacity:.6;animation:sp 1.1s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 .row-actions{position:absolute;right:7px;top:7px;display:flex;gap:4px;align-items:flex-start}
-.settle,.beside,.row-more{height:22px;padding:0 8px;border-radius:6px;background:var(--card);border:1px solid var(--border);
-  font-size:11.5px;font-weight:500;color:var(--muted-foreground);opacity:0;transition:opacity .1s}
-.row-more{min-width:22px;padding:0 6px;line-height:1}
+/* Was height:22px — below 24px AA target size for pointer. */
+.settle,.beside,.row-more{
+  min-height:28px;height:28px;padding:0 9px;border-radius:6px;background:var(--card);border:1px solid var(--border);
+  font-size:11.5px;font-weight:500;color:var(--muted-foreground);opacity:0;transition:opacity .1s;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.row-more{min-width:28px;padding:0 6px;line-height:1}
 .row:hover .settle,.row:hover .beside,.row:hover .row-more,
 .settle:focus-visible,.beside:focus-visible,.row-more:focus-visible,
 .row:focus-within .settle,.row:focus-within .beside,.row:focus-within .row-more,
@@ -131,7 +135,11 @@ code{font-family:var(--font-mono)}
 .sacts{position:absolute;right:7px;display:flex;gap:4px;opacity:0}
 .srow:hover .sacts,.srow:focus-within .sacts,.sacts:focus-within{opacity:1}
 .srow:hover .w,.srow:hover .wt,.srow:focus-within .w,.srow:focus-within .wt{visibility:hidden}
-.sbtn{height:20px;padding:0 7px;border-radius:6px;background:var(--card);border:1px solid var(--border);font-size:11px;color:var(--muted-foreground)}
+/* Settled-shelf Unsettle/Release were 20px tall. */
+.sbtn{
+  min-height:28px;height:28px;padding:0 9px;border-radius:6px;background:var(--card);border:1px solid var(--border);
+  font-size:11.5px;color:var(--muted-foreground);display:inline-flex;align-items:center;cursor:pointer;
+}
 .sbtn:hover{color:var(--foreground);background:var(--accent)}
 .sbtn.rel:hover{color:var(--amber);border-color:var(--amber)}
 .meter{display:flex;align-items:center;gap:7px;padding:5px 6px 7px;font-size:11.5px;color:var(--muted-foreground)}
