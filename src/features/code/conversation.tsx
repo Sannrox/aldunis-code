@@ -1271,16 +1271,29 @@ export function Conversation({
               )}
               {assistantText && <MarkdownBody text={assistantText} className="turn-md" />}
               {toolEvents.length > 0 && (
-                <div className="tools" aria-label="Provider tool activity">
-                  {presentToolRows(toolEvents).map((row) => (
-                    <div className={`tool tool-${row.status}`} key={row.toolCallId}>
-                      <span>
-                        {row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}
-                      </span>
-                      <code>{row.name}</code>
-                      <span className="r" title={row.toolCallId}>{shortToolCallId(row.toolCallId)}</span>
-                    </div>
-                  ))}
+                <div className="tools" role="list" aria-label="Provider tool activity">
+                  {presentToolRows(toolEvents).map((row) => {
+                    const statusLabel = row.status === "running"
+                      ? "Running"
+                      : row.status === "failed"
+                        ? "Failed"
+                        : "Done";
+                    const shortId = shortToolCallId(row.toolCallId);
+                    return (
+                      <div
+                        className={`tool tool-${row.status}`}
+                        role="listitem"
+                        key={row.toolCallId}
+                        aria-label={`${statusLabel} ${row.name} ${shortId}`}
+                      >
+                        <span aria-hidden="true">
+                          {row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}
+                        </span>
+                        <code aria-hidden="true">{row.name}</code>
+                        <span className="r" title={row.toolCallId} aria-hidden="true">{shortId}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {providerState === "completed" && threadId && !completionDismissed && (
