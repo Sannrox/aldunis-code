@@ -54,6 +54,8 @@ export interface ThreadMetadata {
   worktree: string;
   updatedAt: string;
   projectName: string;
+  /** Provider id when present so search hits for the same title can be told apart. */
+  provider?: ProviderId;
   pinnedAt: string | null;
   archivedAt: string | null;
 }

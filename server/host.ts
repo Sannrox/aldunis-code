@@ -800,6 +800,7 @@ async function handleApi(
           projectId: thread.projectId,
           title: thread.title,
           worktree: thread.worktree,
+          provider: thread.provider,
           updatedAt: thread.updatedAt,
           pinnedAt: thread.pinnedAt ?? null,
           archivedAt: thread.archivedAt ?? null,
