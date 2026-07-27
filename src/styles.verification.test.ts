@@ -135,6 +135,11 @@ test("adapter catalog docs links and advanced toggle meet min hit size", () => {
   assert.match(css, /\.adapter-advanced-toggle\s*\{[^}]*min-height:\s*28px/s);
 });
 
+test("native single-line selects default to usable min-height", () => {
+  // Fork dialog selects had no class and measured ~21px.
+  assert.match(css, /select:not\(\[multiple\]\):not\(\[size\]\)\s*\{[^}]*min-height:\s*36px/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
