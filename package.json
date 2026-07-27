@@ -12,7 +12,7 @@
     "dev": "vite --host 127.0.0.1 --port 4174",
     "host": "tsx server/main.ts",
     "start": "npm run build && npm run host",
-    "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
+    "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
     "build:web": "tsc -b && vite build",
     "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",

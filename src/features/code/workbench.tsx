@@ -22,6 +22,7 @@ const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 export function CodeWorkbench({
   product,
   onProductChange,
+  productAvailability,
   repository: repositoryProp,
   repositoryRestoring = false,
   projects = [],
@@ -37,6 +38,7 @@ export function CodeWorkbench({
 }: {
   product: import("../../types").Product;
   onProductChange: (product: import("../../types").Product) => void;
+  productAvailability?: import("../../lib/product-availability").ProductAvailability;
   repository: RepositoryMetadata | null;
   /** True while boot is reopening the last project — avoid flashing empty inbox. */
   repositoryRestoring?: boolean;
@@ -389,6 +391,7 @@ export function CodeWorkbench({
       <CodeSidebar
         product={product}
         onProductChange={onProductChange}
+        productAvailability={productAvailability}
         repository={repository}
         repositoryRestoring={repositoryRestoring}
         projects={projects}

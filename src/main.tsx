@@ -14,6 +14,12 @@ import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
+import {
+  DEFAULT_PRODUCT_AVAILABILITY,
+  isProductAvailable,
+  readProductAvailabilityResponse,
+  type ProductAvailability,
+} from "./lib/product-availability";
 
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
 
@@ -59,6 +65,9 @@ function App() {
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
+  const [productAvailability, setProductAvailability] = useState<ProductAvailability>(
+    DEFAULT_PRODUCT_AVAILABILITY,
+  );
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
@@ -92,7 +101,18 @@ function App() {
         setPreferencesRecovered(result.recovered);
       })
       .catch(() => undefined);
+    void fetch("/api/products/availability", { method: "POST" })
+      .then(async (response) => response.ok ? readProductAvailabilityResponse(await response.json()) : null)
+      .then((availability) => {
+        if (availability) setProductAvailability(availability);
+      })
+      .catch(() => undefined);
   }, []);
+  useEffect(() => {
+    if (!isProductAvailable(product, productAvailability)) {
+      setProduct("code");
+    }
+  }, [product, productAvailability]);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const designMock = isDesignMockQuery();
@@ -224,6 +244,7 @@ function App() {
       <CodeWorkbench
         product={product}
         onProductChange={setProduct}
+        productAvailability={productAvailability}
         repository={repository}
         repositoryRestoring={repositoryRestoring && !repository}
         projects={savedProjects}

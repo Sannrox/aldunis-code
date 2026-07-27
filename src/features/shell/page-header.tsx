@@ -2,6 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Product, IconName } from "../../types";
 import { Icon } from "../../components/icon";
 import { Button } from "../../components/ui";
+import {
+  DEFAULT_PRODUCT_AVAILABILITY,
+  isProductAvailable,
+  type ProductAvailability,
+} from "../../lib/product-availability";
 
 const nav: Array<{ id: Product; label: string; icon: IconName; detail: string; mark: string }> = [
   { id: "code", label: "Code", icon: "code", detail: "Local workbench", mark: "A" },
@@ -17,10 +22,12 @@ export function PageHeader({
   product,
   onChange,
   onSettings,
+  productAvailability = DEFAULT_PRODUCT_AVAILABILITY,
 }: {
   product: Product;
   onChange: (product: Product) => void;
   onSettings: () => void;
+  productAvailability?: ProductAvailability;
 }) {
   const current = nav.find((item) => item.id === product)!;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -34,13 +41,13 @@ export function PageHeader({
         "1": "code", "2": "sekai", "3": "chisei", "4": "tenkai",
       };
       const next = map[event.code] ?? map[event.key];
-      if (!next) return;
+      if (!next || !isProductAvailable(next, productAvailability)) return;
       event.preventDefault();
       onChange(next);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onChange]);
+  }, [onChange, productAvailability]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -75,26 +82,32 @@ export function PageHeader({
         </button>
         {menuOpen && (
           <div className="brand-switch__menu mock-pswitch" role="menu" aria-label="Products">
-            {nav.map((item) => (
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={item.id === product}
-                key={item.id}
-                className={item.id === product ? "active" : ""}
-                onClick={() => {
-                  onChange(item.id);
-                  setMenuOpen(false);
-                }}
-              >
-                <span className={`mock-logo xs ${item.id === product ? "on" : ""}`}>{item.mark}</span>
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.detail}</small>
-                </span>
-                <kbd>⌘⇧{nav.indexOf(item) + 1}</kbd>
-              </button>
-            ))}
+            {nav.map((item) => {
+              const available = isProductAvailable(item.id, productAvailability);
+              return (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={item.id === product}
+                  aria-disabled={!available}
+                  disabled={!available}
+                  key={item.id}
+                  className={`${item.id === product ? "active" : ""} ${available ? "" : "dis"}`.trim()}
+                  onClick={() => {
+                    if (!available) return;
+                    onChange(item.id);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className={`mock-logo xs ${item.id === product ? "on" : ""}`}>{item.mark}</span>
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{available ? item.detail : "Not configured"}</small>
+                  </span>
+                  <kbd>⌘⇧{nav.indexOf(item) + 1}</kbd>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
