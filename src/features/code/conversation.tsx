@@ -1570,13 +1570,14 @@ export function Conversation({
                   role="option"
                   aria-selected={index === suggestionIndex}
                   aria-label={`${suggestion.value}: ${suggestion.detail}`}
+                  title={`${suggestion.value} — ${suggestion.detail}`}
                   className={index === suggestionIndex ? "active" : ""}
                   key={suggestion.value}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => selectSuggestion(suggestion.value)}
                 >
-                  <strong>{suggestion.value}</strong>
-                  <small>{suggestion.detail}</small>
+                  <strong title={suggestion.value}>{suggestion.value}</strong>
+                  <small title={suggestion.detail}>{suggestion.detail}</small>
                 </button>
               ))}
             </div>
