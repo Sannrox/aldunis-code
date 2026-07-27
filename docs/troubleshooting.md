@@ -22,10 +22,15 @@ The host defaults to loopback. Do not pass a public `--host` unless you intend
 
 1. Confirm the binary is on `PATH` (`claude`, `codex`, `shikigami`, `kiro-cli`,
    `grok`, `opencode`).
-2. For Claude, open Settings → profiles and check authentication probe.
-3. For ACP adapters, install the reviewed package under Provider adapters and
+2. Read the composer placeholder and empty-state detail — discovery surfaces a
+   specific fix when known (missing binary, bad version, missing sign-in / key).
+3. For Claude, open Settings → profiles and check authentication probe.
+4. For Codex, run `codex login` when install is present but not authenticated.
+5. For Shikigami, install **1.0.2+**; park resume remains CLI-only
+   (`shikigami run --resume <id> --answer "…"`) until park-answer UX ships.
+6. For ACP adapters, install the reviewed package under Provider adapters and
    ensure the exact launch (`… acp` / `grok agent stdio`) matches the digest.
-4. Remote mode disables adapter administration—return to loopback to install.
+7. Remote mode disables adapter administration—return to loopback to install.
 
 ## Approvals never appear
 

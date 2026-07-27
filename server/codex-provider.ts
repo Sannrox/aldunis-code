@@ -44,6 +44,8 @@ export interface CodexReadiness {
   authenticated: boolean;
   version: string | null;
   models: CodexModel[];
+  /** Operator-facing reason when Codex is not run-ready. */
+  detail: string | null;
 }
 
 function record(value: unknown): JsonRecord | null {
@@ -277,9 +279,30 @@ export class CodexCliAdapter {
         encoding: "utf8",
         timeout: 5_000,
       });
-      version = assertSupportedCodexVersion(result.stdout.trim());
+      try {
+        version = assertSupportedCodexVersion(result.stdout.trim());
+      } catch (error) {
+        const detail = error instanceof ProviderProtocolError
+          ? error.message
+          : "Unsupported Codex CLI version.";
+        return {
+          id: this.id,
+          installed: true,
+          authenticated: false,
+          version: null,
+          models: [],
+          detail,
+        };
+      }
     } catch {
-      return { id: this.id, installed: false, authenticated: false, version: null, models: [] };
+      return {
+        id: this.id,
+        installed: false,
+        authenticated: false,
+        version: null,
+        models: [],
+        detail: "Install Codex CLI on PATH and sign in (codex login).",
+      };
     }
     const child = spawn(this.executable, this.#appServerArguments(), {
       stdio: ["pipe", "pipe", "pipe"],
@@ -351,12 +374,33 @@ export class CodexCliAdapter {
       this.#terminate(child);
     }
     if (spawnFailed) {
-      return { id: this.id, installed: false, authenticated: false, version: null, models: [] };
+      return {
+        id: this.id,
+        installed: false,
+        authenticated: false,
+        version: null,
+        models: [],
+        detail: "Install Codex CLI on PATH and sign in (codex login).",
+      };
     }
     if (!gotAccount || !gotModels) {
-      return { id: this.id, installed: true, authenticated: false, version, models: [] };
+      return {
+        id: this.id,
+        installed: true,
+        authenticated: false,
+        version,
+        models: [],
+        detail: "Codex CLI did not report account or models. Try `codex login`.",
+      };
     }
-    return { id: this.id, installed: true, authenticated, version, models };
+    return {
+      id: this.id,
+      installed: true,
+      authenticated,
+      version,
+      models,
+      detail: authenticated ? null : "Sign in to Codex CLI (codex login).",
+    };
   }
 
   async start(options: ProviderStartOptions): Promise<ProviderRun> {

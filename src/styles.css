@@ -1555,6 +1555,32 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
 .provider-error { color: var(--destructive-foreground); font-size: 13px; margin-top: 8px; }
+.provider-error p { margin: 0 0 6px; }
+.provider-error-park {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--destructive) 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--destructive) 8%, var(--card));
+}
+.provider-error-question { font-weight: 500; color: var(--foreground); }
+.provider-error-resume {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.provider-error-resume code {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--muted);
+  color: var(--foreground);
+  font: 12px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.provider-error-hint { color: var(--muted-foreground); font-size: 12px; margin: 0; }
 .provider-state { color: var(--muted-foreground); font-size: 13px; margin-top: 8px; }
 .recovery-note {
   margin-bottom: 16px; padding: 9px 10px; border-left: 2px solid var(--amber);
