@@ -227,7 +227,13 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                 </li>
                 {entry.website && (
                   <li>
-                    <a href={entry.website} target="_blank" rel="noreferrer">
+                    <a
+                      href={entry.website}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`${entry.name} provider docs`}
+                      title={entry.website}
+                    >
                       Provider docs
                     </a>
                   </li>
