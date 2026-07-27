@@ -282,17 +282,19 @@ export function ChangesPanel({
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
           {files.map((file) => (
             <div className={selected === file.path ? "changed-file active" : "changed-file"} key={file.path}>
-              <input
-                type="checkbox"
-                aria-label={`Select ${file.path} for staging`}
-                checked={selectedPaths.includes(file.path)}
-                onChange={(event) => {
-                  const stagedPaths = file.previousPath ? [file.path, file.previousPath] : [file.path];
-                  setSelectedPaths((paths) => event.target.checked
-                    ? [...new Set([...paths, ...stagedPaths])]
-                    : paths.filter((path) => !stagedPaths.includes(path)));
-                }}
-              />
+              <label className="changed-file-select">
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${file.path} for staging`}
+                  checked={selectedPaths.includes(file.path)}
+                  onChange={(event) => {
+                    const stagedPaths = file.previousPath ? [file.path, file.previousPath] : [file.path];
+                    setSelectedPaths((paths) => event.target.checked
+                      ? [...new Set([...paths, ...stagedPaths])]
+                      : paths.filter((path) => !stagedPaths.includes(path)));
+                  }}
+                />
+              </label>
               <button
                 type="button"
                 className="changed-file-main"
