@@ -12,6 +12,7 @@ export function PaneConversation({
   onOpenRepository,
   onOpenProfiles,
   onOpenBeside,
+  showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
   showChangesSignal,
@@ -26,6 +27,7 @@ export function PaneConversation({
   onOpenRepository: () => void;
   onOpenProfiles: () => void;
   onOpenBeside: () => void;
+  showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
   showChangesSignal: number;
@@ -73,6 +75,7 @@ export function PaneConversation({
       pane={pane}
       active={active}
       onOpenBeside={onOpenBeside}
+      showOpenBeside={showOpenBeside}
       onClosePane={onClosePane}
       onConversationAvailable={onConversationAvailable}
       onOpenRepository={onOpenRepository}

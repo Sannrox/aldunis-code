@@ -28,6 +28,7 @@ export function Conversation({
   pane,
   active,
   onOpenBeside,
+  showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
   onOpenRepository,
@@ -50,6 +51,8 @@ export function Conversation({
   pane: "primary" | "secondary";
   active: boolean;
   onOpenBeside: () => void;
+  /** Hide primary topbar Open beside when a secondary pane is already open. */
+  showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
   onOpenRepository: () => void;
@@ -1072,7 +1075,7 @@ export function Conversation({
               <path d="M3 15h18" />
             </svg>
           </button>
-          {pane === "primary" && !onClosePane && (
+          {pane === "primary" && showOpenBeside && (
             <button
               type="button"
               className="btn btn-ghost btn-sm"

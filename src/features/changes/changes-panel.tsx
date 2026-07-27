@@ -310,11 +310,20 @@ export function ChangesPanel({
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
           {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
-          {diff && threadId && <button className="file-comment-button" onClick={() => setCommentLineIndex(null)}>Comment on {diff.path}</button>}
+          {diff && threadId && (
+            <button
+              type="button"
+              className="file-comment-button"
+              onClick={() => setCommentLineIndex(null)}
+            >
+              Comment on {diff.path}
+            </button>
+          )}
           {diff?.patch && <pre>{diff.lines.map((line) => (
             <span className={line.side} key={line.index}>
               {line.side !== "metadata" && threadId
                 ? <button
+                    type="button"
                     className="diff-comment-button"
                     onClick={() => setCommentLineIndex(line.index)}
                     aria-label={`Comment on ${diff.path} ${line.side} line ${line.newLine ?? line.oldLine}`}
@@ -429,7 +438,7 @@ export function ChangesPanel({
             <pre>{revisionPreview}</pre>
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
             <footer>
-              <button onClick={() => setRevisionPreview(null)}>Cancel</button>
+              <button type="button" onClick={() => setRevisionPreview(null)}>Cancel</button>
               <Button size="sm" onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</Button>
             </footer>
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
