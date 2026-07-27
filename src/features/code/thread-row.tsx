@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import type { ConversationSummary } from "../../types";
 import {
   branchFromWorktree,
@@ -8,6 +8,8 @@ import {
   providerLabel,
 } from "./conversation-list";
 
+export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
+
 /** Three-line row matching workbench-mock.html class structure. */
 export function ThreadRow({
   conversation,
@@ -15,23 +17,47 @@ export function ThreadRow({
   onOpen,
   onSettle,
   onOpenBeside,
+  onAction,
   showSettle = true,
   showBeside = false,
+  archivedView = false,
 }: {
   conversation: ConversationSummary;
   active: boolean;
   onOpen: () => void;
   onSettle?: () => void;
   onOpenBeside?: () => void;
+  onAction?: (action: ConversationLifecycleAction) => void;
   showSettle?: boolean;
   /** Show "Beside" to open this thread in a split secondary pane. */
   showBeside?: boolean;
+  /** When true, show restore instead of settle/archive. */
+  archivedView?: boolean;
 }) {
   const status = conversation.status ?? "idle";
   const blocks = isBlockingStatus(status);
   const unread = isUnread(conversation);
   const elapsed = formatElapsed(conversation.statusSince ?? conversation.updatedAt);
   const monogram = providerMonogram(conversation.provider);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   return (
     <div
@@ -88,6 +114,92 @@ export function ThreadRow({
           >
             Settle
           </button>
+        )}
+        {onAction && (
+          <div className="row-menu" ref={menuRef}>
+            <button
+              type="button"
+              className="row-more"
+              aria-label={`More actions for "${conversation.title}"`}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-controls={menuOpen ? menuId : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen((open) => !open);
+              }}
+            >
+              ⋯
+            </button>
+            {menuOpen && (
+              <div
+                id={menuId}
+                className="row-menu-pop"
+                role="menu"
+                aria-label={`Actions for ${conversation.title}`}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onAction("rename");
+                  }}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onAction("pin");
+                  }}
+                >
+                  {conversation.pinnedAt ? "Unpin" : "Pin"}
+                </button>
+                {archivedView ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuOpen(false);
+                      onAction("restore");
+                    }}
+                  >
+                    Restore
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuOpen(false);
+                      onAction("archive");
+                    }}
+                  >
+                    Archive
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="danger"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setMenuOpen(false);
+                    onAction("delete");
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
