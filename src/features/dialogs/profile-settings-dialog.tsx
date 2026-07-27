@@ -81,6 +81,7 @@ export function ProfileSettingsDialog({
     setError(null);
   };
   const openedOnce = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!open) {
       openedOnce.current = false;
@@ -106,6 +107,18 @@ export function ProfileSettingsDialog({
       edit(profiles[0] ?? null);
     }
   }, [open, profiles, selectedId]);
+  useEffect(() => {
+    if (!open) return;
+    // ModalSurface may focus Close first; reclaim the primary form field.
+    const focusName = () => nameInputRef.current?.focus();
+    focusName();
+    const frame = window.requestAnimationFrame(focusName);
+    const timer = window.setTimeout(focusName, 0);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [open, selectedId]);
   if (!open) return null;
   const request = async (path: string, body: unknown) => {
     setBusy(true);
@@ -198,8 +211,10 @@ export function ProfileSettingsDialog({
           </nav>
           <form onSubmit={save}>
             {!selected && (
-              <label>Provider
+              <label htmlFor="profile-provider">Provider
                 <select
+                  id="profile-provider"
+                  name="profile-provider"
                   value={provider}
                   onChange={(event) => {
                     const next = event.target.value;
@@ -220,15 +235,57 @@ export function ProfileSettingsDialog({
                 {isDefault ? " · system default (re-seeded if deleted)" : ""}
               </p>
             )}
-            <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
+            <label htmlFor="profile-display-name">Display name
+              <input
+                ref={nameInputRef}
+                id="profile-display-name"
+                name="profile-display-name"
+                data-dialog-initial-focus
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+              />
+            </label>
             <div className="profile-fields">
-              <label>Binary path<input value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder={isClaude ? "claude" : "binary on PATH"} /></label>
+              <label htmlFor="profile-binary-path">Binary path
+                <input
+                  id="profile-binary-path"
+                  name="profile-binary-path"
+                  value={binaryPath}
+                  onChange={(event) => setBinaryPath(event.target.value)}
+                  placeholder={isClaude ? "claude" : "binary on PATH"}
+                />
+              </label>
               {isClaude && (
-                <label>Claude config path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="~/.claude-personal" /></label>
+                <label htmlFor="profile-home-path">Claude config path
+                  <input
+                    id="profile-home-path"
+                    name="profile-home-path"
+                    value={homePath}
+                    onChange={(event) => setHomePath(event.target.value)}
+                    placeholder="~/.claude-personal"
+                  />
+                </label>
               )}
             </div>
-            <label>Environment variables<textarea value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder={"KEY=value"} /></label>
-            <label>Sensitive environment values<textarea value={sensitiveEnvironment} onChange={(event) => setSensitiveEnvironment(event.target.value)} placeholder={"SECRET=write-only value"} /></label>
+            <label htmlFor="profile-environment">Environment variables
+              <textarea
+                id="profile-environment"
+                name="profile-environment"
+                value={environment}
+                onChange={(event) => setEnvironment(event.target.value)}
+                placeholder={"KEY=value"}
+              />
+            </label>
+            <label htmlFor="profile-sensitive-environment">Sensitive environment values
+              <textarea
+                id="profile-sensitive-environment"
+                name="profile-sensitive-environment"
+                value={sensitiveEnvironment}
+                onChange={(event) => setSensitiveEnvironment(event.target.value)}
+                placeholder={"SECRET=write-only value"}
+              />
+            </label>
             <p className="secret-note">Sensitive values are write-only. Existing values appear empty and remain stored unless their line is removed. Empty defaults are normal until you configure them.</p>
             {selected && (
               <div className="probe-grid" aria-label="Profile health probes">
