@@ -318,6 +318,7 @@ export function RepositoryDialog({
                   role="option"
                   aria-selected={active}
                   aria-label={`${row.name}: ${row.root}${row.root === currentRoot ? ", current" : ""}`}
+                  title={row.root}
                   className={`project-switcher-row ${active ? "active" : ""} ${row.root === currentRoot ? "current" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => activate(row)}
@@ -325,8 +326,8 @@ export function RepositoryDialog({
                 >
                   <span className="project-switcher-icon" aria-hidden="true">◫</span>
                   <span className="project-switcher-text">
-                    <strong>{row.name}</strong>
-                    <small>{row.root}</small>
+                    <strong title={row.name}>{row.name}</strong>
+                    <small title={row.root}>{row.root}</small>
                   </span>
                   {row.root === currentRoot && <span className="project-switcher-badge">Current</span>}
                 </button>
@@ -340,6 +341,7 @@ export function RepositoryDialog({
                   role="option"
                   aria-selected={active}
                   aria-label={`Parent directory: ${row.path}`}
+                  title={row.path}
                   className={`project-switcher-row ${active ? "active" : ""}`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => activate(row)}
@@ -348,7 +350,7 @@ export function RepositoryDialog({
                   <span className="project-switcher-icon" aria-hidden="true">↰</span>
                   <span className="project-switcher-text">
                     <strong>Parent directory</strong>
-                    <small>{row.path}</small>
+                    <small title={row.path}>{row.path}</small>
                   </span>
                 </button>
               );
@@ -381,6 +383,7 @@ export function RepositoryDialog({
                 role="option"
                 aria-selected={active}
                 aria-label={`${row.label}: ${row.path}`}
+                title={row.path}
                 className={`project-switcher-row ${active ? "active" : ""}`}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => activate(row)}
@@ -388,8 +391,8 @@ export function RepositoryDialog({
               >
                 <span className="project-switcher-icon" aria-hidden="true">＋</span>
                 <span className="project-switcher-text">
-                  <strong>{row.label}</strong>
-                  <small>{row.path}</small>
+                  <strong title={row.label}>{row.label}</strong>
+                  <small title={row.path}>{row.path}</small>
                 </span>
               </button>
             );
