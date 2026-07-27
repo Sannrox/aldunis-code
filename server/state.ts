@@ -400,6 +400,28 @@ function replaceById<T extends { id: string }>(items: T[], value: T): void {
   else items[index] = value;
 }
 
+/**
+ * ACP streams (Grok, Kiro, …) persist many tiny assistant_text rows. For fork
+ * transfer and the exact-messages review list, join consecutive assistant
+ * chunks so the operator sees readable replies rather than 100+ token rows.
+ */
+export function coalesceForkTransferMessages(
+  messages: ForkTransferMessage[],
+): ForkTransferMessage[] {
+  if (messages.length === 0) return [];
+  const sorted = [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const coalesced: ForkTransferMessage[] = [];
+  for (const message of sorted) {
+    const previous = coalesced[coalesced.length - 1];
+    if (previous && previous.role === "assistant" && message.role === "assistant") {
+      previous.text = `${previous.text}${message.text}`;
+      continue;
+    }
+    coalesced.push({ ...message });
+  }
+  return coalesced;
+}
+
 function renderForkPrompt(
   source: Thread,
   messages: ForkTransferMessage[],
@@ -848,9 +870,11 @@ export class LocalStateStore {
     const turnIds = new Set(
       projection.turns.filter((turn) => turn.threadId === source.id).map((turn) => turn.id),
     );
-    const messages = projection.messages
-      .filter((message) => turnIds.has(message.turnId))
-      .map(({ id, role, text, createdAt }) => ({ id, role, text, createdAt }));
+    const messages = coalesceForkTransferMessages(
+      projection.messages
+        .filter((message) => turnIds.has(message.turnId))
+        .map(({ id, role, text, createdAt }) => ({ id, role, text, createdAt })),
+    );
     const annotations = projection.annotations
       .filter((annotation) => annotation.threadId === source.id)
       .map(({ id, path, text, capturedContext }) => ({ id, path, text, capturedContext }));
