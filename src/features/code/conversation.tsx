@@ -1861,7 +1861,7 @@ export function Conversation({
                 aria-expanded={modelMenuOpen}
                 title={
                   showReasoningEffort
-                    ? "Open the model menu. Alt-click cycles Codex reasoning effort."
+                    ? "Open the model menu. Alt-click cycles reasoning effort."
                     : "Open the model menu"
                 }
                 aria-label={
@@ -1955,7 +1955,7 @@ export function Conversation({
                             }}
                           >
                             <span className="n">{effort}</span>
-                            <span className="p">{selected ? "selected" : "Codex reasoning"}</span>
+                            <span className="p">{selected ? "selected" : "reasoning"}</span>
                           </button>
                         );
                       })}
