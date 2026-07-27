@@ -467,7 +467,9 @@ export function ChangesPanel({
             <pre>{revisionPreview}</pre>
             <p>Sending starts a normal follow-up turn. It does not resolve comments, edit files, approve tools, or publish a hosted review.</p>
             <footer>
-              <button type="button" onClick={() => setRevisionPreview(null)}>Cancel</button>
+              <Button type="button" size="sm" onClick={() => setRevisionPreview(null)} aria-label="Cancel revision request">
+                Cancel
+              </Button>
               <Button size="sm" onClick={() => onSendRevision(revisionPreview)} disabled={!canSendRevision}>Send selected comments</Button>
             </footer>
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}

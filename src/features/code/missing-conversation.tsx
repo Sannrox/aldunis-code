@@ -1,5 +1,6 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React from "react";
 import type { ConversationSummary } from "../../types";
+import { Button } from "../../components/ui";
 
 export function MissingConversation({
   pane,
@@ -31,7 +32,11 @@ export function MissingConversation({
           ))}
         </select>
       </label>
-      {onClose && <button type="button" onClick={onClose}>Close pane</button>}
+      {onClose && (
+        <Button type="button" size="sm" onClick={onClose} aria-label={`Close ${pane} pane`}>
+          Close pane
+        </Button>
+      )}
     </section>
   );
 }
