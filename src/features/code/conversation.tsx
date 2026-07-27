@@ -1274,7 +1274,7 @@ export function Conversation({
               )}
               {assistantText && <MarkdownBody text={assistantText} className="turn-md" />}
               {toolEvents.length > 0 && (
-                <div className="tools" role="list" aria-label="Provider tool activity">
+                <div className="tools" role="list" aria-label={`${providerLabel} tool activity`}>
                   {presentToolRows(toolEvents).map((row) => {
                     const statusLabel = row.status === "running"
                       ? "Running"
