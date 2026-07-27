@@ -677,7 +677,12 @@ select.ui-input {
   line-height: 1.45;
   color: var(--muted-foreground);
 }
+/* "Provider docs" links were ~14px tall inline text — below 24px AA target size. */
 .adapter-catalog-meta a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 0;
   color: var(--foreground);
 }
 .adapter-catalog-card footer,
@@ -694,7 +699,8 @@ select.ui-input {
   color: var(--muted-foreground);
   font: 12.5px var(--font-sans);
   font-weight: 500;
-  padding: 0;
+  min-height: 28px;
+  padding: 4px 0;
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;

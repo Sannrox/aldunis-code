@@ -130,6 +130,11 @@ test("bare .ui-input (including native selects) defaults to md height", () => {
   assert.match(css, /\.ui-input\s*\{[^}]*min-height:\s*36px/s);
 });
 
+test("adapter catalog docs links and advanced toggle meet min hit size", () => {
+  assert.match(css, /\.adapter-catalog-meta\s+a\s*\{[^}]*min-height:\s*28px/s);
+  assert.match(css, /\.adapter-advanced-toggle\s*\{[^}]*min-height:\s*28px/s);
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
