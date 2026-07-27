@@ -85,6 +85,13 @@ export function Conversation({
   const [contextError, setContextError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(null);
   const [profileId, setProfileId] = useState("");
+  const claudeProfiles = useMemo(
+    () => profiles.filter((profile) => profile.provider === "claude-code" || !profile.provider),
+    [profiles],
+  );
+  const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
+    ?? claudeProfiles[0]?.id
+    ?? "";
   const [model, setModel] = useState("default");
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
@@ -164,7 +171,7 @@ export function Conversation({
     }
     setProvider(next);
     if (next === "claude-code") {
-      setProfileId((current) => current || profiles[0]?.id || "");
+      setProfileId((current) => current || defaultClaudeProfileId);
       setModel("default");
       setReasoningEffort("medium");
     } else if (next === "codex-cli") {
@@ -242,10 +249,10 @@ export function Conversation({
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
   useEffect(() => {
-    if (!profiles.some((profile) => profile.id === profileId)) {
-      setProfileId(profiles[0]?.id ?? "");
+    if (!claudeProfiles.some((profile) => profile.id === profileId)) {
+      setProfileId(defaultClaudeProfileId);
     }
-  }, [profiles, profileId]);
+  }, [claudeProfiles, defaultClaudeProfileId, profileId]);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [elementReferences, setElementReferences] = useState<ElementReference[]>([]);
   const [checkpoint, setCheckpoint] = useState<TurnCheckpoint | null>(null);
@@ -1206,21 +1213,21 @@ export function Conversation({
                   !providerReady
                     ? providerReadinessMessage
                     : canSwitchProvider
-                    ? "Click to choose a provider for this new conversation. Alt-click opens Claude profiles."
+                    ? "Click to choose a provider for this new conversation. Alt-click opens provider profiles."
                     : conversation
-                      ? "Provider is fixed for this conversation (use fork to change). Click opens Claude profiles."
-                      : "Open Claude profiles"
+                      ? "Provider is fixed for this conversation (use fork to change). Click opens provider profiles."
+                      : "Open provider profiles"
                 }
                 aria-label={
                   !providerReady
                     ? `${providerName} not ready: ${providerReadinessMessage}`
                     : canSwitchProvider
                     ? `Provider ${providerName}. Click to choose among ${availableProviders.length} providers.`
-                    : "Open Claude profiles"
+                    : "Open provider profiles"
                 }
                 onClick={(event) => {
                   if (conversation?.id?.startsWith("mock-")) return;
-                  // Alt/Option-click always opens Claude profile admin.
+                  // Alt/Option-click always opens provider profile admin.
                   if (event.altKey || !canSwitchProvider) {
                     setProviderMenuOpen(false);
                     onOpenProfiles();
@@ -1266,8 +1273,8 @@ export function Conversation({
                       onOpenProfiles();
                     }}
                   >
-                    <span className="n">Claude profiles…</span>
-                    <span className="p">Manage Claude binaries and env</span>
+                    <span className="n">Provider profiles…</span>
+                    <span className="p">Manage binaries and env for each provider</span>
                   </button>
                 </div>
               )}

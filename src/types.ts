@@ -241,6 +241,11 @@ export interface ProfileProbe {
 export interface ClaudeProfile {
   schemaVersion: 1;
   id: string;
+  /**
+   * Owning provider (`claude-code` | `codex-cli` | `shikigami` | `adapter:…`).
+   * Legacy rows without this field are treated as `claude-code`.
+   */
+  provider: string;
   name: string;
   binaryPath: string;
   homePath: string;

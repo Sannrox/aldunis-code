@@ -12,19 +12,34 @@ const DEFAULT_MODELS = ["default", "sonnet", "opus", "haiku"] as const;
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
- * Built-in harness defaults that must work without manual profile setup.
- * Claude Code is the only harness that requires a named profile for binary /
- * config-dir / env. Codex CLI is discovered from PATH and needs no profile.
- * Declarative ACP adapters are installed separately and are not seeded here.
+ * Built-in harness defaults that must exist without manual profile setup.
+ * Records may be empty (no home, no env). Adapters get their own default when
+ * installed; see `ensureProviderDefault` / `ensureDefaults({ adapters })`.
  */
 export const DEFAULT_CLAUDE_PROFILE_ID = "default:claude-code";
+export const DEFAULT_CODEX_PROFILE_ID = "default:codex-cli";
+export const DEFAULT_SHIKIGAMI_PROFILE_ID = "default:shikigami";
 
 export const BUILTIN_HARNESS_DEFAULTS = [
   {
     id: DEFAULT_CLAUDE_PROFILE_ID,
-    harness: "claude-code" as const,
+    provider: "claude-code" as const,
     name: "Claude Code",
     binaryPath: "claude",
+    homePath: "",
+  },
+  {
+    id: DEFAULT_CODEX_PROFILE_ID,
+    provider: "codex-cli" as const,
+    name: "Codex CLI",
+    binaryPath: "codex",
+    homePath: "",
+  },
+  {
+    id: DEFAULT_SHIKIGAMI_PROFILE_ID,
+    provider: "shikigami" as const,
+    name: "Shikigami",
+    binaryPath: "shikigami",
     homePath: "",
   },
 ] as const;
@@ -39,9 +54,14 @@ export interface ProfileEnvironmentVariable {
   valueSet?: boolean;
 }
 
+/** Stable provider key: first-class id or `adapter:<packageId>` / `adapter:<packageId>@<version>`. */
+export type ProfileProviderKey = string;
+
 export interface ClaudeProfile {
   schemaVersion: 1;
   id: string;
+  /** Owning provider. Missing on legacy rows → treated as claude-code. */
+  provider: ProfileProviderKey;
   name: string;
   binaryPath: string;
   homePath: string;
@@ -60,6 +80,14 @@ export interface ProfileProbe {
 
 export interface ClaudeProfileSnapshot extends ClaudeProfile {
   probes: Record<ProfileProbeKind, ProfileProbe>;
+}
+
+export interface AdapterProfileSeed {
+  /** Full discovery id, e.g. `adapter:dev.kiro.cli@1.0.0`. */
+  provider: string;
+  name: string;
+  binaryPath: string;
+  environment?: ProfileEnvironmentVariable[];
 }
 
 interface ProfileDocument {
@@ -110,14 +138,44 @@ function validateEnvironment(environment: ProfileEnvironmentVariable[]): void {
   }
 }
 
-function publicProfile(profile: ClaudeProfile, secrets: SecretDocument): ClaudeProfile {
+/** Stable default profile id for a provider key (version-independent for adapters). */
+export function defaultProfileId(provider: string): string {
+  if (provider === "claude-code") return DEFAULT_CLAUDE_PROFILE_ID;
+  if (provider === "codex-cli") return DEFAULT_CODEX_PROFILE_ID;
+  if (provider === "shikigami") return DEFAULT_SHIKIGAMI_PROFILE_ID;
+  if (provider.startsWith("adapter:")) {
+    const packageId = provider.slice("adapter:".length).split("@")[0]?.trim();
+    if (!packageId) throw new ProfileError("Invalid adapter provider key.");
+    return `default:adapter:${packageId}`;
+  }
+  return `default:${provider}`;
+}
+
+export function isDefaultProfileId(id: string): boolean {
+  return id.startsWith("default:");
+}
+
+function normalizeProfile(raw: ClaudeProfile): ClaudeProfile {
   return {
-    ...profile,
-    environment: profile.environment.map((variable) => variable.sensitive
+    ...raw,
+    provider: typeof raw.provider === "string" && raw.provider.trim()
+      ? raw.provider.trim()
+      : "claude-code",
+    binaryPath: raw.binaryPath ?? "",
+    homePath: raw.homePath ?? "",
+    environment: Array.isArray(raw.environment) ? raw.environment : [],
+  };
+}
+
+function publicProfile(profile: ClaudeProfile, secrets: SecretDocument): ClaudeProfile {
+  const normalized = normalizeProfile(profile);
+  return {
+    ...normalized,
+    environment: normalized.environment.map((variable) => variable.sensitive
       ? {
           name: variable.name,
           sensitive: true,
-          valueSet: Object.hasOwn(secrets.values, `${profile.id}:${variable.name}`),
+          valueSet: Object.hasOwn(secrets.values, `${normalized.id}:${variable.name}`),
         }
       : { name: variable.name, sensitive: false, value: variable.value ?? "" }),
   };
@@ -128,7 +186,7 @@ async function readDocument<T>(path: string, fallback: T): Promise<T> {
     return JSON.parse(await readFile(path, "utf8")) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback;
-    throw new ProfileError("Claude profile storage could not be read.", 500);
+    throw new ProfileError("Provider profile storage could not be read.", 500);
   }
 }
 
@@ -179,68 +237,119 @@ export class ClaudeProfileStore {
       || typeof secrets.values !== "object"
       || secrets.values === null
     ) {
-      throw new ProfileError("Claude profile storage uses an incompatible schema.", 500);
+      throw new ProfileError("Provider profile storage uses an incompatible schema.", 500);
     }
+    profiles.profiles = profiles.profiles.map((profile) => normalizeProfile(profile));
     return { profiles, secrets };
   }
 
+  #snapshot(profile: ClaudeProfile, secrets: SecretDocument): ClaudeProfileSnapshot {
+    return {
+      ...publicProfile(profile, secrets),
+      probes: structuredClone(this.#probes.get(profile.id) ?? emptyProbes()),
+    };
+  }
+
   /**
-   * Ensure every built-in harness that needs a profile has a usable default.
-   * Idempotent by stable profile id: missing built-ins are added; existing
-   * user-edited rows with the same id are left alone. Codex CLI and other
-   * PATH-discovered harnesses do not use this store.
+   * Ensure every built-in harness (and optionally installed adapters) has a
+   * default profile. Idempotent by stable profile id: missing rows are added;
+   * existing user-edited rows with the same id are left alone.
    */
-  async ensureDefaults(): Promise<ClaudeProfileSnapshot[]> {
+  async ensureDefaults(options?: {
+    adapters?: AdapterProfileSeed[];
+  }): Promise<ClaudeProfileSnapshot[]> {
     let result!: ClaudeProfileSnapshot[];
     const operation = this.#writeQueue.then(async () => {
       const { profiles, secrets } = await this.#documents();
       const now = new Date().toISOString();
       let changed = false;
-      for (const builtin of BUILTIN_HARNESS_DEFAULTS) {
-        if (builtin.harness !== "claude-code") continue;
-        if (profiles.profiles.some((profile) => profile.id === builtin.id)) continue;
+
+      const seed = (
+        id: string,
+        provider: string,
+        name: string,
+        binaryPath: string,
+        homePath: string,
+        environment: ProfileEnvironmentVariable[],
+        preferFront: boolean,
+      ) => {
+        if (profiles.profiles.some((profile) => profile.id === id)) return;
         const profile: ClaudeProfile = {
           schemaVersion: PROFILE_SCHEMA_VERSION,
-          id: builtin.id,
-          name: builtin.name,
-          binaryPath: builtin.binaryPath,
-          homePath: builtin.homePath,
-          environment: [],
+          id,
+          provider,
+          name,
+          binaryPath,
+          homePath,
+          environment,
           createdAt: now,
           updatedAt: now,
         };
-        // Prefer the built-in default first so the composer auto-selects it.
-        profiles.profiles.unshift(profile);
+        if (preferFront) profiles.profiles.unshift(profile);
+        else profiles.profiles.push(profile);
         this.#probes.delete(profile.id);
         changed = true;
+      };
+
+      for (const builtin of BUILTIN_HARNESS_DEFAULTS) {
+        seed(
+          builtin.id,
+          builtin.provider,
+          builtin.name,
+          builtin.binaryPath,
+          builtin.homePath,
+          [],
+          builtin.provider === "claude-code",
+        );
       }
+
+      for (const adapter of options?.adapters ?? []) {
+        seed(
+          defaultProfileId(adapter.provider),
+          adapter.provider,
+          adapter.name,
+          adapter.binaryPath,
+          "",
+          adapter.environment ?? [],
+          false,
+        );
+      }
+
       if (changed) await writeDocument(this.#profilesPath, profiles);
-      result = profiles.profiles.map((profile) => ({
-        ...publicProfile(profile, secrets),
-        probes: structuredClone(this.#probes.get(profile.id) ?? emptyProbes()),
-      }));
+      result = profiles.profiles.map((profile) => this.#snapshot(profile, secrets));
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;
     return result;
   }
 
-  async list(): Promise<ClaudeProfileSnapshot[]> {
-    return this.ensureDefaults();
+  /**
+   * Create the default profile for one provider if missing (adapter install path).
+   * Does not overwrite an existing default the operator may have edited.
+   */
+  async ensureProviderDefault(seed: AdapterProfileSeed): Promise<ClaudeProfileSnapshot> {
+    const id = defaultProfileId(seed.provider);
+    const listed = await this.ensureDefaults({ adapters: [seed] });
+    const found = listed.find((profile) => profile.id === id);
+    if (!found) throw new ProfileError("Default provider profile could not be created.", 500);
+    return found;
+  }
+
+  async list(options?: { adapters?: AdapterProfileSeed[] }): Promise<ClaudeProfileSnapshot[]> {
+    return this.ensureDefaults(options);
   }
 
   async save(input: {
     id?: string;
+    provider?: string;
     name: string;
     binaryPath?: string;
     homePath?: string;
     environment?: ProfileEnvironmentVariable[];
   }): Promise<ClaudeProfileSnapshot> {
     const name = input.name.trim();
-    const binaryPath = input.binaryPath?.trim() || "claude";
-    const homePath = input.homePath?.trim() || "";
-    const environment = input.environment ?? [];
     if (!name) throw new ProfileError("A profile name is required.");
+    const environment = input.environment ?? [];
     validateEnvironment(environment);
 
     let result!: ClaudeProfileSnapshot;
@@ -249,8 +358,23 @@ export class ClaudeProfileStore {
       const existing = input.id
         ? profiles.profiles.find((profile) => profile.id === input.id)
         : undefined;
-      if (input.id && !existing) throw new ProfileError("The Claude profile was not found.", 404);
+      if (input.id && !existing) throw new ProfileError("The provider profile was not found.", 404);
       const id = existing?.id ?? randomUUID();
+      const provider = (
+        input.provider?.trim()
+        || existing?.provider
+        || "claude-code"
+      ).trim();
+      if (!provider) throw new ProfileError("A provider is required.");
+      const binaryPath = input.binaryPath?.trim()
+        ?? existing?.binaryPath
+        ?? (
+          provider === "claude-code" ? "claude"
+          : provider === "codex-cli" ? "codex"
+          : provider === "shikigami" ? "shikigami"
+          : ""
+        );
+      const homePath = input.homePath?.trim() ?? existing?.homePath ?? "";
       const now = new Date().toISOString();
       const storedEnvironment = environment.map((variable) => {
         const key = `${id}:${variable.name}`;
@@ -274,6 +398,7 @@ export class ClaudeProfileStore {
       const profile: ClaudeProfile = {
         schemaVersion: PROFILE_SCHEMA_VERSION,
         id,
+        provider,
         name,
         binaryPath,
         homePath,
@@ -298,7 +423,7 @@ export class ClaudeProfileStore {
     const operation = this.#writeQueue.then(async () => {
       const { profiles, secrets } = await this.#documents();
       if (!profiles.profiles.some((profile) => profile.id === id)) {
-        throw new ProfileError("The Claude profile was not found.", 404);
+        throw new ProfileError("The provider profile was not found.", 404);
       }
       profiles.profiles = profiles.profiles.filter((profile) => profile.id !== id);
       for (const key of Object.keys(secrets.values)) {
@@ -320,7 +445,7 @@ export class ClaudeProfileStore {
   }> {
     const { profiles, secrets } = await this.#documents();
     const profile = profiles.profiles.find((item) => item.id === id);
-    if (!profile) throw new ProfileError("Select an available Claude profile.", 404);
+    if (!profile) throw new ProfileError("Select an available provider profile.", 404);
     const environment: NodeJS.ProcessEnv = { ...process.env };
     for (const variable of profile.environment) {
       environment[variable.name] = variable.sensitive
@@ -328,12 +453,16 @@ export class ClaudeProfileStore {
         : variable.value ?? "";
     }
     const resolvedHome = resolve(expandHome(profile.homePath || homedir()));
-    if (profile.homePath) environment.CLAUDE_CONFIG_DIR = resolvedHome;
+    if (profile.provider === "claude-code" && profile.homePath) {
+      environment.CLAUDE_CONFIG_DIR = resolvedHome;
+    }
     return {
       profile: publicProfile(profile, secrets),
       executable: profile.binaryPath,
       environment,
-      continuationKey: `claude:home:${resolvedHome}`,
+      continuationKey: profile.provider === "claude-code"
+        ? `claude:home:${resolvedHome}`
+        : `${profile.provider}:profile:${profile.id}`,
     };
   }
 
@@ -343,17 +472,35 @@ export class ClaudeProfileStore {
     probes[kind] = { state: "refreshing", checkedAt: null, detail: null };
     this.#probes.set(id, probes);
     const checkedAt = new Date().toISOString();
+    const isClaude = runtime.profile.provider === "claude-code";
     try {
       if (kind === "availability") {
+        if (!runtime.executable.trim()) {
+          throw new Error("No binary path configured.");
+        }
         if (isAbsolute(runtime.executable)) await access(runtime.executable);
-        await execFileAsync(runtime.executable, ["--version"], {
+        const args = isClaude || runtime.profile.provider === "codex-cli"
+          ? ["--version"]
+          : runtime.profile.provider === "shikigami"
+          ? ["version"]
+          : ["--version"];
+        await execFileAsync(runtime.executable, args, {
           env: runtime.environment,
           timeout: 5_000,
           encoding: "utf8",
         });
-        probes.availability = { state: "ready", checkedAt, detail: "Claude Code is available." };
+        probes.availability = {
+          state: "ready",
+          checkedAt,
+          detail: `${runtime.profile.name} is available.`,
+        };
       } else if (kind === "version") {
-        const result = await execFileAsync(runtime.executable, ["--version"], {
+        const args = isClaude || runtime.profile.provider === "codex-cli"
+          ? ["--version"]
+          : runtime.profile.provider === "shikigami"
+          ? ["version"]
+          : ["--version"];
+        const result = await execFileAsync(runtime.executable, args, {
           env: runtime.environment,
           timeout: 5_000,
           encoding: "utf8",
@@ -361,40 +508,56 @@ export class ClaudeProfileStore {
         probes.version = {
           state: "ready",
           checkedAt,
-          detail: result.stdout.trim().split("\n")[0] || "Version detected.",
+          detail: `${result.stdout}\n${result.stderr}`.trim().split("\n")[0] || "Version detected.",
         };
       } else if (kind === "authentication") {
-        const result = await execFileAsync(runtime.executable, ["auth", "status", "--json"], {
-          env: runtime.environment,
-          timeout: 8_000,
-          encoding: "utf8",
-        });
-        const normalizedStatus = result.stdout.toLowerCase();
-        let authenticated = !normalizedStatus.includes("not authenticated")
-          && !normalizedStatus.includes("not logged in")
-          && (
-            normalizedStatus.includes("loggedin")
-            || normalizedStatus.includes("logged in")
-            || normalizedStatus.includes("authenticated")
-          );
-        try {
-          const value = JSON.parse(result.stdout) as Record<string, unknown>;
-          authenticated = value.loggedIn === true || value.authenticated === true;
-        } catch {
-          // Older Claude versions may return text despite accepting the command.
+        if (!isClaude) {
+          probes.authentication = {
+            state: "ready",
+            checkedAt,
+            detail: "Authentication is owned by the provider CLI (not probed for this profile).",
+            authenticated: true,
+          };
+        } else {
+          const result = await execFileAsync(runtime.executable, ["auth", "status", "--json"], {
+            env: runtime.environment,
+            timeout: 8_000,
+            encoding: "utf8",
+          });
+          const normalizedStatus = result.stdout.toLowerCase();
+          let authenticated = !normalizedStatus.includes("not authenticated")
+            && !normalizedStatus.includes("not logged in")
+            && (
+              normalizedStatus.includes("loggedin")
+              || normalizedStatus.includes("logged in")
+              || normalizedStatus.includes("authenticated")
+            );
+          try {
+            const value = JSON.parse(result.stdout) as Record<string, unknown>;
+            authenticated = value.loggedIn === true || value.authenticated === true;
+          } catch {
+            // Older Claude versions may return text despite accepting the command.
+          }
+          probes.authentication = {
+            state: authenticated ? "ready" : "unavailable",
+            checkedAt,
+            detail: authenticated ? "Claude authentication is ready." : "Claude is not authenticated.",
+            authenticated,
+          };
         }
-        probes.authentication = {
-          state: authenticated ? "ready" : "unavailable",
-          checkedAt,
-          detail: authenticated ? "Claude authentication is ready." : "Claude is not authenticated.",
-          authenticated,
-        };
-      } else {
+      } else if (isClaude) {
         probes.models = {
           state: "ready",
           checkedAt,
           detail: "Claude model aliases are available.",
           models: [...DEFAULT_MODELS],
+        };
+      } else {
+        probes.models = {
+          state: "ready",
+          checkedAt,
+          detail: "Models are discovered at run time for this provider.",
+          models: ["default"],
         };
       }
     } catch {
@@ -402,10 +565,10 @@ export class ClaudeProfileStore {
         state: "unavailable",
         checkedAt,
         detail: kind === "authentication"
-          ? "Claude authentication could not be verified."
+          ? "Authentication could not be verified for this profile."
           : kind === "models"
-          ? "Claude models could not be resolved."
-          : "Claude Code is unavailable for this profile.",
+          ? "Models could not be resolved for this profile."
+          : `${runtime.profile.name} is unavailable for this profile.`,
         ...(kind === "authentication" ? { authenticated: false } : {}),
         ...(kind === "models" ? { models: [] } : {}),
       };

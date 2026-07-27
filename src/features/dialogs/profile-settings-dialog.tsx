@@ -1,6 +1,11 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { ClaudeProfile, ProfileProbeKind } from "../../types";
 import { Button, CloseButton, ModalSurface } from "../../components/ui";
+import { providerDisplayName } from "../../lib/provider-readiness";
+
+function isDefaultProfileId(id: string): boolean {
+  return id.startsWith("default:");
+}
 
 export function parseEnvironment(
   input: string,
@@ -18,6 +23,31 @@ export function parseEnvironment(
   });
 }
 
+const NEW_PROFILE_PROVIDERS = [
+  { id: "claude-code", label: "Claude Code", binary: "claude" },
+  { id: "codex-cli", label: "Codex CLI", binary: "codex" },
+  { id: "shikigami", label: "Shikigami", binary: "shikigami" },
+] as const;
+
+function profileProviderLabel(provider: string): string {
+  if (provider === "claude-code" || provider === "codex-cli" || provider === "shikigami") {
+    return providerDisplayName(provider, undefined);
+  }
+  if (provider.startsWith("adapter:")) {
+    const packageId = provider.slice("adapter:".length).split("@")[0] || provider;
+    return packageId;
+  }
+  return provider;
+}
+
+function profileDetail(profile: ClaudeProfile): string {
+  const providerLabel = profileProviderLabel(profile.provider);
+  if (profile.provider === "claude-code") {
+    return profile.homePath ? `${providerLabel} · ${profile.homePath}` : `${providerLabel} · default home`;
+  }
+  if (profile.binaryPath) return `${providerLabel} · ${profile.binaryPath}`;
+  return `${providerLabel} · empty default`;
+}
 
 export function ProfileSettingsDialog({
   open,
@@ -33,6 +63,7 @@ export function ProfileSettingsDialog({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = profiles.find((profile) => profile.id === selectedId) ?? null;
   const [name, setName] = useState("");
+  const [provider, setProvider] = useState("claude-code");
   const [binaryPath, setBinaryPath] = useState("claude");
   const [homePath, setHomePath] = useState("");
   const [environment, setEnvironment] = useState("");
@@ -42,6 +73,7 @@ export function ProfileSettingsDialog({
   const edit = (profile: ClaudeProfile | null) => {
     setSelectedId(profile?.id ?? null);
     setName(profile?.name ?? "");
+    setProvider(profile?.provider ?? "claude-code");
     setBinaryPath(profile?.binaryPath ?? "claude");
     setHomePath(profile?.homePath ?? "");
     setEnvironment(profile?.environment.filter((item) => !item.sensitive).map((item) => `${item.name}=${item.value ?? ""}`).join("\n") ?? "");
@@ -62,9 +94,10 @@ export function ProfileSettingsDialog({
       if (profiles.length === 0) return;
       openedOnce.current = true;
       const preferred =
-        profiles.find((profile) => profile.id === "default:claude-code") ??
-        profiles[0] ??
-        null;
+        profiles.find((profile) => profile.id === "default:claude-code")
+        ?? profiles.find((profile) => profile.provider === "claude-code")
+        ?? profiles[0]
+        ?? null;
       edit(preferred);
       return;
     }
@@ -84,11 +117,11 @@ export function ProfileSettingsDialog({
         body: JSON.stringify(body),
       });
       const result = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Claude profiles could not be updated.");
+      if (!response.ok) throw new Error(result.error ?? "Provider profiles could not be updated.");
       await onChanged();
       return result;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Claude profiles could not be updated.");
+      setError(cause instanceof Error ? cause.message : "Provider profiles could not be updated.");
       return null;
     } finally {
       setBusy(false);
@@ -98,9 +131,10 @@ export function ProfileSettingsDialog({
     event.preventDefault();
     const saved = await request("/api/provider/profiles/save", {
       ...(selected ? { id: selected.id } : {}),
+      provider: selected?.provider ?? provider,
       name,
       binaryPath,
-      homePath,
+      homePath: (selected?.provider ?? provider) === "claude-code" ? homePath : "",
       environment: [
         ...parseEnvironment(environment, false, selected?.environment ?? []),
         ...parseEnvironment(sensitiveEnvironment, true, selected?.environment ?? []),
@@ -111,6 +145,8 @@ export function ProfileSettingsDialog({
   const refresh = async (profile: ClaudeProfile, kind: ProfileProbeKind) => {
     await request("/api/provider/profiles/refresh", { id: profile.id, kind });
   };
+  const isClaude = (selected?.provider ?? provider) === "claude-code";
+  const isDefault = selected ? isDefaultProfileId(selected.id) : false;
   return (
     <ModalSurface
       open={open}
@@ -120,14 +156,14 @@ export function ProfileSettingsDialog({
       ariaLabelledBy="profile-dialog-title"
     >
         <header>
-          <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Claude profiles</h2></div>
+          <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Provider profiles</h2></div>
           <CloseButton onClick={onClose} label="Close profile settings" />
         </header>
         <div className="profile-dialog-body">
-          <nav aria-label="Claude profiles">
+          <nav aria-label="Provider profiles">
             {profiles.map((profile) => {
-              const title = `${profile.name}${profile.id === "default:claude-code" ? " · default" : ""}`;
-              const detail = profile.homePath || "Default Claude home";
+              const title = `${profile.name}${isDefaultProfileId(profile.id) ? " · default" : ""}`;
+              const detail = profileDetail(profile);
               return (
                 <button
                   type="button"
@@ -139,7 +175,7 @@ export function ProfileSettingsDialog({
                 >
                   <strong>
                     {profile.name}
-                    {profile.id === "default:claude-code" ? " · default" : ""}
+                    {isDefaultProfileId(profile.id) ? " · default" : ""}
                   </strong>
                   <small>{detail}</small>
                 </button>
@@ -148,7 +184,12 @@ export function ProfileSettingsDialog({
             <button
               type="button"
               className={!selectedId ? "active add-profile" : "add-profile"}
-              onClick={() => edit(null)}
+              onClick={() => {
+                edit(null);
+                setProvider("claude-code");
+                setBinaryPath("claude");
+                setName("");
+              }}
               aria-label="New profile"
               aria-current={!selectedId ? "true" : undefined}
             >
@@ -156,14 +197,39 @@ export function ProfileSettingsDialog({
             </button>
           </nav>
           <form onSubmit={save}>
+            {!selected && (
+              <label>Provider
+                <select
+                  value={provider}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setProvider(next);
+                    const match = NEW_PROFILE_PROVIDERS.find((item) => item.id === next);
+                    if (match) setBinaryPath(match.binary);
+                  }}
+                >
+                  {NEW_PROFILE_PROVIDERS.map((item) => (
+                    <option value={item.id} key={item.id}>{item.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {selected && (
+              <p className="secret-note">
+                Provider: <strong>{profileProviderLabel(selected.provider)}</strong>
+                {isDefault ? " · system default (re-seeded if deleted)" : ""}
+              </p>
+            )}
             <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
             <div className="profile-fields">
-              <label>Binary path<input value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder="claude" /></label>
-              <label>Claude config path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="~/.claude-personal" /></label>
+              <label>Binary path<input value={binaryPath} onChange={(event) => setBinaryPath(event.target.value)} placeholder={isClaude ? "claude" : "binary on PATH"} /></label>
+              {isClaude && (
+                <label>Claude config path<input value={homePath} onChange={(event) => setHomePath(event.target.value)} placeholder="~/.claude-personal" /></label>
+              )}
             </div>
-            <label>Environment variables<textarea value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder={"ANTHROPIC_BASE_URL=https://…"} /></label>
-            <label>Sensitive environment values<textarea value={sensitiveEnvironment} onChange={(event) => setSensitiveEnvironment(event.target.value)} placeholder={"ANTHROPIC_AUTH_TOKEN=write-only value"} /></label>
-            <p className="secret-note">Sensitive values are write-only. Existing values appear empty and remain stored unless their line is removed.</p>
+            <label>Environment variables<textarea value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder={"KEY=value"} /></label>
+            <label>Sensitive environment values<textarea value={sensitiveEnvironment} onChange={(event) => setSensitiveEnvironment(event.target.value)} placeholder={"SECRET=write-only value"} /></label>
+            <p className="secret-note">Sensitive values are write-only. Existing values appear empty and remain stored unless their line is removed. Empty defaults are normal until you configure them.</p>
             {selected && (
               <div className="probe-grid" aria-label="Profile health probes">
                 {(["availability", "version", "authentication", "models"] as ProfileProbeKind[]).map((kind) => {
@@ -200,5 +266,3 @@ export function ProfileSettingsDialog({
     </ModalSurface>
   );
 }
-
-
