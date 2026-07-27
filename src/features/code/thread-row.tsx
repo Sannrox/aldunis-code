@@ -39,6 +39,23 @@ export function ThreadRow({
   const unread = isUnread(conversation);
   const elapsed = formatElapsed(conversation.statusSince ?? conversation.updatedAt);
   const monogram = providerMonogram(conversation.provider);
+  const statusLabel =
+    status === "pending_approval" ? "Approval needed"
+    : status === "awaiting_input" ? "Awaiting input"
+    : status === "failed" ? "Failed"
+    : status === "running" ? "Working"
+    : status === "completed" ? "Completed"
+    : null;
+  const openLabel = [
+    conversation.projectName ?? "project",
+    statusLabel,
+    unread ? "Unread" : null,
+    conversation.pinnedAt ? "Pinned" : null,
+    conversation.title,
+    branchFromWorktree(conversation.worktree),
+    providerLabel(conversation.provider),
+    elapsed,
+  ].filter(Boolean).join(", ");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -95,7 +112,13 @@ export function ThreadRow({
         .join(" ")}
       role="listitem"
     >
-      <button type="button" className="row-main" onClick={onOpen} aria-current={active ? "true" : undefined}>
+      <button
+        type="button"
+        className="row-main"
+        onClick={onOpen}
+        aria-current={active ? "true" : undefined}
+        aria-label={openLabel}
+      >
         <div className="rp">
           <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
