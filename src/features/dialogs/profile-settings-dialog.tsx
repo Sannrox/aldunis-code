@@ -70,6 +70,8 @@ export function ProfileSettingsDialog({
   const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Selected profile id while its availability probe is in flight (amber tile). */
+  const [availabilityProbingId, setAvailabilityProbingId] = useState<string | null>(null);
   const edit = (profile: ClaudeProfile | null) => {
     setSelectedId(profile?.id ?? null);
     setName(profile?.name ?? "");
@@ -82,6 +84,9 @@ export function ProfileSettingsDialog({
   };
   const openedOnce = useRef(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const availabilityProbeGeneration = useRef(0);
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
   useEffect(() => {
     if (!open) {
       openedOnce.current = false;
@@ -117,6 +122,43 @@ export function ProfileSettingsDialog({
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
+    };
+  }, [open, selectedId]);
+  // Auto-check availability when a saved profile is selected so the probe tile
+  // turns green (ready) without a manual click. Does not set form-wide busy.
+  useEffect(() => {
+    if (!open || !selectedId) {
+      setAvailabilityProbingId(null);
+      return;
+    }
+    const profileId = selectedId;
+    const generation = ++availabilityProbeGeneration.current;
+    setAvailabilityProbingId(profileId);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/provider/profiles/refresh", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: profileId, kind: "availability" }),
+        });
+        if (cancelled || generation !== availabilityProbeGeneration.current) return;
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(body.error ?? "Availability could not be checked.");
+        }
+        await onChangedRef.current();
+      } catch {
+        // Leave the tile as unavailable/unknown after parent refresh if the host
+        // returned a result; silent if the request aborted by profile switch.
+      } finally {
+        if (!cancelled && generation === availabilityProbeGeneration.current) {
+          setAvailabilityProbingId(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
   }, [open, selectedId]);
   if (!open) return null;
@@ -290,16 +332,20 @@ export function ProfileSettingsDialog({
             {selected && (
               <div className="probe-grid" aria-label="Profile health probes">
                 {(["availability", "version", "authentication", "models"] as ProfileProbeKind[]).map((kind) => {
-                  const detail = selected.probes[kind].detail ?? "Not checked";
+                  const probingAvailability = kind === "availability" && availabilityProbingId === selected.id;
+                  const state = probingAvailability ? "refreshing" : selected.probes[kind].state;
+                  const detail = probingAvailability
+                    ? "Checking…"
+                    : (selected.probes[kind].detail ?? "Not checked");
                   return (
                     <button
                       type="button"
                       onClick={() => void refresh(selected, kind)}
-                      disabled={busy}
+                      disabled={busy || probingAvailability}
                       key={kind}
                       aria-label={`Check ${kind}: ${detail}`}
                     >
-                      <span className={`probe-state ${selected.probes[kind].state}`} aria-hidden="true" />
+                      <span className={`probe-state ${state}`} aria-hidden="true" />
                       <strong>{kind}</strong>
                       <small>{detail}</small>
                     </button>
