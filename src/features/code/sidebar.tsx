@@ -394,7 +394,16 @@ export function CodeSidebar({
                     );
                     return (
                       <div className="srow" key={conversation.id} data-wt={holds ? "1" : "0"}>
-                        <button type="button" className="srow-main" onClick={() => onOpenConversation(conversation.id)}>
+                        <button
+                          type="button"
+                          className="srow-main"
+                          onClick={() => onOpenConversation(conversation.id)}
+                          aria-label={
+                            holds
+                              ? `Open settled conversation "${conversation.title}" (holds managed worktree)`
+                              : `Open settled conversation "${conversation.title}" on ${branchFromWorktree(conversation.worktree)}`
+                          }
+                        >
                           <span className="t">{conversation.title}</span>
                         </button>
                         {holds

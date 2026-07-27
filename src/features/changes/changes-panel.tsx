@@ -289,7 +289,15 @@ export function ChangesPanel({
                 type="button"
                 className="changed-file-main"
                 onClick={() => setSelected(file.path)}
-                aria-current={selected === file.path}
+                aria-current={selected === file.path ? "true" : undefined}
+                aria-label={[
+                  file.state,
+                  file.path,
+                  file.previousPath ? `from ${file.previousPath}` : null,
+                  file.additions === null && file.deletions === null
+                    ? null
+                    : `${file.additions === null ? "—" : `+${file.additions}`} ${file.deletions === null ? "—" : `−${file.deletions}`}`,
+                ].filter(Boolean).join(", ")}
               >
                 <span className={`change-state ${file.state}`}>{file.state}</span>
                 <span className="changed-file-path">
