@@ -336,6 +336,7 @@ export function ChangesPanel({
               type="button"
               className="file-comment-button"
               onClick={() => setCommentLineIndex(null)}
+              aria-label={`Comment on ${diff.path}, ${pane} pane`}
             >
               Comment on {diff.path}
             </button>
@@ -581,7 +582,7 @@ export function ChangesPanel({
                 className="prepare-delivery"
                 onClick={() => void prepareDelivery()}
                 disabled={deliveryBusy || delivery?.detached}
-                aria-label={`Inspect ${deliveryAction} action for delivery`}
+                aria-label={`Inspect ${deliveryAction} action for delivery, ${pane} pane`}
               >
                 Inspect action
               </Button>

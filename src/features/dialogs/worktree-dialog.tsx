@@ -105,7 +105,18 @@ export function WorktreeDialog({
             </dl>
             {selected.ownership === "user" && <p>This worktree remains selectable, but Aldunis Code does not claim or remove it.</p>}
             {selected.ownership === "aldunis" && !plan && (
-              <Button variant="danger" size="sm" className="worktree-remove" onClick={() => void previewRemove()} disabled={busy || selected.recovery !== "available"}>
+              <Button
+                variant="danger"
+                size="sm"
+                className="worktree-remove"
+                onClick={() => void previewRemove()}
+                disabled={busy || selected.recovery !== "available"}
+                aria-label={
+                  busy
+                    ? `Inspecting removal of worktree ${selected.branch ?? selected.path}`
+                    : `Preview removal of worktree ${selected.branch ?? selected.path}`
+                }
+              >
                 {busy ? "Inspecting…" : "Preview worktree removal"}
               </Button>
             )}
