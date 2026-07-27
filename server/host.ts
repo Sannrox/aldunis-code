@@ -863,6 +863,10 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/create") {
+      // Mutating automations can start provider runs; keep them loopback-local like adapter admin.
+      if (remoteRequest) {
+        throw new AutomationError("Remote clients cannot create automations.", 403);
+      }
       const body = await readJson(request) as {
         name?: unknown;
         threadId?: unknown;
@@ -895,6 +899,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/update") {
+      if (remoteRequest) {
+        throw new AutomationError("Remote clients cannot update automations.", 403);
+      }
       const body = await readJson(request) as {
         id?: unknown;
         name?: unknown;
@@ -914,6 +921,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/delete") {
+      if (remoteRequest) {
+        throw new AutomationError("Remote clients cannot delete automations.", 403);
+      }
       const body = await readJson(request) as { id?: unknown };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
       await automations.remove(body.id);
@@ -921,6 +931,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/run-now") {
+      if (remoteRequest) {
+        throw new AutomationError("Remote clients cannot run automations.", 403);
+      }
       const body = await readJson(request) as { id?: unknown };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
       sendJson(response, 200, await automationScheduler.runNow(body.id));
