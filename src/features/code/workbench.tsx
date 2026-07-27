@@ -585,6 +585,7 @@ export function CodeWorkbench({
                 aria-valuemin={30}
                 aria-valuemax={70}
                 aria-valuenow={Math.round(splitPercent)}
+                aria-valuetext={`${Math.round(splitPercent)} percent primary width`}
                 tabIndex={0}
                 onPointerDown={resize}
                 onKeyDown={(event) => {
