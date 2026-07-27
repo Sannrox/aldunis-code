@@ -235,7 +235,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
               </ul>
               <footer>
                 {entry.action === "current" ? (
-                  <Button type="button" size="sm" disabled>
+                  <Button type="button" size="sm" disabled aria-label={`${entry.name}: installed`}>
                     Installed
                   </Button>
                 ) : (
@@ -244,6 +244,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                     variant="primary"
                     size="sm"
                     disabled={busy || !administrationAvailable || !entry.package}
+                    aria-label={`${entry.installLabel} for ${entry.name}`}
                     onClick={() => void reviewCatalogEntry(entry)}
                   >
                     {entry.installLabel}
@@ -254,6 +255,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                     type="button"
                     size="sm"
                     disabled={busy || !administrationAvailable}
+                    aria-label={`Review package for ${entry.name}`}
                     onClick={() => void reviewCatalogEntry(entry)}
                   >
                     Review package
@@ -281,6 +283,7 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                 <button
                   type="button"
                   disabled={busy || !administrationAvailable}
+                  aria-label={`${adapter.enabled ? "Disable" : "Enable"} ${adapter.manifest.presentation.name}`}
                   onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/${adapter.enabled ? "disable" : "enable"}`)}
                 >
                   {adapter.enabled ? "Disable" : "Enable"}
@@ -288,11 +291,20 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
                 <button
                   type="button"
                   disabled={busy || !administrationAvailable}
+                  aria-label={`Rollback ${adapter.manifest.presentation.name}`}
                   onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/rollback`)}
                 >
                   Rollback
                 </button>
-                <Button variant="danger" size="sm" disabled={busy || !administrationAvailable} onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}>Uninstall</Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={busy || !administrationAvailable}
+                  aria-label={`Uninstall ${adapter.manifest.presentation.name}`}
+                  onClick={() => void act(`/api/provider/adapters/${adapter.manifest.id}/uninstall`)}
+                >
+                  Uninstall
+                </Button>
               </footer>
             </article>
           ))}
