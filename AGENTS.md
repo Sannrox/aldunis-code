@@ -1,31 +1,33 @@
 # Repository guidelines
 
 `aldunis-code` is the local-first agentic development workbench in the Aldunis
-product family. It is private during early development but must remain suitable
-for later open-source publication.
+product family. Keep the repository suitable for open-source collaboration:
+clear boundaries, no secrets in tree, and verifiable changes.
 
 ## Product boundary
 
 - This repository owns the local application shell, repository and worktree
   coordination, provider subprocess adapters, conversations, tool presentation,
-  local approval UX, and changed-file/diff views.
-- Claude Code is the first provider. Provider-specific behavior stays behind a
-  provider adapter; Codex CLI and other providers must not distort the core
-  conversation model.
+  local approval UX, changed-file/diff views, and timer-only automations.
+- Provider-specific behavior stays behind adapters. Claude Code, Codex CLI,
+  Shikigami, and declarative ACP packages must not distort the core conversation
+  model.
 - There is no integrated general-purpose terminal. Provider tools may execute
   commands through explicit, inspectable permission flows.
 - Public `Sannrox/sekai-chisei` owns governance, policy, evidence, provenance,
   routing, usage, and audit.
 - Public `Sannrox/tenkai` owns releases, environments, delivery plans,
   deployments, rollback, and recovery.
-- Private `Sannrox/aldunis-platform` owns enterprise tenant identity, sessions,
+- `Sannrox/aldunis-platform` owns enterprise tenant identity, sessions,
   commercial behavior, and browser-facing composition.
 - Cross-product screens are clients of authenticated contracts. They never
   share databases, accept caller-selected tenant authority, or turn cached
   projections into domain authority.
+- Product switcher: Code is always available; Sekai / Chisei / Tenkai stay
+  disabled until endpoints are configured (`ALDUNIS_*_ENDPOINT`).
 
-Read `docs/architecture.md` and `docs/work-lifecycle.md` before changing a
-boundary.
+Read [docs/architecture.md](docs/architecture.md) and
+[docs/work-lifecycle.md](docs/work-lifecycle.md) before changing a boundary.
 
 ## Engineering rules
 
@@ -40,6 +42,7 @@ boundary.
 - Prefer semantic HTML, keyboard navigation, visible focus, reduced-motion
   support, and deterministic tests.
 - Preserve the no-terminal product constraint.
+- Prefer documentation updates in the same change when behavior shifts.
 
 ## Work lifecycle
 
@@ -53,10 +56,15 @@ the `codex/` prefix.
 
 ## Reference repos
 
-- Open-source T3 Code repo: https://github.com/pingdotgg/t3code
+- Open-source T3 Code (workflow research only): https://github.com/pingdotgg/t3code
 
-Use these as implementation references when designing protocol handling, UX
-flows, and operational safeguards.
+## Documentation map
+
+- [docs/README.md](docs/README.md) — index
+- [docs/getting-started.md](docs/getting-started.md) — run locally
+- [docs/providers.md](docs/providers.md) — provider matrix
+- [docs/decisions/README.md](docs/decisions/README.md) — ADRs
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contributor guide
 
 ## Repository skills
 
@@ -67,9 +75,8 @@ flows, and operational safeguards.
 - `capture-code-decision` — preserve accepted architecture outcomes.
 
 Before committing work delivered through `deliver-code-issue`, run the **global**
-`autoreview` helper (for example
+`autoreview` helper when available (for example
 `$HOME/.grok/skills/autoreview/scripts/autoreview`, with
 `$HOME/.agents/...` or `$HOME/.claude/...` as fallbacks). Do not vendor
 `autoreview` into this repository. Deterministic verify and live UI stress
 complement it; they do not replace it.
-
