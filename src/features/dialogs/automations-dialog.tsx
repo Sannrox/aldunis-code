@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import type { ProviderId } from "../../types";
 import { Button, Field, Input, Textarea } from "../../components/ui";
+import { providerChipName } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
 export type AutomationSchedule =
@@ -19,13 +21,25 @@ export interface AutomationItem {
   lastError: string | null;
 }
 
+export interface AutomationThreadOption {
+  id: string;
+  title: string;
+  provider?: ProviderId;
+}
+
+function automationThreadLabel(thread: AutomationThreadOption): string {
+  const title = thread.title.trim() || thread.id;
+  if (!thread.provider) return title;
+  return `${title} · ${providerChipName(thread.provider, undefined)}`;
+}
+
 export function AutomationsDialog({
   open,
   threads,
   onClose,
 }: {
   open: boolean;
-  threads: Array<{ id: string; title: string }>;
+  threads: AutomationThreadOption[];
   onClose: () => void;
 }) {
   const [items, setItems] = useState<AutomationItem[]>([]);
@@ -173,7 +187,7 @@ export function AutomationsDialog({
           >
             {threads.length === 0 && <option value="">No conversations yet</option>}
             {threads.map((thread) => (
-              <option key={thread.id} value={thread.id}>{thread.title || thread.id}</option>
+              <option key={thread.id} value={thread.id}>{automationThreadLabel(thread)}</option>
             ))}
           </select>
         </Field>

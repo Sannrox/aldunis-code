@@ -316,7 +316,11 @@ function App() {
       />
       <AutomationsDialog
         open={automationsOpen}
-        threads={threads.map((thread) => ({ id: thread.id, title: thread.title }))}
+        threads={threads.map((thread) => ({
+          id: thread.id,
+          title: thread.title,
+          provider: thread.provider,
+        }))}
         onClose={() => setAutomationsOpen(false)}
       />
       <PreferencesDialog
