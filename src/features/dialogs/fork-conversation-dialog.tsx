@@ -120,7 +120,7 @@ export function ForkConversationDialog({
             <div><dt>File context</dt><dd>None</dd></div>
             <div><dt>Summaries</dt><dd>None</dd></div>
             <div><dt>Transfer size</dt><dd>{preview.byteCount.toLocaleString()} bytes</dd></div>
-            <div><dt>Worktree</dt><dd>{preview.worktree}</dd></div>
+            <div><dt>Worktree</dt><dd title={preview.worktree}>{preview.worktree}</dd></div>
           </dl>
           <details open>
             <summary>Exact messages crossing the boundary</summary>
@@ -137,7 +137,12 @@ export function ForkConversationDialog({
           </details>
           {preview.annotations.length > 0 && <details>
             <summary>User-authored annotations</summary>
-            {preview.annotations.map((annotation) => <article key={annotation.id}><strong>{annotation.path}</strong><p>{annotation.text}</p></article>)}
+            {preview.annotations.map((annotation) => (
+              <article key={annotation.id}>
+                <strong title={annotation.path}>{annotation.path}</strong>
+                <p>{annotation.text}</p>
+              </article>
+            ))}
           </details>}
           <details>
             <summary>Always excluded</summary>
