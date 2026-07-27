@@ -16,8 +16,10 @@ import type { ProviderDiscovery } from "../types";
 
 test("providerDisplayName and providerChipName cover first-class and adapter ids", () => {
   assert.equal(providerDisplayName("claude-code", undefined), "Claude Code");
-  assert.equal(providerChipName("codex-cli", undefined), "codex-cli");
-  assert.equal(providerChipName("shikigami", undefined), "shikigami");
+  // Composer chip uses short friendly labels, not machine ids.
+  assert.equal(providerChipName("claude-code", undefined), "Claude");
+  assert.equal(providerChipName("codex-cli", undefined), "Codex");
+  assert.equal(providerChipName("shikigami", undefined), "Shikigami");
   assert.equal(
     providerDisplayName("adapter:kiro-cli@1.0.0", {
       id: "adapter:kiro-cli@1.0.0",

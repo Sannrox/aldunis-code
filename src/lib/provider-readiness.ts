@@ -108,14 +108,17 @@ export function providerAvatarInitials(
   return (single.slice(0, 2) || "AD").toUpperCase();
 }
 
-/** Compact chip id/label used on the composer provider control. */
+/**
+ * Compact chip label on the composer provider control.
+ * Prefer human names over machine ids (claude-code / codex-cli / reverse-DNS packages).
+ */
 export function providerChipName(
   provider: ProviderId,
   discovery: ProviderDiscovery | undefined,
 ): string {
-  if (provider === "claude-code") return "claude-code";
-  if (provider === "codex-cli") return "codex-cli";
-  if (provider === "shikigami") return "shikigami";
+  if (provider === "claude-code") return "Claude";
+  if (provider === "codex-cli") return "Codex";
+  if (provider === "shikigami") return "Shikigami";
   const name = discovery?.name?.trim();
   if (name) return name;
   // Prefer known friendly names over reverse-DNS package ids when discovery is cold.
