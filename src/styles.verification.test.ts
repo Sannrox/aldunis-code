@@ -43,6 +43,12 @@ test("ui primitive classes are defined against the stylesheet", () => {
   }
 });
 
+test("icon buttons resist flex shrink in tight headers", () => {
+  // Close controls in review-dock headers were crushed to ~13px under flex-shrink.
+  assert.match(css, /\.ui-button--icon\s*\{[^}]*min-width:\s*32px[^}]*flex:\s*0\s+0\s+32px/s);
+  assert.match(css, /\.ui-button--icon-sm\s*\{[^}]*min-width:\s*28px[^}]*flex:\s*0\s+0\s+28px/s);
+});
+
 test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
   assert.doesNotMatch(css, /@import\s+url\(/i);

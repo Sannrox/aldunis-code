@@ -389,12 +389,21 @@ export function ChangesPanel({
           </header>
           {annotations.length === 0 && <p>No local comments yet.</p>}
           <ul className="annotation-list">
-            {annotations.map((annotation) => (
+            {annotations.map((annotation) => {
+              const target =
+                annotation.scope === "file"
+                  ? `${annotation.path} (file)`
+                  : annotation.side === "deletion"
+                    ? `${annotation.path} old line ${annotation.oldLine}`
+                    : `${annotation.path} new line ${annotation.newLine}`;
+              const resolveLabel = annotation.resolution === "unresolved" ? "Resolve" : "Reopen";
+              return (
               <li className={`annotation-item ${annotation.resolution} ${annotation.stale ? "stale" : ""}`} key={annotation.id}>
                 <label className="annotation-select">
                   <input
                     type="checkbox"
                     checked={selectedAnnotationIds.includes(annotation.id)}
+                    aria-label={`Select comment on ${target}`}
                     onChange={(event) => setSelectedAnnotationIds((current) => event.target.checked
                       ? [...current, annotation.id]
                       : current.filter((id) => id !== annotation.id))}
@@ -419,13 +428,15 @@ export function ChangesPanel({
                 <button
                   type="button"
                   className="annotation-resolve"
+                  aria-label={`${resolveLabel} comment on ${target}`}
                   onClick={() => void setResolution(annotation)}
                   disabled={annotationBusy}
                 >
-                  {annotation.resolution === "unresolved" ? "Resolve" : "Reopen"}
+                  {resolveLabel}
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
           {annotationError && <p className="changes-error" role="alert">{annotationError}</p>}
           <Button size="sm" onClick={() => void previewRevision()} disabled={annotationBusy || selectedAnnotationIds.length === 0}>Preview revision request</Button>
