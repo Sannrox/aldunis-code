@@ -98,9 +98,9 @@ export function WorktreeDialog({
         {selected ? (
           <>
             <dl className="worktree-details">
-              <div><dt>Repository</dt><dd>{repository.root}</dd></div>
-              <div><dt>Worktree</dt><dd>{selected.path}</dd></div>
-              <div><dt>Branch</dt><dd>{selected.branch ?? "Detached HEAD"}</dd></div>
+              <div><dt>Repository</dt><dd title={repository.root}>{repository.root}</dd></div>
+              <div><dt>Worktree</dt><dd title={selected.path}>{selected.path}</dd></div>
+              <div><dt>Branch</dt><dd title={selected.branch ?? "Detached HEAD"}>{selected.branch ?? "Detached HEAD"}</dd></div>
               <div><dt>Ownership</dt><dd>{selected.ownership === "aldunis" ? `Aldunis · ${selected.recovery}` : "User-created"}</dd></div>
             </dl>
             {selected.ownership === "user" && <p>This worktree remains selectable, but Aldunis Code does not claim or remove it.</p>}
@@ -169,10 +169,12 @@ export function WorktreeDialog({
           <section className="worktree-approval" aria-label={`Approve worktree ${plan.action}`}>
             <strong>{plan.action === "create" ? "Create this isolated worktree once?" : "Remove this worktree checkout once?"}</strong>
             <dl>
-              <div><dt>Repository</dt><dd>{plan.repository}</dd></div>
-              {plan.action === "create" && <div><dt>Base</dt><dd>{plan.base} · {plan.baseRevision}</dd></div>}
-              <div><dt>Branch</dt><dd>{plan.branch}</dd></div>
-              <div><dt>Path</dt><dd>{plan.path}</dd></div>
+              <div><dt>Repository</dt><dd title={plan.repository}>{plan.repository}</dd></div>
+              {plan.action === "create" && (
+                <div><dt>Base</dt><dd title={`${plan.base} · ${plan.baseRevision}`}>{plan.base} · {plan.baseRevision}</dd></div>
+              )}
+              <div><dt>Branch</dt><dd title={plan.branch}>{plan.branch}</dd></div>
+              <div><dt>Path</dt><dd title={plan.path}>{plan.path}</dd></div>
             </dl>
             <p>{plan.action === "create"
               ? "Approval is single-use. The conversation will be bound to the canonical result."
