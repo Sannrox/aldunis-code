@@ -1815,12 +1815,19 @@ export function Conversation({
                 >
                   {modelOptions.map((option) => {
                     const selected = option.id === model;
+                    // Synthetic default keeps a friendly primary label; avoid repeating raw "default".
+                    const detail = option.id === "default"
+                      ? (selected ? "Provider default · selected" : "Provider default")
+                      : `${option.id}${selected ? " · selected" : ""}`;
+                    const optionLabel = option.id === "default"
+                      ? `${option.displayName}${selected ? ", selected" : ""}`
+                      : `${option.displayName}: ${option.id}${selected ? ", selected" : ""}`;
                     return (
                       <button
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        aria-label={`${option.displayName}: ${option.id}${selected ? ", selected" : ""}`}
+                        aria-label={optionLabel}
                         key={option.id}
                         data-model-option=""
                         data-model-id={option.id}
@@ -1832,7 +1839,7 @@ export function Conversation({
                         }}
                       >
                         <span className="n">{option.displayName}</span>
-                        <span className="p">{option.id}{selected ? " · selected" : ""}</span>
+                        <span className="p">{detail}</span>
                       </button>
                     );
                   })}
