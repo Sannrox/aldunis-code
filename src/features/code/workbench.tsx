@@ -22,7 +22,6 @@ export function CodeWorkbench({
   onSelectProject,
   profiles,
   onOpenProfiles,
-  onSearch,
   onOpenPalette,
   onSelectWorktree,
   onManageWorktrees,
@@ -41,7 +40,6 @@ export function CodeWorkbench({
   onSelectProject: (projectId: string) => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: () => void;
-  onSearch: () => void;
   onOpenPalette: () => void;
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
@@ -75,6 +73,8 @@ export function CodeWorkbench({
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const splitReference = useRef<HTMLDivElement>(null);
   const restoredProjectReference = useRef<string | null>(null);
+  /** Last projectId we asked the host to open for the active primary thread (dedupes async switch). */
+  const requestedProjectForPrimaryRef = useRef<string | null>(null);
   const primarySelectionReference = useRef("new:0");
   const secondaryIdReference = useRef<string | null>(null);
   const primaryPaneReference = useRef<HTMLDivElement>(null);
@@ -257,8 +257,16 @@ export function CodeWorkbench({
       setLifecycleError(error instanceof Error ? error.message : "Conversation lifecycle action failed.");
     }
   };
+  const worktreeForActive = (() => {
+    if (!repository) return null;
+    const candidate = activeConversation?.worktree ?? repository.selectedWorktree;
+    if (!candidate) return null;
+    return repository.worktrees.some((worktree) => worktree.path === candidate)
+      ? candidate
+      : repository.selectedWorktree;
+  })();
   const refresh = async () => {
-    if (!repository) {
+    if (!repository || !worktreeForActive) {
       setChanges([]);
       return;
     }
@@ -268,7 +276,7 @@ export function CodeWorkbench({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           root: repository.root,
-          worktree: activeConversation?.worktree ?? repository.selectedWorktree,
+          worktree: worktreeForActive,
         }),
       });
       const body = await response.json() as { files?: ChangedFile[]; error?: string };
@@ -278,10 +286,36 @@ export function CodeWorkbench({
       setChanges([]);
     }
   };
-  useEffect(() => { void refresh(); }, [activeConversation?.worktree, repository]);
+  useEffect(() => { void refresh(); }, [worktreeForActive, repository?.root, repository?.selectedWorktree]);
+  // URL/local restore can pair a conversation with the wrong open repository.
+  // Activate the thread's project so runs/tools bind to the correct root.
+  useEffect(() => {
+    if (!primaryId || restoreState !== "ready") return;
+    const thread = conversations.find((item) => item.id === primaryId);
+    if (!thread) {
+      requestedProjectForPrimaryRef.current = null;
+      return;
+    }
+    const activeIds = new Set([
+      repository?.projectId,
+      ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+    ].filter(Boolean) as string[]);
+    if (activeIds.has(thread.projectId)) {
+      requestedProjectForPrimaryRef.current = thread.projectId;
+      return;
+    }
+    // Dedup: async openRepository does not update projectId immediately.
+    if (requestedProjectForPrimaryRef.current === thread.projectId) return;
+    requestedProjectForPrimaryRef.current = thread.projectId;
+    onSelectProject(thread.projectId);
+  }, [conversations, onSelectProject, primaryId, projects, repository?.projectId, restoreState]);
   const repositoryFor = (conversation: ConversationSummary | null) => {
     if (!repository) return null;
     if (!conversation?.worktree) return repository;
+    // Never stamp a foreign worktree onto the open root — that causes /api/changes
+    // 403s and a disabled composer while project switch is still in flight.
+    const known = repository.worktrees.some((worktree) => worktree.path === conversation.worktree);
+    if (!known) return repository;
     return {
       ...repository,
       selectedWorktree: conversation.worktree,
@@ -389,7 +423,6 @@ export function CodeWorkbench({
           }
           setActivePane("primary");
         }}
-        onSearch={onSearch}
         onOpenPalette={onOpenPalette}
         onSelectWorktree={onSelectWorktree}
         onManageWorktrees={onManageWorktrees}

@@ -20,6 +20,7 @@ import {
   providerNotReadyMessage,
   providerReasoningEfforts,
 } from "../../lib/provider-readiness";
+import { formatElapsed } from "./conversation-list";
 
 export function Conversation({
   repository,
@@ -67,7 +68,7 @@ export function Conversation({
   onOpenProfiles: () => void;
 }) {
   const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode }>>([]);
+  const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
   const [mode, setMode] = useState<InteractionMode>("ask");
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
@@ -525,11 +526,14 @@ export function Conversation({
       setMessages(history.filter((message) => message.role === "user").map((message) => ({
         text: message.text,
         mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
+        createdAt: message.createdAt,
       })));
-      setProviderEvents(history.filter((message) => message.role === "assistant").map((message) => ({
-        kind: "assistant_text" as const,
-        text: message.text,
-      })));
+      setProviderEvents(history
+        .filter((message) => message.role === "assistant" && message.text.trim().length > 0)
+        .map((message) => ({
+          kind: "assistant_text" as const,
+          text: message.text,
+        })));
       const nextState: ProviderState = latest.status === "active" || latest.status === "running"
         ? "streaming"
         : latest.status === "waiting_for_approval"
@@ -716,7 +720,7 @@ export function Conversation({
       || !historyRestored
     ) return;
     const turnMode = mode;
-    setMessages((current) => [...current, { text: value, mode: turnMode }]);
+    setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
     if (promptOverride === undefined) setDraft("");
     const sentAttachments = promptOverride === undefined ? attachments : [];
     if (promptOverride === undefined) setAttachments([]);
@@ -948,15 +952,36 @@ export function Conversation({
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
+  const hasAssistantContent = Boolean(assistantText.trim())
+    || toolEvents.length > 0
+    || approvals.length > 0
+    || failure != null;
+  // Avoid empty assistant shells after restore (header-only with no body).
+  // runActive covers starting/streaming/waiting_for_approval/cancelling.
+  const showAssistantTurn = hasAssistantContent
+    || runActive
+    || (providerState === "completed" && Boolean(threadId))
+    || Boolean(failureView);
   const conversationEmpty = messages.length === 0
-    && providerEvents.length === 0
+    && !showAssistantTurn
     && providerState === "idle";
+  const conversationWorktreeMissing = Boolean(
+    conversation?.worktree
+    && repository
+    && !repository.worktrees.some((item) => item.path === conversation.worktree),
+  );
   const emptyState = !repository
     ? {
         title: "Open a repository to begin",
         detail: "Choose an explicit local root before starting a provider conversation.",
         action: <Button variant="primary" size="lg" onClick={onOpenRepository}>Open repository</Button>,
       }
+    : conversationWorktreeMissing
+      ? {
+          title: "Worktree is not available",
+          detail: `This conversation is bound to ${conversation?.worktree}, which is not among the discovered worktrees for the open repository. Switch project or recreate the worktree before sending.`,
+          action: <Button variant="primary" size="lg" onClick={onManageWorktrees}>Manage worktrees</Button>,
+        }
     : !providerReady
       ? {
           title: `${providerName} is not ready`,
@@ -1068,17 +1093,23 @@ export function Conversation({
             <div className="role">
               <span className="av you">Y</span>
               <span className="rname">You</span>
-              <span className="rtime">now</span>
+              <span className="rtime">{message.createdAt ? formatElapsed(message.createdAt) : "now"}</span>
             </div>
             <p>{message.text}</p>
           </div>
         ))}
-        {(providerState !== "idle" || providerEvents.length > 0) && (
+        {showAssistantTurn && (
           <div className="turn" aria-live="polite">
             <div className="role">
               <span className="av">{provider === "claude-code" ? "CC" : provider === "codex-cli" ? "CX" : provider === "shikigami" ? "SK" : "AD"}</span>
               <span className="rname">{providerLabel}</span>
-              <span className="rtime">now</span>
+              <span className="rtime">
+                {runActive
+                  ? "now"
+                  : conversation?.updatedAt
+                    ? formatElapsed(conversation.updatedAt)
+                    : "now"}
+              </span>
             </div>
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
@@ -1319,12 +1350,16 @@ export function Conversation({
             placeholder={
               !historyRestored
                 ? "Restoring conversation session…"
+                : conversationWorktreeMissing
+                ? "Conversation worktree is not available for the open repository…"
                 : !providerReady
                 ? providerReadinessMessage
                 : worktree
                 ? `Reply to ${providerName}…`
                 : "Open a repository with an available worktree…"
             }
+            id={`${pane}-composer`}
+            name={`${pane}-composer`}
             aria-label={`Message ${providerName}`}
             disabled={
               !worktree
