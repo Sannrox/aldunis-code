@@ -16,6 +16,7 @@ import {
   providerAvatarInitials,
   providerChipName as formatProviderChipName,
   providerDisplayName,
+  providerListLabel,
   providerModelLabel,
   providerModelOptions,
   providerNotReadyMessage,
@@ -1087,7 +1088,7 @@ export function Conversation({
         <div className="crumb">
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
-          {repository && <> · {providerName.toLocaleLowerCase().replace(/\s+/g, "-")}</>}
+          {repository && <> · {providerListLabel(provider)}</>}
           {model !== "default" && <> · {modelChipLabel}</>}
           {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
