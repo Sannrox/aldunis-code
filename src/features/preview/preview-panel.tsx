@@ -161,7 +161,11 @@ export function PreviewPanel({
       <header>
         <div><p className="eyebrow">CONSTRAINED PREVIEW</p><h2>Local web application</h2></div>
         <div>
-          {running && <button type="button" onClick={() => void stop()}>Stop</button>}
+          {running && (
+            <Button type="button" size="sm" onClick={() => void stop()} aria-label="Stop local web preview">
+              Stop
+            </Button>
+          )}
           <CloseButton onClick={onClose} label="Close preview" />
         </div>
       </header>
@@ -180,7 +184,9 @@ export function PreviewPanel({
             autoComplete="off"
             spellCheck={false}
           />
-          <button type="submit">Review start</button>
+          <Button type="submit" size="sm" aria-label="Review preview start">
+            Review start
+          </Button>
         </form>
       )}
       {preview?.state === "approval_pending" && (
@@ -188,13 +194,14 @@ export function PreviewPanel({
           <span><Icon name="shield" /></span>
           <div><strong>Start development server once?</strong><code>{preview.command}</code><small>{preview.worktree}</small></div>
           <footer>
-            <button
+            <Button
               type="button"
+              size="sm"
               aria-label={`Deny starting preview: ${preview.command}`}
               onClick={() => void decide("deny")}
             >
               Deny
-            </button>
+            </Button>
             <Button
               variant="primary"
               size="sm"
@@ -211,13 +218,15 @@ export function PreviewPanel({
           <div className="preview-toolbar">
             <span>{preview.origin}</span>
             <em className={frameState}>{frameState}</em>
-            <button
+            <Button
               type="button"
+              size="sm"
               onClick={selectElement}
               disabled={referencePending || frameState !== "visible"}
+              aria-label={referencePending ? "Choose an element in the preview" : "Reference element in the preview"}
             >
               {referencePending ? "Choose an element…" : "Reference element"}
-            </button>
+            </Button>
           </div>
           <iframe
             ref={frameRef}

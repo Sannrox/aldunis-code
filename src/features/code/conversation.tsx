@@ -1366,16 +1366,26 @@ export function Conversation({
                         ))}
                       </ul>
                       <footer>
-                        <button type="button" onClick={() => setRewindPreview(null)} disabled={checkpointBusy}>Cancel</button>
-                        <button
+                        <Button
                           type="button"
+                          size="sm"
+                          onClick={() => setRewindPreview(null)}
+                          disabled={checkpointBusy}
+                          aria-label={`Cancel workspace rewind, ${pane} pane`}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
                           className="rewind-confirm"
                           aria-label={`Confirm workspace rewind, ${pane} pane`}
                           onClick={() => void confirmRewind()}
                           disabled={checkpointBusy}
                         >
                           {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
-                        </button>
+                        </Button>
                       </footer>
                     </>
                   )}
