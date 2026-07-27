@@ -494,6 +494,15 @@ export function Conversation({
           createdAt: string;
         }>;
         messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
+        activities?: Array<{
+          turnId: string;
+          kind: "tool_started" | "tool_finished" | "provider_failed";
+          toolCallId: string | null;
+          name: string | null;
+          failed: boolean | null;
+          message: string | null;
+          createdAt: string;
+        }>;
         providerSessions: Array<{ threadId: string; provider?: ProviderId; sessionId: string }>;
       };
       const thread = conversation
@@ -547,12 +556,41 @@ export function Conversation({
       })));
       // Keep whitespace-only assistant chunks (e.g. "\n\n" from ACP streams).
       // Dropping them via trim() glued "shikigami" + "There" into unreadable text.
-      setProviderEvents(history
+      const assistantEvents: ProviderEvent[] = history
         .filter((message) => message.role === "assistant" && message.text.length > 0)
         .map((message) => ({
           kind: "assistant_text" as const,
           text: message.text,
-        })));
+        }));
+      // Rehydrate tool runs and provider failures from activity rows. Without
+      // this, reopening a failed turn only shows the user prompt.
+      const activityEvents: ProviderEvent[] = (projection.activities ?? [])
+        .filter((activity) => turnIds.has(activity.turnId))
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .flatMap((activity): ProviderEvent[] => {
+          if (activity.kind === "provider_failed") {
+            return [{
+              kind: "failed",
+              message: activity.message?.trim() || "Provider failed.",
+            }];
+          }
+          if (activity.kind === "tool_started" && activity.toolCallId) {
+            return [{
+              kind: "tool_started",
+              toolCallId: activity.toolCallId,
+              name: activity.name?.trim() || "Provider tool",
+            }];
+          }
+          if (activity.kind === "tool_finished" && activity.toolCallId) {
+            return [{
+              kind: "tool_finished",
+              toolCallId: activity.toolCallId,
+              failed: activity.failed === true,
+            }];
+          }
+          return [];
+        });
+      setProviderEvents([...assistantEvents, ...activityEvents]);
       const nextState: ProviderState = latest.status === "active" || latest.status === "running"
         ? "streaming"
         : latest.status === "waiting_for_approval"
@@ -985,6 +1023,8 @@ export function Conversation({
   const showAssistantTurn = hasAssistantContent
     || runActive
     || (providerState === "completed" && Boolean(threadId))
+    || providerState === "failed"
+    || providerState === "cancelled"
     || Boolean(failureView);
   const conversationEmpty = messages.length === 0
     && !showAssistantTurn
@@ -1356,7 +1396,7 @@ export function Conversation({
                   )}
                 </div>
               )}
-              {(providerState === "completed" || providerState === "cancelled")
+              {(providerState === "completed" || providerState === "cancelled" || providerState === "failed")
                 && <p className="provider-state">{stateCopy[providerState]}</p>}
               {checkpoint && (
                 <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint: ${checkpoint.state}`}>
