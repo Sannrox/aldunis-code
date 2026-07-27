@@ -883,6 +883,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   white-space: pre-wrap !important;
   word-break: break-word !important;
 }
+/* Keep icon dismiss controls from flex-shrinking in narrow review headers. */
+.ui-button--icon {
+  width: 32px !important;
+  min-width: 32px !important;
+  flex: 0 0 32px !important;
+}
+.ui-button--icon-sm {
+  width: 28px !important;
+  min-width: 28px !important;
+  flex: 0 0 28px !important;
+}
+
 /* Line/file comment controls need a real hit target (bare "+" was ~7×17). */
 .diff-comment-button,
 .file-comment-button {
