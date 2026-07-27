@@ -20,12 +20,24 @@ const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [
   "xhigh",
 ];
 
+/**
+ * Concrete Claude aliases offered in the composer (T3-style: no synthetic
+ * "Default" row — the preferred default is Sonnet).
+ * Server still accepts legacy "default" on the wire.
+ */
 const CLAUDE_MODELS: ProviderModelOption[] = [
-  { id: "default", displayName: "Default" },
   { id: "sonnet", displayName: "Sonnet" },
   { id: "opus", displayName: "Opus" },
   { id: "haiku", displayName: "Haiku" },
 ];
+
+/**
+ * Preferred concrete model when discovery is empty, aligned with T3's
+ * DEFAULT_MODEL_BY_PROVIDER idea (real slug, not a "default" sentinel).
+ */
+export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<string, string>> = {
+  "claude-code": "sonnet",
+};
 
 /** Package id segment of `adapter:<package>@<version>`, or null. */
 export function adapterPackageId(provider: string): string | null {
@@ -191,6 +203,28 @@ export function providerNotReadyMessage(
   return `${options.providerName} is not ready…`;
 }
 
+/**
+ * Resolve the concrete model to use when the UI/state still has the
+ * unpinned sentinel `"default"` (or an empty selection). Matches T3:
+ * discovery `isDefault` → first discovered model → provider preferred slug.
+ */
+export function resolveDefaultProviderModel(
+  provider: ProviderId,
+  discovery: ProviderDiscovery | undefined,
+): string {
+  const models = discovery?.models ?? [];
+  const marked = models.find((entry) => entry.isDefault)?.id;
+  if (marked && marked !== "default") return marked;
+  // Prefer a real discovered id over a synthetic "default" entry in the list.
+  const firstReal = models.find((entry) => entry.id !== "default")?.id;
+  if (firstReal) return firstReal;
+  if (marked) return marked;
+  const preferred = DEFAULT_MODEL_BY_PROVIDER[provider];
+  if (preferred) return preferred;
+  if (provider === "claude-code") return "sonnet";
+  return "default";
+}
+
 /** Models the composer chip can cycle for the selected provider. */
 export function providerModelOptions(
   provider: ProviderId,
@@ -200,21 +234,21 @@ export function providerModelOptions(
 
   const discovered = discovery?.models ?? [];
   if (discovered.length === 0) {
+    // No list yet: show the resolved preferred id (may still be "default" until discover).
+    const id = resolveDefaultProviderModel(provider, discovery);
+    if (id === "default") return [{ id: "default", displayName: "Default" }];
+    return [{ id, displayName: id }];
+  }
+
+  // T3-style: only real discovered models — no synthetic prepended "Default" row.
+  const real = discovered.filter((model) => model.id !== "default");
+  if (real.length === 0) {
     return [{ id: "default", displayName: "Default" }];
   }
-
-  const options = discovered.map((model) => ({
+  return real.map((model) => ({
     id: model.id,
-    displayName: model.id === "default"
-      ? (model.displayName && model.displayName !== "default" ? model.displayName : "Default")
-      : (model.displayName || model.id),
+    displayName: model.displayName || model.id,
   }));
-
-  // Keep an explicit default entry when discovery did not list one.
-  if (!options.some((entry) => entry.id === "default")) {
-    return [{ id: "default", displayName: "Default" }, ...options];
-  }
-  return options;
 }
 
 export function cycleProviderModel(
@@ -224,7 +258,10 @@ export function cycleProviderModel(
 ): string {
   const options = providerModelOptions(provider, discovery);
   if (options.length <= 1) return options[0]?.id ?? currentModel;
-  const index = options.findIndex((entry) => entry.id === currentModel);
+  const effective = currentModel === "default"
+    ? resolveDefaultProviderModel(provider, discovery)
+    : currentModel;
+  const index = options.findIndex((entry) => entry.id === effective);
   const next = options[(index + 1) % options.length] ?? options[0]!;
   return next.id;
 }
@@ -234,9 +271,18 @@ export function providerModelLabel(
   model: string,
   discovery: ProviderDiscovery | undefined,
 ): string {
-  if (model === "default") return "Default";
-  const match = providerModelOptions(provider, discovery).find((entry) => entry.id === model);
-  return match?.displayName ?? model;
+  const effective = model === "default"
+    ? resolveDefaultProviderModel(provider, discovery)
+    : model;
+  const match = providerModelOptions(provider, discovery).find((entry) => entry.id === effective);
+  if (match) return match.displayName;
+  // Discovery may mark a default that was filtered from options (id "default").
+  const discovered = discovery?.models?.find((entry) => entry.id === effective);
+  if (discovered?.displayName && discovered.displayName !== "default") {
+    return discovered.displayName;
+  }
+  if (effective === "default") return "Default";
+  return effective;
 }
 
 /**
@@ -251,10 +297,13 @@ export function providerReasoningEfforts(
 ): ReasoningEffort[] {
   const isAdapter = typeof provider === "string" && provider.startsWith("adapter:");
   if (provider !== "codex-cli" && !isAdapter) return [];
-  if (model === "default") {
+  const effective = model === "default"
+    ? resolveDefaultProviderModel(provider, discovery)
+    : model;
+  if (effective === "default") {
     return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
   }
-  const match = discovery?.models?.find((entry) => entry.id === model);
+  const match = discovery?.models?.find((entry) => entry.id === effective);
   if (!match) {
     return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
   }
