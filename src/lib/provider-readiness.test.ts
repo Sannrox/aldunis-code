@@ -4,6 +4,7 @@ import {
   cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
+  prettifyModelId,
   providerAvatarInitials,
   providerChipName,
   providerDisplayName,
@@ -227,6 +228,19 @@ test("Claude model options use T3-style full slugs and versioned labels", () => 
   assert.equal(providerModelLabel("claude-code", "sonnet", undefined), "Sonnet 5");
   assert.equal(providerModelLabel("claude-code", "default", undefined), "Sonnet 5");
   assert.equal(providerModelLabel("claude-code", "claude-sonnet-5", undefined), "Sonnet 5");
+});
+
+test("prettifyModelId humanizes session-restored slugs without discovery", () => {
+  assert.equal(prettifyModelId("grok-4.5"), "Grok 4.5");
+  assert.equal(prettifyModelId("gpt-5.2-codex"), "Gpt 5.2 Codex");
+  assert.equal(prettifyModelId("auto"), "Auto");
+  assert.equal(prettifyModelId("default"), "default");
+  // Without discovery, labels fall back to prettified ids (not the raw slug).
+  assert.equal(
+    providerModelLabel("adapter:dev.xai.grok-build@1.0.0", "grok-4.5", undefined),
+    "Grok 4.5",
+  );
+  assert.equal(providerModelLabel("adapter:dev.kiro.cli@1.0.0", "auto", undefined), "Auto");
 });
 
 test("Codex reasoning effort cycles advertised options", () => {
