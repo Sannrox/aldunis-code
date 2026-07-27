@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
@@ -328,6 +328,46 @@ export function CodeWorkbench({
     setSecondaryId(candidate);
     setActivePane("secondary");
   };
+  const openConversation = useCallback((id: string) => {
+    const thread = conversations.find((item) => item.id === id);
+    // Activate the thread's repository for runs/tools, but do not change the
+    // project chip filter — inbox "All" must stay on All when clicking a chat.
+    if (thread) {
+      const activeIds = new Set([
+        repository?.projectId,
+        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+      ].filter(Boolean) as string[]);
+      if (!activeIds.has(thread.projectId)) {
+        onSelectProject(thread.projectId);
+      }
+    }
+    primarySelectionReference.current = id;
+    setPrimaryId(id);
+    if (secondaryIdReference.current === id) {
+      secondaryIdReference.current = null;
+      setSecondaryId(null);
+    }
+    setActivePane("primary");
+    // Patch visit locally — do not reload/resort the inbox on every selection.
+    const visitedAt = new Date().toISOString();
+    setConversations((current) => current.map((item) => (
+      item.id === id ? { ...item, lastVisitedAt: visitedAt } : item
+    )));
+    void fetch("/api/state/conversations/visit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId: id }),
+    }).catch(() => undefined);
+  }, [conversations, onSelectProject, projects, repository?.projectId]);
+  // Thread search lives outside the workbench shell; open hits via shared event.
+  useEffect(() => {
+    const onOpenFromSearch = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
+      if (typeof threadId === "string" && threadId.length > 0) openConversation(threadId);
+    };
+    window.addEventListener("aldunis:open-conversation", onOpenFromSearch);
+    return () => window.removeEventListener("aldunis:open-conversation", onOpenFromSearch);
+  }, [openConversation]);
   const resize = (event: React.PointerEvent<HTMLDivElement>) => {
     const element = splitReference.current;
     if (!element) return;
@@ -370,37 +410,7 @@ export function CodeWorkbench({
         conversations={listedConversations}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
-        onOpenConversation={(id) => {
-          const thread = conversations.find((item) => item.id === id);
-          // Activate the thread's repository for runs/tools, but do not change the
-          // project chip filter — inbox "All" must stay on All when clicking a chat.
-          if (thread) {
-            const activeIds = new Set([
-              repository?.projectId,
-              ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-            ].filter(Boolean) as string[]);
-            if (!activeIds.has(thread.projectId)) {
-              onSelectProject(thread.projectId);
-            }
-          }
-          primarySelectionReference.current = id;
-          setPrimaryId(id);
-          if (secondaryId === id) {
-            secondaryIdReference.current = null;
-            setSecondaryId(null);
-          }
-          setActivePane("primary");
-          // Patch visit locally — do not reload/resort the inbox on every selection.
-          const visitedAt = new Date().toISOString();
-          setConversations((current) => current.map((item) => (
-            item.id === id ? { ...item, lastVisitedAt: visitedAt } : item
-          )));
-          void fetch("/api/state/conversations/visit", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ threadId: id }),
-          }).catch(() => undefined);
-        }}
+        onOpenConversation={openConversation}
         onOpenBeside={openBeside}
         onNewConversation={() => {
           // New thread uses the active/filter project for runs — never opens a path tree,
