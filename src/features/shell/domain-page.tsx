@@ -47,7 +47,14 @@ export function DomainPage({ product }: { product: Exclude<Product, "code"> }) {
       <p className="domain-summary">{page.summary}</p>
       <div className="domain-grid">
         {page.items.map((item, index) => (
-          <button type="button" key={item}>
+          <button
+            type="button"
+            key={item}
+            disabled
+            aria-disabled="true"
+            aria-label={`${item}: not available until ${page.eyebrow.toLowerCase()} is configured`}
+            title="Projected route — unavailable until this plane is configured"
+          >
             <span>0{index + 1}</span>
             <strong>{item}</strong>
             <Icon name="chevron" />
