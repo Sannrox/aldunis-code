@@ -202,7 +202,7 @@ svg:not(.ic):not(.ic-sm):not(.ic-lg) { width: 18px; height: 18px; }
   color: var(--destructive-foreground);
 }
 .ui-button--danger:hover:not(:disabled) { filter: brightness(1.08); }
-.ui-button--xs { min-height: 24px; padding: 0 8px; font-size: max(var(--type-floor), 0.55rem); border-radius: 5px; }
+.ui-button--xs { min-height: 28px; padding: 0 8px; font-size: max(var(--type-floor), 0.55rem); border-radius: 5px; }
 .ui-button--sm { min-height: 30px; padding: 0 10px; font-size: max(var(--type-floor), 0.6rem); }
 .ui-button--md { min-height: 32px; padding: 0 10px; font-size: max(var(--type-floor), 0.65rem); }
 .ui-button--lg { min-height: 34px; padding: 0 12px; font-size: max(var(--type-floor), 0.65rem); }
@@ -1608,7 +1608,8 @@ select.ui-input {
   flex: 0 0 auto;
   align-self: flex-start;
   margin-top: 1px;
-  height: 26px;
+  min-height: 28px;
+  height: 28px;
   padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
