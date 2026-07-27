@@ -1068,7 +1068,7 @@ export function Conversation({
             <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
             </svg>
-            Open
+            Browse
           </button>
           <span className="cdiv" aria-hidden="true" />
           <button
