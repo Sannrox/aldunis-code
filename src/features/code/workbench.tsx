@@ -486,29 +486,42 @@ export function CodeWorkbench({
         {incompleteDeletionIds.map((threadId) => (
           <div className="workspace-state error" role="alert" key={threadId}>
             <span>Conversation deletion {threadId} is incomplete.</span>
-            <button onClick={() => {
-              void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
-                .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
-                .catch((error: unknown) => setLifecycleError(
-                  error instanceof Error ? error.message : "Conversation deletion retry failed.",
-                ));
-            }}>Retry deletion</button>
+            <button
+              type="button"
+              onClick={() => {
+                void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
+                  .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
+                  .catch((error: unknown) => setLifecycleError(
+                    error instanceof Error ? error.message : "Conversation deletion retry failed.",
+                  ));
+              }}
+            >
+              Retry deletion
+            </button>
           </div>
         ))}
         {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
         {restoreState === "failed" && (
           <div className="workspace-state failed" role="alert">
             <span>Local conversation history could not be loaded.</span>
-            <button onClick={() => setRestoreAttempt((value) => value + 1)}>Retry</button>
+            <button type="button" onClick={() => setRestoreAttempt((value) => value + 1)}>Retry</button>
           </div>
         )}
         {(restoreState === "ready" || !repository) && <>
         {secondaryId && (
           <nav className="pane-switcher" aria-label="Visible conversation pane">
-            <button className={activePane === "primary" ? "active" : ""} onClick={() => setActivePane("primary")}>
+            <button
+              type="button"
+              className={activePane === "primary" ? "active" : ""}
+              onClick={() => setActivePane("primary")}
+            >
               Primary · {primary?.title ?? (primaryId ? "Replace conversation" : "New conversation")}
             </button>
-            <button className={activePane === "secondary" ? "active" : ""} onClick={() => setActivePane("secondary")}>
+            <button
+              type="button"
+              className={activePane === "secondary" ? "active" : ""}
+              onClick={() => setActivePane("secondary")}
+            >
               Secondary · {secondary?.title ?? (secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation")}
             </button>
           </nav>

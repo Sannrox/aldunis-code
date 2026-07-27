@@ -161,7 +161,7 @@ export function PreviewPanel({
       <header>
         <div><p className="eyebrow">CONSTRAINED PREVIEW</p><h2>Local web application</h2></div>
         <div>
-          {running && <button onClick={() => void stop()}>Stop</button>}
+          {running && <button type="button" onClick={() => void stop()}>Stop</button>}
           <CloseButton onClick={onClose} label="Close preview" />
         </div>
       </header>
@@ -188,7 +188,7 @@ export function PreviewPanel({
           <span><Icon name="shield" /></span>
           <div><strong>Start development server once?</strong><code>{preview.command}</code><small>{preview.worktree}</small></div>
           <footer>
-            <button onClick={() => void decide("deny")}>Deny</button>
+            <button type="button" onClick={() => void decide("deny")}>Deny</button>
             <Button variant="primary" size="sm" onClick={() => void decide("allow_once")}>Allow once</Button>
           </footer>
         </section>
@@ -198,7 +198,11 @@ export function PreviewPanel({
           <div className="preview-toolbar">
             <span>{preview.origin}</span>
             <em className={frameState}>{frameState}</em>
-            <button onClick={selectElement} disabled={referencePending || frameState !== "visible"}>
+            <button
+              type="button"
+              onClick={selectElement}
+              disabled={referencePending || frameState !== "visible"}
+            >
               {referencePending ? "Choose an element…" : "Reference element"}
             </button>
           </div>

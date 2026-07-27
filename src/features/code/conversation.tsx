@@ -1232,7 +1232,7 @@ export function Conversation({
                   </small>
                   {approval.state === "pending" && (
                     <footer>
-                      <button onClick={() => void decideApproval(approval, "deny")}>Deny</button>
+                      <button type="button" onClick={() => void decideApproval(approval, "deny")}>Deny</button>
                       <Button variant="primary" size="sm" onClick={() => void decideApproval(approval, "allow_once")}>Allow once</Button>
                     </footer>
                   )}
@@ -1275,7 +1275,7 @@ export function Conversation({
                       <small>{checkpoint.state}</small>
                     </div>
                     {checkpoint.state === "completed" && !rewindPreview && (
-                      <button onClick={() => void previewRewind()} disabled={checkpointBusy}>
+                      <button type="button" onClick={() => void previewRewind()} disabled={checkpointBusy}>
                         {checkpointBusy ? "Inspecting…" : "Preview rewind"}
                       </button>
                     )}
@@ -1292,8 +1292,8 @@ export function Conversation({
                         ))}
                       </ul>
                       <footer>
-                        <button onClick={() => setRewindPreview(null)} disabled={checkpointBusy}>Cancel</button>
-                        <button className="rewind-confirm" onClick={() => void confirmRewind()} disabled={checkpointBusy}>
+                        <button type="button" onClick={() => setRewindPreview(null)} disabled={checkpointBusy}>Cancel</button>
+                        <button type="button" className="rewind-confirm" onClick={() => void confirmRewind()} disabled={checkpointBusy}>
                           {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
                         </button>
                       </footer>
