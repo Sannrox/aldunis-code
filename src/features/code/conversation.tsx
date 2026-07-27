@@ -964,12 +964,14 @@ export function Conversation({
     || Boolean(failureView);
   const conversationEmpty = messages.length === 0
     && !showAssistantTurn
-    && providerState === "idle";
+    && providerState === "idle"
+    && !draft.trim();
   const conversationWorktreeMissing = Boolean(
     conversation?.worktree
     && repository
     && !repository.worktrees.some((item) => item.path === conversation.worktree),
   );
+  const accessLabel = mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
   const emptyState = !repository
     ? {
         title: "Open a repository to begin",
@@ -1005,11 +1007,11 @@ export function Conversation({
     cancelled: "Turn cancelled · send another prompt to resume",
     failed: "Provider stopped · send another prompt to resume",
   };
-  const accessScope = mode === "ask"
-    ? { label: "Read-only", warning: false }
-    : mode === "plan"
-      ? { label: "Plan only", warning: true }
-      : { label: "Build · approve mutations", warning: true };
+  const accessScope = {
+    label: accessLabel,
+    warning: mode !== "ask",
+    detail: modeCopy[mode].authority,
+  };
 
   return (
     <div
@@ -1598,8 +1600,8 @@ export function Conversation({
                 disabled={!canPickMode}
                 aria-haspopup="listbox"
                 aria-expanded={modeMenuOpen}
-                title={modeCopy[mode].authority}
-                aria-label={`Access ${accessScope.label}. Open menu to choose Ask, Plan, or Build.`}
+                title={accessScope.detail}
+                aria-label={`Access ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -1611,7 +1613,7 @@ export function Conversation({
                   <rect x="3" y="11" width="18" height="10" rx="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
-                {mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write"}
+                {accessScope.label}
                 <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
               </button>
               <button
