@@ -448,6 +448,20 @@ export function Conversation({
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
   /** Hides the post-turn settle prompt until the next completed turn. */
   const [completionDismissed, setCompletionDismissed] = useState(false);
+  // Escape cancels a workspace rewind preview without requiring the Cancel button.
+  useEffect(() => {
+    if (!rewindPreview) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (checkpointBusy) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setRewindPreview(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [rewindPreview, checkpointBusy]);
   useEffect(() => {
     setSessionId(null);
     setHistoryRestored(conversation === null);
