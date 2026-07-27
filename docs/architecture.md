@@ -7,27 +7,37 @@ development. Its core interaction is a structured conversation attached to an
 explicit repository and worktree, with inspectable tool activity, approvals,
 and diffs.
 
-## Initial topology
+## Topology
 
 ```text
-local browser UI
+local browser UI  (loopback)
     |
 local Aldunis Code host
     |-- repository and worktree adapter
-    |-- normalized conversation/event store
+    |-- normalized conversation / event store
     |-- permission broker
-    `-- provider adapter
-            `-- Claude Code subprocess
+    |-- scheduled automations (timer → existing conversation)
+    |-- product availability (Code always; planes if configured)
+    `-- provider adapters
+            |-- Claude Code (profiles)
+            |-- Codex CLI
+            |-- Shikigami (harness; optional Chisei governance)
+            `-- declarative ACP (Kiro, Grok Build, OpenCode, …)
 
-optional authenticated clients
-    |-- Sekai Chisei API: policy, evidence, provenance, audit
-    |-- Tenkai API: releases, plans, deployments, recovery
-    `-- Aldunis gateway: enterprise identity and tenant context
+optional product clients (projections only)
+    |-- Sekai / Chisei: knowledge + governance APIs
+    |-- Tenkai: delivery APIs
+    `-- Aldunis Platform: enterprise identity / composition
 ```
 
 The browser never receives provider credentials or unrestricted filesystem
 access. The local host binds to loopback by default and resolves every
 repository operation against an explicitly opened root.
+
+**Governed agent path (product direction):** UI surfaces for governance show
+**Chisei projections** only. The local harness for plane-governed work is
+**Shikigami**, which invokes tools and Chisei contracts. Direct Claude/Codex/ACP
+routes remain available without claiming Chisei coverage.
 
 Remote workbench access is not an exception to the loopback default. The
 [remote workbench recommendation](remote-workbench.md) permits a separate,
@@ -114,12 +124,34 @@ Adapter administration is disabled for the entire host while remote mode is
 active. The user returns to the default loopback-only mode to install, update,
 enable, disable, roll back, or uninstall adapters.
 
-## Delivery sequence
+## Provider surface (shipped)
 
-1. Original navigable application shell and domain information architecture.
+| Kind | Providers |
+| --- | --- |
+| Native profiles | Claude Code |
+| Native discovery | Codex CLI |
+| First-class harness | Shikigami (PermissionBroker pre-exec in Build) |
+| Reviewed ACP packages | Kiro CLI, Grok Build CLI, OpenCode |
+
+See [providers.md](providers.md) for operator detail and
+[decisions/](decisions/README.md) for adapter and harness decisions.
+
+## Delivery sequence (historical)
+
+1. Navigable application shell and domain information architecture.
 2. Local host with repository/worktree discovery and constrained file access.
 3. Claude Code adapter with normalized streaming events.
 4. Permission broker and changed-file/diff workflows.
-5. Sekai Chisei read-only evidence and policy integration.
-6. Tenkai delivery views through its authenticated API.
-7. Optional Aldunis enterprise session and tenant composition.
+5. Multi-provider: Codex, declarative ACP, Shikigami.
+6. Automations, checkpoints, remote workbench, desktop shell.
+7. Sekai / Chisei / Tenkai product clients via authenticated contracts (in progress;
+   planes disabled in the switcher until configured).
+8. Optional Aldunis enterprise session and tenant composition.
+
+## Related guides
+
+- [Getting started](getting-started.md)
+- [Local data](local-data.md)
+- [Automations](automations.md)
+- [Remote workbench](remote-workbench.md)
+- [Workspace checkpoints](workspace-checkpoints.md)
