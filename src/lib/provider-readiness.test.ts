@@ -172,11 +172,13 @@ test("providerModelOptions and cycleProviderModel walk discovered models", () =>
   };
   const options = providerModelOptions("codex-cli", discovery);
   assert.equal(options[0]?.id, "default");
+  assert.equal(options[0]?.displayName, "Default");
   assert.equal(options[1]?.id, "gpt-5");
   assert.equal(cycleProviderModel("codex-cli", "default", discovery), "gpt-5");
   assert.equal(cycleProviderModel("codex-cli", "gpt-5", discovery), "o3");
   assert.equal(cycleProviderModel("codex-cli", "o3", discovery), "default");
   assert.equal(providerModelLabel("codex-cli", "gpt-5", discovery), "GPT-5");
+  assert.equal(providerModelLabel("codex-cli", "default", discovery), "Default");
 });
 
 test("Claude model cycle keeps legacy presentation order", () => {
@@ -186,6 +188,12 @@ test("Claude model cycle keeps legacy presentation order", () => {
     providerModelOptions("claude-code", undefined).map((entry) => entry.id),
     ["default", "sonnet", "opus", "haiku"],
   );
+  assert.deepEqual(
+    providerModelOptions("claude-code", undefined).map((entry) => entry.displayName),
+    ["Default", "Sonnet", "Opus", "Haiku"],
+  );
+  assert.equal(providerModelLabel("claude-code", "sonnet", undefined), "Sonnet");
+  assert.equal(providerModelLabel("claude-code", "default", undefined), "Default");
 });
 
 test("Codex reasoning effort cycles advertised options", () => {
