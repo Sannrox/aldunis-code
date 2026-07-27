@@ -139,6 +139,8 @@ export function CommandPalette({
           <Icon name="search" />
           <input
             ref={inputRef}
+            id="command-palette-query"
+            name="command-palette-query"
             data-dialog-initial-focus
             value={query}
             onChange={(event) => {
@@ -146,6 +148,7 @@ export function CommandPalette({
               setActiveIndex(0);
             }}
             placeholder="Search available actions"
+            aria-label="Search available actions"
             aria-controls="command-palette-results"
             aria-activedescendant={
               actions[activeIndex] ? `command-palette-action-${activeIndex}` : undefined

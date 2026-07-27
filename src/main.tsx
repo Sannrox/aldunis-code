@@ -253,7 +253,6 @@ function App() {
         }}
         profiles={profiles}
         onOpenProfiles={() => setProfileDialog(true)}
-        onSearch={() => setSearchOpen(true)}
         onOpenPalette={() => setPaletteOpen(true)}
         onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
         onManageWorktrees={(path) => {

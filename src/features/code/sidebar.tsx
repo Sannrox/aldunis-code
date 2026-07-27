@@ -35,7 +35,6 @@ export function CodeSidebar({
   changes,
   onShowChanges,
   onBrowseFiles,
-  onSearch,
   onOpenPalette,
   conversations,
   primaryConversationId,
@@ -70,7 +69,6 @@ export function CodeSidebar({
   changes: ChangedFile[];
   onShowChanges: () => void;
   onBrowseFiles: () => void;
-  onSearch: () => void;
   onOpenPalette: () => void;
   conversations: ConversationSummary[];
   primaryConversationId: string | null;
@@ -236,7 +234,7 @@ export function CodeSidebar({
       {product === "code" && (
         <div className="code-nav" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
           <div className="g1">
-            <button type="button" className="search" onClick={onSearch}>
+            <button type="button" className="search" onClick={onOpenPalette} aria-label="Search and commands">
               <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
                 <path d="m20 20-3.5-3.5" />
