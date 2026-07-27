@@ -90,13 +90,14 @@ export function ThreadSearchDialog({
               role="option"
               key={thread.id}
               aria-label={`${thread.title}: ${detail}`}
+              title={`${thread.title} · ${detail}`}
               onClick={() => {
                 onSelect(thread.id);
                 onClose();
               }}
             >
-              <strong>{thread.title}</strong>
-              <small>{detail}</small>
+              <strong title={thread.title}>{thread.title}</strong>
+              <small title={detail}>{detail}</small>
             </button>
           );
         })}
