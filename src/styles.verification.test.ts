@@ -48,15 +48,16 @@ test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /@import\s+url\(/i);
 });
 
-test("conversation overlays are contained by .conv-root", () => {
-  // File browser and web preview are absolute under a positioned .conv-root so
-  // they do not climb to .app and cover the product sidebar. They start below
-  // the conversation topbar so Browse / Review / Preview stay clickable.
+test("conversation overlays are contained by .conv (not review dock)", () => {
+  // File browser and web preview are absolute under a positioned .conv so they
+  // do not climb to .app (covering the product sidebar) or cover the review
+  // dock sibling. Topbar is outside .conv, so Browse / Review stay clickable.
   assert.match(css, /--conv-topbar-height\s*:/);
   assert.match(css, /\.conv-root\s*\{[^}]*position:\s*relative/s);
+  assert.match(css, /\.conv\s*\{[^}]*position:\s*relative/s);
   assert.match(
     css,
-    /\.file-browser-panel,\s*\.preview-panel\s*\{[^}]*position:\s*absolute[^}]*top:\s*var\(--conv-topbar-height\)[^}]*right:\s*0[^}]*bottom:\s*0[^}]*left:\s*0/s,
+    /\.file-browser-panel,\s*\.preview-panel\s*\{[^}]*position:\s*absolute[^}]*top:\s*0[^}]*right:\s*0[^}]*bottom:\s*0[^}]*left:\s*0/s,
   );
 });
 

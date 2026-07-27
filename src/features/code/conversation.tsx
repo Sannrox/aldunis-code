@@ -1720,6 +1720,29 @@ export function Conversation({
           </div>
         </div>
       </div>
+      {/* File browser / preview stay inside .conv so the review dock remains
+          visible and usable when both panels are open. */}
+      {previewOpen && repository && (
+        <PreviewPanel
+          repository={repository}
+          onClose={() => setPreviewOpen(false)}
+          onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
+        />
+      )}
+      {filesOpen && repository && (
+        <FileBrowserPanel
+          repository={repository}
+          attached={attachments}
+          maxAttachments={capabilities?.attachments.maxCount ?? 8}
+          onAttach={(path) => {
+            if (!attachments.includes(path) && attachments.length < (capabilities?.attachments.maxCount ?? 8)) {
+              setAttachments((current) => [...current, path]);
+              setContextError(null);
+            }
+          }}
+          onClose={onHideFiles}
+        />
+      )}
       </div>
       {changesOpen && repository && (
         <aside className="rv review-dock" aria-label="Review changes">
@@ -1751,27 +1774,6 @@ export function Conversation({
             setForkOpen(false);
             onConversationAvailable?.(id);
           }}
-        />
-      )}
-      {previewOpen && repository && (
-        <PreviewPanel
-          repository={repository}
-          onClose={() => setPreviewOpen(false)}
-          onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
-        />
-      )}
-      {filesOpen && repository && (
-        <FileBrowserPanel
-          repository={repository}
-          attached={attachments}
-          maxAttachments={capabilities?.attachments.maxCount ?? 8}
-          onAttach={(path) => {
-            if (!attachments.includes(path) && attachments.length < (capabilities?.attachments.maxCount ?? 8)) {
-              setAttachments((current) => [...current, path]);
-              setContextError(null);
-            }
-          }}
-          onClose={onHideFiles}
         />
       )}
     </div>
