@@ -1202,7 +1202,11 @@ export function Conversation({
               className="btn btn-ghost btn-sm"
               onClick={onOpenBeside}
               title="Open a second conversation pane"
-              aria-label="Open beside"
+              aria-label={
+                conversation?.title
+                  ? `Open second pane beside "${conversation.title}" · ${providerLabel}`
+                  : `Open second conversation pane beside ${providerLabel}`
+              }
             >
               Beside
             </button>
@@ -1214,7 +1218,7 @@ export function Conversation({
               onClick={() => setForkOpen(true)}
               disabled={runActive}
               title="Fork this conversation to another provider"
-              aria-label="Fork conversation to another provider"
+              aria-label={`Fork ${providerLabel} conversation to another provider`}
             >
               Fork
             </button>
@@ -1953,10 +1957,11 @@ export function Conversation({
       )}
       </div>
       {changesOpen && repository && (
-        <aside className="rv review-dock" aria-label="Review changes">
+        <aside className="rv review-dock" aria-label={`Review changes, ${pane} pane`}>
           <ChangesPanel
             repository={repository}
             threadId={threadId}
+            pane={pane}
             files={changes}
             loading={changesLoading}
             error={changesError}
