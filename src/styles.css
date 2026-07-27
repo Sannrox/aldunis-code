@@ -137,6 +137,17 @@ body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 button, input, textarea, select { color: inherit; font: inherit; }
 button { border: 0; cursor: pointer; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+/* Fork / delivery / profile / search native selects measured ~21px without a
+   size class. Give single-line selects the same usable height as .ui-input. */
+select:not([multiple]):not([size]) {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--secondary);
+  color: var(--foreground);
+  cursor: pointer;
+}
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; margin: -1px; padding: 0; border: 0; clip: rect(0,0,0,0); white-space: nowrap; }
 /* Default icon stroke; .ic in mock-shell sizes shell icons to 13px. */
 svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.6; }
