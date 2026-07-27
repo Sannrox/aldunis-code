@@ -309,12 +309,34 @@ export function ProfileSettingsDialog({
             )}
             {error && <p className="repository-error" role="alert">{error}</p>}
             <footer>
-              {selected && <Button type="button" variant="danger" size="sm" onClick={async () => {
-                if (await request("/api/provider/profiles/delete", { id: selected.id })) edit(null);
-              }} disabled={busy}>Delete profile</Button>}
+              {selected && (
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  aria-label={`Delete profile ${selected.name}`}
+                  onClick={async () => {
+                    if (await request("/api/provider/profiles/delete", { id: selected.id })) edit(null);
+                  }}
+                  disabled={busy}
+                >
+                  Delete profile
+                </Button>
+              )}
               <span />
               <button type="button" onClick={onClose}>Cancel</button>
-              <Button type="submit" variant="primary" disabled={busy || !name.trim()}>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={busy || !name.trim()}
+                aria-label={
+                  busy
+                    ? "Saving profile"
+                    : selected
+                      ? `Save profile ${name.trim() || selected.name}`
+                      : `Save new profile ${name.trim() || "unnamed"}`
+                }
+              >
                 {busy ? "Saving…" : "Save profile"}
               </Button>
             </footer>
