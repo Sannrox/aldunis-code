@@ -142,7 +142,12 @@ export function WorktreeDialog({
             {!plan && (
               <footer>
                 <Button type="button" onClick={onClose} aria-label="Cancel worktree changes">Cancel</Button>
-                <Button type="submit" variant="primary" disabled={busy || !base.trim() || !branch.trim()}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={busy || !base.trim() || !branch.trim()}
+                  aria-label={busy ? "Validating worktree creation" : "Preview worktree creation"}
+                >
                   {busy ? "Validating…" : "Preview creation"}
                 </Button>
               </footer>
@@ -162,7 +167,7 @@ export function WorktreeDialog({
               ? "Approval is single-use. The conversation will be bound to the canonical result."
               : "Only the clean checkout is removed. The branch, commits, remotes, and conversation history remain."}</p>
             <footer>
-              <Button onClick={() => setPlan(null)} disabled={busy}>Back</Button>
+              <Button onClick={() => setPlan(null)} disabled={busy} aria-label="Back to worktree form">Back</Button>
               <Button
                 variant={plan.action === "remove" ? "danger" : "primary"}
                 size="sm"
@@ -182,7 +187,11 @@ export function WorktreeDialog({
           </section>
         )}
         {error && <div className="repository-error" role="alert">{error}</div>}
-        {selected && !plan && <footer><Button onClick={onClose}>Close</Button></footer>}
+        {selected && !plan && (
+          <footer>
+            <Button onClick={onClose} aria-label="Close worktree manager">Close</Button>
+          </footer>
+        )}
     </ModalSurface>
   );
 }
