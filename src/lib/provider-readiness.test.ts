@@ -28,13 +28,23 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
     }),
     "Kiro",
   );
+  // Known package ids prefer the stable list label over discovery names
+  // that append "CLI" or shorten the product name.
   assert.equal(
     providerChipName("adapter:kiro-cli@1.0.0", {
       id: "adapter:kiro-cli@1.0.0",
       installed: true,
       name: "Kiro",
     }),
-    "Kiro",
+    "Kiro CLI",
+  );
+  assert.equal(
+    providerChipName("adapter:dev.xai.grok-build@1.0.0", {
+      id: "adapter:dev.xai.grok-build@1.0.0",
+      installed: true,
+      name: "Grok Build CLI",
+    }),
+    "Grok Build",
   );
   // Without discovery, still name known adapters from package id (incl. reverse-DNS).
   assert.equal(
