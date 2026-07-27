@@ -6,7 +6,7 @@ import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
-import { Button } from "../../components/ui";
+import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
@@ -515,7 +515,15 @@ export function CodeWorkbench({
         <DomainPage product={product as Exclude<import("../../types").Product, "code">} />
       ) : (
       <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
-        {lifecycleError && <div className="workspace-state error" role="alert">{lifecycleError}</div>}
+        {lifecycleError && (
+          <div className="workspace-state error" role="alert">
+            <span>{lifecycleError}</span>
+            <CloseButton
+              onClick={() => setLifecycleError(null)}
+              label="Dismiss lifecycle error"
+            />
+          </div>
+        )}
         {incompleteDeletionIds.map((threadId) => {
           // Prefer title · provider over a raw UUID in the recovery banner.
           const conversation = conversations.find((item) => item.id === threadId);
