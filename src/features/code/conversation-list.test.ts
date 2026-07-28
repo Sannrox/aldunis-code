@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ConversationSummary } from "../../types";
 import {
   branchFromWorktree,
   formatElapsed,
+  groupSidebarConversations,
   isBlockingStatus,
   isUnread,
   providerLabel,
@@ -34,6 +36,52 @@ test("blocking statuses are approval, input, and failed only", () => {
   assert.equal(isBlockingStatus("running"), false);
   assert.equal(isBlockingStatus("completed"), false);
   assert.equal(isBlockingStatus("idle"), false);
+});
+
+test("sidebar groups every blocking state ahead of active conversations", () => {
+  const conversations = [
+    { id: "idle-pinned", status: "idle", pinnedAt: "2026-01-05T00:00:00.000Z" },
+    { id: "approval-pinned", status: "pending_approval", pinnedAt: "2026-01-04T00:00:00.000Z" },
+    { id: "input", status: "awaiting_input", pinnedAt: null },
+    { id: "failed", status: "failed", pinnedAt: null },
+    { id: "running", status: "running", pinnedAt: null },
+    { id: "completed-unread", status: "completed", wokeAt: "2026-01-03T00:00:00.000Z" },
+  ] as ConversationSummary[];
+
+  const grouped = groupSidebarConversations(conversations);
+
+  assert.deepEqual(grouped.attention.map(({ id }) => id), [
+    "approval-pinned",
+    "input",
+    "failed",
+  ]);
+  assert.deepEqual(grouped.active.map(({ id }) => id), [
+    "idle-pinned",
+    "running",
+    "completed-unread",
+  ]);
+});
+
+test("settled and archived conversations never require sidebar attention", () => {
+  const blockingSettled = {
+    id: "settled",
+    status: "failed",
+    settledAt: "2026-01-03T00:00:00.000Z",
+  } as ConversationSummary;
+  const blockingArchived = {
+    id: "archived",
+    status: "pending_approval",
+    archivedAt: "2026-01-04T00:00:00.000Z",
+  } as ConversationSummary;
+
+  const activeView = groupSidebarConversations([blockingArchived, blockingSettled]);
+  assert.deepEqual(activeView.attention, []);
+  assert.deepEqual(activeView.active.map(({ id }) => id), ["archived"]);
+  assert.deepEqual(activeView.settled.map(({ id }) => id), ["settled"]);
+
+  const archivedView = groupSidebarConversations([blockingArchived], true);
+  assert.deepEqual(archivedView.attention, []);
+  assert.deepEqual(archivedView.active.map(({ id }) => id), ["archived"]);
 });
 
 test("elapsed formatting floors to now / m / h / d", () => {

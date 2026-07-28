@@ -2,7 +2,7 @@ import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
-import { branchFromWorktree } from "./conversation-list";
+import { branchFromWorktree, groupSidebarConversations } from "./conversation-list";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
@@ -101,17 +101,13 @@ export function CodeSidebar({
   const brandRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const settledShelfId = useId();
+  const attentionHeadingId = useId();
+  const activeHeadingId = useId();
 
-  const { active, settled } = useMemo(() => {
-    const activeList: ConversationSummary[] = [];
-    const settledList: ConversationSummary[] = [];
-    for (const conversation of conversations) {
-      if (conversation.settledAt) settledList.push(conversation);
-      else activeList.push(conversation);
-    }
-    settledList.sort((a, b) => (b.settledAt ?? "").localeCompare(a.settledAt ?? ""));
-    return { active: activeList, settled: settledList };
-  }, [conversations]);
+  const { attention, active, settled } = useMemo(
+    () => groupSidebarConversations(conversations, showingArchived),
+    [conversations, showingArchived],
+  );
 
   const meterPct = worktreeLimit > 0
     ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100))
@@ -330,7 +326,11 @@ export function CodeSidebar({
               onClick={() => setProjectMenuOpen((open) => !open)}
               aria-haspopup="listbox"
               aria-expanded={projectMenuOpen}
-              aria-label={`Project filter: ${projectFilterLabel}`}
+              aria-label={`Project filter: ${projectFilterLabel}${
+                attention.length > 0
+                  ? `, ${attention.length} conversation${attention.length === 1 ? "" : "s"} need attention`
+                  : ""
+              }`}
               title={selectedProject?.root}
             >
               <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
@@ -398,8 +398,34 @@ export function CodeSidebar({
           </div>
 
           <div className="list" id="list" role="list">
-            <div className="glabel">
-              <span>{showingArchived ? "Archived" : "Threads"}</span>
+            {attention.length > 0 && (
+              <div className="attention-group" role="group" aria-labelledby={attentionHeadingId}>
+                <div className="glabel attention-label" id={attentionHeadingId} aria-live="polite">
+                  <span>Needs attention</span>
+                  <span className="n">{attention.length}</span>
+                </div>
+                {attention.map((conversation) => {
+                  const openInPane = primaryConversationId === conversation.id
+                    || secondaryConversationId === conversation.id;
+                  return (
+                    <ThreadRow
+                      key={conversation.id}
+                      conversation={conversation}
+                      active={openInPane}
+                      onOpen={() => onOpenConversation(conversation.id)}
+                      onSettle={() => onSettle(conversation)}
+                      showSettle
+                      showBeside={!openInPane}
+                      onOpenBeside={() => onOpenBeside(conversation.id)}
+                      archivedView={false}
+                      onAction={(action) => onConversationAction(conversation, action)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+            <div className="glabel" id={activeHeadingId}>
+              <span>{showingArchived ? "Archived" : "Active"}</span>
               <span className="n">{active.length}</span>
               <button
                 type="button"
@@ -410,26 +436,28 @@ export function CodeSidebar({
                 {showingArchived ? "Show active" : "Show archived"}
               </button>
             </div>
-            {active.map((conversation) => {
-              const openInPane = primaryConversationId === conversation.id
-                || secondaryConversationId === conversation.id;
-              return (
-                <ThreadRow
-                  key={conversation.id}
-                  conversation={conversation}
-                  active={openInPane}
-                  onOpen={() => onOpenConversation(conversation.id)}
-                  onSettle={showingArchived ? undefined : () => onSettle(conversation)}
-                  showSettle={!showingArchived}
-                  // Beside is for a second column — hide when this thread is already primary or secondary.
-                  showBeside={!showingArchived && !openInPane}
-                  onOpenBeside={() => onOpenBeside(conversation.id)}
-                  archivedView={showingArchived}
-                  onAction={(action) => onConversationAction(conversation, action)}
-                />
-              );
-            })}
-            {active.length === 0 && projects.length > 0 && (
+            <div role="group" aria-labelledby={activeHeadingId}>
+              {active.map((conversation) => {
+                const openInPane = primaryConversationId === conversation.id
+                  || secondaryConversationId === conversation.id;
+                return (
+                  <ThreadRow
+                    key={conversation.id}
+                    conversation={conversation}
+                    active={openInPane}
+                    onOpen={() => onOpenConversation(conversation.id)}
+                    onSettle={showingArchived ? undefined : () => onSettle(conversation)}
+                    showSettle={!showingArchived}
+                    // Beside is for a second column — hide when this thread is already primary or secondary.
+                    showBeside={!showingArchived && !openInPane}
+                    onOpenBeside={() => onOpenBeside(conversation.id)}
+                    archivedView={showingArchived}
+                    onAction={(action) => onConversationAction(conversation, action)}
+                  />
+                );
+              })}
+            </div>
+            {active.length === 0 && attention.length === 0 && projects.length > 0 && (
               <p className="empty-list">
                 {showingArchived
                   ? "No archived conversations."
