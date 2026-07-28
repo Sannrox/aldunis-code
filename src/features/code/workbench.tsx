@@ -226,7 +226,7 @@ export function CodeWorkbench({
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    setConversations(await loadConversationList(null));
+    setConversations(await loadConversationList(null, { fresh: true }));
     return result;
   };
   const manageConversation = async (
@@ -603,7 +603,7 @@ export function CodeWorkbench({
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
                   }
-                  void loadConversationList(null).then(setConversations).catch(() => {});
+                  void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
                 }} />}
           </div>
           {secondaryId && (
@@ -635,7 +635,7 @@ export function CodeWorkbench({
                       if (secondaryIdReference.current !== secondaryId) return;
                       secondaryIdReference.current = id;
                       setSecondaryId(id);
-                      void loadConversationList(null).then(setConversations).catch(() => {});
+                      void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
                     }} />}
               </div>
             </>
@@ -648,5 +648,4 @@ export function CodeWorkbench({
     </>
   );
 }
-
 
