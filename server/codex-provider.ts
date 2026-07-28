@@ -11,6 +11,7 @@ import {
   type ProviderStartOptions,
   ProviderProtocolError,
   type ReasoningEffort,
+  UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
 } from "./provider.ts";
 
 const execFileAsync = promisify(execFile);
@@ -203,9 +204,11 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
       : [{ kind: "tool_started", toolCallId: id, name: `Subagent ${String(item.tool)}` }];
   }
   if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
-    throw new ProviderProtocolError(
-      "Codex attempted external tool activity that Aldunis Code does not authorize.",
-    );
+    return [{
+      kind: "failed",
+      code: "unsupported_external_tool",
+      message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
+    }];
   }
   const informationalItemTypes = new Set([
     "userMessage",
@@ -600,6 +603,20 @@ export class CodexCliAdapter {
         if (message.id !== undefined && typeof message.method === "string") {
           const params = record(message.params);
           if (!params) throw new ProviderProtocolError("Codex emitted malformed approval parameters.");
+          if (message.method === "item/tool/call") {
+            this.#send(active.child, {
+              id: message.id as RpcId,
+              result: { contentItems: [], success: false },
+            });
+            terminalEmitted = true;
+            yield {
+              kind: "failed",
+              code: "unsupported_external_tool",
+              message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
+            };
+            this.#terminate(active.child);
+            return;
+          }
           const isCommand = message.method === "item/commandExecution/requestApproval";
           const isFile = message.method === "item/fileChange/requestApproval";
           if (!isCommand && !isFile) {

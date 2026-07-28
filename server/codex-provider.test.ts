@@ -110,6 +110,67 @@ if (process.argv.includes("--version")) {
   assert.equal(adapter.cancel(run.id), false);
 });
 
+test("Codex dynamic-tool requests fail with an actionable policy explanation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-provider-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"0199a213-81c0-7800-8aa1-bbab2a035a53"},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      console.log(JSON.stringify({
+        id:2,result:{turn:{id:"0199a213-81c0-7800-8aa1-bbab2a035a54"}}
+      }));
+      console.log(JSON.stringify({
+        id:3,
+        method:"item/tool/call",
+        params:{
+          threadId:"0199a213-81c0-7800-8aa1-bbab2a035a53",
+          turnId:"0199a213-81c0-7800-8aa1-bbab2a035a54",
+          callId:"private-call",
+          namespace:null,
+          tool:"private-tool",
+          arguments:{secret:"must not be exposed"}
+        }
+      }));
+    }
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "conversation-1",
+    prompt: "Use an external tool",
+    approvalUrl: "http://127.0.0.1:1/unused",
+    mode: "build",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.deepEqual(events, [
+    {
+      kind: "session_started",
+      sessionId: "0199a213-81c0-7800-8aa1-bbab2a035a53",
+      model: "fixture",
+    },
+    {
+      kind: "failed",
+      code: "unsupported_external_tool",
+      message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+    },
+  ]);
+  assert.equal(adapter.cancel(run.id), false);
+});
+
 test("unknown and malformed Codex notifications fail closed", () => {
   assert.throws(
     () => normalizeCodexNotification({ method: "future/event", params: {} }),
@@ -126,6 +187,22 @@ test("unknown and malformed Codex notifications fail closed", () => {
     }),
     /Unsupported Codex item type/,
   );
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/started",
+    params: {
+      item: {
+        id: "item-2",
+        type: "mcpToolCall",
+        server: "private-server",
+        tool: "private-tool",
+        arguments: { secret: "must not be exposed" },
+      },
+    },
+  }), [{
+    kind: "failed",
+    code: "unsupported_external_tool",
+    message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+  }]);
 });
 
 test("interrupted and failed Codex turns normalize to terminal events", () => {
