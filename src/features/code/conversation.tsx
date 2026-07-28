@@ -36,6 +36,14 @@ import {
   type PromptHistoryBrowse,
 } from "../../lib/composer-prompt-history";
 import {
+  loadFreshLocalStateProjection,
+  loadLocalStateProjection,
+} from "../../lib/local-state-load";
+import {
+  loadProviderCapabilities,
+  peekProviderCapabilitiesCache,
+} from "../../lib/provider-capabilities-cache";
+import {
   invalidateProviderDiscoveryCache,
   loadProviderDiscovery,
   peekProviderDiscoveryCache,
@@ -116,7 +124,9 @@ export function Conversation({
   const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [contextError, setContextError] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(null);
+  const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(
+    () => peekProviderCapabilitiesCache(),
+  );
   const [profileId, setProfileId] = useState("");
   const claudeProfiles = useMemo(
     () => profiles.filter((profile) => profile.provider === "claude-code" || !profile.provider),
@@ -543,10 +553,7 @@ export function Conversation({
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
-      const response = await fetch("/api/state/load", { method: "POST" });
-      if (!active) return;
-      if (!response.ok) throw new Error("Conversation history could not be restored.");
-      const projection = await response.json() as {
+      const projection = await loadLocalStateProjection() as {
         threads: Array<{
           id: string;
           projectId: string;
@@ -583,6 +590,7 @@ export function Conversation({
           profileId?: string;
         }>;
       };
+      if (!active) return;
       const thread = conversation
         ? projection.threads.find((item) => (
             item.id === conversation.id
@@ -755,12 +763,8 @@ export function Conversation({
     };
   }, [conversation?.id, notificationsEnabled, provider, repository?.projectId, repository?.selectedWorktree]);
   useEffect(() => {
-    void fetch("/api/provider/capabilities", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }).then(async (response) => {
-      if (response.ok) setCapabilities(await response.json() as ProviderCapabilities);
+    void loadProviderCapabilities().then((caps) => {
+      if (caps) setCapabilities(caps);
     });
   }, []);
   const worktree = repository?.worktrees.find((item) => (
@@ -989,10 +993,13 @@ export function Conversation({
         if (result.done) break;
       }
       if (activeTurnId) {
-        const stateResponse = await fetch("/api/state/load", { method: "POST" });
-        if (stateResponse.ok) {
-          const projection = await stateResponse.json() as { checkpoints?: TurnCheckpoint[] };
+        try {
+          const projection = await loadFreshLocalStateProjection() as {
+            checkpoints?: TurnCheckpoint[];
+          };
           setCheckpoint(projection.checkpoints?.find((item) => item.turnId === activeTurnId) ?? null);
+        } catch {
+          // Checkpoint is optional after a completed turn.
         }
       }
     } catch (error) {
@@ -2159,5 +2166,3 @@ export function Conversation({
     </div>
   );
 }
-
-

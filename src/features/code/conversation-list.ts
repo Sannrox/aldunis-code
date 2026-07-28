@@ -3,6 +3,10 @@ import type {
   RepositoryMetadata,
   ThreadStatusProjection,
 } from "../../types";
+import {
+  loadFreshLocalStateProjection,
+  loadLocalStateProjection,
+} from "../../lib/local-state-load";
 
 /**
  * Load threads for the inbox. Pass a project id to scope, or null/undefined for
@@ -10,10 +14,12 @@ import type {
  */
 export async function loadConversationList(
   projectId?: string | null,
+  options: { fresh?: boolean } = {},
 ): Promise<ConversationSummary[]> {
-  const response = await fetch("/api/state/load", { method: "POST" });
-  if (!response.ok) throw new Error("Conversation history could not be loaded.");
-  const projection = await response.json() as {
+  const loadProjection = options.fresh
+    ? loadFreshLocalStateProjection
+    : loadLocalStateProjection;
+  const projection = await loadProjection() as {
     threads: ConversationSummary[];
     projects?: Array<{ id: string; name: string }>;
     threadStatuses?: ThreadStatusProjection[];
