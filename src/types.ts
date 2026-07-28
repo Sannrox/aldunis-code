@@ -105,6 +105,35 @@ export interface ForkPreview {
   byteCount: number;
   digest: string;
   excluded: string[];
+  contextPackage: ContextReceipt;
+}
+export interface ContextPin {
+  path: string;
+  kind: "file" | "folder";
+}
+export type ContextReceiptSource =
+  | "aldunis_attachment"
+  | "aldunis_folder"
+  | "provider_managed_instruction";
+export interface ContextReceiptEntry {
+  path: string;
+  type: "text" | "image" | "folder" | "instruction" | "unsupported";
+  source: ContextReceiptSource;
+  bytes: number | null;
+  truncated: boolean;
+  digest: string | null;
+  omissionReason: string | null;
+}
+export interface ContextReceipt {
+  id?: string;
+  threadId?: string;
+  turnId?: string;
+  pins: ContextPin[];
+  entries: ContextReceiptEntry[];
+  totalBytes: number;
+  estimatedTokens: number;
+  digest: string;
+  createdAt?: string;
 }
 export type ChangeState = "added" | "modified" | "deleted" | "renamed" | "binary" | "oversized";
 export interface ChangedFile {

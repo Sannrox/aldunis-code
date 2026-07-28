@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  assembleContextPackage,
   browseRepositoryFiles,
   composePrompt,
   MAX_CONTEXT_FILES,
@@ -95,6 +96,115 @@ test("text and supported images resolve into bounded local context", async () =>
   const prompt = composePrompt("Review this.", attachments);
   assert.match(prompt, /export const ready/);
   assert.match(prompt, /<image path="image.png"/);
+});
+
+test("context packages resolve folders deterministically and retain metadata only", async () => {
+  const { parent, root } = await fixture();
+  await writeFile(join(root, "AGENTS.md"), "# provider-owned instructions\n");
+  await writeFile(join(parent, "outside.txt"), "outside");
+  await symlink(join(parent, "outside.txt"), join(root, "src", "linked.txt"));
+  const assembled = await assembleContextPackage(root, [
+    { path: "src", kind: "folder" },
+    { path: "generated", kind: "folder" },
+  ]);
+  assert.deepEqual(assembled.attachments.map((attachment) => attachment.path), ["src/main.ts"]);
+  assert.equal(assembled.entries.find((entry) => entry.path === "src/main.ts")?.digest?.length, 64);
+  assert.equal(
+    assembled.entries.find((entry) => entry.path === "src/linked.txt")?.omissionReason,
+    "symlink",
+  );
+  assert.match(
+    assembled.entries.find((entry) => entry.path === "generated")?.omissionReason ?? "",
+    /ignored/,
+  );
+  assert.equal(
+    assembled.entries.find((entry) => entry.path === "AGENTS.md")?.source,
+    "provider_managed_instruction",
+  );
+  assert.equal(JSON.stringify(assembled.entries).includes("export const ready"), false);
+  assert.equal(assembled.totalBytes, Buffer.byteLength("export const ready = true;\n"));
+  assert.equal(assembled.estimatedTokens, Math.ceil(assembled.totalBytes / 4));
+});
+
+test("context package paths fail closed outside the repository", async () => {
+  const { root } = await fixture();
+  await assert.rejects(
+    () => assembleContextPackage(root, [{ path: "../outside", kind: "folder" }]),
+    /escapes/,
+  );
+  await assert.rejects(
+    () => assembleContextPackage(root, [{ path: "/tmp", kind: "folder" }]),
+    /repository-relative/,
+  );
+});
+
+test("the repository root is a valid folder pin", async () => {
+  const { root } = await fixture();
+  await writeFile(join(root, "AGENTS.md"), "# provider-owned instructions\n");
+  const assembled = await assembleContextPackage(root, [{ path: ".", kind: "folder" }]);
+  assert.equal(assembled.pins[0]?.path, ".");
+  assert.equal(
+    assembled.entries.some((entry) => entry.path === "src/main.ts"),
+    true,
+  );
+  assert.equal(
+    assembled.entries.some((entry) => entry.path === "image.png"),
+    true,
+  );
+  assert.equal(
+    assembled.attachments.some((attachment) => attachment.path === "AGENTS.md"),
+    false,
+  );
+  assert.equal(
+    assembled.entries.find((entry) => entry.path === "AGENTS.md")?.source,
+    "provider_managed_instruction",
+  );
+});
+
+test("context packages enforce deterministic file and byte limits", async () => {
+  const { root } = await fixture();
+  await mkdir(join(root, "many"));
+  await Promise.all(Array.from({ length: 101 }, (_, index) => (
+    writeFile(join(root, "many", `${String(index).padStart(3, "0")}.txt`), `${index}`)
+  )));
+  const fileLimited = await assembleContextPackage(root, [{ path: "many", kind: "folder" }]);
+  assert.equal(fileLimited.attachments.length, 100);
+  assert.equal(
+    fileLimited.entries.some((entry) => entry.omissionReason === "package file limit"),
+    true,
+  );
+
+  await mkdir(join(root, "large"));
+  await writeFile(join(root, "large", "a.txt"), "a".repeat(1_100_000));
+  await writeFile(join(root, "large", "b.txt"), "b".repeat(1_100_000));
+  const byteLimited = await assembleContextPackage(root, [{ path: "large", kind: "folder" }]);
+  assert.deepEqual(byteLimited.attachments.map((attachment) => attachment.path), ["large/a.txt"]);
+  assert.equal(
+    byteLimited.entries.find((entry) => entry.path === "large/b.txt")?.omissionReason,
+    "package byte limit",
+  );
+
+  await mkdir(join(root, "binary"));
+  await writeFile(join(root, "binary", "a.bin"), Buffer.alloc(1_100_000));
+  await writeFile(join(root, "binary", "b.bin"), Buffer.alloc(1_100_000));
+  const binaryLimited = await assembleContextPackage(root, [{ path: "binary", kind: "folder" }]);
+  assert.equal(
+    binaryLimited.entries.find((entry) => entry.path === "binary/a.bin")?.omissionReason,
+    "unsupported binary file",
+  );
+  assert.equal(
+    binaryLimited.entries.find((entry) => entry.path === "binary/b.bin")?.omissionReason,
+    "package byte limit",
+  );
+});
+
+test("remote context assembly does not enumerate provider instruction paths", async () => {
+  const { root } = await fixture();
+  await writeFile(join(root, "AGENTS.md"), "# provider-owned instructions\n");
+  const assembled = await assembleContextPackage(root, [], {
+    includeProviderInstructions: false,
+  });
+  assert.deepEqual(assembled.entries, []);
 });
 
 test("visible element references compose as bounded escaped structured context", () => {

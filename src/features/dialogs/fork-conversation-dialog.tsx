@@ -8,6 +8,7 @@ import {
   resolveDefaultProviderModel,
 } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
+import { ContextPackageSummary } from "../code/context-package";
 
 function isReady(provider: ProviderDiscovery | undefined): boolean {
   return Boolean(provider?.installed && provider.authenticated !== false && provider.enabled !== false);
@@ -118,6 +119,7 @@ export function ForkConversationDialog({
         <p>This creates a new provider-native conversation. The source and its provider session remain unchanged.</p>
         {busy && !preview && <p role="status">Preparing bounded context…</p>}
         {preview && <>
+          <ContextPackageSummary receipt={preview.contextPackage} label="Reviewed transfer package" />
           <dl>
             <div><dt>Messages</dt><dd>{preview.messages.length}</dd></div>
             <div><dt>Annotations</dt><dd>{preview.annotations.length}</dd></div>
