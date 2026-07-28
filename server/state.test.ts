@@ -98,6 +98,41 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "active");
 });
 
+test("typed provider policy failures survive reload without arbitrary error text", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Use a dynamic tool",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  await store.recordProviderEvent(first.thread.id, first.turn.id, "codex-cli", {
+    kind: "failed",
+    code: "unsupported_external_tool",
+    message: "untrusted provider text",
+  });
+  const second = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Fail generically",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+  });
+  await store.recordProviderEvent(second.thread.id, second.turn.id, "codex-cli", {
+    kind: "failed",
+    message: "secret subprocess dump",
+  });
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.deepEqual(rebuilt.activities.map((activity) => activity.message), [
+    "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+    "Provider failed.",
+  ]);
+});
+
 test("host restart marks orphaned active and approval turns interrupted", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

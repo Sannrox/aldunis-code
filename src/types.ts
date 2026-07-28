@@ -330,7 +330,11 @@ export type ProviderEvent =
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
-  | { kind: "failed"; message: string };
+  | {
+    kind: "failed";
+    message: string;
+    code?: "unsupported_external_tool";
+  };
 export type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
 export type InteractionMode = "ask" | "plan" | "build";
 export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";

@@ -17,6 +17,9 @@ const READ_ONLY_TOOLS = "Read,Glob,Grep";
 
 export type InteractionMode = "ask" | "plan" | "build";
 
+export const UNSUPPORTED_EXTERNAL_TOOL_MESSAGE =
+  "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.";
+
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
@@ -26,7 +29,11 @@ export type ProviderEvent =
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
-  | { kind: "failed"; message: string };
+  | {
+    kind: "failed";
+    message: string;
+    code?: "unsupported_external_tool";
+  };
 
 export class ProviderProtocolError extends Error {}
 

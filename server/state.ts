@@ -2,7 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { InteractionMode, ProviderEvent, ProviderId } from "./provider.ts";
+import {
+  type InteractionMode,
+  type ProviderEvent,
+  type ProviderId,
+  UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
+} from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 2;
 /** Schema versions accepted when loading on-disk history. */
@@ -1236,9 +1241,14 @@ export class LocalStateStore {
           toolCallId: event.kind === "failed" ? null : event.toolCallId,
           name: event.kind === "tool_started" ? event.name : null,
           failed: event.kind === "tool_finished" ? event.failed : event.kind === "failed" ? true : null,
-          // Never persist raw failure text — it can contain credentials or
-          // subprocess dumps. UI restores a generic "Provider failed." label.
-          message: event.kind === "failed" ? "Provider failed." : null,
+          // Never persist arbitrary failure text — it can contain credentials
+          // or subprocess dumps. Only repository-owned, typed policy copy is
+          // durable; every other failure restores a generic label.
+          message: event.kind === "failed" && event.code === "unsupported_external_tool"
+            ? UNSUPPORTED_EXTERNAL_TOOL_MESSAGE
+            : event.kind === "failed"
+            ? "Provider failed."
+            : null,
           createdAt: now,
         },
       });
