@@ -1538,6 +1538,7 @@ async function handleApi(
         prompt: body.prompt.trim(),
         mode,
         provider: providerId,
+        reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
       });
       const forkPrompt = await state.pendingForkPrompt(persisted.thread.id);

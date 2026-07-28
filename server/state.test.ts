@@ -381,6 +381,7 @@ test("version-one history loads with null thread lifecycle timestamps", async ()
   assert.equal(projection.threads[0].wokeAt, null);
   assert.equal(projection.threads[0].lastVisitedAt, null);
   assert.equal(projection.threads[0].archivedAt, null);
+  assert.equal(projection.threads[0].reasoningEffort, undefined);
 });
 
 test("conversation lifecycle persists and rebuilds with deterministic pin ordering fields", async () => {
@@ -679,6 +680,33 @@ test("an existing conversation cannot silently switch provider state", async () 
     }),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
+});
+
+test("Codex reasoning effort persists across turns and restart", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Start with low effort",
+    mode: "ask",
+    provider: "codex-cli",
+    reasoningEffort: "low",
+  });
+  assert.equal(thread.reasoningEffort, "low");
+
+  await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Continue with high effort",
+    mode: "ask",
+    provider: "codex-cli",
+    reasoningEffort: "high",
+    threadId: thread.id,
+  });
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.threads[0].reasoningEffort, "high");
 });
 
 test("cross-provider fork previews and persists only allowlisted conversation context", async () => {

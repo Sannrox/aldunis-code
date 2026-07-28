@@ -159,7 +159,10 @@ export function Conversation({
     () => peekProviderDiscoveryCache() !== null,
   );
   const [forkOpen, setForkOpen] = useState(false);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+    () => conversation?.reasoningEffort ?? "medium",
+  );
+  const legacyReasoningDefaultRef = useRef<string | null>(null);
   useEffect(() => {
     const loadProviders = (force = false) => {
       if (force) invalidateProviderDiscoveryCache();
@@ -569,6 +572,7 @@ export function Conversation({
           provider?: ProviderId;
           profileId?: string | null;
           model?: string | null;
+          reasoningEffort?: ReasoningEffort;
           updatedAt: string;
         }>;
         turns: Array<{
@@ -631,6 +635,7 @@ export function Conversation({
       else if (session?.profileId) setProfileId(session.profileId);
       if (thread.model) setModel(thread.model);
       else if (session?.model?.trim()) setModel(session.model.trim());
+      if (thread.reasoningEffort) setReasoningEffort(thread.reasoningEffort);
       const turns = projection.turns
         .filter((item) => item.threadId === thread.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -881,6 +886,33 @@ export function Conversation({
     (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
     && effectiveModel !== "default"
   ) && reasoningEfforts.length > 0;
+  useEffect(() => {
+    if (
+      !conversation
+      || conversation.reasoningEffort
+      || !providersLoaded
+      || !historyRestored
+      || legacyReasoningDefaultRef.current === conversation.id
+    ) {
+      return;
+    }
+    legacyReasoningDefaultRef.current = conversation.id;
+    const preferred = selectedProvider?.models?.find(
+      (entry) => entry.id === effectiveModel,
+    )?.defaultReasoningEffort;
+    if (preferred && reasoningEfforts.includes(preferred)) {
+      setReasoningEffort(preferred);
+    } else if (reasoningEfforts.length > 0) {
+      setReasoningEffort(reasoningEfforts[0]!);
+    }
+  }, [
+    conversation,
+    effectiveModel,
+    historyRestored,
+    providersLoaded,
+    reasoningEfforts,
+    selectedProvider,
+  ]);
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
     ask: { label: "Ask", authority: "Read-only tools" },
     plan: { label: "Plan", authority: "Planning; mutations blocked" },
