@@ -1225,6 +1225,23 @@ async function handleApi(
       sendJson(response, 200, provider.capabilities());
       return true;
     }
+    if (route === "/api/provider/skills") {
+      const body = await readJson(request) as {
+        provider?: unknown;
+        root?: unknown;
+        worktree?: unknown;
+      };
+      if (
+        body.provider !== "codex-cli"
+        || typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+      ) {
+        throw new RepositoryError("A Codex provider, repository, and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, { skills: await codex.skills(context.worktree) });
+      return true;
+    }
     if (route === "/api/provider/approvals/list") {
       const body = await readJson(request) as { runId?: unknown };
       if (typeof body.runId !== "string") {

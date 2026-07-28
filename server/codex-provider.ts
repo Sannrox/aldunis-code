@@ -54,6 +54,11 @@ export interface CodexReadiness {
   detail: string | null;
 }
 
+export interface CodexSkill {
+  name: string;
+  description: string;
+}
+
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as JsonRecord
@@ -430,6 +435,91 @@ export class CodexCliAdapter {
       models,
       detail: authenticated ? null : "Sign in to Codex CLI (codex login).",
     };
+  }
+
+  async skills(worktree: string): Promise<CodexSkill[]> {
+    let version: string;
+    try {
+      const result = await execFileAsync(this.executable, ["--version"], {
+        encoding: "utf8",
+        timeout: 5_000,
+      });
+      version = assertSupportedCodexVersion(result.stdout.trim());
+    } catch {
+      throw new ProviderProtocolError("Codex CLI is not installed or could not be started.");
+    }
+    const child = spawn(this.executable, this.#appServerArguments(version), {
+      cwd: worktree,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let spawnFailed = false;
+    child.once("error", () => { spawnFailed = true; });
+    child.stdin.on("error", () => {});
+    child.stderr.resume();
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      const force = setTimeout(() => {
+        if (child.exitCode === null) child.kill("SIGKILL");
+      }, 1_000);
+      force.unref();
+    }, 5_000);
+    timeout.unref();
+    let received = false;
+    let skills: CodexSkill[] = [];
+    try {
+      this.#send(child, { method: "initialize", id: 0, params: {
+        clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+      } });
+      for await (const message of this.#lines(child)) {
+        if (message.id === 0) {
+          if (message.error) break;
+          this.#send(child, { method: "initialized", params: {} });
+          this.#send(child, {
+            method: "skills/list",
+            id: 1,
+            params: { cwds: [worktree], forceReload: false },
+          });
+          continue;
+        }
+        if (message.id !== 1) continue;
+        if (message.error) break;
+        const result = record(message.result);
+        if (!result || !Array.isArray(result.data)) {
+          throw new ProviderProtocolError("Codex emitted a malformed skills list.");
+        }
+        const seen = new Set<string>();
+        skills = result.data.flatMap((entryValue): CodexSkill[] => {
+          const entry = record(entryValue);
+          if (!entry || !Array.isArray(entry.skills)) {
+            throw new ProviderProtocolError("Codex emitted a malformed skills list.");
+          }
+          return entry.skills.flatMap((skillValue): CodexSkill[] => {
+            const skill = record(skillValue);
+            if (
+              !skill
+              || typeof skill.name !== "string"
+              || !skill.name
+              || typeof skill.description !== "string"
+              || typeof skill.enabled !== "boolean"
+            ) {
+              throw new ProviderProtocolError("Codex emitted malformed skill metadata.");
+            }
+            if (!skill.enabled || seen.has(skill.name)) return [];
+            seen.add(skill.name);
+            return [{ name: skill.name, description: skill.description }];
+          });
+        }).sort((left, right) => left.name.localeCompare(right.name));
+        received = true;
+        break;
+      }
+    } finally {
+      clearTimeout(timeout);
+      this.#terminate(child);
+    }
+    if (spawnFailed || !received) {
+      throw new ProviderProtocolError("Codex CLI could not list skills.");
+    }
+    return skills;
   }
 
   async start(options: ProviderStartOptions): Promise<ProviderRun> {

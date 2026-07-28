@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
-  ProviderCapabilities, ProviderState, ProviderEvent, InteractionMode, ReasoningEffort,
+  ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
   ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference,
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
@@ -127,6 +127,7 @@ export function Conversation({
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(
     () => peekProviderCapabilitiesCache(),
   );
+  const [providerSkills, setProviderSkills] = useState<ProviderSkill[]>([]);
   const [profileId, setProfileId] = useState("");
   const claudeProfiles = useMemo(
     () => profiles.filter((profile) => profile.provider === "claude-code" || !profile.provider),
@@ -771,6 +772,31 @@ export function Conversation({
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
   )) ?? null;
+  useEffect(() => {
+    if (provider !== "codex-cli" || !repository || !worktree) {
+      setProviderSkills([]);
+      return;
+    }
+    setProviderSkills([]);
+    const controller = new AbortController();
+    void fetch("/api/provider/skills", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        root: repository.root,
+        worktree: worktree.path,
+      }),
+      signal: controller.signal,
+    }).then(async (response) => {
+      const body = await response.json() as { skills?: ProviderSkill[] };
+      if (!response.ok) throw new Error("Codex skills could not be loaded.");
+      setProviderSkills(body.skills ?? []);
+    }).catch((error) => {
+      if (error instanceof Error && error.name !== "AbortError") setProviderSkills([]);
+    });
+    return () => controller.abort();
+  }, [provider, repository, worktree]);
   const conversationBranch = worktree?.branch ?? "Detached HEAD";
   const runActive = providerState === "starting"
     || providerState === "streaming"
@@ -841,9 +867,15 @@ export function Conversation({
     setSuggestionIndex(0);
     if (prefix === "/") {
       setSuggestionMode("commands");
-      setSuggestions((capabilities?.commands ?? [])
-        .filter((command) => command.name.slice(1).includes(query.toLocaleLowerCase()))
-        .map((command) => ({ value: command.name, detail: command.description })));
+      const normalizedQuery = query.toLocaleLowerCase();
+      setSuggestions([
+        ...(capabilities?.commands ?? [])
+          .filter((command) => command.name.slice(1).includes(normalizedQuery))
+          .map((command) => ({ value: command.name, detail: command.description })),
+        ...providerSkills
+          .filter((skill) => skill.name.toLocaleLowerCase().includes(normalizedQuery))
+          .map((skill) => ({ value: `$${skill.name}`, detail: skill.description })),
+      ]);
       return;
     }
     setSuggestionMode("files");
@@ -861,7 +893,7 @@ export function Conversation({
       if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
     });
     return () => controller.abort();
-  }, [capabilities, draft, repository, worktree]);
+  }, [capabilities, draft, providerSkills, repository, worktree]);
   const selectSuggestion = (value: string) => {
     if (suggestionMode === "files") {
       if (!attachments.includes(value)) {

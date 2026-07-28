@@ -69,6 +69,36 @@ test("Codex version and native lifecycle events normalize without provider paylo
   }), [{ kind: "tool_finished", toolCallId: "item-3", failed: false }]);
 });
 
+test("Codex skills expose enabled metadata without local paths", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-skills-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.144.3");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({id:1,result:{data:[{
+      cwd:${JSON.stringify(directory)},
+      errors:[],
+      skills:[
+        {name:"zeta",description:"Zeta skill",path:"/private/zeta",scope:"user",enabled:true},
+        {name:"alpha",description:"Alpha skill",path:"/private/alpha",scope:"repo",enabled:true},
+        {name:"disabled",description:"Disabled skill",path:"/private/disabled",scope:"repo",enabled:false}
+      ]
+    }]}}));
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  assert.deepEqual(await new CodexCliAdapter(executable).skills(directory), [
+    { name: "alpha", description: "Alpha skill" },
+    { name: "zeta", description: "Zeta skill" },
+  ]);
+});
+
 test("Codex cancellation force-terminates an unresponsive app-server", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-provider-"));
   const executable = join(directory, "fake-codex");

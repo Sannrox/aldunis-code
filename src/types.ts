@@ -168,6 +168,10 @@ export interface ProviderCapabilities {
     imageTypes: string[];
   };
 }
+export interface ProviderSkill {
+  name: string;
+  description: string;
+}
 export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export interface ProviderDiscovery {
@@ -359,4 +363,3 @@ export type IconName =
   | "search"
   | "settings"
   | "chevron";
-
