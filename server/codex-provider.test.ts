@@ -8,6 +8,7 @@ import {
   codexAppServerArguments,
   codexFileChangePaths,
   CodexCliAdapter,
+  isRecoverableCodexResumeError,
   normalizeCodexNotification,
   pathsWithinWorktree,
 } from "./codex-provider.ts";
@@ -67,6 +68,87 @@ test("Codex version and native lifecycle events normalize without provider paylo
     method: "item/completed",
     params: { item: { id: "item-3", type: "collabAgentToolCall", tool: "spawnAgent", status: "completed" } },
   }), [{ kind: "tool_finished", toolCallId: "item-3", failed: false }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "thread/goal/cleared",
+    params: { threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" },
+  }), []);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "thread/goal/updated",
+    params: {
+      threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53",
+      goal: { objective: "Ship safely", status: "active" },
+    },
+  }), []);
+});
+
+test("Codex resumes fall back only for missing provider threads", () => {
+  assert.equal(isRecoverableCodexResumeError({ message: "thread not found" }), true);
+  assert.equal(isRecoverableCodexResumeError({ message: "no rollout found for thread abc" }), true);
+  assert.equal(isRecoverableCodexResumeError({ message: "authentication required" }), false);
+  assert.equal(isRecoverableCodexResumeError({ message: "thread permission denied" }), false);
+});
+
+test("Codex keeps one app-server process alive across conversation turns", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-session-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  let turn = 0;
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"thread-" + process.pid},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      turn += 1;
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-" + turn}}}));
+      console.log(JSON.stringify({
+        method:"turn/completed",
+        params:{threadId:"thread-" + process.pid,turn:{id:"turn-" + turn,status:"completed"}}
+      }));
+    }
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  try {
+    const first = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-1",
+      prompt: "First",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      mode: "build",
+    });
+    const firstEvents = [];
+    for await (const event of first.events) firstEvents.push(event);
+    const session = firstEvents.find((event) => event.kind === "session_started");
+    assert.equal(session?.kind, "session_started");
+
+    const second = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-1",
+      prompt: "Second",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      resumeSessionId: session?.kind === "session_started" ? session.sessionId : undefined,
+      mode: "build",
+    });
+    const secondEvents = [];
+    for await (const event of second.events) secondEvents.push(event);
+    assert.deepEqual(secondEvents, [{
+      kind: "turn_completed",
+      sessionId: session?.kind === "session_started" ? session.sessionId : "",
+      costUsd: null,
+    }]);
+  } finally {
+    adapter.close();
+  }
 });
 
 test("Codex skills expose enabled metadata without local paths", async () => {

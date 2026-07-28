@@ -32,6 +32,10 @@ interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
   cancelled: boolean;
   spawnFailed: boolean;
+  initialized: boolean;
+  conversationId: string;
+  worktree: string;
+  currentRunId: string | null;
   threadId: string | null;
   turnId: string | null;
   fileChanges: Map<string, string[]>;
@@ -71,6 +75,19 @@ function string(value: unknown, field: string): string {
     throw new ProviderProtocolError(`Codex event is missing ${field}.`);
   }
   return value;
+}
+
+export function isRecoverableCodexResumeError(value: unknown): boolean {
+  const error = record(value);
+  const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+  if (!message.includes("thread")) return false;
+  return [
+    "not found",
+    "does not exist",
+    "missing",
+    "unknown",
+    "no rollout",
+  ].some((snippet) => message.includes(snippet));
 }
 
 /**
@@ -265,6 +282,8 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
     "turn/moderationMetadata",
     "thread/started",
     "thread/status/changed",
+    "thread/goal/updated",
+    "thread/goal/cleared",
     "thread/tokenUsage/updated",
     "skills/changed",
     "item/agentMessage/delta",
@@ -299,6 +318,7 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
 export class CodexCliAdapter {
   readonly id = "codex-cli" as const;
   readonly #active = new Map<string, ActiveRun>();
+  readonly #sessions = new Map<string, ActiveRun>();
 
   constructor(
     private readonly executable = "codex",
@@ -526,6 +546,28 @@ export class CodexCliAdapter {
   }
 
   async start(options: ProviderStartOptions): Promise<ProviderRun> {
+    const existing = this.#sessions.get(options.conversationId);
+    if (
+      existing
+      && existing.child.exitCode === null
+      && !existing.spawnFailed
+      && existing.currentRunId === null
+      && existing.worktree === options.worktree
+      && (!options.resumeSessionId || options.resumeSessionId === existing.threadId)
+    ) {
+      const id = randomUUID();
+      existing.cancelled = false;
+      existing.currentRunId = id;
+      existing.turnId = null;
+      existing.fileChanges.clear();
+      this.#active.set(id, existing);
+      return { id, events: this.#events(id, existing, options) };
+    }
+    if (existing) {
+      this.#sessions.delete(options.conversationId);
+      this.#terminate(existing.child);
+    }
+
     let version: string;
     try {
       const result = await execFileAsync(this.executable, ["--version"], {
@@ -543,11 +585,25 @@ export class CodexCliAdapter {
     child.stdin.on("error", () => {});
     child.stderr.resume();
     const active: ActiveRun = {
-      child, cancelled: false, spawnFailed: false, threadId: null, turnId: null,
+      child,
+      cancelled: false,
+      spawnFailed: false,
+      initialized: false,
+      conversationId: options.conversationId,
+      worktree: options.worktree,
+      currentRunId: id,
+      threadId: null,
+      turnId: null,
       fileChanges: new Map(),
     };
     child.once("error", () => { active.spawnFailed = true; });
+    child.once("exit", () => {
+      if (this.#sessions.get(options.conversationId) === active) {
+        this.#sessions.delete(options.conversationId);
+      }
+    });
     this.#active.set(id, active);
+    this.#sessions.set(options.conversationId, active);
     return { id, events: this.#events(id, active, options) };
   }
 
@@ -579,6 +635,13 @@ export class CodexCliAdapter {
     return true;
   }
 
+  close(): void {
+    for (const session of this.#sessions.values()) {
+      this.#terminate(session.child);
+    }
+    this.#sessions.clear();
+  }
+
   #send(child: ChildProcessWithoutNullStreams, value: unknown): boolean {
     if (child.stdin.destroyed || child.stdin.writableEnded) return false;
     try {
@@ -601,7 +664,7 @@ export class CodexCliAdapter {
   async *#lines(child: ChildProcessWithoutNullStreams): AsyncIterable<JsonRecord> {
     const decoder = new StringDecoder("utf8");
     let buffer = "";
-    for await (const chunk of child.stdout) {
+    for await (const chunk of child.stdout.iterator({ destroyOnReturn: false })) {
       buffer += decoder.write(chunk);
       if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
         throw new ProviderProtocolError("Codex emitted an oversized message.");
@@ -632,16 +695,33 @@ export class CodexCliAdapter {
     options: ProviderStartOptions,
   ): AsyncIterable<ProviderEvent> {
     const token = this.permissions.createRunToken(id);
-    this.#send(active.child, { method: "initialize", id: 0, params: {
-      clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
-    } });
+    const startTurn = () => {
+      if (!active.threadId) throw new ProviderProtocolError("Codex session is missing its thread id.");
+      this.#send(active.child, { method: "turn/start", id: 2, params: {
+        threadId: active.threadId,
+        input: [{ type: "text", text: options.prompt, text_elements: [] }],
+        cwd: options.worktree,
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        model: options.model ?? null,
+        effort: options.reasoningEffort ?? null,
+      } });
+    };
+    if (active.initialized) startTurn();
+    else {
+      this.#send(active.child, { method: "initialize", id: 0, params: {
+        clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+      } });
+    }
     let protocolFailed = false;
     let terminalEmitted = false;
+    let resumeFallbackAttempted = false;
     const approvalTasks = new Set<Promise<void>>();
     try {
       for await (const message of this.#lines(active.child)) {
         if (message.id === 0) {
           if (message.error) throw new ProviderProtocolError("Codex app-server initialization failed.");
+          active.initialized = true;
           this.#send(active.child, { method: "initialized", params: {} });
           this.#send(active.child, {
             method: options.resumeSessionId ? "thread/resume" : "thread/start",
@@ -663,6 +743,29 @@ export class CodexCliAdapter {
           continue;
         }
         if (message.id === 1) {
+          if (
+            message.error
+            && options.resumeSessionId
+            && !resumeFallbackAttempted
+            && isRecoverableCodexResumeError(message.error)
+          ) {
+            resumeFallbackAttempted = true;
+            this.#send(active.child, {
+              method: "thread/start",
+              id: 1,
+              params: {
+                cwd: options.worktree,
+                approvalPolicy: "on-request",
+                approvalsReviewer: "user",
+                sandbox: "read-only",
+                model: options.model ?? null,
+                config: options.reasoningEffort
+                  ? { model_reasoning_effort: options.reasoningEffort }
+                  : null,
+              },
+            });
+            continue;
+          }
           if (message.error) throw new ProviderProtocolError("Codex could not start or resume the thread.");
           const result = record(message.result);
           const thread = record(result?.thread);
@@ -672,15 +775,7 @@ export class CodexCliAdapter {
             sessionId: active.threadId,
             model: typeof result?.model === "string" ? result.model : options.model ?? null,
           };
-          this.#send(active.child, { method: "turn/start", id: 2, params: {
-            threadId: active.threadId,
-            input: [{ type: "text", text: options.prompt, text_elements: [] }],
-            cwd: options.worktree,
-            approvalPolicy: "on-request",
-            approvalsReviewer: "user",
-            model: options.model ?? null,
-            effort: options.reasoningEffort ?? null,
-          } });
+          startTurn();
           continue;
         }
         if (message.id === 2) {
@@ -844,13 +939,16 @@ export class CodexCliAdapter {
             if (turn?.status === "completed" && active.threadId) {
               terminalEmitted = true;
               yield { kind: "turn_completed", sessionId: active.threadId, costUsd: null };
-              this.#terminate(active.child);
+              return;
             }
           }
         }
       }
     } catch (error) {
       protocolFailed = true;
+      if (this.#sessions.get(active.conversationId) === active) {
+        this.#sessions.delete(active.conversationId);
+      }
       this.#terminate(active.child);
       terminalEmitted = true;
       yield { kind: "failed", message: error instanceof ProviderProtocolError
@@ -858,6 +956,7 @@ export class CodexCliAdapter {
         : "Codex stream processing failed." };
     } finally {
       this.#active.delete(id);
+      if (active.currentRunId === id) active.currentRunId = null;
       this.permissions.closeRun(id, active.cancelled ? "cancelled" : "provider_failed");
     }
     if (active.cancelled && !protocolFailed && !terminalEmitted) yield { kind: "cancelled" };

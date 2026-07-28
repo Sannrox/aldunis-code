@@ -2417,6 +2417,7 @@ export function createLocalHost(
   automationScheduler.start();
   server.once("close", () => {
     automationScheduler.stop();
+    codex.close();
     internalPermissionCallback?.server.close();
   });
   return server;
