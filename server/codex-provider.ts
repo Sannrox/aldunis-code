@@ -6,6 +6,11 @@ import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { MAX_APPROVAL_PATHS, PermissionBroker } from "./permission.ts";
 import {
+  CODEX_PROCESS_EXIT_MESSAGE,
+  CODEX_PROTOCOL_FALLBACK_MESSAGE,
+  CODEX_UNSUPPORTED_ITEM_MESSAGE,
+  CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE,
+  CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE,
   type ProviderEvent,
   type ProviderRun,
   type ProviderStartOptions,
@@ -39,6 +44,7 @@ interface ActiveRun {
   threadId: string | null;
   turnId: string | null;
   fileChanges: Map<string, string[]>;
+  activeToolCalls: Set<string>;
 }
 
 export interface CodexModel {
@@ -247,6 +253,29 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   ]);
   if (informationalItemTypes.has(String(item.type))) return [];
   throw new ProviderProtocolError(`Unsupported Codex item type: ${String(item.type)}.`);
+}
+
+function settleActiveToolCalls(active: ActiveRun): ProviderEvent[] {
+  const events = [...active.activeToolCalls].map((toolCallId): ProviderEvent => ({
+    kind: "tool_finished",
+    toolCallId,
+    failed: true,
+  }));
+  active.activeToolCalls.clear();
+  return events;
+}
+
+function safeCodexProtocolFailureMessage(error: ProviderProtocolError): string {
+  if (error.message.startsWith("Unsupported Codex notification:")) {
+    return CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE;
+  }
+  if (error.message.startsWith("Unsupported Codex item type:")) {
+    return CODEX_UNSUPPORTED_ITEM_MESSAGE;
+  }
+  if (error.message.startsWith("Unsupported Codex turn status:")) {
+    return CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE;
+  }
+  return CODEX_PROTOCOL_FALLBACK_MESSAGE;
 }
 
 export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
@@ -560,6 +589,7 @@ export class CodexCliAdapter {
       existing.currentRunId = id;
       existing.turnId = null;
       existing.fileChanges.clear();
+      existing.activeToolCalls.clear();
       this.#active.set(id, existing);
       return { id, events: this.#events(id, existing, options) };
     }
@@ -595,6 +625,7 @@ export class CodexCliAdapter {
       threadId: null,
       turnId: null,
       fileChanges: new Map(),
+      activeToolCalls: new Set(),
     };
     child.once("error", () => { active.spawnFailed = true; });
     child.once("exit", () => {
@@ -794,6 +825,7 @@ export class CodexCliAdapter {
               result: { contentItems: [], success: false },
             });
             terminalEmitted = true;
+            for (const settled of settleActiveToolCalls(active)) yield settled;
             yield {
               kind: "failed",
               code: "unsupported_external_tool",
@@ -927,6 +959,15 @@ export class CodexCliAdapter {
             }
           }
           for (const event of normalizeCodexNotification(message)) {
+            if (event.kind === "tool_started") active.activeToolCalls.add(event.toolCallId);
+            if (event.kind === "tool_finished") active.activeToolCalls.delete(event.toolCallId);
+            if (
+              event.kind === "failed"
+              || event.kind === "cancelled"
+              || event.kind === "turn_completed"
+            ) {
+              for (const settled of settleActiveToolCalls(active)) yield settled;
+            }
             yield event;
             if (event.kind === "cancelled" || event.kind === "failed") {
               terminalEmitted = true;
@@ -938,6 +979,7 @@ export class CodexCliAdapter {
             const turn = record(params?.turn);
             if (turn?.status === "completed" && active.threadId) {
               terminalEmitted = true;
+              for (const settled of settleActiveToolCalls(active)) yield settled;
               yield { kind: "turn_completed", sessionId: active.threadId, costUsd: null };
               return;
             }
@@ -951,19 +993,36 @@ export class CodexCliAdapter {
       }
       this.#terminate(active.child);
       terminalEmitted = true;
-      yield { kind: "failed", message: error instanceof ProviderProtocolError
-        ? error.message
-        : "Codex stream processing failed." };
+      for (const settled of settleActiveToolCalls(active)) yield settled;
+      yield error instanceof ProviderProtocolError
+        ? {
+            kind: "failed",
+            code: "provider_protocol_error",
+            message: safeCodexProtocolFailureMessage(error),
+          }
+        : {
+            kind: "failed",
+            code: "provider_protocol_error",
+            message: "Codex stream processing failed.",
+          };
     } finally {
       this.#active.delete(id);
       if (active.currentRunId === id) active.currentRunId = null;
       this.permissions.closeRun(id, active.cancelled ? "cancelled" : "provider_failed");
     }
-    if (active.cancelled && !protocolFailed && !terminalEmitted) yield { kind: "cancelled" };
+    if (active.cancelled && !protocolFailed && !terminalEmitted) {
+      for (const settled of settleActiveToolCalls(active)) yield settled;
+      yield { kind: "cancelled" };
+    }
     else if (active.spawnFailed && !protocolFailed) {
       yield { kind: "failed", message: "Codex CLI is not installed or could not be started." };
     } else if (!protocolFailed && !terminalEmitted) {
-      yield { kind: "failed", message: "Codex CLI exited before completing the turn." };
+      for (const settled of settleActiveToolCalls(active)) yield settled;
+      yield {
+        kind: "failed",
+        code: "provider_process_exit",
+        message: CODEX_PROCESS_EXIT_MESSAGE,
+      };
     }
   }
 }

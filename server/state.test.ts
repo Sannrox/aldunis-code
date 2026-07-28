@@ -102,7 +102,7 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "active");
 });
 
-test("typed provider policy failures survive reload without arbitrary error text", async () => {
+test("typed provider failures survive reload without arbitrary error text", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
   const first = await store.startTurn({
@@ -129,10 +129,38 @@ test("typed provider policy failures survive reload without arbitrary error text
     kind: "failed",
     message: "secret subprocess dump",
   });
+  const third = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Fail on a protocol mismatch",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+  });
+  await store.recordProviderEvent(third.thread.id, third.turn.id, "codex-cli", {
+    kind: "failed",
+    code: "provider_protocol_error",
+    message: "Codex app-server emitted an unsupported notification.",
+  });
+  const fourth = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Attempt forged typed diagnostics",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+  });
+  await store.recordProviderEvent(fourth.thread.id, fourth.turn.id, "codex-cli", {
+    kind: "failed",
+    code: "provider_protocol_error",
+    message: "Unsupported Codex notification: ghp_raw-secret-value.",
+  });
 
   const rebuilt = await new LocalStateStore(directory).load();
   assert.deepEqual(rebuilt.activities.map((activity) => activity.message), [
     "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+    "Provider failed.",
+    "Codex app-server emitted an unsupported notification.",
     "Provider failed.",
   ]);
 });

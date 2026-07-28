@@ -151,6 +151,77 @@ if (process.argv.includes("--version")) {
   }
 });
 
+test("Codex session reuse cannot leak abandoned tool state into the next turn", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-session-reset-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  let turn = 0;
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"thread-1"},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      turn += 1;
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-" + turn}}}));
+      if (turn === 1) {
+        console.log(JSON.stringify({
+          method:"item/started",
+          params:{item:{id:"abandoned-command",type:"commandExecution",command:"private"}}
+        }));
+      } else {
+        console.log(JSON.stringify({
+          method:"turn/completed",
+          params:{threadId:"thread-1",turn:{id:"turn-" + turn,status:"completed"}}
+        }));
+      }
+    }
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  try {
+    const first = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-1",
+      prompt: "First",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      mode: "build",
+    });
+    let sessionId = "";
+    for await (const event of first.events) {
+      if (event.kind === "session_started") sessionId = event.sessionId;
+      if (event.kind === "tool_started") break;
+    }
+
+    const second = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-1",
+      prompt: "Second",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      resumeSessionId: sessionId,
+      mode: "build",
+    });
+    const secondEvents = [];
+    for await (const event of second.events) secondEvents.push(event);
+    assert.deepEqual(secondEvents, [{
+      kind: "turn_completed",
+      sessionId: "thread-1",
+      costUsd: null,
+    }]);
+  } finally {
+    adapter.close();
+  }
+});
+
 test("Codex skills expose enabled metadata without local paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-skills-"));
   const executable = join(directory, "fake-codex");
@@ -198,6 +269,10 @@ if (process.argv.includes("--version")) {
     if (message.id === 2) console.log(JSON.stringify({
       id:2,result:{turn:{id:"0199a213-81c0-7800-8aa1-bbab2a035a54"}}
     }));
+    if (message.id === 2) console.log(JSON.stringify({
+      method:"item/started",
+      params:{item:{id:"command-before-cancel",type:"commandExecution",command:"private"}}
+    }));
   });
 }
 `);
@@ -218,7 +293,7 @@ if (process.argv.includes("--version")) {
       setTimeout(() => adapter.cancel(run.id), 50).unref();
     }
   }
-  assert.deepEqual(kinds, ["session_started", "cancelled"]);
+  assert.deepEqual(kinds, ["session_started", "tool_started", "tool_finished", "cancelled"]);
   assert.equal(adapter.cancel(run.id), false);
 });
 
@@ -239,6 +314,10 @@ if (process.argv.includes("--version")) {
     if (message.id === 2) {
       console.log(JSON.stringify({
         id:2,result:{turn:{id:"0199a213-81c0-7800-8aa1-bbab2a035a54"}}
+      }));
+      console.log(JSON.stringify({
+        method:"item/started",
+        params:{item:{id:"command-before-policy-failure",type:"commandExecution",command:"private"}}
       }));
       console.log(JSON.stringify({
         id:3,
@@ -273,6 +352,16 @@ if (process.argv.includes("--version")) {
       kind: "session_started",
       sessionId: "0199a213-81c0-7800-8aa1-bbab2a035a53",
       model: "fixture",
+    },
+    {
+      kind: "tool_started",
+      toolCallId: "command-before-policy-failure",
+      name: "Command",
+    },
+    {
+      kind: "tool_finished",
+      toolCallId: "command-before-policy-failure",
+      failed: true,
     },
     {
       kind: "failed",
@@ -315,6 +404,55 @@ test("unknown and malformed Codex notifications fail closed", () => {
     code: "unsupported_external_tool",
     message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
   }]);
+});
+
+test("Codex protocol failures preserve a safe diagnostic and settle active tools", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-protocol-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"thread-1"},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-1"}}}));
+      console.log(JSON.stringify({
+        method:"item/started",
+        params:{item:{id:"command-1",type:"commandExecution",command:"private"}}
+      }));
+      console.log(JSON.stringify({method:"future/event",params:{}}));
+    }
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "conversation-1",
+    prompt: "Trigger a protocol mismatch",
+    approvalUrl: "http://127.0.0.1:1/unused",
+    mode: "build",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.deepEqual(events, [
+    { kind: "session_started", sessionId: "thread-1", model: "fixture" },
+    { kind: "tool_started", toolCallId: "command-1", name: "Command" },
+    { kind: "tool_finished", toolCallId: "command-1", failed: true },
+    {
+      kind: "failed",
+      code: "provider_protocol_error",
+      message: "Codex app-server emitted an unsupported notification.",
+    },
+  ]);
 });
 
 test("interrupted and failed Codex turns normalize to terminal events", () => {
