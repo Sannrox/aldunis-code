@@ -23,8 +23,11 @@ Typical contents (names may evolve; do not commit these files):
 | Provider adapter metadata | Installed declarative adapters |
 | Shikigami run dirs | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
 
-File modes are restricted (owner-only where applicable). Corrupt or incompatible
-history **fails visibly** rather than wiping data.
+File modes are restricted (owner-only where applicable). History mutations are
+locked across local host processes. If an older concurrent-host race left intact
+JSONL records with forked sequence metadata, startup renumbers those records in
+physical append order without discarding them. Malformed JSON and incompatible
+schemas still **fail visibly** rather than wiping data.
 
 ## Conversation history
 

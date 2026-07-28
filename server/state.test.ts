@@ -15,6 +15,14 @@ async function fixtureStore(): Promise<{ directory: string; store: LocalStateSto
   return { directory, store: new LocalStateStore(directory) };
 }
 
+test("fresh stores create a missing state directory before the first write", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "aldunis-state-parent-"));
+  const directory = join(parent, "state");
+  const store = new LocalStateStore(directory);
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  assert.equal((await store.load()).projects[0].id, "project-1");
+});
+
 test("versioned projects, threads, turns, messages, activities, and sessions rebuild deterministically", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -288,6 +296,72 @@ test("concurrent writes remain strictly ordered and crash-safe", async () => {
   assert.equal(projection.threads.length, 12);
   assert.equal(projection.turns.length, 12);
   assert.equal(projection.messages.length, 12);
+});
+
+test("one host holds the local history writer lease until release", async () => {
+  const { directory, store } = await fixtureStore();
+  const release = await store.acquireWriterLease();
+  await assert.rejects(
+    () => new LocalStateStore(directory).acquireWriterLease(),
+    /already using this local state directory/,
+  );
+  await release();
+  const releaseRestarted = await new LocalStateStore(directory).acquireWriterLease();
+  await releaseRestarted();
+});
+
+test("intact forked history is renumbered in physical append order", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Preserve every intact event",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const eventPath = join(directory, "events.v1.jsonl");
+  const lines = (await readFile(eventPath, "utf8")).trim().split("\n");
+  const forked = lines.map((line, index) => {
+    const envelope = JSON.parse(line);
+    if (index >= 2) envelope.sequence -= 1;
+    return JSON.stringify(envelope);
+  });
+  await writeFile(eventPath, `${forked.join("\n")}\n`, "utf8");
+
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.projects.length, 1);
+  assert.equal(projection.threads.length, 1);
+  assert.equal(projection.turns.length, 1);
+  assert.equal(projection.messages[0].text, "Preserve every intact event");
+
+  const repaired = (await readFile(eventPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).sequence);
+  assert.deepEqual(repaired, Array.from({ length: repaired.length }, (_, index) => index + 1));
+});
+
+test("forward sequence gaps still fail visibly without rewriting history", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Do not hide missing events",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const eventPath = join(directory, "events.v1.jsonl");
+  const lines = (await readFile(eventPath, "utf8")).trim().split("\n");
+  const missing = lines.filter((_, index) => index !== 1);
+  await writeFile(eventPath, `${missing.join("\n")}\n`, "utf8");
+
+  await assert.rejects(
+    () => new LocalStateStore(directory).load(),
+    /not ordered at event 3; expected 2/,
+  );
+  assert.equal(await readFile(eventPath, "utf8"), `${missing.join("\n")}\n`);
 });
 
 test("new conversations stop at the bounded per-project retention limit", async () => {

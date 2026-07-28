@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { promisify } from "node:util";
 import { createLocalHost, assertLoopbackHost } from "./host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
-import { defaultStateDirectory } from "./state.ts";
+import { defaultStateDirectory, LocalStateStore } from "./state.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -84,7 +84,9 @@ const tls = remoteMode === "lan"
       key: await readFile(tlsKeyPath!),
     }
   : undefined;
-const server = createLocalHost(undefined, undefined, undefined, remoteAuth, tls);
+const state = new LocalStateStore();
+const releaseWriterLease = await state.acquireWriterLease();
+const server = createLocalHost(undefined, state, undefined, remoteAuth, tls);
 let tailscaleConfigured = false;
 
 async function disableTailscaleServe(): Promise<void> {
@@ -106,7 +108,9 @@ async function disableTailscaleServe(): Promise<void> {
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
   await disableTailscaleServe();
-  server.close(() => process.kill(process.pid, signal));
+  server.close(() => {
+    void releaseWriterLease().finally(() => process.kill(process.pid, signal));
+  });
 }
 
 process.once("SIGINT", () => { void shutdown("SIGINT"); });

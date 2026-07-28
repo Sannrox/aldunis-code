@@ -48,6 +48,9 @@ The host defaults to loopback. Do not pass a public `--host` unless you intend
 ## History / preferences recovered
 
 Invalid on-disk JSON recovers to safe defaults with a visible recovered flag.
+Intact history records with forked sequence metadata are repaired automatically
+at startup. Stop extra host processes if state repeatedly reports that it is
+busy.
 Do not delete the state directory unless you intend to lose local history.
 See [local-data.md](local-data.md).
 
