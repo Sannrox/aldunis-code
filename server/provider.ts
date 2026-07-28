@@ -28,6 +28,8 @@ export const CODEX_UNSUPPORTED_ITEM_MESSAGE =
   "Codex app-server emitted an unsupported item type.";
 export const CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE =
   "Codex app-server emitted an unsupported turn status.";
+export const CLAUDE_AUTHENTICATION_FAILURE_MESSAGE =
+  "Claude Code authentication failed. Re-authenticate in Claude Code and try again.";
 
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -41,13 +43,18 @@ export type ProviderEvent =
   | {
     kind: "failed";
     message: string;
-    code?: "unsupported_external_tool" | "provider_protocol_error" | "provider_process_exit";
+    code?:
+      | "unsupported_external_tool"
+      | "provider_authentication"
+      | "provider_protocol_error"
+      | "provider_process_exit";
   };
 
 export function persistedProviderFailureMessage(
   event: Extract<ProviderEvent, { kind: "failed" }>,
 ): string {
   if (event.code === "unsupported_external_tool") return UNSUPPORTED_EXTERNAL_TOOL_MESSAGE;
+  if (event.code === "provider_authentication") return CLAUDE_AUTHENTICATION_FAILURE_MESSAGE;
   if (event.code === "provider_process_exit") return CODEX_PROCESS_EXIT_MESSAGE;
   if (event.code === "provider_protocol_error") {
     if (
@@ -132,6 +139,16 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
         kind: "session_started",
         sessionId: requiredString(event.session_id, "session_id"),
         model: typeof event.model === "string" ? event.model : null,
+      }];
+    }
+    if (
+      event.subtype === "api_retry"
+      && (event.error_status === 401 || event.error === "authentication_failed")
+    ) {
+      return [{
+        kind: "failed",
+        code: "provider_authentication",
+        message: CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
       }];
     }
     return [];
@@ -242,6 +259,15 @@ interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
   cancelled: boolean;
   spawnFailed: boolean;
+}
+
+function terminateProviderProcess(child: ChildProcessWithoutNullStreams): NodeJS.Timeout {
+  child.kill("SIGTERM");
+  const timer = setTimeout(() => {
+    if (child.exitCode === null) child.kill("SIGKILL");
+  }, 2_000);
+  timer.unref();
+  return timer;
 }
 
 export class ClaudeCodeAdapter {
@@ -371,11 +397,7 @@ export class ClaudeCodeAdapter {
     if (!active) return false;
     active.cancelled = true;
     this.permissions.closeRun(id, "cancelled");
-    active.child.kill("SIGTERM");
-    const timer = setTimeout(() => {
-      if (active.child.exitCode === null) active.child.kill("SIGKILL");
-    }, 2_000);
-    timer.unref();
+    terminateProviderProcess(active.child);
     return true;
   }
 
@@ -391,8 +413,9 @@ export class ClaudeCodeAdapter {
   ): AsyncIterable<ProviderEvent> {
     let buffer = "";
     let protocolFailed = false;
+    let terminationTimer: NodeJS.Timeout | undefined;
     try {
-      for await (const chunk of active.child.stdout) {
+      providerOutput: for await (const chunk of active.child.stdout) {
         buffer += chunk.toString("utf8");
         if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
           throw new ProviderProtocolError("Claude emitted an oversized event.");
@@ -411,6 +434,11 @@ export class ClaudeCodeAdapter {
             for (const event of normalizeClaudeEvent(parsed)) {
               if (event.kind !== "tool_requested") {
                 yield event;
+                if (event.kind === "failed") {
+                  protocolFailed = true;
+                  terminationTimer = terminateProviderProcess(active.child);
+                  break providerOutput;
+                }
                 if (event.kind === "tool_finished") {
                   const approval = this.permissions.approvalFor(id, event.toolCallId);
                   if (approval && approval.state !== "pending") {
@@ -465,6 +493,7 @@ export class ClaudeCodeAdapter {
         active.child.once("close", (exitCode, signal) => resolve([exitCode, signal]));
       }
     });
+    clearTimeout(terminationTimer);
     this.#active.delete(id);
     if (active.cancelled) {
       yield { kind: "cancelled" };
