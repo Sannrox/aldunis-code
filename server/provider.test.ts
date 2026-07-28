@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   assertSupportedClaudeVersion,
+  CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
   ClaudeCodeAdapter,
   modeArguments,
   normalizeClaudeEvent,
@@ -88,6 +89,80 @@ test("provider errors are normalized without exposing raw diagnostics", () => {
     type: "result", subtype: "error_during_execution", is_error: true,
     session_id: "session-1", result: "Authentication is required.",
   }), [{ kind: "failed", message: "Authentication is required." }]);
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "system",
+    subtype: "api_retry",
+    attempt: 1,
+    max_retries: 10,
+    error_status: 401,
+    error: "authentication_failed",
+    session_id: "session-1",
+  }), [{
+    kind: "failed",
+    code: "provider_authentication",
+    message: CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
+  }]);
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "system",
+    subtype: "api_retry",
+    error_status: 503,
+    error: "service_unavailable",
+  }), []);
+});
+
+test("Claude authentication retry terminates the provider process promptly", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-provider-auth-"));
+  const executable = join(directory, "fake-claude");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("2.1.177 (Claude Code)");
+} else if (process.argv.includes("--help")) {
+  console.log(${JSON.stringify(supportedHelp)});
+} else {
+  console.log(JSON.stringify({type:"system",subtype:"init",session_id:"fixture-session",model:"fixture"}));
+  console.log(JSON.stringify({
+    type:"system",
+    subtype:"api_retry",
+    attempt:1,
+    max_retries:10,
+    error_status:401,
+    error:"authentication_failed",
+    session_id:"fixture-session"
+  }));
+  process.on("SIGTERM", () => {});
+  setInterval(() => {}, 1000);
+}
+`);
+  await chmod(executable, 0o700);
+
+  const adapter = new ClaudeCodeAdapter(executable);
+  const run = await adapter.start(
+    directory,
+    directory,
+    "conversation-auth",
+    "hello",
+    "http://127.0.0.1:4174/api/provider/permissions/request",
+    "ask",
+  );
+  let timeout: NodeJS.Timeout | undefined;
+  const events = await Promise.race([
+    Array.fromAsync(run.events),
+    new Promise<never>((_, reject) => {
+      timeout = setTimeout(
+        () => reject(new Error("authentication failure did not stop the provider")),
+        3_000,
+      );
+    }),
+  ]).finally(() => clearTimeout(timeout));
+
+  assert.deepEqual(events, [
+    { kind: "session_started", sessionId: "fixture-session", model: "fixture" },
+    {
+      kind: "failed",
+      code: "provider_authentication",
+      message: CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
+    },
+  ]);
 });
 
 test("provider capabilities expose typed commands and bounded local attachments", () => {

@@ -155,6 +155,18 @@ test("typed provider failures survive reload without arbitrary error text", asyn
     code: "provider_protocol_error",
     message: "Unsupported Codex notification: ghp_raw-secret-value.",
   });
+  const fifth = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Fail authentication",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(fifth.thread.id, fifth.turn.id, "claude-code", {
+    kind: "failed",
+    code: "provider_authentication",
+    message: "untrusted authentication diagnostics",
+  });
 
   const rebuilt = await new LocalStateStore(directory).load();
   assert.deepEqual(rebuilt.activities.map((activity) => activity.message), [
@@ -162,6 +174,7 @@ test("typed provider failures survive reload without arbitrary error text", asyn
     "Provider failed.",
     "Codex app-server emitted an unsupported notification.",
     "Provider failed.",
+    "Claude Code authentication failed. Re-authenticate in Claude Code and try again.",
   ]);
 });
 
