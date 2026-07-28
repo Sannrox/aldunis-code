@@ -128,6 +128,8 @@ export interface Message {
   role: "user" | "assistant";
   text: string;
   createdAt: string;
+  /** Event-log position used to restore cross-record provider ordering. */
+  eventSequence?: number;
 }
 
 export interface Activity {
@@ -140,6 +142,8 @@ export interface Activity {
   failed: boolean | null;
   message: string | null;
   createdAt: string;
+  /** Event-log position used to restore cross-record provider ordering. */
+  eventSequence?: number;
 }
 
 export interface ProviderSessionReference {
@@ -469,8 +473,11 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
   if (event.type === "project_saved") replaceById(projection.projects, event.project);
   else if (event.type === "thread_saved") replaceById(projection.threads, event.thread);
   else if (event.type === "turn_saved") replaceById(projection.turns, event.turn);
-  else if (event.type === "message_saved") replaceById(projection.messages, event.message);
-  else if (event.type === "activity_saved") replaceById(projection.activities, event.activity);
+  else if (event.type === "message_saved") {
+    replaceById(projection.messages, { ...event.message, eventSequence: envelope.sequence });
+  } else if (event.type === "activity_saved") {
+    replaceById(projection.activities, { ...event.activity, eventSequence: envelope.sequence });
+  }
   else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
       (item) => item.threadId === event.providerSession.threadId
@@ -1444,12 +1451,27 @@ export class LocalStateStore {
     const operation = this.#writeQueue.then(async () => {
       const next = structuredClone(this.#projection);
       change(next);
+      const transcriptEvents = [
+        ...next.messages.map((message) => ({
+          eventSequence: message.eventSequence,
+          createdAt: message.createdAt,
+          event: { type: "message_saved" as const, message },
+        })),
+        ...next.activities.map((activity) => ({
+          eventSequence: activity.eventSequence,
+          createdAt: activity.createdAt,
+          event: { type: "activity_saved" as const, activity },
+        })),
+      ].sort((left, right) => (
+        left.eventSequence !== undefined && right.eventSequence !== undefined
+          ? left.eventSequence - right.eventSequence
+          : left.createdAt.localeCompare(right.createdAt)
+      ));
       const events: StateEvent[] = [
         ...next.projects.map((project): StateEvent => ({ type: "project_saved", project })),
         ...next.threads.map((thread): StateEvent => ({ type: "thread_saved", thread })),
         ...next.turns.map((turn): StateEvent => ({ type: "turn_saved", turn })),
-        ...next.messages.map((message): StateEvent => ({ type: "message_saved", message })),
-        ...next.activities.map((activity): StateEvent => ({ type: "activity_saved", activity })),
+        ...transcriptEvents.map(({ event }) => event),
         ...next.providerSessions.map((providerSession): StateEvent => ({
           type: "provider_session_saved",
           providerSession,
