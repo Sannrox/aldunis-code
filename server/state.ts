@@ -7,6 +7,7 @@ import {
   persistedProviderFailureMessage,
   type ProviderEvent,
   type ProviderId,
+  type ReasoningEffort,
 } from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 2;
@@ -33,6 +34,7 @@ export interface Thread {
   forkId?: string;
   profileId?: string | null;
   model?: string | null;
+  reasoningEffort?: ReasoningEffort;
   createdAt: string;
   updatedAt: string;
   pinnedAt?: string | null;
@@ -704,6 +706,7 @@ export class LocalStateStore {
     prompt: string;
     mode: InteractionMode;
     provider: ProviderId;
+    reasoningEffort?: ReasoningEffort;
     threadId?: string;
   }): Promise<{ thread: Thread; turn: Turn }> {
     const projection = await this.load();
@@ -746,7 +749,12 @@ export class LocalStateStore {
       }
     }
     const thread: Thread = existing
-      ? { ...existing, provider: existing.provider ?? input.provider, updatedAt: now }
+      ? {
+          ...existing,
+          provider: existing.provider ?? input.provider,
+          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+          updatedAt: now,
+        }
       : {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
           id: randomUUID(),
@@ -754,6 +762,7 @@ export class LocalStateStore {
           title: input.prompt.slice(0, 80),
           worktree: input.worktree,
           provider: input.provider,
+          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
           createdAt: now,
           updatedAt: now,
           pinnedAt: null,

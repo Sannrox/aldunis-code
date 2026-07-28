@@ -82,6 +82,7 @@ export interface ConversationSummary {
   parentThreadId?: string;
   profileId?: string | null;
   model?: string | null;
+  reasoningEffort?: ReasoningEffort;
   updatedAt: string;
   pinnedAt?: string | null;
   archivedAt?: string | null;
