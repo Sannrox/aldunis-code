@@ -36,3 +36,21 @@ test("presentAssistantTimeline updates a tool in its original group after later 
     { kind: "text", text: "Working…" },
   ]);
 });
+
+test("presentAssistantTimeline marks unfinished tools cancelled for an interrupted turn", () => {
+  const events: ProviderEvent[] = [
+    { kind: "tool_started", toolCallId: "call-abc12345", name: "Agent" },
+    { kind: "tool_started", toolCallId: "call-def67890", name: "Read" },
+    { kind: "tool_finished", toolCallId: "call-def67890", failed: true },
+  ];
+
+  assert.deepEqual(presentAssistantTimeline(events, "cancelled"), [
+    {
+      kind: "tools",
+      rows: [
+        { toolCallId: "call-abc12345", name: "Agent", status: "cancelled" },
+        { toolCallId: "call-def67890", name: "Read", status: "failed" },
+      ],
+    },
+  ]);
+});

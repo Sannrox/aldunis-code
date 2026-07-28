@@ -12,7 +12,10 @@ export type AssistantTimelineBlock =
  * Tool finishes update the tool group containing their matching start event;
  * they do not move that group below later assistant text.
  */
-export function presentAssistantTimeline(events: ProviderEvent[]): AssistantTimelineBlock[] {
+export function presentAssistantTimeline(
+  events: ProviderEvent[],
+  unfinishedStatus: "running" | "cancelled" = "running",
+): AssistantTimelineBlock[] {
   const blocks: Array<
     | { kind: "text"; chunks: string[] }
     | {
@@ -52,6 +55,13 @@ export function presentAssistantTimeline(events: ProviderEvent[]): AssistantTime
       const text = joinAssistantTextChunks(block.chunks);
       return text ? [{ kind: "text", text }] : [];
     }
-    return [{ kind: "tools", rows: presentToolRows(block.events) }];
+    return [{
+      kind: "tools",
+      rows: presentToolRows(block.events).map((row) => (
+        row.status === "running" && unfinishedStatus === "cancelled"
+          ? { ...row, status: "cancelled" }
+          : row
+      )),
+    }];
   });
 }
