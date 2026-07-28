@@ -50,6 +50,10 @@ import {
 } from "../../lib/provider-discovery-cache";
 import { shortToolCallId } from "../../lib/tool-presentation";
 import { presentAssistantTimeline } from "../../lib/conversation-timeline";
+import {
+  shouldRefreshAfterRestoredTurn,
+  type RestoredTurnStatus,
+} from "../../lib/thread-status-transition";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 
@@ -147,6 +151,12 @@ export function Conversation({
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const lastAttentionState = useRef<string | null>(null);
+  const restoredTurnStatus = useRef<{
+    turnId: string;
+    status: RestoredTurnStatus;
+  } | null>(null);
+  const conversationAvailableCallback = useRef(onConversationAvailable);
+  conversationAvailableCallback.current = onConversationAvailable;
   // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
   const [provider, setProvider] = useState<ProviderId>(
     () => conversation?.provider ?? "claude-code",
@@ -578,7 +588,7 @@ export function Conversation({
         turns: Array<{
           id: string;
           threadId: string;
-          status: "active" | "idle" | "waiting_for_user" | "waiting_for_approval" | "completed" | "failed" | "interrupted" | "running" | "cancelled";
+          status: RestoredTurnStatus;
           mode?: InteractionMode;
           providerRunId?: string;
           createdAt: string;
@@ -740,6 +750,11 @@ export function Conversation({
                 ? "completed"
                 : "idle";
       setProviderState(nextState);
+      const restoredStatus = { turnId: latest.id, status: latest.status };
+      if (shouldRefreshAfterRestoredTurn(restoredTurnStatus.current, restoredStatus)) {
+        conversationAvailableCallback.current?.(thread.id);
+      }
+      restoredTurnStatus.current = restoredStatus;
       if (latest.providerRunId && latest.status === "waiting_for_approval") {
         const approvalsResponse = await fetch("/api/provider/approvals/list", {
           method: "POST",
