@@ -121,6 +121,27 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
   throw new ProviderProtocolError(`Unsupported ACP session update: ${updateType}.`);
 }
 
+export function acpNotificationEvents(
+  value: unknown,
+  loadingSession: boolean,
+): ProviderEvent[] {
+  const events = normalizeAcpNotification(value);
+  // session/load may replay the provider's native history before replying.
+  // Aldunis already owns that timeline, so validate the replay but do not
+  // append it as fresh content to the resumed turn.
+  return loadingSession ? [] : events;
+}
+
+export function acpLoadedSessionId(
+  value: unknown,
+  resumeSessionId: string | undefined,
+): string {
+  const result = record(value);
+  if (typeof result?.sessionId === "string" && result.sessionId) return result.sessionId;
+  if (resumeSessionId) return resumeSessionId;
+  throw new ProviderProtocolError("ACP message is missing session ID.");
+}
+
 export function isOptionalKiroNotification(adapterId: string, value: unknown): boolean {
   const message = record(value);
   return adapterId === "dev.kiro.cli"
@@ -421,8 +442,7 @@ export class AcpProviderAdapter {
         }
         if (message.method === undefined && message.id === 1) {
           if (message.error) throw new ProviderProtocolError("ACP could not start or load the session.");
-          const result = record(message.result);
-          active.sessionId = requiredString(result?.sessionId, "session ID");
+          active.sessionId = acpLoadedSessionId(message.result, options.resumeSessionId);
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           const selectedModel = options.model?.trim() && options.model !== "default"
             ? options.model.trim()
@@ -594,7 +614,10 @@ export class AcpProviderAdapter {
             setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
             continue;
           }
-          const events = normalizeAcpNotification(message);
+          const events = acpNotificationEvents(
+            message,
+            Boolean(options.resumeSessionId && active.sessionId === null),
+          );
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           for (const event of events) yield event;
         }
