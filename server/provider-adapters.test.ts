@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   acpAllowOnceOption,
+  acpLoadedSessionId,
+  acpNotificationEvents,
   acpPromptRequest,
   acpReadTextFile,
   acpSessionRequest,
@@ -579,6 +581,35 @@ test("Kiro session notifications normalize without exposing the wire shape", () 
       update: { type: "UnknownKiroUpdate" },
     },
   }), /malformed session update/);
+});
+
+test("ACP session load keeps the persisted ID and suppresses validated history replay", () => {
+  const replay = {
+    jsonrpc: "2.0",
+    method: "session/notification",
+    params: {
+      sessionId: "kiro-session",
+      update: {
+        type: "AgentMessageChunk",
+        content: { type: "text", text: "prior Kiro answer" },
+      },
+    },
+  };
+  assert.deepEqual(acpNotificationEvents(replay, true), []);
+  assert.deepEqual(
+    acpNotificationEvents(replay, false),
+    [{ kind: "assistant_text", text: "prior Kiro answer" }],
+  );
+  assert.throws(
+    () => acpNotificationEvents({
+      ...replay,
+      params: { sessionId: "kiro-session", update: { type: "UnknownKiroUpdate" } },
+    }, true),
+    /malformed session update/,
+  );
+  assert.equal(acpLoadedSessionId({}, "kiro-session"), "kiro-session");
+  assert.equal(acpLoadedSessionId({ sessionId: "loaded-session" }, "kiro-session"), "loaded-session");
+  assert.throws(() => acpLoadedSessionId({}, undefined), /missing session ID/);
 });
 
 test("Kiro prompts use the standard ACP prompt field exercised by the CLI", () => {
