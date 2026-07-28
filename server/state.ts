@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { lock } from "proper-lockfile";
 import {
   type InteractionMode,
   persistedProviderFailureMessage,
@@ -656,9 +657,11 @@ export class LocalStateStore {
     this.#eventPath = join(directory, "events.v1.jsonl");
   }
 
-  async load(): Promise<StateProjection> {
-    if (this.#loaded) return structuredClone(this.#projection);
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+  async #readProjection(): Promise<{
+    envelopes: EventEnvelope[];
+    projection: StateProjection;
+    repaired: boolean;
+  }> {
     let contents = "";
     try {
       contents = await readFile(this.#eventPath, "utf8");
@@ -667,15 +670,97 @@ export class LocalStateStore {
         throw new LocalStateError("Local history could not be read.");
       }
     }
-    const projection = emptyProjection();
+    const parsedEnvelopes: EventEnvelope[] = [];
     const lines = contents.split("\n");
     for (let index = 0; index < lines.length; index += 1) {
       if (!lines[index]) continue;
-      applyEvent(projection, parseEnvelope(lines[index], index + 1));
+      parsedEnvelopes.push(parseEnvelope(lines[index], index + 1));
     }
-    this.#projection = projection;
+    const sequences = new Set(parsedEnvelopes.map((envelope) => envelope.sequence));
+    const maximumSequence = parsedEnvelopes.reduce(
+      (maximum, envelope) => Math.max(maximum, envelope.sequence),
+      0,
+    );
+    const firstMismatch = parsedEnvelopes.findIndex(
+      (envelope, index) => envelope.sequence !== index + 1,
+    );
+    const repaired = firstMismatch !== -1;
+    if (repaired) {
+      const isCompleteFork = maximumSequence > 0
+        && parsedEnvelopes.length > maximumSequence
+        && sequences.size === maximumSequence
+        && Array.from(
+          { length: maximumSequence },
+          (_, index) => sequences.has(index + 1),
+        ).every(Boolean);
+      if (!isCompleteFork) {
+        const envelope = parsedEnvelopes[firstMismatch];
+        throw new LocalStateError(
+          `Local history is not ordered at event ${envelope.sequence}; expected ${firstMismatch + 1}.`,
+        );
+      }
+    }
+    const projection = emptyProjection();
+    const envelopes = parsedEnvelopes.map((parsed, index) => (
+      repaired ? { ...parsed, sequence: index + 1 } : parsed
+    ));
+    for (const envelope of envelopes) {
+      applyEvent(projection, envelope);
+    }
+    return { envelopes, projection, repaired };
+  }
+
+  async #replaceHistory(envelopes: EventEnvelope[]): Promise<void> {
+    const temporary = join(this.directory, `.events-${randomUUID()}.tmp`);
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      const lines = envelopes.map((envelope) => JSON.stringify(envelope));
+      await handle.writeFile(lines.length ? `${lines.join("\n")}\n` : "", "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    try {
+      await rename(temporary, this.#eventPath);
+      const directoryHandle = await open(dirname(this.#eventPath), "r");
+      try {
+        await directoryHandle.sync();
+      } finally {
+        await directoryHandle.close();
+      }
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  }
+
+  async acquireWriterLease(): Promise<() => Promise<void>> {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    try {
+      return await lock(join(this.directory, "host-writer"), {
+        realpath: false,
+        stale: 30_000,
+        update: 10_000,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOCKED") {
+        throw new LocalStateError(
+          "Another Aldunis Code host is already using this local state directory.",
+          503,
+        );
+      }
+      throw error;
+    }
+  }
+
+  async load(): Promise<StateProjection> {
+    if (this.#loaded) return structuredClone(this.#projection);
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    const history = await this.#readProjection();
+    if (history.repaired) await this.#replaceHistory(history.envelopes);
+    this.#projection = history.projection;
     this.#loaded = true;
-    return structuredClone(projection);
+    return structuredClone(this.#projection);
   }
 
   async #append(event: StateEvent): Promise<void> {
@@ -1583,7 +1668,7 @@ export class LocalStateStore {
         ...next.forks.map((fork): StateEvent => ({ type: "fork_saved", fork })),
       ];
       const rebuilt = emptyProjection();
-      const lines = events.map((event, index) => {
+      const envelopes = events.map((event, index) => {
         const envelope: EventEnvelope = {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
           sequence: index + 1,
@@ -1592,28 +1677,9 @@ export class LocalStateStore {
           event,
         };
         applyEvent(rebuilt, envelope);
-        return JSON.stringify(envelope);
+        return envelope;
       });
-      const temporary = join(this.directory, `.events-${randomUUID()}.tmp`);
-      const handle = await open(temporary, "wx", 0o600);
-      try {
-        await handle.writeFile(lines.length ? `${lines.join("\n")}\n` : "", "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      try {
-        await rename(temporary, this.#eventPath);
-        const directoryHandle = await open(dirname(this.#eventPath), "r");
-        try {
-          await directoryHandle.sync();
-        } finally {
-          await directoryHandle.close();
-        }
-      } catch (error) {
-        await rm(temporary, { force: true });
-        throw error;
-      }
+      await this.#replaceHistory(envelopes);
       this.#projection = rebuilt;
     });
     this.#writeQueue = operation.catch(() => undefined);

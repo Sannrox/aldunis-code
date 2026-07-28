@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalHost } from "../server/host.ts";
+import { LocalStateStore } from "../server/state.ts";
 import {
   closeServer,
   DESKTOP_PROTOCOL,
@@ -15,6 +16,7 @@ const applicationRoot = fileURLToPath(new URL("..", import.meta.url));
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 let window: BrowserWindow | null = null;
 let backend: ReturnType<typeof createLocalHost> | null = null;
+let releaseWriterLease: (() => Promise<void>) | null = null;
 let shuttingDown = false;
 
 function showWindow(): void {
@@ -45,7 +47,9 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(async () => {
     process.env.ALDUNIS_CODE_STATE_DIR = join(app.getPath("userData"), "state");
     app.setAppLogsPath();
-    backend = createLocalHost(join(applicationRoot, "dist"));
+    const state = new LocalStateStore();
+    releaseWriterLease = await state.acquireWriterLease();
+    backend = createLocalHost(join(applicationRoot, "dist"), state);
     const applicationUrl = await listenOnLoopback(backend);
     const applicationOrigin = new URL(applicationUrl).origin;
     window = new BrowserWindow({
@@ -94,6 +98,8 @@ if (!gotSingleInstanceLock) {
     if (shuttingDown || !backend?.listening) return;
     event.preventDefault();
     shuttingDown = true;
-    void closeServer(backend).finally(() => app.quit());
+    void closeServer(backend)
+      .then(() => releaseWriterLease?.())
+      .finally(() => app.quit());
   });
 }
