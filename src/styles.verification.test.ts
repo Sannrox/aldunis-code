@@ -213,6 +213,12 @@ test("completion settle actions wrap in narrow dual-pane columns", () => {
   assert.match(shell, /\.done \.acts\s*\{[^}]*flex-wrap:\s*wrap[^}]*min-width:\s*0/s);
 });
 
+test("conversation prose wraps long unbroken prompts", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.turn p\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+});
+
 test("composer crow chips ellipsize in narrow dual-pane columns", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
