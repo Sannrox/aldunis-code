@@ -12,6 +12,7 @@ export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const MAX_TOTAL_TEXT_BYTES = 256 * 1024;
 export const MAX_CONTEXT_PACKAGE_FILES = 100;
 export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
+const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
@@ -220,7 +221,14 @@ export async function assembleContextPackage(
   let totalBytes = 0;
   let inspectedBytes = 0;
   const paths = [...selected].sort(([left], [right]) => left.localeCompare(right));
-  for (const [path, source] of paths.slice(0, MAX_CONTEXT_PACKAGE_FILES)) {
+  let pathIndex = 0;
+  for (
+    ;
+    pathIndex < paths.length && pathIndex < MAX_CONTEXT_PACKAGE_INSPECTED_FILES;
+    pathIndex += 1
+  ) {
+    if (attachments.length >= MAX_CONTEXT_PACKAGE_FILES) break;
+    const [path, source] = paths[pathIndex];
     const direct = await lstat(join(worktree, path)).catch(() => null);
     if (!direct) {
       entries.push(omittedEntry(path, source, "file changed or disappeared during resolution"));
@@ -273,11 +281,14 @@ export async function assembleContextPackage(
     });
     totalBytes += bytes.length;
   }
-  if (paths.length > MAX_CONTEXT_PACKAGE_FILES) {
+  if (pathIndex < paths.length) {
+    const limit = attachments.length >= MAX_CONTEXT_PACKAGE_FILES
+      ? "package file limit"
+      : "package inspection limit";
     entries.push(omittedEntry(
-      `${paths.length - MAX_CONTEXT_PACKAGE_FILES} additional files`,
+      `${paths.length - pathIndex} additional files`,
       "aldunis_folder",
-      "package file limit",
+      limit,
       "folder",
     ));
   }

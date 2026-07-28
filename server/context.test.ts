@@ -174,6 +174,49 @@ test("context packages enforce deterministic file and byte limits", async () => 
     true,
   );
 
+  await mkdir(join(root, "rejected-first"));
+  await Promise.all(Array.from({ length: 100 }, (_, index) => (
+    writeFile(
+      join(root, "rejected-first", `a-${String(index).padStart(3, "0")}.bin`),
+      Buffer.from([0]),
+    )
+  )));
+  await writeFile(join(root, "rejected-first", "z-valid.txt"), "valid");
+  const rejectedFirst = await assembleContextPackage(
+    root,
+    [{ path: "rejected-first", kind: "folder" }],
+  );
+  assert.deepEqual(
+    rejectedFirst.attachments.map((attachment) => attachment.path),
+    ["rejected-first/z-valid.txt"],
+  );
+  assert.equal(
+    rejectedFirst.entries.filter((entry) => entry.omissionReason === "unsupported binary file").length,
+    100,
+  );
+
+  await mkdir(join(root, "inspection-bound"));
+  await Promise.all(Array.from({ length: 201 }, (_, index) => (
+    writeFile(
+      join(root, "inspection-bound", `a-${String(index).padStart(3, "0")}.bin`),
+      Buffer.from([0]),
+    )
+  )));
+  await writeFile(join(root, "inspection-bound", "z-valid.txt"), "too late");
+  const inspectionBound = await assembleContextPackage(
+    root,
+    [{ path: "inspection-bound", kind: "folder" }],
+  );
+  const inspectedFolderEntries = inspectionBound.entries.filter(
+    (entry) => entry.source === "aldunis_folder",
+  );
+  assert.equal(inspectionBound.attachments.length, 0);
+  assert.equal(inspectedFolderEntries.length, 201);
+  const inspectionLimitEntry = inspectedFolderEntries.find(
+    (entry) => entry.omissionReason === "package inspection limit",
+  );
+  assert.equal(inspectionLimitEntry?.path, "2 additional files");
+
   await mkdir(join(root, "large"));
   await writeFile(join(root, "large", "a.txt"), "a".repeat(1_100_000));
   await writeFile(join(root, "large", "b.txt"), "b".repeat(1_100_000));
