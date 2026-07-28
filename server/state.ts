@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type InteractionMode,
+  persistedProviderFailureMessage,
   type ProviderEvent,
   type ProviderId,
-  UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
 } from "./provider.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 2;
@@ -1249,13 +1249,9 @@ export class LocalStateStore {
           name: event.kind === "tool_started" ? event.name : null,
           failed: event.kind === "tool_finished" ? event.failed : event.kind === "failed" ? true : null,
           // Never persist arbitrary failure text — it can contain credentials
-          // or subprocess dumps. Only repository-owned, typed policy copy is
+          // or subprocess dumps. Only repository-owned, typed diagnostics are
           // durable; every other failure restores a generic label.
-          message: event.kind === "failed" && event.code === "unsupported_external_tool"
-            ? UNSUPPORTED_EXTERNAL_TOOL_MESSAGE
-            : event.kind === "failed"
-            ? "Provider failed."
-            : null,
+          message: event.kind === "failed" ? persistedProviderFailureMessage(event) : null,
           createdAt: now,
         },
       });

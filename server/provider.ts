@@ -19,6 +19,15 @@ export type InteractionMode = "ask" | "plan" | "build";
 
 export const UNSUPPORTED_EXTERNAL_TOOL_MESSAGE =
   "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.";
+export const CODEX_PROCESS_EXIT_MESSAGE = "Codex CLI exited before completing the turn.";
+export const CODEX_PROTOCOL_FALLBACK_MESSAGE =
+  "Codex app-server emitted an incompatible protocol event.";
+export const CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE =
+  "Codex app-server emitted an unsupported notification.";
+export const CODEX_UNSUPPORTED_ITEM_MESSAGE =
+  "Codex app-server emitted an unsupported item type.";
+export const CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE =
+  "Codex app-server emitted an unsupported turn status.";
 
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
@@ -32,8 +41,27 @@ export type ProviderEvent =
   | {
     kind: "failed";
     message: string;
-    code?: "unsupported_external_tool";
+    code?: "unsupported_external_tool" | "provider_protocol_error" | "provider_process_exit";
   };
+
+export function persistedProviderFailureMessage(
+  event: Extract<ProviderEvent, { kind: "failed" }>,
+): string {
+  if (event.code === "unsupported_external_tool") return UNSUPPORTED_EXTERNAL_TOOL_MESSAGE;
+  if (event.code === "provider_process_exit") return CODEX_PROCESS_EXIT_MESSAGE;
+  if (event.code === "provider_protocol_error") {
+    if (
+      event.message === CODEX_PROTOCOL_FALLBACK_MESSAGE
+      || event.message === CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE
+      || event.message === CODEX_UNSUPPORTED_ITEM_MESSAGE
+      || event.message === CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE
+      || event.message === "Codex stream processing failed."
+    ) {
+      return event.message;
+    }
+  }
+  return "Provider failed.";
+}
 
 export class ProviderProtocolError extends Error {}
 
