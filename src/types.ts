@@ -309,9 +309,27 @@ export interface ElementReference {
   screenshot: string | null;
 }
 export type ProviderState = "idle" | "starting" | "streaming" | "waiting_for_approval" | "cancelling" | "completed" | "cancelled" | "failed";
+export type ProviderPlanStepStatus = "pending" | "active" | "completed" | "neutral";
+export interface ProviderPlanStep {
+  content: string;
+  status: ProviderPlanStepStatus;
+}
+export interface ProviderPlanArtifact {
+  id: string;
+  provider: ProviderId;
+  title?: string;
+  body?: string;
+  steps?: ProviderPlanStep[];
+  updatedAt?: string;
+}
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
+  | {
+    kind: "plan_updated";
+    artifact: ProviderPlanArtifact;
+    bodyMode?: "replace" | "append";
+  }
   | { kind: "tool_started"; toolCallId: string; name: string }
   | {
     kind: "approval_pending";

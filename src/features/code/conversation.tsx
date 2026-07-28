@@ -2,7 +2,7 @@ import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
-  ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference,
+  ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
@@ -50,12 +50,18 @@ import {
 } from "../../lib/provider-discovery-cache";
 import { shortToolCallId } from "../../lib/tool-presentation";
 import { presentAssistantTimeline } from "../../lib/conversation-timeline";
+import { latestPlanFromEvents } from "../../lib/provider-plan";
 import {
   shouldRefreshAfterRestoredTurn,
   type RestoredTurnStatus,
 } from "../../lib/thread-status-transition";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
+import {
+  ProviderPlanActions,
+  ProviderPlanCard,
+  ProviderPlanContent,
+} from "./provider-plan";
 
 export function Conversation({
   repository,
@@ -170,6 +176,9 @@ export function Conversation({
     () => peekProviderDiscoveryCache() !== null,
   );
   const [forkOpen, setForkOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
+  const planTriggerRef = useRef<HTMLButtonElement>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     () => conversation?.reasoningEffort ?? "medium",
   );
@@ -612,6 +621,18 @@ export function Conversation({
           createdAt: string;
           eventSequence?: number;
         }>;
+        plans?: Array<{
+          artifactId: string;
+          threadId: string;
+          turnId: string;
+          provider: ProviderId;
+          title?: string;
+          body?: string;
+          steps?: ProviderPlanArtifact["steps"];
+          updatedAt: string;
+          createdAt: string;
+          eventSequence?: number;
+        }>;
         providerSessions: Array<{
           threadId: string;
           provider?: ProviderId;
@@ -711,6 +732,23 @@ export function Conversation({
           }
           return [];
         }),
+        ...(projection.plans ?? [])
+          .filter((plan) => plan.turnId === turnId)
+          .map((plan) => ({
+            event: {
+              kind: "plan_updated" as const,
+              artifact: {
+                id: plan.artifactId,
+                provider: plan.provider,
+                ...(plan.title !== undefined ? { title: plan.title } : {}),
+                ...(plan.body !== undefined ? { body: plan.body } : {}),
+                ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
+                updatedAt: plan.updatedAt,
+              },
+            },
+            createdAt: plan.createdAt,
+            eventSequence: plan.eventSequence,
+          })),
       ].sort((left, right) => (
         left.eventSequence !== undefined && right.eventSequence !== undefined
           ? left.eventSequence - right.eventSequence
@@ -1244,6 +1282,32 @@ export function Conversation({
     }
   };
   const assistantTimeline = presentAssistantTimeline(providerEvents);
+  const latestPlan = useMemo(() => latestPlanFromEvents([
+    ...archivedTurns.map((turn) => turn.events),
+    providerEvents,
+  ]), [archivedTurns, providerEvents]);
+  const planEntries = useMemo(() => [
+    ...archivedTurns.flatMap((turn, index) => (
+      presentAssistantTimeline(turn.events)
+        .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
+        .map((block) => ({
+          key: `archived-${index}-plan-${block.artifact.provider}-${block.artifact.id}`,
+          artifact: block.artifact,
+        }))
+    )),
+    ...presentAssistantTimeline(providerEvents)
+      .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
+      .map((block) => ({
+        key: `current-plan-${block.artifact.provider}-${block.artifact.id}`,
+        artifact: block.artifact,
+      })),
+  ], [archivedTurns, providerEvents]);
+  const panelPlan = selectedPlanKey
+    ? planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan
+    : latestPlan;
+  useEffect(() => {
+    if (!latestPlan) setPlanOpen(false);
+  }, [latestPlan]);
   const assistantText = joinAssistantTextChunks(
     providerEvents
       .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
@@ -1258,6 +1322,7 @@ export function Conversation({
     .at(-1);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const hasAssistantContent = Boolean(assistantText.trim())
+    || latestPlan != null
     || toolEvents.length > 0
     || approvals.length > 0
     || failure != null;
@@ -1340,6 +1405,23 @@ export function Conversation({
       if (block.kind === "text") {
         return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
       }
+      if (block.kind === "plan") {
+        const planKey = `${keyPrefix}-plan-${block.artifact.provider}-${block.artifact.id}`;
+        return (
+          <ProviderPlanCard
+            key={planKey}
+            plan={block.artifact}
+            providerLabel={providerDisplayName(
+              block.artifact.provider,
+              providers.find((item) => item.id === block.artifact.provider),
+            )}
+            onOpen={() => {
+              setSelectedPlanKey(planKey);
+              setPlanOpen(true);
+            }}
+          />
+        );
+      }
       return (
         <div className="tools" role="list" aria-label={`${providerLabel} tool activity`} key={`${keyPrefix}-tools-${blockIndex}`}>
           {block.rows.map((row) => {
@@ -1415,6 +1497,21 @@ export function Conversation({
           {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
         <div className="tb-r">
+          {latestPlan && (
+            <button
+              ref={planTriggerRef}
+              type="button"
+              className={`btn btn-ghost btn-sm ${planOpen ? "on" : ""}`}
+              onClick={() => {
+                setSelectedPlanKey(null);
+                setPlanOpen((open) => !open);
+              }}
+              aria-expanded={planOpen}
+              aria-controls={`${pane}-provider-plan-panel`}
+            >
+              Plan
+            </button>
+          )}
           <button
             type="button"
             className={`btn btn-ghost btn-sm ${filesOpen ? "on" : ""}`}
@@ -2337,6 +2434,45 @@ export function Conversation({
               void send(prompt);
             }}
           />
+        </aside>
+      )}
+      {planOpen && panelPlan && (
+        <aside
+          id={`${pane}-provider-plan-panel`}
+          className="provider-plan-panel"
+          aria-label={`Latest plan, ${pane} pane`}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            setPlanOpen(false);
+            planTriggerRef.current?.focus();
+          }}
+        >
+          <header>
+            <div>
+              <small>{providerDisplayName(
+                panelPlan.provider,
+                providers.find((item) => item.id === panelPlan.provider),
+              )}</small>
+              <h2>{panelPlan.title?.trim() || "Plan"}</h2>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              autoFocus
+              onClick={() => {
+                setPlanOpen(false);
+                planTriggerRef.current?.focus();
+              }}
+              aria-label="Close plan panel"
+            >
+              ×
+            </button>
+          </header>
+          <div className="provider-plan-panel-body">
+            <ProviderPlanContent plan={panelPlan} />
+          </div>
+          <footer><ProviderPlanActions plan={panelPlan} /></footer>
         </aside>
       )}
       </div>
