@@ -66,6 +66,38 @@ export function isBlockingStatus(status: ConversationSummary["status"]): boolean
   return status === "pending_approval" || status === "awaiting_input" || status === "failed";
 }
 
+export function groupSidebarConversations(
+  conversations: ConversationSummary[],
+  archivedView = false,
+): {
+  attention: ConversationSummary[];
+  active: ConversationSummary[];
+  settled: ConversationSummary[];
+} {
+  const attention: ConversationSummary[] = [];
+  const active: ConversationSummary[] = [];
+  const settled: ConversationSummary[] = [];
+
+  for (const conversation of conversations) {
+    if (conversation.settledAt) {
+      settled.push(conversation);
+    } else if (
+      !archivedView
+      && !conversation.archivedAt
+      && isBlockingStatus(conversation.status)
+    ) {
+      attention.push(conversation);
+    } else {
+      active.push(conversation);
+    }
+  }
+
+  settled.sort((left, right) => (
+    (right.settledAt ?? "").localeCompare(left.settledAt ?? "")
+  ));
+  return { attention, active, settled };
+}
+
 export function formatElapsed(iso: string, now = Date.now()): string {
   const ms = Math.max(0, now - new Date(iso).getTime());
   const minutes = Math.floor(ms / 60_000);

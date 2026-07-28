@@ -71,6 +71,9 @@ code{font-family:var(--font-mono)}
 .list{flex:1;min-height:0;overflow-y:auto;padding:0 8px 4px}
 .glabel{display:flex;align-items:center;padding:8px 6px 5px;font-size:12px;font-weight:500;color:var(--muted-foreground)}
 .glabel .n{margin-left:auto;font-family:var(--font-mono);font-size:11px}
+.attention-group{margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.attention-label{color:var(--foreground)}
+.attention-label .n{color:var(--destructive-foreground)}
 
 .row{position:relative;display:block;width:100%;padding:8px 9px;border-radius:var(--radius);margin-bottom:2px;transition:background .12s}
 .row:hover{background:var(--sidebar-row-hover)}
