@@ -32,13 +32,17 @@ schemas still **fail visibly** rather than wiping data.
 ## Conversation history
 
 Projects, threads, turns, messages, typed tool activity, provider session
-references, checkpoints, and related records rebuild from the event log.
+references, context receipts, checkpoints, and related records rebuild from
+the event log.
 
 - Active turns remain owned by the host if you navigate away and return.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
 - Provider credentials, raw tool inputs/outputs, and environment values are
   **not** part of the history schema.
+- Context receipts retain repository-relative paths, entry types, byte counts,
+  truncation state, content digests, and omission reasons. They do not retain a
+  second copy of repository file content.
 
 ## Preferences
 

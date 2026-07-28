@@ -3,6 +3,7 @@ import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
   ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
+  ContextPin, ContextReceipt,
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
@@ -62,6 +63,10 @@ import {
   ProviderPlanCard,
   ProviderPlanContent,
 } from "./provider-plan";
+import {
+  ContextPackagePanel,
+  ContextPackageSummary,
+} from "./context-package";
 
 export function Conversation({
   repository,
@@ -118,6 +123,7 @@ export function Conversation({
     events: ProviderEvent[];
     assistantAt?: string;
     state: RestoredTurnStatus;
+    contextReceipt?: ContextReceipt;
   }>>([]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
@@ -137,6 +143,15 @@ export function Conversation({
   const [conversationId] = useState(() => conversation?.id ?? crypto.randomUUID());
   const [threadId, setThreadId] = useState<string | null>(conversation?.id ?? null);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [folderPins, setFolderPins] = useState<string[]>([]);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [draftContextReceipt, setDraftContextReceipt] = useState<ContextReceipt | null>(null);
+  const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
+  const [contextPackageBusy, setContextPackageBusy] = useState(false);
+  const contextPins = useMemo<ContextPin[]>(() => [
+    ...attachments.map((path) => ({ path, kind: "file" as const })),
+    ...folderPins.map((path) => ({ path, kind: "folder" as const })),
+  ], [attachments, folderPins]);
   const [suggestions, setSuggestions] = useState<Array<{ value: string; detail: string }>>([]);
   const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
@@ -571,6 +586,11 @@ export function Conversation({
     setMessages([]);
     setArchivedTurns([]);
     setProviderEvents([]);
+    setAttachments([]);
+    setFolderPins([]);
+    setCurrentContextReceipt(null);
+    setDraftContextReceipt(null);
+    setContextOpen(false);
     setProviderState("idle");
     setRunId(null);
   }, [conversation?.id, conversation?.provider, repository?.projectId, repository?.selectedWorktree, provider]);
@@ -594,6 +614,7 @@ export function Conversation({
           model?: string | null;
           reasoningEffort?: ReasoningEffort;
           updatedAt: string;
+          contextPins?: ContextPin[];
         }>;
         turns: Array<{
           id: string;
@@ -633,6 +654,7 @@ export function Conversation({
           createdAt: string;
           eventSequence?: number;
         }>;
+        contextReceipts?: ContextReceipt[];
         providerSessions: Array<{
           threadId: string;
           provider?: ProviderId;
@@ -668,6 +690,10 @@ export function Conversation({
       if (thread.model) setModel(thread.model);
       else if (session?.model?.trim()) setModel(session.model.trim());
       if (thread.reasoningEffort) setReasoningEffort(thread.reasoningEffort);
+      if (thread.contextPins) {
+        setAttachments(thread.contextPins.filter((pin) => pin.kind === "file").map((pin) => pin.path));
+        setFolderPins(thread.contextPins.filter((pin) => pin.kind === "folder").map((pin) => pin.path));
+      }
       const turns = projection.turns
         .filter((item) => item.threadId === thread.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -767,12 +793,14 @@ export function Conversation({
           events: orderedEvents.map(({ event }) => event),
           assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
           state: turn.status,
+          contextReceipt: projection.contextReceipts?.find((receipt) => receipt.turnId === turn.id),
         }];
       });
       const currentTurn = restoredTurns.at(-1);
       setArchivedTurns(restoredTurns.slice(0, -1));
       setMessages(userMessages);
       setProviderEvents(currentTurn?.events ?? []);
+      setCurrentContextReceipt(currentTurn?.contextReceipt ?? null);
       const lastAssistantAt = history
         .filter((message) => message.role === "assistant" && message.createdAt)
         .at(-1)
@@ -862,6 +890,45 @@ export function Conversation({
     item.path === repository.selectedWorktree
     && (item.state === "available" || item.state === "detached")
   )) ?? null;
+  useEffect(() => {
+    if (!repository || !worktree) {
+      setDraftContextReceipt(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setContextPackageBusy(true);
+      void fetch("/api/context/package/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: worktree.path,
+          pins: contextPins,
+        }),
+      }).then(async (response) => {
+        const body = await response.json() as { package?: ContextReceipt; error?: string };
+        if (!response.ok || !body.package) {
+          throw new Error(body.error ?? "The context package could not be resolved.");
+        }
+        if (!cancelled) {
+          setDraftContextReceipt(body.package);
+          setContextError(null);
+        }
+      }).catch((cause) => {
+        if (!cancelled) {
+          setDraftContextReceipt(null);
+          setContextError(cause instanceof Error ? cause.message : "Context resolution failed.");
+        }
+      }).finally(() => {
+        if (!cancelled) setContextPackageBusy(false);
+      });
+    }, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [repository, worktree, contextPins]);
   useEffect(() => {
     if (provider !== "codex-cli" || !repository || !worktree) {
       setProviderSkills([]);
@@ -986,6 +1053,9 @@ export function Conversation({
       setSuggestionMode("commands");
       const normalizedQuery = query.toLocaleLowerCase();
       setSuggestions([
+        ...("context".includes(normalizedQuery)
+          ? [{ value: "/context", detail: "Inspect the Aldunis-owned draft context package" }]
+          : []),
         ...(capabilities?.commands ?? [])
           .filter((command) => command.name.slice(1).includes(normalizedQuery))
           .map((command) => ({ value: command.name, detail: command.description })),
@@ -1014,8 +1084,8 @@ export function Conversation({
   const selectSuggestion = (value: string) => {
     if (suggestionMode === "files") {
       if (!attachments.includes(value)) {
-        if (attachments.length >= (capabilities?.attachments.maxCount ?? 8)) {
-          setContextError(`Attach at most ${capabilities?.attachments.maxCount ?? 8} files.`);
+        if (contextPins.length >= 100) {
+          setContextError("Pin at most 100 file or folder paths.");
           return;
         }
         setAttachments((current) => [...current, value]);
@@ -1030,6 +1100,12 @@ export function Conversation({
   };
   const send = async (promptOverride?: string) => {
     const value = (promptOverride ?? draft).trim();
+    if (promptOverride === undefined && value === "/context") {
+      setDraft("");
+      setPlanOpen(false);
+      setContextOpen(true);
+      return;
+    }
     if (
       !value
       || !repository
@@ -1048,16 +1124,16 @@ export function Conversation({
           events: providerEvents,
           assistantAt: assistantTurnAt ?? undefined,
           state: providerState === "cancelled" ? "cancelled" : providerState,
+          contextReceipt: currentContextReceipt ?? undefined,
         },
       ]);
     }
     setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
     if (promptOverride === undefined) setDraft("");
-    const sentAttachments = promptOverride === undefined ? attachments : [];
-    if (promptOverride === undefined) setAttachments([]);
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
     setProviderEvents([]);
+    setCurrentContextReceipt(draftContextReceipt);
     setProviderState("starting");
     setAssistantTurnAt(null);
     setRunId(null);
@@ -1079,7 +1155,7 @@ export function Conversation({
           projectId: repository.projectId,
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
-          attachments: sentAttachments,
+          contextPins,
           profileId: provider === "claude-code" ? profileId : null,
           model: effectiveModel,
           provider,
@@ -1101,6 +1177,13 @@ export function Conversation({
       setRunId(activeRunId);
       setThreadId(createdThreadId);
       activeTurnId = response.headers.get("x-turn-id");
+      if (activeTurnId) {
+        void loadFreshLocalStateProjection().then((value) => {
+          const projection = value as { contextReceipts?: ContextReceipt[] };
+          const receipt = projection.contextReceipts?.find((item) => item.turnId === activeTurnId);
+          if (receipt) setCurrentContextReceipt(receipt);
+        }).catch(() => undefined);
+      }
       setProviderState("streaming");
       if (!response.body) throw new Error(`${providerName} returned no event stream.`);
       const reader = response.body.getReader();
@@ -1166,7 +1249,6 @@ export function Conversation({
     } catch (error) {
       setAssistantTurnAt(new Date().toISOString());
       if (promptOverride === undefined) {
-        setAttachments(sentAttachments);
         setElementReferences(sentElementReferences);
       }
       setProviderEvents((current) => [...current, {
@@ -1654,6 +1736,9 @@ export function Conversation({
                 <span className="rtime">{turn.message.createdAt ? formatElapsed(turn.message.createdAt) : "now"}</span>
               </div>
               <p>{turn.message.text}</p>
+              {turn.contextReceipt && (
+                <ContextPackageSummary receipt={turn.contextReceipt} label="Submitted context" />
+              )}
             </div>
             <div className="turn">
               <div className="role">
@@ -1681,6 +1766,9 @@ export function Conversation({
               <span className="rtime">{latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}</span>
             </div>
             <p>{latestMessage.text}</p>
+            {currentContextReceipt && (
+              <ContextPackageSummary receipt={currentContextReceipt} label="Submitted context" />
+            )}
           </div>
         )}
         {showAssistantTurn && (
@@ -1942,6 +2030,19 @@ export function Conversation({
               ))}
             </div>
           )}
+          <button
+            type="button"
+            className="composer-context-summary"
+            onClick={() => {
+              setPlanOpen(false);
+              setContextOpen(true);
+            }}
+            aria-label="Inspect draft context package"
+          >
+            Context: {draftContextReceipt
+              ? `${draftContextReceipt.entries.filter((entry) => entry.omissionReason === null).length} files, approximately ${draftContextReceipt.estimatedTokens.toLocaleString()} tokens`
+              : contextPackageBusy ? "resolving…" : "unavailable"}
+          </button>
           {suggestionMode && (
             <div
               className="composer-suggestions"
@@ -2406,9 +2507,9 @@ export function Conversation({
           repository={repository}
           pane={pane}
           attached={attachments}
-          maxAttachments={capabilities?.attachments.maxCount ?? 8}
+          maxAttachments={100}
           onAttach={(path) => {
-            if (!attachments.includes(path) && attachments.length < (capabilities?.attachments.maxCount ?? 8)) {
+            if (!attachments.includes(path) && contextPins.length < 100) {
               setAttachments((current) => [...current, path]);
               setContextError(null);
             }
@@ -2474,6 +2575,31 @@ export function Conversation({
           </div>
           <footer><ProviderPlanActions plan={panelPlan} /></footer>
         </aside>
+      )}
+      {contextOpen && (
+        <ContextPackagePanel
+          receipt={draftContextReceipt}
+          pins={contextPins}
+          busy={contextPackageBusy}
+          error={contextError}
+          onAdd={(pin) => {
+            if (contextPins.some((item) => item.kind === pin.kind && item.path === pin.path)) return;
+            if (contextPins.length >= 100) {
+              setContextError("Pin at most 100 file or folder paths.");
+              return;
+            }
+            if (pin.kind === "file") setAttachments((current) => [...current, pin.path]);
+            else setFolderPins((current) => [...current, pin.path]);
+          }}
+          onRemove={(pin) => {
+            if (pin.kind === "file") {
+              setAttachments((current) => current.filter((path) => path !== pin.path));
+            } else {
+              setFolderPins((current) => current.filter((path) => path !== pin.path));
+            }
+          }}
+          onClose={() => setContextOpen(false)}
+        />
       )}
       </div>
       {forkOpen && threadId && (

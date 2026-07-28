@@ -126,6 +126,42 @@ test("provider plans update one persisted artifact and survive restart without d
   }), /does not match/);
 });
 
+test("context receipts retain immutable metadata without repository content", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Use bounded context",
+    mode: "ask",
+    provider: "codex-cli",
+    contextPins: [{ path: "src", kind: "folder" }],
+  });
+  await store.saveContextReceipt({
+    threadId: thread.id,
+    turnId: turn.id,
+    pins: [{ path: "src", kind: "folder" }],
+    entries: [{
+      path: "src/main.ts",
+      type: "text",
+      source: "aldunis_folder",
+      bytes: 24,
+      truncated: false,
+      digest: "a".repeat(64),
+      omissionReason: null,
+    }],
+    totalBytes: 24,
+    estimatedTokens: 6,
+    digest: "b".repeat(64),
+  });
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.deepEqual(rebuilt.threads[0].contextPins, [{ path: "src", kind: "folder" }]);
+  assert.equal(rebuilt.contextReceipts.length, 1);
+  assert.equal(rebuilt.contextReceipts[0].entries[0].digest, "a".repeat(64));
+  const journal = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal(journal.includes("repository source sentinel"), false);
+});
+
 test("attention states and provider run identity survive reload", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -447,6 +483,7 @@ test("project deletion and retention physically remove sensitive conversation da
     messages: [],
     activities: [],
     plans: [],
+    contextReceipts: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -595,6 +632,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     messages: 2,
     activities: 0,
     plans: 0,
+    contextReceipts: 0,
     providerSessions: 1,
     checkpoints: 0,
     annotations: 0,

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, readFile, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -9,6 +10,9 @@ export const MAX_CONTEXT_FILES = 8;
 export const MAX_TEXT_BYTES = 64 * 1024;
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const MAX_TOTAL_TEXT_BYTES = 256 * 1024;
+export const MAX_CONTEXT_PACKAGE_FILES = 100;
+export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
+const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
@@ -26,6 +30,35 @@ export interface ContextAttachment {
   mediaType: string;
   size: number;
   content?: string;
+}
+
+export interface ContextPin {
+  path: string;
+  kind: "file" | "folder";
+}
+
+export type ContextReceiptSource =
+  | "aldunis_attachment"
+  | "aldunis_folder"
+  | "provider_managed_instruction";
+
+export interface ContextReceiptEntry {
+  path: string;
+  type: "text" | "image" | "folder" | "instruction" | "unsupported";
+  source: ContextReceiptSource;
+  bytes: number | null;
+  truncated: boolean;
+  digest: string | null;
+  omissionReason: string | null;
+}
+
+export interface AssembledContextPackage {
+  pins: ContextPin[];
+  entries: ContextReceiptEntry[];
+  attachments: ContextAttachment[];
+  totalBytes: number;
+  estimatedTokens: number;
+  digest: string;
 }
 
 export interface ContextElementReference {
@@ -75,6 +108,10 @@ function isHidden(path: string): boolean {
   return path.split("/").some((part) => part.startsWith("."));
 }
 
+function isProviderInstruction(path: string): boolean {
+  return /(^|\/)(AGENTS|CLAUDE)\.md$/i.test(path);
+}
+
 async function repositoryPaths(worktree: string, signal?: AbortSignal): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "git",
@@ -91,6 +128,194 @@ async function repositoryPaths(worktree: string, signal?: AbortSignal): Promise<
     .filter(Boolean)
     .filter((path) => !isHidden(path) && !SECRET_NAMES.test(path))
     .sort((left, right) => left.localeCompare(right));
+}
+
+function packageDigest(entries: ContextReceiptEntry[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(entries.map((entry) => ({
+      path: entry.path,
+      type: entry.type,
+      source: entry.source,
+      bytes: entry.bytes,
+      truncated: entry.truncated,
+      digest: entry.digest,
+      omissionReason: entry.omissionReason,
+    }))), "utf8")
+    .digest("hex");
+}
+
+function omittedEntry(
+  path: string,
+  source: ContextReceiptSource,
+  reason: string,
+  type: ContextReceiptEntry["type"] = "unsupported",
+): ContextReceiptEntry {
+  return {
+    path,
+    type,
+    source,
+    bytes: null,
+    truncated: false,
+    digest: null,
+    omissionReason: reason,
+  };
+}
+
+/**
+ * Resolve explicit file/folder pins through Git's tracked + non-ignored view.
+ * Content is returned only for immediate prompt assembly; receipts retain
+ * metadata and digests, never a second copy of repository source.
+ */
+export async function assembleContextPackage(
+  worktree: string,
+  requestedPins: ContextPin[],
+  options: { includeProviderInstructions?: boolean } = {},
+): Promise<AssembledContextPackage> {
+  const pins = requestedPins.map((pin) => ({
+    path: relativeFilePath(worktree, pin.path).replace(/\/+$/, ""),
+    kind: pin.kind,
+  }));
+  const uniquePins = [...new Map(pins.map((pin) => [`${pin.kind}:${pin.path}`, pin])).values()];
+  const available = await repositoryPaths(worktree);
+  const availableSet = new Set(available);
+  const selected = new Map<string, ContextReceiptSource>();
+  const entries: ContextReceiptEntry[] = [];
+
+  for (const pin of uniquePins) {
+    if (pin.path !== "." && (SECRET_NAMES.test(pin.path) || isHidden(pin.path))) {
+      entries.push(omittedEntry(pin.path, pin.kind === "folder" ? "aldunis_folder" : "aldunis_attachment", "ignored or secret-like path"));
+      continue;
+    }
+    if (pin.kind === "file" && isProviderInstruction(pin.path)) {
+      if (options.includeProviderInstructions === false) {
+        entries.push(omittedEntry(
+          pin.path,
+          "provider_managed_instruction",
+          "provider-managed instruction is not attached",
+          "instruction",
+        ));
+      }
+      continue;
+    }
+    if (pin.kind === "folder") {
+      const prefix = `${pin.path}/`;
+      const matches = pin.path === "."
+        ? available
+        : available.filter((path) => path.startsWith(prefix));
+      const attachableMatches = matches.filter((path) => !isProviderInstruction(path));
+      if (matches.length === 0) {
+        entries.push(omittedEntry(pin.path, "aldunis_folder", "folder is empty, ignored, missing, or outside the repository", "folder"));
+        continue;
+      }
+      for (const path of attachableMatches) selected.set(path, "aldunis_folder");
+      continue;
+    }
+    if (!availableSet.has(pin.path)) {
+      entries.push(omittedEntry(pin.path, "aldunis_attachment", "file is ignored, missing, or outside the repository"));
+      continue;
+    }
+    selected.set(pin.path, "aldunis_attachment");
+  }
+
+  const attachments: ContextAttachment[] = [];
+  let totalBytes = 0;
+  let inspectedBytes = 0;
+  const paths = [...selected].sort(([left], [right]) => left.localeCompare(right));
+  let pathIndex = 0;
+  for (
+    ;
+    pathIndex < paths.length && pathIndex < MAX_CONTEXT_PACKAGE_INSPECTED_FILES;
+    pathIndex += 1
+  ) {
+    if (attachments.length >= MAX_CONTEXT_PACKAGE_FILES) break;
+    const [path, source] = paths[pathIndex];
+    const direct = await lstat(join(worktree, path)).catch(() => null);
+    if (!direct) {
+      entries.push(omittedEntry(path, source, "file changed or disappeared during resolution"));
+      continue;
+    }
+    if (direct.isSymbolicLink()) {
+      entries.push(omittedEntry(path, source, "symlink"));
+      continue;
+    }
+    if (!direct.isFile()) {
+      entries.push(omittedEntry(path, source, "submodule, nested repository, or unsupported entry"));
+      continue;
+    }
+    if (inspectedBytes + direct.size > MAX_CONTEXT_PACKAGE_BYTES) {
+      entries.push(omittedEntry(path, source, "package byte limit"));
+      continue;
+    }
+    inspectedBytes += direct.size;
+    const canonical = await constrainPath(worktree, join(worktree, path));
+    const bytes = await readFile(canonical);
+    if (bytes.length !== direct.size) {
+      entries.push(omittedEntry(path, source, "file changed during resolution"));
+      continue;
+    }
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const mediaType = IMAGE_TYPES[extname(path).toLocaleLowerCase()];
+    if (mediaType) {
+      attachments.push({ path, kind: "image", mediaType, size: bytes.length });
+      entries.push({
+        path, type: "image", source, bytes: bytes.length, truncated: false,
+        digest, omissionReason: null,
+      });
+      totalBytes += bytes.length;
+      continue;
+    }
+    if (bytes.includes(0)) {
+      entries.push(omittedEntry(path, source, "unsupported binary file"));
+      continue;
+    }
+    attachments.push({
+      path,
+      kind: "text",
+      mediaType: "text/plain",
+      size: bytes.length,
+      content: bytes.toString("utf8"),
+    });
+    entries.push({
+      path, type: "text", source, bytes: bytes.length, truncated: false,
+      digest, omissionReason: null,
+    });
+    totalBytes += bytes.length;
+  }
+  if (pathIndex < paths.length) {
+    const limit = attachments.length >= MAX_CONTEXT_PACKAGE_FILES
+      ? "package file limit"
+      : "package inspection limit";
+    entries.push(omittedEntry(
+      `${paths.length - pathIndex} additional files`,
+      "aldunis_folder",
+      limit,
+      "folder",
+    ));
+  }
+
+  if (options.includeProviderInstructions !== false) {
+    for (const path of available.filter(isProviderInstruction)) {
+      if (selected.has(path)) continue;
+      entries.push({
+        path,
+        type: "instruction",
+        source: "provider_managed_instruction",
+        bytes: null,
+        truncated: false,
+        digest: null,
+        omissionReason: "provider-managed effectiveness was not reported",
+      });
+    }
+  }
+  const orderedEntries = entries.sort((left, right) => left.path.localeCompare(right.path));
+  return {
+    pins: uniquePins,
+    entries: orderedEntries,
+    attachments,
+    totalBytes,
+    estimatedTokens: Math.ceil(totalBytes / 4),
+    digest: packageDigest(orderedEntries),
+  };
 }
 
 async function inspectRepositoryFile(

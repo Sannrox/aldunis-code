@@ -62,11 +62,12 @@ import {
   type ProfileProbeKind,
 } from "./profiles.ts";
 import {
+  assembleContextPackage,
   browseRepositoryFiles,
   composePrompt,
   previewRepositoryFile,
-  resolveContextAttachments,
   searchRepositoryFiles,
+  type ContextPin,
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
@@ -1311,6 +1312,48 @@ async function handleApi(
       });
       return true;
     }
+    if (route === "/api/context/package/preview") {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        pins?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || !Array.isArray(body.pins)
+        || body.pins.length > 100
+        || body.pins.some((pin) => (
+          typeof pin !== "object"
+          || pin === null
+          || typeof (pin as { path?: unknown }).path !== "string"
+          || !["file", "folder"].includes(String((pin as { kind?: unknown }).kind))
+        ))
+      ) {
+        throw new RepositoryError("A repository, worktree, and bounded context pin list are required.");
+      }
+      const pins = body.pins as ContextPin[];
+      if (remoteRequest && pins.some((pin) => pin.kind === "folder")) {
+        throw new RepositoryError(
+          "Remote folder pinning requires an authenticated repository grant and is unavailable.",
+          403,
+        );
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const assembled = await assembleContextPackage(context.worktree, pins, {
+        includeProviderInstructions: !remoteRequest,
+      });
+      sendJson(response, 200, {
+        package: {
+          pins: assembled.pins,
+          entries: assembled.entries,
+          totalBytes: assembled.totalBytes,
+          estimatedTokens: assembled.estimatedTokens,
+          digest: assembled.digest,
+        },
+      });
+      return true;
+    }
     if (route === "/api/provider/profiles/list") {
       const installedAdapters = await adapters.list();
       sendJson(response, 200, {
@@ -1399,6 +1442,7 @@ async function handleApi(
         threadId?: unknown;
         mode?: unknown;
         attachments?: unknown;
+        contextPins?: unknown;
         profileId?: unknown;
         model?: unknown;
         elementReferences?: unknown;
@@ -1421,7 +1465,18 @@ async function handleApi(
         || !["ask", "plan", "build"].includes(body.mode as string)
         || (body.attachments !== undefined && (
           !Array.isArray(body.attachments)
+          || body.attachments.length > 100
           || body.attachments.some((path) => typeof path !== "string")
+        ))
+        || (body.contextPins !== undefined && (
+          !Array.isArray(body.contextPins)
+          || body.contextPins.length > 100
+          || body.contextPins.some((pin) => (
+            typeof pin !== "object"
+            || pin === null
+            || typeof (pin as { path?: unknown }).path !== "string"
+            || !["file", "folder"].includes(String((pin as { kind?: unknown }).kind))
+          ))
         ))
         || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
@@ -1446,13 +1501,23 @@ async function handleApi(
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
-      const attachments = await resolveContextAttachments(
+      const contextPins = body.contextPins !== undefined
+        ? body.contextPins as ContextPin[]
+        : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
+      if (remoteRequest && contextPins.some((pin) => pin.kind === "folder")) {
+        throw new RepositoryError(
+          "Remote folder pinning requires an authenticated repository grant and is unavailable.",
+          403,
+        );
+      }
+      const assembledContext = await assembleContextPackage(
         context.worktree,
-        (body.attachments ?? []) as string[],
+        contextPins,
+        { includeProviderInstructions: !remoteRequest },
       );
       const providerPrompt = composePrompt(
         body.prompt.trim(),
-        attachments,
+        assembledContext.attachments,
         (body.elementReferences ?? []) as Array<{
           selector: string;
           tag: string;
@@ -1540,6 +1605,16 @@ async function handleApi(
         provider: providerId,
         reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
+        contextPins: assembledContext.pins,
+      });
+      await state.saveContextReceipt({
+        threadId: persisted.thread.id,
+        turnId: persisted.turn.id,
+        pins: assembledContext.pins,
+        entries: assembledContext.entries,
+        totalBytes: assembledContext.totalBytes,
+        estimatedTokens: assembledContext.estimatedTokens,
+        digest: assembledContext.digest,
       });
       const forkPrompt = await state.pendingForkPrompt(persisted.thread.id);
       const effectiveProviderPrompt = forkPrompt

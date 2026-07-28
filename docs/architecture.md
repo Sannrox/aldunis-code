@@ -91,6 +91,13 @@ through a versioned authenticated contract.
   and enforces depth, entry, latency, cancellation, and concurrency limits.
   Remote clients receive no filesystem enumeration capability until an
   authenticated directory-grant design is accepted.
+- Context-package folder pins follow the bounded v1 decision recorded in
+  [Issue #322](https://github.com/Sannrox/aldunis-code/issues/322):
+  the host resolves at most 100 non-ignored files and 2 MiB per turn, rejects
+  symlinks and repository boundaries, and stores immutable metadata receipts
+  rather than duplicate source content. Pins are conversation-scoped. Remote
+  folder pinning stays unavailable until an authenticated repository grant
+  supplies that authority.
 
 ## Declarative provider adapter trust
 

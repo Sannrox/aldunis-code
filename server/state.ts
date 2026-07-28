@@ -11,6 +11,7 @@ import {
   type ProviderPlanStep,
   type ReasoningEffort,
 } from "./provider.ts";
+import type { ContextPin, ContextReceiptEntry } from "./context.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 2;
 /** Schema versions accepted when loading on-disk history. */
@@ -47,6 +48,7 @@ export interface Thread {
   wokeAt?: string | null;
   /** When the operator last opened this thread. Unread is lastVisitedAt < wokeAt. */
   lastVisitedAt?: string | null;
+  contextPins?: ContextPin[];
 }
 
 export type ConversationDeletionStatus = "pending" | "failed" | "completed";
@@ -61,6 +63,7 @@ export interface ConversationDeletion {
     messages: number;
     activities: number;
     plans: number;
+    contextReceipts: number;
     providerSessions: number;
     checkpoints: number;
     annotations: number;
@@ -167,6 +170,19 @@ export interface PlanArtifact {
   eventSequence?: number;
 }
 
+export interface ContextReceipt {
+  schemaVersion: 2;
+  id: string;
+  threadId: string;
+  turnId: string;
+  pins: ContextPin[];
+  entries: ContextReceiptEntry[];
+  totalBytes: number;
+  estimatedTokens: number;
+  digest: string;
+  createdAt: string;
+}
+
 export interface ProviderSessionReference {
   schemaVersion: 2;
   threadId: string;
@@ -264,6 +280,7 @@ export interface StateProjection {
   messages: Message[];
   activities: Activity[];
   plans: PlanArtifact[];
+  contextReceipts: ContextReceipt[];
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
@@ -279,6 +296,7 @@ type StateEvent =
   | { type: "message_saved"; message: Message }
   | { type: "activity_saved"; activity: Activity }
   | { type: "plan_saved"; plan: PlanArtifact }
+  | { type: "context_receipt_saved"; contextReceipt: ContextReceipt }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
   | { type: "annotation_saved"; annotation: DiffAnnotation }
@@ -311,6 +329,7 @@ function emptyProjection(): StateProjection {
     messages: [],
     activities: [],
     plans: [],
+    contextReceipts: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -507,6 +526,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
       ...event.plan,
       eventSequence: existing?.eventSequence ?? envelope.sequence,
     });
+  } else if (event.type === "context_receipt_saved") {
+    replaceById(projection.contextReceipts, event.contextReceipt);
   }
   else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
@@ -567,6 +588,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     message_saved: "message",
     activity_saved: "activity",
     plan_saved: "plan",
+    context_receipt_saved: "contextReceipt",
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
@@ -614,6 +636,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           messages: Number(records.messages ?? 0),
           activities: Number(records.activities ?? 0),
           plans: Number(records.plans ?? 0),
+          contextReceipts: Number(records.contextReceipts ?? 0),
           providerSessions: Number(records.providerSessions ?? 0),
           checkpoints: Number(records.checkpoints ?? 0),
           annotations: Number(records.annotations ?? 0),
@@ -822,6 +845,7 @@ export class LocalStateStore {
     provider: ProviderId;
     reasoningEffort?: ReasoningEffort;
     threadId?: string;
+    contextPins?: ContextPin[];
   }): Promise<{ thread: Thread; turn: Turn }> {
     const projection = await this.load();
     if (!projection.projects.some((project) => project.id === input.projectId)) {
@@ -867,6 +891,7 @@ export class LocalStateStore {
           ...existing,
           provider: existing.provider ?? input.provider,
           ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+          ...(input.contextPins ? { contextPins: input.contextPins } : {}),
           updatedAt: now,
         }
       : {
@@ -877,6 +902,7 @@ export class LocalStateStore {
           worktree: input.worktree,
           provider: input.provider,
           ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+          contextPins: input.contextPins ?? [],
           createdAt: now,
           updatedAt: now,
           pinnedAt: null,
@@ -906,6 +932,26 @@ export class LocalStateStore {
     await this.#append({ type: "turn_saved", turn });
     await this.#append({ type: "message_saved", message });
     return { thread, turn };
+  }
+
+  async saveContextReceipt(
+    receipt: Omit<ContextReceipt, "schemaVersion" | "id" | "createdAt">,
+  ): Promise<ContextReceipt> {
+    const projection = await this.load();
+    const turn = projection.turns.find(
+      (item) => item.id === receipt.turnId && item.threadId === receipt.threadId,
+    );
+    if (!turn) throw new LocalStateError("The context receipt turn is unavailable.", 404);
+    const saved: ContextReceipt = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      id: createHash("sha256")
+        .update(`${receipt.threadId}\n${receipt.turnId}\n${receipt.digest}`, "utf8")
+        .digest("hex"),
+      ...receipt,
+      createdAt: new Date().toISOString(),
+    };
+    await this.#append({ type: "context_receipt_saved", contextReceipt: saved });
+    return saved;
   }
 
   async createFork(input: {
@@ -997,6 +1043,13 @@ export class LocalStateStore {
     prompt: string;
     byteCount: number;
     digest: string;
+    contextPackage: {
+      pins: [];
+      entries: [];
+      totalBytes: number;
+      estimatedTokens: number;
+      digest: string;
+    };
     excluded: string[];
   }> {
     const projection = await this.load();
@@ -1014,6 +1067,8 @@ export class LocalStateStore {
       .filter((annotation) => annotation.threadId === source.id)
       .map(({ id, path, text, capturedContext }) => ({ id, path, text, capturedContext }));
     const prompt = renderForkPrompt(source, messages, annotations);
+    const byteCount = Buffer.byteLength(prompt, "utf8");
+    const digest = createHash("sha256").update(prompt, "utf8").digest("hex");
     return {
       sourceThreadId: source.id,
       sourceProvider: source.provider,
@@ -1023,8 +1078,15 @@ export class LocalStateStore {
       files: [],
       summaries: [],
       prompt,
-      byteCount: Buffer.byteLength(prompt, "utf8"),
-      digest: createHash("sha256").update(prompt, "utf8").digest("hex"),
+      byteCount,
+      digest,
+      contextPackage: {
+        pins: [],
+        entries: [],
+        totalBytes: byteCount,
+        estimatedTokens: Math.ceil(byteCount / 4),
+        digest,
+      },
       excluded: [
         "Provider credentials and environment values",
         "Native provider session identifiers",
@@ -1220,6 +1282,9 @@ export class LocalStateStore {
       messages: projection.messages.filter((message) => turnIds.has(message.turnId)).length,
       activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)).length,
       plans: projection.plans.filter((plan) => plan.threadId === threadId).length,
+      contextReceipts: projection.contextReceipts.filter(
+        (receipt) => receipt.threadId === threadId,
+      ).length,
       providerSessions: projection.providerSessions.filter(
         (session) => session.threadId === threadId,
       ).length,
@@ -1247,6 +1312,9 @@ export class LocalStateStore {
     projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
     projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
     projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
+    projection.contextReceipts = projection.contextReceipts.filter(
+      (receipt) => receipt.threadId !== threadId,
+    );
     projection.providerSessions = projection.providerSessions.filter(
       (session) => session.threadId !== threadId,
     );
@@ -1552,6 +1620,9 @@ export class LocalStateStore {
       projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
       projection.plans = projection.plans.filter((plan) => !threadIds.has(plan.threadId));
+      projection.contextReceipts = projection.contextReceipts.filter(
+        (receipt) => !threadIds.has(receipt.threadId),
+      );
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !threadIds.has(session.threadId),
       );
@@ -1590,6 +1661,9 @@ export class LocalStateStore {
       projection.messages = projection.messages.filter((message) => !expiredTurns.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !expiredTurns.has(activity.turnId));
       projection.plans = projection.plans.filter((plan) => !expiredThreads.has(plan.threadId));
+      projection.contextReceipts = projection.contextReceipts.filter(
+        (receipt) => !expiredThreads.has(receipt.threadId),
+      );
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !expiredThreads.has(session.threadId),
       );
@@ -1634,6 +1708,11 @@ export class LocalStateStore {
             type: "plan_saved" as const,
             plan: { ...plan, eventSequence: undefined },
           },
+        })),
+        ...next.contextReceipts.map((contextReceipt) => ({
+          eventSequence: undefined,
+          createdAt: contextReceipt.createdAt,
+          event: { type: "context_receipt_saved" as const, contextReceipt },
         })),
       ].sort((left, right) => (
         left.eventSequence !== undefined && right.eventSequence !== undefined
