@@ -41,6 +41,10 @@ Sensitive environment values live in the host secret store (write-only in the UI
 ### Codex CLI
 
 - Seeds `default:codex-cli` (binary `codex`); discovery still uses `PATH`.
+- Keeps one app-server process alive per conversation and starts follow-up turns
+  on the resident provider thread. After host or process restart, Code resumes
+  from the persisted thread id; a missing provider thread falls back to a fresh
+  provider thread while preserving the Aldunis conversation history.
 - Accepts Codex CLI **0.80+** on the 0.x app-server line (not an exact minor
   pin). Major 1.x is fail-closed until validated.
 - Reports install, authentication readiness, version, models, and reasoning
