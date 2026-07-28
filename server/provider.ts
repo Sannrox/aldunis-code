@@ -31,9 +31,29 @@ export const CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE =
 export const CLAUDE_AUTHENTICATION_FAILURE_MESSAGE =
   "Claude Code authentication failed. Re-authenticate in Claude Code and try again.";
 
+export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
+export type ProviderPlanStepStatus = "pending" | "active" | "completed" | "neutral";
+export interface ProviderPlanStep {
+  content: string;
+  status: ProviderPlanStepStatus;
+}
+export interface ProviderPlanArtifact {
+  id: string;
+  provider: ProviderId;
+  title?: string;
+  body?: string;
+  steps?: ProviderPlanStep[];
+  updatedAt?: string;
+}
+
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
+  | {
+    kind: "plan_updated";
+    artifact: ProviderPlanArtifact;
+    bodyMode?: "replace" | "append";
+  }
   | { kind: "tool_started"; toolCallId: string; name: string }
   | ({ kind: "approval_pending" } & ApprovalSnapshot)
   | { kind: "approval_resolved"; id: string; state: ApprovalSnapshot["state"] }
@@ -72,7 +92,6 @@ export function persistedProviderFailureMessage(
 
 export class ProviderProtocolError extends Error {}
 
-export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface ProviderStartOptions {

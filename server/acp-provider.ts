@@ -6,6 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { PermissionBroker } from "./permission.ts";
 import {
   type ProviderEvent,
+  type ProviderId,
   type ProviderRun,
   type ProviderStartOptions,
   ProviderProtocolError,
@@ -38,7 +39,10 @@ function textContent(value: unknown): string {
   return requiredString(content.text, "message text");
 }
 
-export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
+export function normalizeAcpNotification(
+  value: unknown,
+  provider: ProviderId = "adapter:test@1.0.0",
+): ProviderEvent[] {
   const message = record(value);
   if (
     !message
@@ -106,10 +110,42 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
     // Unknown status strings: tolerate rather than kill the conversation.
     return [];
   }
+  if (updateType === "plan") {
+    const sessionId = requiredString(params?.sessionId, "session ID");
+    if (!Array.isArray(update.entries)) {
+      throw new ProviderProtocolError("ACP emitted a malformed plan.");
+    }
+    const steps = update.entries.map((value) => {
+      const entry = record(value);
+      if (!entry) throw new ProviderProtocolError("ACP emitted a malformed plan entry.");
+      const rawStatus = entry.status;
+      const status = rawStatus === undefined
+        ? "neutral"
+        : rawStatus === "in_progress"
+        ? "active"
+        : rawStatus;
+      if (
+        status !== "pending"
+        && status !== "active"
+        && status !== "completed"
+        && status !== "neutral"
+      ) {
+        throw new ProviderProtocolError(`Unsupported ACP plan status: ${String(rawStatus)}.`);
+      }
+      return { content: requiredString(entry.content, "plan entry content"), status };
+    });
+    return [{
+      kind: "plan_updated",
+      artifact: {
+        id: `session:${sessionId}`,
+        provider,
+        steps,
+      },
+    }];
+  }
   const informational = new Set([
     "agent_thought_chunk",
     "user_message_chunk",
-    "plan",
     "available_commands_update",
     "current_mode_update",
     "config_option_update",
@@ -124,8 +160,9 @@ export function normalizeAcpNotification(value: unknown): ProviderEvent[] {
 export function acpNotificationEvents(
   value: unknown,
   loadingSession: boolean,
+  provider: ProviderId = "adapter:test@1.0.0",
 ): ProviderEvent[] {
-  const events = normalizeAcpNotification(value);
+  const events = normalizeAcpNotification(value, provider);
   // session/load may replay the provider's native history before replying.
   // Aldunis already owns that timeline, so validate the replay but do not
   // append it as fresh content to the resumed turn.
@@ -617,6 +654,7 @@ export class AcpProviderAdapter {
           const events = acpNotificationEvents(
             message,
             Boolean(options.resumeSessionId && active.sessionId === null),
+            `adapter:${this.adapter.manifest.id}@${this.adapter.manifest.version}`,
           );
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           for (const event of events) yield event;

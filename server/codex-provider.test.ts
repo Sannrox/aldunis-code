@@ -81,6 +81,52 @@ test("Codex version and native lifecycle events normalize without provider paylo
   }), []);
 });
 
+test("Codex plan notifications normalize as stable artifacts and reject malformed steps", () => {
+  assert.deepEqual(normalizeCodexNotification({
+    method: "turn/plan/updated",
+    params: {
+      turnId: "turn-1",
+      explanation: "Implementation plan",
+      plan: [
+        { step: "Inspect", status: "completed" },
+        { step: "Implement", status: "inProgress" },
+        { step: "Verify", status: "pending" },
+      ],
+    },
+  }), [{
+    kind: "plan_updated",
+    artifact: {
+      id: "turn:turn-1",
+      provider: "codex-cli",
+      body: "Implementation plan",
+      steps: [
+        { content: "Inspect", status: "completed" },
+        { content: "Implement", status: "active" },
+        { content: "Verify", status: "pending" },
+      ],
+    },
+  }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/plan/delta",
+    params: { itemId: "plan-1", delta: "First chunk" },
+  }), [{
+    kind: "plan_updated",
+    artifact: { id: "item:plan-1", provider: "codex-cli", body: "First chunk" },
+    bodyMode: "append",
+  }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/completed",
+    params: { item: { id: "plan-1", type: "plan", text: "Final plan" } },
+  }), [{
+    kind: "plan_updated",
+    artifact: { id: "item:plan-1", provider: "codex-cli", body: "Final plan" },
+  }]);
+  assert.throws(() => normalizeCodexNotification({
+    method: "turn/plan/updated",
+    params: { turnId: "turn-1", plan: [{ step: "Inspect", status: "invented" }] },
+  }), /Unsupported Codex plan step status/);
+});
+
 test("Codex resumes fall back only for missing provider threads", () => {
   assert.equal(isRecoverableCodexResumeError({ message: "thread not found" }), true);
   assert.equal(isRecoverableCodexResumeError({ message: "no rollout found for thread abc" }), true);

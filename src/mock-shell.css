@@ -295,8 +295,29 @@ code{font-family:var(--font-mono)}
 
 /* review panel — dock prefers 430px but shrinks so .conv stays usable
    (dual-pane + fixed 430px was collapsing the thread to ~70px). */
-.split{flex:1;display:flex;min-height:0;min-width:0}
+.split{position:relative;flex:1;display:flex;min-height:0;min-width:0}
 .conv{flex:1 1 50%;min-width:min(240px,100%);display:flex;flex-direction:column}
+.provider-plan-card{margin:12px 0;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);overflow:hidden}
+.provider-plan-card>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:10px 12px;cursor:pointer;list-style:none}
+.provider-plan-card>summary::-webkit-details-marker{display:none}
+.provider-plan-card>summary>span:first-child{display:flex;min-width:0;flex-direction:column;gap:2px}
+.provider-plan-card>summary strong,.provider-plan-card>summary small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.provider-plan-card>summary>span:last-child{color:var(--muted-foreground);font-size:12px}
+.provider-plan-card[open]>summary{border-bottom:1px solid var(--border)}
+.provider-plan-content{padding:12px;min-width:0}
+.provider-plan-steps{display:grid;gap:8px;margin:8px 0 0;padding:0;list-style:none}
+.provider-plan-step{display:grid;grid-template-columns:20px minmax(0,1fr);gap:7px;align-items:start;color:var(--foreground)}
+.provider-plan-step.is-completed{color:var(--muted-foreground)}
+.provider-plan-step.is-active .provider-plan-status{color:var(--primary)}
+.provider-plan-status{font-variant-numeric:tabular-nums;text-align:center}
+.provider-plan-card-footer,.provider-plan-actions{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.provider-plan-card-footer{justify-content:space-between;padding:10px 12px;border-top:1px solid var(--border)}
+.provider-plan-panel{flex:0 1 420px;min-width:min(300px,45%);max-width:45%;display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--border);background:var(--background)}
+.provider-plan-panel>header,.provider-plan-panel>footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-bottom:1px solid var(--border)}
+.provider-plan-panel>header h2{margin:2px 0 0;font-size:16px}
+.provider-plan-panel>header small{color:var(--muted-foreground)}
+.provider-plan-panel-body{flex:1;min-height:0;overflow:auto}
+.provider-plan-panel>footer{border-top:1px solid var(--border);border-bottom:0}
 .rv{width:min(430px,48%);flex:0 1 min(430px,48%);max-width:430px;min-width:0;border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
 .rv-h{display:flex;align-items:center;gap:10px;padding:13px 16px 11px}
 .rv-t{font-size:13.5px;font-weight:500}
@@ -913,6 +934,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     overflow: hidden !important;
   }
   .split { flex-direction: column !important; }
+  .provider-plan-panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 12;
+    width: min(100%, 420px);
+    max-width: 100%;
+    min-width: 0;
+    box-shadow: -12px 0 36px rgb(0 0 0 / .18);
+  }
   .split.with-review > .conv {
     flex: 1 1 45% !important;
     min-height: 100px !important;

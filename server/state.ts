@@ -7,6 +7,7 @@ import {
   persistedProviderFailureMessage,
   type ProviderEvent,
   type ProviderId,
+  type ProviderPlanStep,
   type ReasoningEffort,
 } from "./provider.ts";
 
@@ -58,6 +59,7 @@ export interface ConversationDeletion {
     turns: number;
     messages: number;
     activities: number;
+    plans: number;
     providerSessions: number;
     checkpoints: number;
     annotations: number;
@@ -145,6 +147,22 @@ export interface Activity {
   message: string | null;
   createdAt: string;
   /** Event-log position used to restore cross-record provider ordering. */
+  eventSequence?: number;
+}
+
+export interface PlanArtifact {
+  schemaVersion: 2;
+  id: string;
+  artifactId: string;
+  threadId: string;
+  turnId: string;
+  provider: ProviderId;
+  title?: string;
+  body?: string;
+  steps?: ProviderPlanStep[];
+  createdAt: string;
+  updatedAt: string;
+  /** Position of the first update, keeping the card anchored in the timeline. */
   eventSequence?: number;
 }
 
@@ -244,6 +262,7 @@ export interface StateProjection {
   turns: Turn[];
   messages: Message[];
   activities: Activity[];
+  plans: PlanArtifact[];
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
@@ -258,6 +277,7 @@ type StateEvent =
   | { type: "turn_saved"; turn: Turn }
   | { type: "message_saved"; message: Message }
   | { type: "activity_saved"; activity: Activity }
+  | { type: "plan_saved"; plan: PlanArtifact }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
   | { type: "annotation_saved"; annotation: DiffAnnotation }
@@ -289,6 +309,7 @@ function emptyProjection(): StateProjection {
     turns: [],
     messages: [],
     activities: [],
+    plans: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -479,6 +500,12 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.messages, { ...event.message, eventSequence: envelope.sequence });
   } else if (event.type === "activity_saved") {
     replaceById(projection.activities, { ...event.activity, eventSequence: envelope.sequence });
+  } else if (event.type === "plan_saved") {
+    const existing = projection.plans.find((plan) => plan.id === event.plan.id);
+    replaceById(projection.plans, {
+      ...event.plan,
+      eventSequence: existing?.eventSequence ?? envelope.sequence,
+    });
   }
   else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
@@ -538,6 +565,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     turn_saved: "turn",
     message_saved: "message",
     activity_saved: "activity",
+    plan_saved: "plan",
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
@@ -584,6 +612,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           turns: Number(records.turns ?? 0),
           messages: Number(records.messages ?? 0),
           activities: Number(records.activities ?? 0),
+          plans: Number(records.plans ?? 0),
           providerSessions: Number(records.providerSessions ?? 0),
           checkpoints: Number(records.checkpoints ?? 0),
           annotations: Number(records.annotations ?? 0),
@@ -917,6 +946,7 @@ export class LocalStateStore {
         "Hidden reasoning",
         "Raw tool inputs and outputs",
         "Tool approvals and runtime activity",
+        "Provider plan artifacts",
       ],
     };
   }
@@ -1104,6 +1134,7 @@ export class LocalStateStore {
       turns: turnIds.size,
       messages: projection.messages.filter((message) => turnIds.has(message.turnId)).length,
       activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)).length,
+      plans: projection.plans.filter((plan) => plan.threadId === threadId).length,
       providerSessions: projection.providerSessions.filter(
         (session) => session.threadId === threadId,
       ).length,
@@ -1130,6 +1161,7 @@ export class LocalStateStore {
     projection.turns = projection.turns.filter((turn) => turn.threadId !== threadId);
     projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
     projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
+    projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
     projection.providerSessions = projection.providerSessions.filter(
       (session) => session.threadId !== threadId,
     );
@@ -1220,6 +1252,47 @@ export class LocalStateStore {
           role: "assistant",
           text: event.text,
           createdAt: now,
+        },
+      });
+      return;
+    }
+    if (event.kind === "plan_updated") {
+      const projection = await this.load();
+      const turn = projection.turns.find(
+        (item) => item.id === turnId && item.threadId === threadId,
+      );
+      if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      if (event.artifact.provider !== provider) {
+        throw new LocalStateError("The plan artifact provider does not match the active provider.");
+      }
+      const id = createHash("sha256")
+        .update(`${threadId}\n${turnId}\n${provider}\n${event.artifact.id}`, "utf8")
+        .digest("hex");
+      const existing = projection.plans.find((plan) => plan.id === id);
+      const body = event.artifact.body === undefined
+        ? existing?.body
+        : event.bodyMode === "append"
+          ? `${existing?.body ?? ""}${event.artifact.body}`
+          : event.artifact.body;
+      await this.#append({
+        type: "plan_saved",
+        plan: {
+          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+          id,
+          artifactId: event.artifact.id,
+          threadId,
+          turnId,
+          provider,
+          ...(event.artifact.title !== undefined
+            ? { title: event.artifact.title }
+            : existing?.title !== undefined ? { title: existing.title } : {}),
+          ...(body !== undefined ? { body } : {}),
+          ...(event.artifact.steps !== undefined
+            ? { steps: event.artifact.steps }
+            : existing?.steps !== undefined ? { steps: existing.steps } : {}),
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: event.artifact.updatedAt ?? now,
+          eventSequence: existing?.eventSequence,
         },
       });
       return;
@@ -1393,6 +1466,7 @@ export class LocalStateStore {
       projection.turns = projection.turns.filter((turn) => !turnIds.has(turn.id));
       projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
+      projection.plans = projection.plans.filter((plan) => !threadIds.has(plan.threadId));
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !threadIds.has(session.threadId),
       );
@@ -1430,6 +1504,7 @@ export class LocalStateStore {
       projection.turns = projection.turns.filter((turn) => !expiredTurns.has(turn.id));
       projection.messages = projection.messages.filter((message) => !expiredTurns.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !expiredTurns.has(activity.turnId));
+      projection.plans = projection.plans.filter((plan) => !expiredThreads.has(plan.threadId));
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !expiredThreads.has(session.threadId),
       );
@@ -1466,6 +1541,14 @@ export class LocalStateStore {
           eventSequence: activity.eventSequence,
           createdAt: activity.createdAt,
           event: { type: "activity_saved" as const, activity },
+        })),
+        ...next.plans.map((plan) => ({
+          eventSequence: plan.eventSequence,
+          createdAt: plan.createdAt,
+          event: {
+            type: "plan_saved" as const,
+            plan: { ...plan, eventSequence: undefined },
+          },
         })),
       ].sort((left, right) => (
         left.eventSequence !== undefined && right.eventSequence !== undefined

@@ -1,9 +1,11 @@
-import type { ProviderEvent } from "../types";
+import type { ProviderEvent, ProviderPlanArtifact } from "../types";
 import { joinAssistantTextChunks } from "./assistant-text";
+import { mergePlanArtifact } from "./provider-plan";
 import { presentToolRows, type ToolRow } from "./tool-presentation";
 
 export type AssistantTimelineBlock =
   | { kind: "text"; text: string }
+  | { kind: "plan"; artifact: ProviderPlanArtifact }
   | { kind: "tools"; rows: ToolRow[] };
 
 /**
@@ -18,6 +20,7 @@ export function presentAssistantTimeline(
 ): AssistantTimelineBlock[] {
   const blocks: Array<
     | { kind: "text"; chunks: string[] }
+    | { kind: "plan"; artifact: ProviderPlanArtifact }
     | {
         kind: "tools";
         events: Array<Extract<ProviderEvent, { kind: "tool_started" | "tool_finished" }>>;
@@ -25,12 +28,25 @@ export function presentAssistantTimeline(
       }
   > = [];
   const toolBlockByCallId = new Map<string, Extract<(typeof blocks)[number], { kind: "tools" }>>();
+  const planBlockById = new Map<string, Extract<(typeof blocks)[number], { kind: "plan" }>>();
 
   for (const event of events) {
     if (event.kind === "assistant_text") {
       const last = blocks.at(-1);
       if (last?.kind === "text") last.chunks.push(event.text);
       else blocks.push({ kind: "text", chunks: [event.text] });
+      continue;
+    }
+    if (event.kind === "plan_updated") {
+      const id = `${event.artifact.provider}\n${event.artifact.id}`;
+      const existing = planBlockById.get(id);
+      if (existing) {
+        existing.artifact = mergePlanArtifact(existing.artifact, event);
+      } else {
+        const block = { kind: "plan" as const, artifact: mergePlanArtifact(undefined, event) };
+        blocks.push(block);
+        planBlockById.set(id, block);
+      }
       continue;
     }
     if (event.kind !== "tool_started" && event.kind !== "tool_finished") continue;
@@ -55,6 +71,7 @@ export function presentAssistantTimeline(
       const text = joinAssistantTextChunks(block.chunks);
       return text ? [{ kind: "text", text }] : [];
     }
+    if (block.kind === "plan") return [block];
     return [{
       kind: "tools",
       rows: presentToolRows(block.events).map((row) => (

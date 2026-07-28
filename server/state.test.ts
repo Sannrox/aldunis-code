@@ -65,6 +65,59 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
+test("provider plans update one persisted artifact and survive restart without duplication", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Plan the work",
+    mode: "plan",
+    provider: "codex-cli",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "plan_updated",
+    artifact: { id: "item:plan-1", provider: "codex-cli", body: "First" },
+    bodyMode: "append",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "plan_updated",
+    artifact: {
+      id: "item:plan-1",
+      provider: "codex-cli",
+      body: " final",
+      steps: [{ content: "Verify", status: "active" }],
+    },
+    bodyMode: "append",
+  });
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.plans.length, 1);
+  assert.equal(rebuilt.plans[0].body, "First final");
+  assert.deepEqual(rebuilt.plans[0].steps, [{ content: "Verify", status: "active" }]);
+  const next = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Plan the next turn",
+    mode: "plan",
+    provider: "codex-cli",
+    threadId: thread.id,
+  });
+  await store.recordProviderEvent(thread.id, next.turn.id, "codex-cli", {
+    kind: "plan_updated",
+    artifact: { id: "item:plan-1", provider: "codex-cli", body: "Second turn" },
+  });
+  const afterSecondTurn = await new LocalStateStore(directory).load();
+  assert.equal(afterSecondTurn.plans.length, 2);
+  assert.deepEqual(
+    afterSecondTurn.plans.map((plan) => [plan.turnId, plan.body]),
+    [[turn.id, "First final"], [next.turn.id, "Second turn"]],
+  );
+  await assert.rejects(() => store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "plan_updated",
+    artifact: { id: "spoof", provider: "claude-code", body: "wrong provider" },
+  }), /does not match/);
+});
+
 test("attention states and provider run identity survive reload", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -319,6 +372,7 @@ test("project deletion and retention physically remove sensitive conversation da
     turns: [],
     messages: [],
     activities: [],
+    plans: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -466,6 +520,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     turns: 1,
     messages: 2,
     activities: 0,
+    plans: 0,
     providerSessions: 1,
     checkpoints: 0,
     annotations: 0,
@@ -746,6 +801,14 @@ test("cross-provider fork previews and persists only allowlisted conversation co
     kind: "assistant_text",
     text: "The boundary is explicit.",
   });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "plan_updated",
+    artifact: {
+      id: "source-plan",
+      provider: "claude-code",
+      body: "private source plan sentinel",
+    },
+  });
 
   const preview = await store.previewFork(thread.id);
   assert.deepEqual(preview.messages.map((message) => message.text), [
@@ -754,6 +817,8 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   ]);
   assert.equal(preview.prompt.includes("native-secret-session"), false);
   assert.equal(preview.prompt.includes("raw-tool-call"), false);
+  assert.equal(preview.prompt.includes("private source plan sentinel"), false);
+  assert.equal(preview.excluded.includes("Provider plan artifacts"), true);
   assert.equal(preview.files.length, 0);
   assert.equal(preview.summaries.length, 0);
 
@@ -769,6 +834,10 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   assert.equal(created.thread.parentThreadId, thread.id);
   assert.equal(created.thread.provider, "codex-cli");
   assert.equal(created.fork.status, "pending");
+  assert.equal(
+    (await store.load()).plans.some((plan) => plan.threadId === created.thread.id),
+    false,
+  );
   assert.equal(await store.pendingForkPrompt(created.thread.id), preview.prompt);
   assert.deepEqual((await store.load()).threads[0], sourceBefore);
 

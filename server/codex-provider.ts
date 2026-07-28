@@ -216,6 +216,18 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   if (item.type === "agentMessage") {
     return completed ? [{ kind: "assistant_text", text: string(item.text, "agent text") }] : [];
   }
+  if (item.type === "plan") {
+    return completed
+      ? [{
+          kind: "plan_updated",
+          artifact: {
+            id: `item:${id}`,
+            provider: "codex-cli",
+            body: string(item.text, "plan text"),
+          },
+        }]
+      : [];
+  }
   if (item.type === "commandExecution") {
     return completed
       ? [{ kind: "tool_finished", toolCallId: id, failed: item.status !== "completed" }]
@@ -241,7 +253,6 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   const informationalItemTypes = new Set([
     "userMessage",
     "hookPrompt",
-    "plan",
     "reasoning",
     "imageView",
     "sleep",
@@ -285,6 +296,44 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   if (!params) throw new ProviderProtocolError("Codex emitted malformed notification parameters.");
   if (method === "item/started") return itemEvents(params.item, false);
   if (method === "item/completed") return itemEvents(params.item, true);
+  if (method === "turn/plan/updated") {
+    const turnId = string(params.turnId, "turn id");
+    if (!Array.isArray(params.plan)) {
+      throw new ProviderProtocolError("Codex emitted a malformed turn plan.");
+    }
+    const steps = params.plan.map((value) => {
+      const step = record(value);
+      if (!step) throw new ProviderProtocolError("Codex emitted a malformed plan step.");
+      const rawStatus = string(step.status, "plan step status");
+      const status = rawStatus === "inProgress" ? "active" : rawStatus;
+      if (status !== "pending" && status !== "active" && status !== "completed") {
+        throw new ProviderProtocolError(`Unsupported Codex plan step status: ${rawStatus}.`);
+      }
+      return { content: string(step.step, "plan step"), status };
+    });
+    return [{
+      kind: "plan_updated",
+      artifact: {
+        id: `turn:${turnId}`,
+        provider: "codex-cli",
+        ...(typeof params.explanation === "string" && params.explanation
+          ? { body: params.explanation }
+          : {}),
+        steps,
+      },
+    }];
+  }
+  if (method === "item/plan/delta") {
+    return [{
+      kind: "plan_updated",
+      artifact: {
+        id: `item:${string(params.itemId, "item id")}`,
+        provider: "codex-cli",
+        body: string(params.delta, "plan delta"),
+      },
+      bodyMode: "append",
+    }];
+  }
   if (method === "turn/completed") {
     const turn = record(params.turn);
     if (!turn) throw new ProviderProtocolError("Codex emitted a malformed completed turn.");
@@ -307,7 +356,6 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   const informational = new Set([
     "turn/started",
     "turn/diff/updated",
-    "turn/plan/updated",
     "turn/moderationMetadata",
     "thread/started",
     "thread/status/changed",
@@ -316,7 +364,6 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
     "thread/tokenUsage/updated",
     "skills/changed",
     "item/agentMessage/delta",
-    "item/plan/delta",
     "item/reasoning/summaryTextDelta",
     "item/reasoning/summaryPartAdded",
     "item/reasoning/textDelta",

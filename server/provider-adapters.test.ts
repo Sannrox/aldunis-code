@@ -366,6 +366,41 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
   );
 });
 
+test("ACP plans preserve adapter provenance and map only reported statuses", () => {
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "plan",
+        entries: [
+          { content: "Inspect", status: "completed", priority: "high" },
+          { content: "Implement", status: "in_progress" },
+          { content: "Decide" },
+        ],
+      },
+    },
+  }, "adapter:dev.fixture@1.2.3"), [{
+    kind: "plan_updated",
+    artifact: {
+      id: "session:session-1",
+      provider: "adapter:dev.fixture@1.2.3",
+      steps: [
+        { content: "Inspect", status: "completed" },
+        { content: "Implement", status: "active" },
+        { content: "Decide", status: "neutral" },
+      ],
+    },
+  }]);
+  assert.throws(() => normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      sessionId: "session-1",
+      update: { sessionUpdate: "plan", entries: [{ content: "Nope", status: "guessed" }] },
+    },
+  }, "adapter:dev.fixture@1.2.3"), /Unsupported ACP plan status/);
+});
+
 test("the shipped Kiro adapter is declarative, direct-only, and schema-valid", async () => {
   const raw = await readFile(
     new URL("../provider-adapters/kiro-cli.json", import.meta.url),
