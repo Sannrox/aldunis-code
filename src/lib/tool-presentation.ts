@@ -1,6 +1,6 @@
 import type { ProviderEvent } from "../types";
 
-export type ToolRowStatus = "running" | "done" | "failed";
+export type ToolRowStatus = "running" | "done" | "failed" | "cancelled";
 
 export interface ToolRow {
   toolCallId: string;

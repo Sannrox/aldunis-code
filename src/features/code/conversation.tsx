@@ -111,6 +111,7 @@ export function Conversation({
     message: { text: string; mode: InteractionMode; createdAt?: string };
     events: ProviderEvent[];
     assistantAt?: string;
+    state: RestoredTurnStatus;
   }>>([]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
@@ -727,6 +728,7 @@ export function Conversation({
           },
           events: orderedEvents.map(({ event }) => event),
           assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
+          state: turn.status,
         }];
       });
       const currentTurn = restoredTurns.at(-1);
@@ -1003,7 +1005,12 @@ export function Conversation({
     if (previousMessage) {
       setArchivedTurns((current) => [
         ...current,
-        { message: previousMessage, events: providerEvents, assistantAt: assistantTurnAt ?? undefined },
+        {
+          message: previousMessage,
+          events: providerEvents,
+          assistantAt: assistantTurnAt ?? undefined,
+          state: providerState === "cancelled" ? "cancelled" : providerState,
+        },
       ]);
     }
     setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
@@ -1324,15 +1331,25 @@ export function Conversation({
     warning: mode !== "ask",
     detail: modeCopy[mode].authority,
   };
-  const renderTimeline = (events: ProviderEvent[], keyPrefix: string) => (
-    presentAssistantTimeline(events).map((block, blockIndex) => {
+  const renderTimeline = (
+    events: ProviderEvent[],
+    keyPrefix: string,
+    unfinishedStatus: "running" | "cancelled" = "running",
+  ) => (
+    presentAssistantTimeline(events, unfinishedStatus).map((block, blockIndex) => {
       if (block.kind === "text") {
         return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
       }
       return (
         <div className="tools" role="list" aria-label={`${providerLabel} tool activity`} key={`${keyPrefix}-tools-${blockIndex}`}>
           {block.rows.map((row) => {
-            const statusLabel = row.status === "running" ? "Running" : row.status === "failed" ? "Failed" : "Done";
+            const statusLabel = row.status === "running"
+              ? "Running"
+              : row.status === "failed"
+                ? "Failed"
+                : row.status === "cancelled"
+                  ? "Cancelled"
+                  : "Done";
             const shortId = shortToolCallId(row.toolCallId);
             return (
               <div
@@ -1341,7 +1358,7 @@ export function Conversation({
                 key={row.toolCallId}
                 aria-label={`${statusLabel} ${row.name} ${shortId}`}
               >
-                <span aria-hidden="true">{row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}</span>
+                <span aria-hidden="true">{statusLabel}</span>
                 <code aria-hidden="true">{row.name}</code>
                 <span className="r" title={row.toolCallId} aria-hidden="true">{shortId}</span>
               </div>
@@ -1547,8 +1564,15 @@ export function Conversation({
                 <span className="rname">{providerLabel}</span>
                 <span className="rtime">{turn.assistantAt ? formatElapsed(turn.assistantAt) : "now"}</span>
               </div>
-              {renderTimeline(turn.events, `archived-${index}`)}
+              {renderTimeline(
+                turn.events,
+                `archived-${index}`,
+                turn.state === "interrupted" || turn.state === "cancelled" ? "cancelled" : "running",
+              )}
               {renderArchivedFailure(turn.events)}
+              {(turn.state === "interrupted" || turn.state === "cancelled") && (
+                <p className="provider-state">{providerLabel} cancelled</p>
+              )}
             </div>
           </React.Fragment>
         ))}
@@ -1578,7 +1602,11 @@ export function Conversation({
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
-              {assistantTimeline.length > 0 && renderTimeline(providerEvents, "current")}
+              {assistantTimeline.length > 0 && renderTimeline(
+                providerEvents,
+                "current",
+                providerState === "cancelled" ? "cancelled" : "running",
+              )}
               {providerState === "completed" && threadId && !completionDismissed && (
                 <div className="done" role="status">
                   <div className="h">
