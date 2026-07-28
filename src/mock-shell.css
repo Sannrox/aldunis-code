@@ -848,6 +848,54 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .review-dock, .rv { width: min(360px, 46vw) !important; flex-basis: min(360px, 46vw) !important; }
 }
 @media (max-width: 680px) {
+  .settings {
+    flex-direction: column !important;
+  }
+  .snav {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 2px !important;
+    overflow-x: auto !important;
+    padding: 8px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+  .sback {
+    flex: 0 0 auto !important;
+    margin: 0 6px 0 0 !important;
+    white-space: nowrap !important;
+  }
+  .snav-i {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+  }
+  .sbody {
+    min-height: 0 !important;
+    padding: 20px 0 !important;
+  }
+  .sw {
+    padding: 0 16px !important;
+  }
+  .preferences-form .field {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+  .preferences-form .fc {
+    width: 100% !important;
+    padding-top: 0 !important;
+  }
+  .preferences-form .seg {
+    display: flex !important;
+    width: 100% !important;
+  }
+  .preferences-form .seg button {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+  }
   .sb { width: 100% !important; flex-basis: auto !important; max-height: 42vh; border-right: 0 !important; border-bottom: 1px solid var(--border); }
   .app { flex-direction: column !important; }
   /* Was flex: 0 0 42vh — fixed basis taller than a dual-pane column (~344px)

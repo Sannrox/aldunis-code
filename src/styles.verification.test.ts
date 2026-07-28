@@ -195,6 +195,23 @@ test("preferences segment buttons meet min hit size", () => {
   assert.match(shell, /\.seg\s+button\s*\{[^}]*min-height:\s*28px/s);
 });
 
+test("preferences collapse to a scrollable single-column layout on narrow viewports", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.settings\s*\{[^}]*flex-direction:\s*column\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.snav\s*\{[^}]*flex-direction:\s*row\s*!important[^}]*overflow-x:\s*auto\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.preferences-form\s+\.field\s*\{[^}]*flex-direction:\s*column\s*!important/s,
+  );
+});
+
 test("annotation resolve and ui-button--xs meet min hit size", () => {
   assert.match(css, /\.ui-button--xs\s*\{[^}]*min-height:\s*28px/s);
   assert.match(css, /\.annotation-resolve\s*\{[^}]*min-height:\s*28px/s);
