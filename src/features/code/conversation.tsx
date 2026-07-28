@@ -48,7 +48,8 @@ import {
   loadProviderDiscovery,
   peekProviderDiscoveryCache,
 } from "../../lib/provider-discovery-cache";
-import { presentToolRows, shortToolCallId } from "../../lib/tool-presentation";
+import { shortToolCallId } from "../../lib/tool-presentation";
+import { presentAssistantTimeline } from "../../lib/conversation-timeline";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 
@@ -102,6 +103,11 @@ export function Conversation({
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
+  const [archivedTurns, setArchivedTurns] = useState<Array<{
+    message: { text: string; mode: InteractionMode; createdAt?: string };
+    events: ProviderEvent[];
+    assistantAt?: string;
+  }>>([]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
   const [promptHistoryBrowse, setPromptHistoryBrowse] = useState<PromptHistoryBrowse>(() => (
@@ -540,6 +546,7 @@ export function Conversation({
     setAssistantTurnAt(null);
     setRewindPreview(null);
     setMessages([]);
+    setArchivedTurns([]);
     setProviderEvents([]);
     setProviderState("idle");
     setRunId(null);
@@ -573,7 +580,13 @@ export function Conversation({
           createdAt: string;
           completedAt?: string | null;
         }>;
-        messages: Array<{ turnId: string; role: "user" | "assistant"; text: string; createdAt: string }>;
+        messages: Array<{
+          turnId: string;
+          role: "user" | "assistant";
+          text: string;
+          createdAt: string;
+          eventSequence?: number;
+        }>;
         activities?: Array<{
           turnId: string;
           kind: "tool_started" | "tool_finished" | "provider_failed";
@@ -582,6 +595,7 @@ export function Conversation({
           failed: boolean | null;
           message: string | null;
           createdAt: string;
+          eventSequence?: number;
         }>;
         providerSessions: Array<{
           threadId: string;
@@ -643,51 +657,67 @@ export function Conversation({
       const history = projection.messages
         .filter((message) => turnIds.has(message.turnId))
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      setMessages(history.filter((message) => message.role === "user").map((message) => ({
+      const userMessages = history.filter((message) => message.role === "user").map((message) => ({
         text: message.text,
         mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
         createdAt: message.createdAt,
-      })));
-      // Keep whitespace-only assistant chunks (e.g. "\n\n" from ACP streams).
-      // Dropping them via trim() glued "shikigami" + "There" into unreadable text.
-      const assistantEvents: ProviderEvent[] = history
-        .filter((message) => message.role === "assistant" && message.text.length > 0)
-        .map((message) => ({
-          kind: "assistant_text" as const,
-          text: message.text,
-        }));
-      // Rehydrate tool runs and provider failures from activity rows. Without
-      // this, reopening a failed turn only shows the user prompt.
-      const activityEvents: ProviderEvent[] = (projection.activities ?? [])
-        .filter((activity) => turnIds.has(activity.turnId))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-        .flatMap((activity): ProviderEvent[] => {
+      }));
+      const eventsForTurn = (
+        turnId: string,
+      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => [
+        ...history
+          .filter((message) => message.turnId === turnId && message.role === "assistant" && message.text.length > 0)
+          .map((message) => ({
+            event: { kind: "assistant_text" as const, text: message.text },
+            createdAt: message.createdAt,
+            eventSequence: message.eventSequence,
+          })),
+        ...(projection.activities ?? [])
+          .filter((activity) => activity.turnId === turnId)
+          .flatMap((activity): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
           if (activity.kind === "provider_failed") {
-            // Scope default copy with the thread provider so dual-pane failures
-            // are not both "Provider failed."
             const fallback = `${providerDisplayName(provider, selectedProvider)} failed.`;
             return [{
-              kind: "failed",
-              message: activity.message?.trim() || fallback,
+              event: { kind: "failed", message: activity.message?.trim() || fallback },
+              createdAt: activity.createdAt,
+              eventSequence: activity.eventSequence,
             }];
           }
           if (activity.kind === "tool_started" && activity.toolCallId) {
-            return [{
-              kind: "tool_started",
-              toolCallId: activity.toolCallId,
-              name: activity.name?.trim() || "Tool",
-            }];
+            return [{ event: {
+              kind: "tool_started", toolCallId: activity.toolCallId, name: activity.name?.trim() || "Tool",
+            }, createdAt: activity.createdAt, eventSequence: activity.eventSequence }];
           }
           if (activity.kind === "tool_finished" && activity.toolCallId) {
-            return [{
-              kind: "tool_finished",
-              toolCallId: activity.toolCallId,
-              failed: activity.failed === true,
-            }];
+            return [{ event: {
+              kind: "tool_finished", toolCallId: activity.toolCallId, failed: activity.failed === true,
+            }, createdAt: activity.createdAt, eventSequence: activity.eventSequence }];
           }
           return [];
-        });
-      setProviderEvents([...assistantEvents, ...activityEvents]);
+        }),
+      ].sort((left, right) => (
+        left.eventSequence !== undefined && right.eventSequence !== undefined
+          ? left.eventSequence - right.eventSequence
+          : left.createdAt.localeCompare(right.createdAt)
+      ));
+      const restoredTurns = turns.flatMap((turn) => {
+        const user = history.find((message) => message.turnId === turn.id && message.role === "user");
+        if (!user) return [];
+        const orderedEvents = eventsForTurn(turn.id);
+        return [{
+          message: {
+            text: user.text,
+            mode: turn.mode ?? "ask",
+            createdAt: user.createdAt,
+          },
+          events: orderedEvents.map(({ event }) => event),
+          assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
+        }];
+      });
+      const currentTurn = restoredTurns.at(-1);
+      setArchivedTurns(restoredTurns.slice(0, -1));
+      setMessages(userMessages);
+      setProviderEvents(currentTurn?.events ?? []);
       const lastAssistantAt = history
         .filter((message) => message.role === "assistant" && message.createdAt)
         .at(-1)
@@ -922,6 +952,13 @@ export function Conversation({
       || !historyRestored
     ) return;
     const turnMode = mode;
+    const previousMessage = messages.at(-1);
+    if (previousMessage) {
+      setArchivedTurns((current) => [
+        ...current,
+        { message: previousMessage, events: providerEvents, assistantAt: assistantTurnAt ?? undefined },
+      ]);
+    }
     setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
     if (promptOverride === undefined) setDraft("");
     const sentAttachments = promptOverride === undefined ? attachments : [];
@@ -1152,6 +1189,7 @@ export function Conversation({
       }]);
     }
   };
+  const assistantTimeline = presentAssistantTimeline(providerEvents);
   const assistantText = joinAssistantTextChunks(
     providerEvents
       .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
@@ -1239,6 +1277,56 @@ export function Conversation({
     warning: mode !== "ask",
     detail: modeCopy[mode].authority,
   };
+  const renderTimeline = (events: ProviderEvent[], keyPrefix: string) => (
+    presentAssistantTimeline(events).map((block, blockIndex) => {
+      if (block.kind === "text") {
+        return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
+      }
+      return (
+        <div className="tools" role="list" aria-label={`${providerLabel} tool activity`} key={`${keyPrefix}-tools-${blockIndex}`}>
+          {block.rows.map((row) => {
+            const statusLabel = row.status === "running" ? "Running" : row.status === "failed" ? "Failed" : "Done";
+            const shortId = shortToolCallId(row.toolCallId);
+            return (
+              <div
+                className={`tool tool-${row.status}`}
+                role="listitem"
+                key={row.toolCallId}
+                aria-label={`${statusLabel} ${row.name} ${shortId}`}
+              >
+                <span aria-hidden="true">{row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}</span>
+                <code aria-hidden="true">{row.name}</code>
+                <span className="r" title={row.toolCallId} aria-hidden="true">{shortId}</span>
+              </div>
+            );
+          })}
+        </div>
+      );
+    })
+  );
+  const renderArchivedFailure = (events: ProviderEvent[]) => {
+    const event = events
+      .filter((candidate): candidate is Extract<ProviderEvent, { kind: "failed" }> => candidate.kind === "failed")
+      .at(-1);
+    if (!event) return null;
+    const view = parseProviderFailure(event.message);
+    return (
+      <div className={`provider-error ${view.kind === "park" ? "provider-error-park" : ""}`} role="alert">
+        <p>
+          {/^provider failed\.?$/i.test(view.summary.trim())
+            ? `${providerName} failed.`
+            : view.summary}
+        </p>
+        {view.question && <p className="provider-error-question">Question: {view.question}</p>}
+        {view.resumeCommand && (
+          <div className="provider-error-resume">
+            <code title={view.resumeCommand}>{view.resumeCommand}</code>
+          </div>
+        )}
+      </div>
+    );
+  };
+  const latestMessage = messages.at(-1);
 
   return (
     <div
@@ -1396,16 +1484,37 @@ export function Conversation({
             </section>
           )
           : null}
-        {messages.map((message, index) => (
-          <div className="turn user" key={`${message.text}-${index}`}>
+        {archivedTurns.map((turn, index) => (
+          <React.Fragment key={`archived-${turn.message.createdAt ?? index}`}>
+            <div className="turn user">
+              <div className="role">
+                <span className="av you">Y</span>
+                <span className="rname">You</span>
+                <span className="rtime">{turn.message.createdAt ? formatElapsed(turn.message.createdAt) : "now"}</span>
+              </div>
+              <p>{turn.message.text}</p>
+            </div>
+            <div className="turn">
+              <div className="role">
+                <span className="av">{providerAvatarInitials(provider, providerLabel)}</span>
+                <span className="rname">{providerLabel}</span>
+                <span className="rtime">{turn.assistantAt ? formatElapsed(turn.assistantAt) : "now"}</span>
+              </div>
+              {renderTimeline(turn.events, `archived-${index}`)}
+              {renderArchivedFailure(turn.events)}
+            </div>
+          </React.Fragment>
+        ))}
+        {latestMessage && (
+          <div className="turn user" key={`${latestMessage.text}-${latestMessage.createdAt ?? "latest"}`}>
             <div className="role">
               <span className="av you">Y</span>
               <span className="rname">You</span>
-              <span className="rtime">{message.createdAt ? formatElapsed(message.createdAt) : "now"}</span>
+              <span className="rtime">{latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}</span>
             </div>
-            <p>{message.text}</p>
+            <p>{latestMessage.text}</p>
           </div>
-        ))}
+        )}
         {showAssistantTurn && (
           <div className="turn" aria-live="polite">
             <div className="role">
@@ -1422,33 +1531,7 @@ export function Conversation({
               {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
-              {assistantText && <MarkdownBody text={assistantText} className="turn-md" />}
-              {toolEvents.length > 0 && (
-                <div className="tools" role="list" aria-label={`${providerLabel} tool activity`}>
-                  {presentToolRows(toolEvents).map((row) => {
-                    const statusLabel = row.status === "running"
-                      ? "Running"
-                      : row.status === "failed"
-                        ? "Failed"
-                        : "Done";
-                    const shortId = shortToolCallId(row.toolCallId);
-                    return (
-                      <div
-                        className={`tool tool-${row.status}`}
-                        role="listitem"
-                        key={row.toolCallId}
-                        aria-label={`${statusLabel} ${row.name} ${shortId}`}
-                      >
-                        <span aria-hidden="true">
-                          {row.status === "running" ? "Run" : row.status === "failed" ? "Failed" : "Done"}
-                        </span>
-                        <code aria-hidden="true">{row.name}</code>
-                        <span className="r" title={row.toolCallId} aria-hidden="true">{shortId}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {assistantTimeline.length > 0 && renderTimeline(providerEvents, "current")}
               {providerState === "completed" && threadId && !completionDismissed && (
                 <div className="done" role="status">
                   <div className="h">

@@ -58,6 +58,10 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.turns[0].mode, "plan");
   assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);
   assert.equal(rebuilt.activities[0].name, "Read");
+  assert.ok(
+    rebuilt.messages[1]!.eventSequence! < rebuilt.activities[0]!.eventSequence!,
+    "provider records retain their shared event-log order across collections",
+  );
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
@@ -440,6 +444,65 @@ test("conversation deletion previews and physically compacts only conversation-o
   const persisted = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal(persisted.includes("secret sentinel"), false);
   assert.equal(persisted.includes("worktree-that-must-survive"), false);
+});
+
+test("state compaction preserves message and activity event order", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const removed = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/removed",
+    prompt: "Remove this conversation",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(removed.thread.id, removed.turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "removed-session",
+    costUsd: 0,
+  });
+  const survivor = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/survivor",
+    prompt: "Keep this conversation",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "Before tool.",
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "tool_started",
+    toolCallId: "tool-1",
+    name: "Read",
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "After tool.",
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "survivor-session",
+    costUsd: 0,
+  });
+
+  await store.deleteConversation(removed.thread.id);
+  const rebuilt = await new LocalStateStore(directory).load();
+  const orderedKinds = [
+    ...rebuilt.messages
+      .filter((message) => message.turnId === survivor.turn.id)
+      .map((message) => ({
+        sequence: message.eventSequence!,
+        kind: message.role === "user" ? "user" : "assistant",
+      })),
+    ...rebuilt.activities
+      .filter((activity) => activity.turnId === survivor.turn.id)
+      .map((activity) => ({ sequence: activity.eventSequence!, kind: activity.kind })),
+  ]
+    .sort((left, right) => left.sequence - right.sequence)
+    .map(({ kind }) => kind);
+  assert.deepEqual(orderedKinds, ["user", "assistant", "tool_started", "assistant"]);
 });
 
 test("only allowlisted provider fields are persisted", async () => {
