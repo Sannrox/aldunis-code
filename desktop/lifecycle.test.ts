@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import test from "node:test";
 import {
@@ -36,4 +37,16 @@ test("native directory selection returns one path and cancellation returns no au
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }), "/project");
   assert.equal(selectedDirectoryPath({ canceled: true, filePaths: ["/project"] }), null);
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
+});
+
+test("desktop ESM build leaves CommonJS state locking outside the bundle", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    scripts?: { "build:desktop-main"?: string };
+  };
+  const command = packageJson.scripts?.["build:desktop-main"];
+  const [mainProcessBuild] = command?.split("&&", 1) ?? [];
+
+  assert.match(mainProcessBuild ?? "", /esbuild desktop\/main\.ts/);
+  assert.match(mainProcessBuild ?? "", /--format=esm/);
+  assert.match(mainProcessBuild ?? "", /--external:proper-lockfile/);
 });
