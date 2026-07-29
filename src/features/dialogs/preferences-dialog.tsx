@@ -192,17 +192,19 @@ export function PreferencesDialog({
         >
           ← Back to threads
         </button>
-        {SECTIONS.map((item) => (
-          <button
-            type="button"
-            key={item}
-            className={`snav-i ${section === item ? "on" : ""}`}
-            aria-current={section === item ? "true" : undefined}
-            onClick={() => setSection(item)}
-          >
-            {item === "Archived" ? "Archived threads" : item}
-          </button>
-        ))}
+        <div className="snav-sections">
+          {SECTIONS.map((item) => (
+            <button
+              type="button"
+              key={item}
+              className={`snav-i ${section === item ? "on" : ""}`}
+              aria-current={section === item ? "true" : undefined}
+              onClick={() => setSection(item)}
+            >
+              {item === "Archived" ? "Archived threads" : item}
+            </button>
+          ))}
+        </div>
       </nav>
       <div className="sbody">
         <div className="sw">

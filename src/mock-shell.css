@@ -762,6 +762,7 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   display: flex !important;
   flex-direction: column !important;
 }
+.snav-sections { display: contents; }
 .sback {
   display: flex !important;
   align-items: center !important;
@@ -908,10 +909,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     flex-direction: row !important;
     align-items: center !important;
     gap: 2px !important;
-    overflow-x: auto !important;
+    overflow: hidden !important;
     padding: 8px !important;
     border-right: 0 !important;
     border-bottom: 1px solid var(--border) !important;
+  }
+  .snav-sections {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    align-items: center;
+    gap: 2px;
+    overflow-x: auto;
   }
   .sback {
     flex: 0 0 auto !important;

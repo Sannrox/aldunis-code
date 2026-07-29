@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   preferenceSectionHasEditableFields,
   preferencesHaveUnsavedChanges,
+  PreferencesDialog,
   ProviderSettingsLinks,
 } from "./preferences-dialog";
 import { DEFAULT_PREFERENCES } from "../../preferences";
@@ -20,6 +21,26 @@ test("preferences dialog wires provider recovery destinations", () => {
   assert.match(html, /Manage provider profiles/);
   assert.match(html, /Manage provider adapters/);
   assert.match(html, /without leaving this recovery path/);
+});
+
+test("preferences dialog keeps its exit separate from scrollable sections", () => {
+  const html = renderToStaticMarkup(
+    <PreferencesDialog
+      open
+      preferences={DEFAULT_PREFERENCES}
+      recovered={false}
+      onClose={() => undefined}
+      onSave={async () => undefined}
+      onOpenProviderSettings={() => undefined}
+      onOpenAdapterSettings={() => undefined}
+    />,
+  );
+
+  assert.match(
+    html,
+    /class="sback"[^>]*>← Back to threads<\/button><div class="snav-sections">/,
+  );
+  assert.match(html, /class="snav-i on" aria-current="true">General/);
 });
 
 test("informational settings sections do not imply unsaved changes", () => {

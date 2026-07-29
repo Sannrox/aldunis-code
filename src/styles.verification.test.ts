@@ -204,7 +204,11 @@ test("preferences collapse to a scrollable single-column layout on narrow viewpo
   );
   assert.match(
     shell,
-    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.snav\s*\{[^}]*flex-direction:\s*row\s*!important[^}]*overflow-x:\s*auto\s*!important/s,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.snav\s*\{[^}]*flex-direction:\s*row\s*!important[^}]*overflow:\s*hidden\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.snav-sections\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/s,
   );
   assert.match(
     shell,
