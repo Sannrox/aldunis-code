@@ -57,6 +57,21 @@ export function automationThreadLabels(
   return labels;
 }
 
+export function formatAutomationInterval(seconds: number): string {
+  const units = [
+    { seconds: 86_400, label: "day" },
+    { seconds: 3_600, label: "hour" },
+    { seconds: 60, label: "minute" },
+  ];
+  for (const unit of units) {
+    if (seconds >= unit.seconds && seconds % unit.seconds === 0) {
+      const count = seconds / unit.seconds;
+      return `every ${count} ${unit.label}${count === 1 ? "" : "s"}`;
+    }
+  }
+  return `every ${seconds} second${seconds === 1 ? "" : "s"}`;
+}
+
 export function AutomationsDialog({
   open,
   threads,
@@ -297,7 +312,7 @@ export function AutomationsDialog({
             </div>
             <div className="muted">
               {item.schedule.kind === "interval"
-                ? `every ${item.schedule.seconds}s`
+                ? formatAutomationInterval(item.schedule.seconds)
                 : `cron ${item.schedule.expression}`}
               {" · "}
               last: {item.lastStatus ?? "seed pending"}
