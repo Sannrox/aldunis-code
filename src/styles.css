@@ -663,6 +663,22 @@ select.ui-input {
 .delete-conversation-dialog footer {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px;
 }
+.release-worktree-dialog {
+  display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; padding: 16px;
+}
+.release-worktree-dialog p { margin: 0; font-size: 12px; line-height: 1.5; }
+.release-worktree-context { display: grid; gap: 3px; min-width: 0; }
+.release-worktree-context strong { overflow-wrap: anywhere; font-size: 13px; }
+.release-worktree-context span { color: var(--muted-foreground); }
+.release-worktree-dialog > code {
+  overflow: hidden; padding: 8px 10px; border-radius: 6px; background: var(--muted);
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.release-worktree-impact { display: grid; gap: 8px; margin: 0; }
+.release-worktree-impact div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; }
+.release-worktree-impact dt { color: var(--muted-foreground); font: 11px var(--font-mono); text-transform: uppercase; }
+.release-worktree-impact dd { margin: 0; font-size: 12px; }
+.release-worktree-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .quick-search {
   display: flex; align-items: center; gap: 8px; width: 100%;
   padding: 10px 16px; border: 0; border-bottom: 1px solid var(--border);

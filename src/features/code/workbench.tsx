@@ -15,6 +15,7 @@ import {
   DeleteConversationDialog,
   type ConversationDeletionPreview,
 } from "../dialogs/delete-conversation-dialog";
+import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -85,6 +86,7 @@ export function CodeWorkbench({
     conversation: ConversationSummary;
     preview: ConversationDeletionPreview;
   } | null>(null);
+  const [releaseTarget, setReleaseTarget] = useState<ConversationSummary | null>(null);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
@@ -93,6 +95,7 @@ export function CodeWorkbench({
   const [splitPercent, setSplitPercent] = useState(50);
   const renameReturnFocusReference = useRef<HTMLElement | null>(null);
   const deleteReturnFocusReference = useRef<HTMLElement | null>(null);
+  const releaseReturnFocusReference = useRef<HTMLElement | null>(null);
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
     () => (repository ? "loading" : "idle"),
   );
@@ -497,14 +500,9 @@ export function CodeWorkbench({
             ));
         }}
         onReleaseWorktree={(conversation) => {
-          const releaseLabel = conversation.provider
-            ? `${conversation.title} · ${providerListLabel(conversation.provider)}`
-            : conversation.title;
-          if (!window.confirm(`Release managed worktree for "${releaseLabel}"? The conversation is kept.`)) return;
-          void postLifecycle("/api/state/conversations/release-worktree", { threadId: conversation.id, confirm: true })
-            .catch((error: unknown) => setLifecycleError(
-              error instanceof Error ? error.message : "Worktree release failed.",
-            ));
+          const active = document.activeElement;
+          releaseReturnFocusReference.current = active instanceof HTMLElement ? active : null;
+          setReleaseTarget(conversation);
         }}
         worktreeLimit={worktreeLimit}
         managedWorktreeCount={managedWorktreeCount}
@@ -691,6 +689,25 @@ export function CodeWorkbench({
               .catch(() => setLifecycleError(
                 "Conversation deleted, but the conversation list could not be refreshed.",
               ));
+          }}
+        />
+      )}
+      {releaseTarget && (
+        <ReleaseWorktreeDialog
+          title={releaseTarget.title}
+          provider={releaseTarget.provider ? providerListLabel(releaseTarget.provider) : "Unknown provider"}
+          worktree={releaseTarget.worktree}
+          onClose={() => {
+            setReleaseTarget(null);
+            const returnFocus = releaseReturnFocusReference.current;
+            releaseReturnFocusReference.current = null;
+            window.requestAnimationFrame(() => window.requestAnimationFrame(() => returnFocus?.focus()));
+          }}
+          onConfirm={async () => {
+            await postLifecycle("/api/state/conversations/release-worktree", {
+              threadId: releaseTarget.id,
+              confirm: true,
+            });
           }}
         />
       )}
