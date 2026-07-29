@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
@@ -43,6 +43,7 @@ import {
   stepPromptHistoryUp,
   type PromptHistoryBrowse,
 } from "../../lib/composer-prompt-history";
+import { syncComposerHeight } from "../../lib/composer-height";
 import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
@@ -124,6 +125,7 @@ export function Conversation({
   onOpenProfiles: (provider?: ProviderId) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
   const [archivedTurns, setArchivedTurns] = useState<Array<{
     message: { text: string; mode: InteractionMode; createdAt?: string };
@@ -153,6 +155,21 @@ export function Conversation({
   const [folderPins, setFolderPins] = useState<string[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
   const [draftContextReceipt, setDraftContextReceipt] = useState<ContextReceipt | null>(null);
+  useLayoutEffect(() => {
+    if (composerRef.current) syncComposerHeight(composerRef.current);
+  }, [draft]);
+  useLayoutEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    let width = composer.clientWidth;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      syncComposerHeight(composer);
+    });
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, []);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
   const contextPins = useMemo<ContextPin[]>(() => [
@@ -2102,6 +2119,7 @@ export function Conversation({
             </div>
           )}
           <textarea
+            ref={composerRef}
             className="composer-input"
             value={draft}
             spellCheck
