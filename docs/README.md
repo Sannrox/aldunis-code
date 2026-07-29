@@ -26,6 +26,7 @@ want to change it.
 | [work-lifecycle.md](work-lifecycle.md) | Issues, PRs, review, decisions |
 | [design-system.md](design-system.md) | UI tokens and patterns |
 | [design/README.md](design/README.md) | Design artifacts and evidence |
+| [research/363-workspace-panel-selector.md](research/363-workspace-panel-selector.md) | Files, Preview, and Changes navigation decision |
 | [research/364-provider-management-entry.md](research/364-provider-management-entry.md) | Provider administration entry-point decision |
 | [decisions/README.md](decisions/README.md) | Accepted design decisions (ADRs) |
 
