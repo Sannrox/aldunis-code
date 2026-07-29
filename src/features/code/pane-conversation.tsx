@@ -25,7 +25,7 @@ export function PaneConversation({
   active: boolean;
   profiles: ClaudeProfile[];
   onOpenRepository: () => void;
-  onOpenProfiles: () => void;
+  onOpenProfiles: (provider?: ProviderId) => void;
   onOpenBeside: () => void;
   showOpenBeside?: boolean;
   onClosePane?: () => void;
@@ -95,5 +95,4 @@ export function PaneConversation({
     />
   );
 }
-
 

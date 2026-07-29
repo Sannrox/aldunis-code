@@ -22,6 +22,7 @@ function paneConversationLabel(
   return `${title} · ${providerListLabel(conversation.provider)}`;
 }
 
+
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
 export function CodeWorkbench({
@@ -52,7 +53,7 @@ export function CodeWorkbench({
   /** Activates a registered project by id — no directory tree. */
   onSelectProject: (projectId: string) => void;
   profiles: ClaudeProfile[];
-  onOpenProfiles: () => void;
+  onOpenProfiles: (provider?: ProviderId) => void;
   onOpenPalette: () => void;
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
@@ -648,4 +649,3 @@ export function CodeWorkbench({
     </>
   );
 }
-

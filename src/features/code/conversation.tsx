@@ -116,7 +116,7 @@ export function Conversation({
   onBrowseFiles: () => void;
   onHideFiles: () => void;
   profiles: ClaudeProfile[];
-  onOpenProfiles: () => void;
+  onOpenProfiles: (provider?: ProviderId) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
@@ -1461,7 +1461,7 @@ export function Conversation({
           title: `${providerName} is not ready`,
           detail: providerReadinessMessage || `Finish setup for ${providerName}, then return here.`,
           action: provider === "claude-code"
-            ? <Button variant="primary" size="lg" onClick={onOpenProfiles}>Configure Claude</Button>
+            ? <Button variant="primary" size="lg" onClick={() => onOpenProfiles(provider)}>Configure Claude</Button>
             : null,
         }
       : {
@@ -1936,7 +1936,7 @@ export function Conversation({
                       type="button"
                       size="sm"
                       variant="secondary"
-                      onClick={onOpenProfiles}
+                      onClick={() => onOpenProfiles(provider)}
                     >
                       Open provider settings
                     </Button>
@@ -2223,7 +2223,7 @@ export function Conversation({
                   // Alt/Option-click always opens provider profile admin.
                   if (event.altKey || !canSwitchProvider) {
                     closeComposerMenus();
-                    onOpenProfiles();
+                    onOpenProfiles(provider);
                     return;
                   }
                   setModelMenuOpen(false);
@@ -2303,7 +2303,7 @@ export function Conversation({
                       event.preventDefault();
                       event.stopPropagation();
                       setProviderMenuOpen(false);
-                      onOpenProfiles();
+                      onOpenProfiles(provider);
                     }}
                   >
                     <span className="n">Provider profiles…</span>
