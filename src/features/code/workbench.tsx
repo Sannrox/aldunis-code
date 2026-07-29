@@ -11,6 +11,10 @@ import { providerListLabel } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
+import {
+  DeleteConversationDialog,
+  type ConversationDeletionPreview,
+} from "../dialogs/delete-conversation-dialog";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -77,6 +81,10 @@ export function CodeWorkbench({
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    conversation: ConversationSummary;
+    preview: ConversationDeletionPreview;
+  } | null>(null);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
@@ -84,6 +92,7 @@ export function CodeWorkbench({
   const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
   const [splitPercent, setSplitPercent] = useState(50);
   const renameReturnFocusReference = useRef<HTMLElement | null>(null);
+  const deleteReturnFocusReference = useRef<HTMLElement | null>(null);
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
     () => (repository ? "loading" : "idle"),
   );
@@ -257,6 +266,10 @@ export function CodeWorkbench({
           if (secondaryId === conversation.id) setSecondaryId(null);
         }
       } else {
+        const active = document.activeElement;
+        deleteReturnFocusReference.current = active instanceof HTMLElement
+          ? active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null
+          : null;
         const previewResponse = await fetch("/api/state/conversations/delete/preview", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -268,23 +281,7 @@ export function CodeWorkbench({
           error?: string;
         };
         if (!previewResponse.ok) throw new Error(preview.error ?? "Deletion preview failed.");
-        const affected = Object.entries(preview.affectedRecords ?? {})
-          .filter(([, count]) => count > 0)
-          .map(([name, count]) => `${count} ${name}`)
-          .join(", ");
-        const deleteLabel = conversation.provider
-          ? `${conversation.title} · ${providerListLabel(conversation.provider)}`
-          : conversation.title;
-        const confirmed = window.confirm(
-          `Delete "${deleteLabel}"?\n\nLocal data removed: ${affected}.\n\nNot removed: ${(preview.excluded ?? []).join(", ")}.\n\nThis cannot be undone.`,
-        );
-        if (!confirmed) return;
-        await postLifecycle("/api/state/conversations/delete", {
-          threadId: conversation.id,
-          confirm: true,
-        });
-        if (primaryId === conversation.id) setPrimaryId(null);
-        if (secondaryId === conversation.id) setSecondaryId(null);
+        setDeleteTarget({ conversation, preview });
       }
     } catch (error) {
       setLifecycleError(error instanceof Error ? error.message : "Conversation lifecycle action failed.");
@@ -662,6 +659,38 @@ export function CodeWorkbench({
               threadId: renameTarget.id,
               title,
             });
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteConversationDialog
+          conversation={deleteTarget.conversation}
+          preview={deleteTarget.preview}
+          onClose={() => {
+            setDeleteTarget(null);
+            const returnFocus = deleteReturnFocusReference.current;
+            deleteReturnFocusReference.current = null;
+            window.requestAnimationFrame(() => {
+              window.requestAnimationFrame(() => returnFocus?.focus());
+            });
+          }}
+          onDelete={async () => {
+            const conversation = deleteTarget.conversation;
+            const response = await fetch("/api/state/conversations/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ threadId: conversation.id, confirm: true }),
+            });
+            const result = await response.json() as { error?: string };
+            if (!response.ok) throw new Error(result.error ?? "Conversation deletion failed.");
+            if (primaryId === conversation.id) setPrimaryId(null);
+            if (secondaryId === conversation.id) setSecondaryId(null);
+            setConversations((current) => current.filter((item) => item.id !== conversation.id));
+            void loadConversationList(null, { fresh: true })
+              .then(setConversations)
+              .catch(() => setLifecycleError(
+                "Conversation deleted, but the conversation list could not be refreshed.",
+              ));
           }}
         />
       )}
