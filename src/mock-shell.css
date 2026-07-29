@@ -866,6 +866,21 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   }
 }
 
+/* At the supported 1440px default, two conversation panes remain useful until
+   either one opens its review dock. The extra internal split otherwise leaves
+   both the conversation and diff at roughly 280px. Show the active pane while
+   review is open; both conversations remain mounted and selectable above it. */
+@media (min-width: 1101px) and (max-width: 1440px) {
+  .conversation-workspace:has(.review-dock) .split-workspace.split {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .conversation-workspace:has(.review-dock)[data-active-pane="primary"] .split-workspace.split > .secondary-pane,
+  .conversation-workspace:has(.review-dock)[data-active-pane="secondary"] .split-workspace.split > .primary-pane,
+  .conversation-workspace:has(.review-dock) .split-workspace.split > .split-divider {
+    display: none !important;
+  }
+}
+
 /* split layout for review */
 .split {
   flex: 1 !important; display: flex !important; min-height: 0 !important;
