@@ -851,6 +851,21 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   color: var(--foreground);
 }
 
+/* The 920px desktop minimum leaves ~648px beside the product sidebar. Two
+   conversation columns split that again, so an open review dock is forced
+   below a readable width. Keep both conversations mounted, but use the
+   existing pane switcher to show the active one at constrained desktop widths. */
+@media (max-width: 1100px) {
+  .split-workspace.split {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .conversation-workspace[data-active-pane="primary"] .split-workspace.split > .secondary-pane,
+  .conversation-workspace[data-active-pane="secondary"] .split-workspace.split > .primary-pane,
+  .split-workspace.split > .split-divider {
+    display: none !important;
+  }
+}
+
 /* split layout for review */
 .split {
   flex: 1 !important; display: flex !important; min-height: 0 !important;
