@@ -641,7 +641,9 @@ select.ui-input {
   min-height: 44px;
   border-radius: 8px; background: transparent; text-align: left; color: var(--foreground);
 }
-.quick-results > button:hover, .quick-results > button:focus-visible { background: var(--accent); }
+.quick-results > button:hover,
+.quick-results > button:focus-visible,
+.quick-results > button.active { background: var(--accent); }
 .quick-results strong { display: block; font-size: 13.5px; font-weight: 500; }
 .quick-results small, .quick-results > p { display: block; color: var(--muted-foreground); font-size: 12px; }
 
@@ -1908,4 +1910,3 @@ select.ui-input {
 [data-motion="reduce"] *, [data-motion="reduce"] *::before, [data-motion="reduce"] *::after {
   scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important;
 }
-
