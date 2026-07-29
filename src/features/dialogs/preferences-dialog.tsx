@@ -32,31 +32,26 @@ export function preferencesHaveUnsavedChanges(
 }
 
 export function ProviderSettingsLinks({
-  onOpenProviderSettings,
-  onOpenAdapterSettings,
+  onOpenProviderManagement,
   disabled = false,
 }: {
-  onOpenProviderSettings: () => void;
-  onOpenAdapterSettings: () => void;
+  onOpenProviderManagement: () => void;
   disabled?: boolean;
 }) {
   return (
     <div className="provider-settings-links">
       <p className="preference-note">
-        Provider profiles and declarative adapters stay in their dedicated dialogs.
-        Open the setup surface you need without leaving this recovery path.
+        Profiles, adapter package trust, and readiness diagnostics share one navigation shell.
+        Their credentials, approvals, and mutation APIs remain separate.
       </p>
       <div>
         <Button
           type="button"
           variant="primary"
-          onClick={onOpenProviderSettings}
+          onClick={onOpenProviderManagement}
           disabled={disabled}
         >
-          Manage provider profiles
-        </Button>
-        <Button type="button" onClick={onOpenAdapterSettings} disabled={disabled}>
-          Manage provider adapters
+          Open provider management
         </Button>
       </div>
       {disabled && (
@@ -87,16 +82,14 @@ export function PreferencesDialog({
   recovered,
   onClose,
   onSave,
-  onOpenProviderSettings,
-  onOpenAdapterSettings,
+  onOpenProviderManagement,
 }: {
   open: boolean;
   preferences: Preferences;
   recovered: boolean;
   onClose: () => void;
   onSave: (preferences: Preferences) => Promise<void>;
-  onOpenProviderSettings: () => void;
-  onOpenAdapterSettings: () => void;
+  onOpenProviderManagement: () => void;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [busy, setBusy] = useState(false);
@@ -321,13 +314,9 @@ export function PreferencesDialog({
             {section === "Providers" && (
               <ProviderSettingsLinks
                 disabled={draftDirty}
-                onOpenProviderSettings={() => {
+                onOpenProviderManagement={() => {
                   onClose();
-                  onOpenProviderSettings();
-                }}
-                onOpenAdapterSettings={() => {
-                  onClose();
-                  onOpenAdapterSettings();
+                  onOpenProviderManagement();
                 }}
               />
             )}

@@ -13,14 +13,13 @@ import { DEFAULT_PREFERENCES } from "../../preferences";
 test("preferences dialog wires provider recovery destinations", () => {
   const html = renderToStaticMarkup(
     <ProviderSettingsLinks
-      onOpenProviderSettings={() => undefined}
-      onOpenAdapterSettings={() => undefined}
+      onOpenProviderManagement={() => undefined}
     />,
   );
 
-  assert.match(html, /Manage provider profiles/);
-  assert.match(html, /Manage provider adapters/);
-  assert.match(html, /without leaving this recovery path/);
+  assert.match(html, /Open provider management/);
+  assert.match(html, /adapter package trust/);
+  assert.match(html, /mutation APIs remain separate/);
 });
 
 test("preferences dialog keeps its exit separate from scrollable sections", () => {
@@ -31,8 +30,7 @@ test("preferences dialog keeps its exit separate from scrollable sections", () =
       recovered={false}
       onClose={() => undefined}
       onSave={async () => undefined}
-      onOpenProviderSettings={() => undefined}
-      onOpenAdapterSettings={() => undefined}
+      onOpenProviderManagement={() => undefined}
     />,
   );
 
@@ -67,8 +65,7 @@ test("preference drafts expose unsaved changes before cross-dialog navigation", 
   const html = renderToStaticMarkup(
     <ProviderSettingsLinks
       disabled
-      onOpenProviderSettings={() => undefined}
-      onOpenAdapterSettings={() => undefined}
+      onOpenProviderManagement={() => undefined}
     />,
   );
   assert.match(html, /disabled/);

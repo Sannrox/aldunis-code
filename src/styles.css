@@ -333,7 +333,7 @@ select.ui-input {
   z-index: 40;
   background: var(--overlay-scrim, rgba(0, 0, 0, 0.55));
 }
-.ui-dialog, .quick-dialog, .repository-dialog, .profile-dialog {
+.ui-dialog, .quick-dialog, .repository-dialog, .profile-dialog, .provider-management-dialog {
   position: fixed;
   top: 50%;
   left: 50%;
@@ -417,6 +417,169 @@ select.ui-input {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+}
+.provider-management-dialog {
+  width: min(1120px, calc(100vw - 2rem));
+  height: min(780px, calc(100vh - 2rem));
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: var(--shadow-modal);
+}
+.provider-management-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.provider-management-header .eyebrow,
+.provider-diagnostics .eyebrow {
+  margin: 0 0 6px;
+  color: var(--muted-foreground);
+  font: 11px var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.provider-management-header h2,
+.provider-diagnostics h3 {
+  margin: 0;
+  color: var(--foreground);
+}
+.provider-management-header > div > p:last-child,
+.provider-diagnostics header > p:last-child {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.provider-management-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  min-height: 0;
+  height: calc(100% - 102px);
+}
+.provider-management-layout > nav {
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar);
+}
+.provider-management-layout > nav button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--muted-foreground);
+}
+.provider-management-layout > nav button:hover,
+.provider-management-layout > nav button:focus-visible,
+.provider-management-layout > nav button.active {
+  background: var(--sidebar-row-selected);
+  color: var(--foreground);
+}
+.provider-management-layout > nav strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+.provider-management-layout > nav small {
+  font-size: 11px;
+  line-height: 1.35;
+}
+.provider-management-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.provider-management-panel > .profile-dialog-body,
+.provider-management-panel > .adapter-settings {
+  height: 100%;
+}
+.provider-management-panel > .adapter-settings {
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+.provider-diagnostics {
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 22px 24px;
+}
+.provider-diagnostic-list {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0;
+}
+.provider-diagnostic-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.provider-diagnostic-list article > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.provider-diagnostic-list small {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-diagnostic-state {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--muted);
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.provider-diagnostic-state.ready { color: var(--success, #68b684); }
+.provider-diagnostic-state.attention { color: var(--destructive-foreground); }
+.provider-credential-note {
+  padding: 12px;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+@media (max-width: 760px) {
+  .provider-management-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .provider-management-layout > nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .provider-management-layout > nav button {
+    flex: 1 0 150px;
+  }
+  .provider-management-header > div > p:last-child,
+  .provider-management-layout > nav small {
+    display: none;
+  }
+  .provider-diagnostic-list article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .profile-dialog-body {
+    grid-template-columns: 160px minmax(0, 1fr);
+  }
 }
 .profile-dialog > header {
   display: flex;

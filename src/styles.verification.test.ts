@@ -249,6 +249,21 @@ test("preferences collapse to a scrollable single-column layout on narrow viewpo
   );
 });
 
+test("provider management keeps one bounded shell and stacks navigation narrowly", () => {
+  assert.match(
+    css,
+    /\.provider-management-dialog\s*\{[^}]*width:\s*min\(1120px[^}]*height:\s*min\(780px[^}]*overflow:\s*hidden/s,
+  );
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.provider-management-layout\s*\{[^}]*grid-template-columns:\s*1fr[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/s,
+  );
+  assert.match(
+    css,
+    /\.provider-management-layout\s*>\s*nav\s+button\s*\{[^}]*min-height:\s*56px/s,
+  );
+});
+
 test("annotation resolve and ui-button--xs meet min hit size", () => {
   assert.match(css, /\.ui-button--xs\s*\{[^}]*min-height:\s*28px/s);
   assert.match(css, /\.annotation-resolve\s*\{[^}]*min-height:\s*28px/s);
