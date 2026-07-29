@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   automationThreadBaseLabel,
   automationThreadLabels,
+  formatAutomationInterval,
   type AutomationThreadOption,
 } from "./automations-dialog";
 
@@ -28,4 +29,11 @@ test("automation choices label only exact remaining collisions", () => {
     ["thread-2", "Repeated prompt · aldunis-code · Codex · Task thread-2"],
     ["thread-3", "Unique prompt · aldunis-code · Codex"],
   ]);
+});
+
+test("automation interval summaries use the largest exact readable unit", () => {
+  assert.equal(formatAutomationInterval(60), "every 1 minute");
+  assert.equal(formatAutomationInterval(5_400), "every 90 minutes");
+  assert.equal(formatAutomationInterval(7_200), "every 2 hours");
+  assert.equal(formatAutomationInterval(172_800), "every 2 days");
 });
