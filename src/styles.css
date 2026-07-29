@@ -1098,6 +1098,9 @@ select.ui-input {
   display: flex; min-width: 0; flex-direction: column;
   background: var(--background); color: var(--foreground); border-left: 1px solid var(--border);
 }
+.preview-panel[hidden] {
+  display: none;
+}
 .file-browser-panel > header {
   display: flex;
   flex: 0 0 auto;
