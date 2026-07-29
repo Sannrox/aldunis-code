@@ -159,4 +159,3 @@ No further product decision is needed for the shell described here. A proposal
 to merge profile and adapter mutation APIs, weaken digest approval, store
 provider credentials, or administer adapters remotely would cross an existing
 trust boundary and requires a separate design decision.
-
