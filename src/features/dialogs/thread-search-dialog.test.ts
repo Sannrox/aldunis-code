@@ -5,7 +5,50 @@ import {
   clampThreadSearchIndex,
   nextThreadSearchIndex,
   threadSearchActiveDescendant,
+  threadSearchDetail,
 } from "./thread-search-dialog";
+import type { ThreadMetadata } from "../../types";
+
+const thread = {
+  id: "thread-1",
+  projectId: "project-1",
+  title: "Repeated prompt",
+  worktree: "/tmp/project",
+  updatedAt: "2026-07-29T16:21:34.000Z",
+  projectName: "aldunis-code",
+  provider: "codex-cli",
+  pinnedAt: null,
+  archivedAt: null,
+} satisfies ThreadMetadata;
+
+test("conversation search detail includes exact updated recency", () => {
+  assert.equal(
+    threadSearchDetail(thread, (date) => date.toISOString()),
+    "aldunis-code · Codex · Updated 2026-07-29T16:21:34.000Z · /tmp/project",
+  );
+});
+
+test("conversation search detail exposes pinned and archived lifecycle state", () => {
+  assert.match(
+    threadSearchDetail({ ...thread, pinnedAt: "2026-07-29T16:00:00.000Z" }, () => "now"),
+    /Codex · Pinned · Updated now/,
+  );
+  assert.match(
+    threadSearchDetail({
+      ...thread,
+      pinnedAt: "2026-07-29T16:00:00.000Z",
+      archivedAt: "2026-07-29T16:10:00.000Z",
+    }, () => "now"),
+    /Codex · Archived · Updated now/,
+  );
+});
+
+test("conversation search detail survives malformed persisted update times", () => {
+  assert.match(
+    threadSearchDetail({ ...thread, updatedAt: "not-a-date" }),
+    /Codex · Updated time unknown/,
+  );
+});
 
 test("conversation search cycles its active result in both directions", () => {
   assert.equal(nextThreadSearchIndex(0, 3, "next"), 1);

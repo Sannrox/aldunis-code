@@ -4,11 +4,30 @@ import { Icon } from "../../components/icon";
 import { providerListLabel } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
 
-function threadSearchDetail(thread: ThreadMetadata): string {
+const THREAD_SEARCH_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+
+export function threadSearchDetail(
+  thread: ThreadMetadata,
+  formatDate: (date: Date) => string = (date) => THREAD_SEARCH_DATE_FORMAT.format(date),
+): string {
   const provider = thread.provider
     ? providerListLabel(thread.provider)
     : null;
-  return [thread.projectName, provider, thread.worktree].filter(Boolean).join(" · ");
+  const state = thread.archivedAt
+    ? "Archived"
+    : thread.pinnedAt
+      ? "Pinned"
+      : null;
+  const updatedAt = new Date(thread.updatedAt);
+  const updated = Number.isFinite(updatedAt.getTime())
+    ? `Updated ${formatDate(updatedAt)}`
+    : "Updated time unknown";
+  return [thread.projectName, provider, state, updated, thread.worktree]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function nextThreadSearchIndex(
@@ -203,4 +222,3 @@ export function ThreadSearchDialog({
     </OverlayDialog>
   );
 }
-
