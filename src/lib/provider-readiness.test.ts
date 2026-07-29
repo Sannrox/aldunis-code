@@ -4,6 +4,8 @@ import {
   cycleProviderModel,
   cycleReasoningEffort,
   parseProviderFailure,
+  providerFailureNeedsConfiguration,
+  providerTextReportsAuthenticationFailure,
   prettifyModelId,
   providerAvatarInitials,
   providerChipName,
@@ -306,4 +308,33 @@ test("parseProviderFailure splits park summary and resume command", () => {
     'shikigami run --resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee --answer "..."',
   );
   assert.equal(parseProviderFailure("Codex CLI could not start.").kind, "generic");
+});
+
+test("provider failures distinguish configuration recovery from retryable failures", () => {
+  assert.equal(
+    providerFailureNeedsConfiguration("Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+    true,
+  );
+  assert.equal(providerFailureNeedsConfiguration("Sign in to Codex CLI (codex login)."), true);
+  assert.equal(providerFailureNeedsConfiguration("Provider process exited unexpectedly."), false);
+  assert.equal(providerFailureNeedsConfiguration("Request timed out."), false);
+  assert.equal(providerFailureNeedsConfiguration("API key validation service timed out."), false);
+  assert.equal(providerFailureNeedsConfiguration("Request failed while checking credentials."), false);
+});
+
+test("assistant text only triggers recovery for explicit authentication errors", () => {
+  assert.equal(
+    providerTextReportsAuthenticationFailure("Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+    true,
+  );
+  assert.equal(providerTextReportsAuthenticationFailure("Authentication failed: credentials expired."), true);
+  assert.equal(
+    providerTextReportsAuthenticationFailure("Connecting…\nAuthentication failed: credentials expired."),
+    true,
+  );
+  assert.equal(
+    providerTextReportsAuthenticationFailure("I checked the API key configuration before the process exited."),
+    false,
+  );
+  assert.equal(providerTextReportsAuthenticationFailure("Request timed out after checking authentication."), false);
 });

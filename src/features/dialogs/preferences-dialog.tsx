@@ -13,7 +13,60 @@ const SECTIONS = [
   "Archived",
 ] as const;
 
-type Section = (typeof SECTIONS)[number];
+export type Section = (typeof SECTIONS)[number];
+
+export function preferenceSectionHasEditableFields(section: Section): boolean {
+  return section === "General" || section === "Worktrees" || section === "Keybindings";
+}
+
+export function preferencesHaveUnsavedChanges(
+  draft: Preferences,
+  saved: Preferences,
+): boolean {
+  return draft.theme !== saved.theme
+    || draft.density !== saved.density
+    || draft.zoom !== saved.zoom
+    || draft.reducedMotion !== saved.reducedMotion
+    || draft.commandPaletteShortcut !== saved.commandPaletteShortcut
+    || draft.managedWorktreeLimit !== saved.managedWorktreeLimit;
+}
+
+export function ProviderSettingsLinks({
+  onOpenProviderSettings,
+  onOpenAdapterSettings,
+  disabled = false,
+}: {
+  onOpenProviderSettings: () => void;
+  onOpenAdapterSettings: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="provider-settings-links">
+      <p className="preference-note">
+        Provider profiles and declarative adapters stay in their dedicated dialogs.
+        Open the setup surface you need without leaving this recovery path.
+      </p>
+      <div>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={onOpenProviderSettings}
+          disabled={disabled}
+        >
+          Manage provider profiles
+        </Button>
+        <Button type="button" onClick={onOpenAdapterSettings} disabled={disabled}>
+          Manage provider adapters
+        </Button>
+      </div>
+      {disabled && (
+        <p className="preference-note" role="status">
+          Save or cancel your preference changes before opening provider management.
+        </p>
+      )}
+    </div>
+  );
+}
 
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
@@ -34,12 +87,16 @@ export function PreferencesDialog({
   recovered,
   onClose,
   onSave,
+  onOpenProviderSettings,
+  onOpenAdapterSettings,
 }: {
   open: boolean;
   preferences: Preferences;
   recovered: boolean;
   onClose: () => void;
   onSave: (preferences: Preferences) => Promise<void>;
+  onOpenProviderSettings: () => void;
+  onOpenAdapterSettings: () => void;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [busy, setBusy] = useState(false);
@@ -116,6 +173,7 @@ export function PreferencesDialog({
   if (!open) return null;
   const update = <K extends keyof Preferences>(key: K, value: Preferences[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
+  const draftDirty = preferencesHaveUnsavedChanges(draft, preferences);
 
   return (
     <div
@@ -259,10 +317,17 @@ export function PreferencesDialog({
               </>
             )}
             {section === "Providers" && (
-              <p className="preference-note">
-                Provider profiles and declarative adapters stay in their dedicated dialogs.
-                Use Settings only for installation-wide posture — not mid-turn provider switching.
-              </p>
+              <ProviderSettingsLinks
+                disabled={draftDirty}
+                onOpenProviderSettings={() => {
+                  onClose();
+                  onOpenProviderSettings();
+                }}
+                onOpenAdapterSettings={() => {
+                  onClose();
+                  onOpenAdapterSettings();
+                }}
+              />
             )}
             {section === "Worktrees" && (
               <>
@@ -358,17 +423,19 @@ export function PreferencesDialog({
                 filter. Settled is a separate shelf state and does not archive.
               </p>
             )}
-            <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>
-              <Button type="button" onClick={onClose} aria-label="Cancel settings changes">Cancel</Button>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={busy}
-                aria-label={busy ? "Saving settings" : "Save settings"}
-              >
-                {busy ? "Saving…" : "Save settings"}
-              </Button>
-            </footer>
+            {(preferenceSectionHasEditableFields(section) || draftDirty) && (
+              <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>
+                <Button type="button" onClick={onClose} aria-label="Cancel settings changes">Cancel</Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={busy}
+                  aria-label={busy ? "Saving settings" : "Save settings"}
+                >
+                  {busy ? "Saving…" : "Save settings"}
+                </Button>
+              </footer>
+            )}
           </form>
         </div>
       </div>
