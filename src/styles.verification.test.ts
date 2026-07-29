@@ -157,6 +157,13 @@ test("command palette search field has a usable min-height", () => {
   assert.match(css, /\.quick-search\s*>\s*input\s*\{[^}]*min-height:\s*32px/s);
 });
 
+test("keyboard-active quick results remain visibly highlighted", () => {
+  assert.match(
+    css,
+    /\.quick-results\s*>\s*button:hover,[\s\S]*?\.quick-results\s*>\s*button:focus-visible,[\s\S]*?\.quick-results\s*>\s*button\.active\s*\{[^}]*background:\s*var\(--accent\)/s,
+  );
+});
+
 test("bare .ui-input (including native selects) defaults to md height", () => {
   // Automations dialog used <select class="ui-input"> without --md; base rule
   // must supply min-height so selects are not ~21px tall.

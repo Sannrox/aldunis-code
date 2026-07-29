@@ -11,6 +11,37 @@ function threadSearchDetail(thread: ThreadMetadata): string {
   return [thread.projectName, provider, thread.worktree].filter(Boolean).join(" · ");
 }
 
+export function nextThreadSearchIndex(
+  current: number,
+  resultCount: number,
+  direction: "next" | "previous",
+): number {
+  if (resultCount <= 0) return 0;
+  return direction === "next"
+    ? (current + 1) % resultCount
+    : (current - 1 + resultCount) % resultCount;
+}
+
+export function clampThreadSearchIndex(current: number, resultCount: number): number {
+  if (resultCount <= 0) return 0;
+  return Math.min(current, resultCount - 1);
+}
+
+export function threadSearchActiveDescendant(
+  activeIndex: number,
+  resultCount: number,
+): string | undefined {
+  return resultCount > 0 ? `thread-search-result-${activeIndex}` : undefined;
+}
+
+export function activeThreadSearchResult(
+  results: ThreadMetadata[],
+  activeIndex: number,
+  loading: boolean,
+): ThreadMetadata | undefined {
+  return loading ? undefined : results[activeIndex];
+}
+
 export function ThreadSearchDialog({
   open,
   threads,
@@ -26,21 +57,33 @@ export function ThreadSearchDialog({
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState<"exclude" | "include" | "only">("exclude");
   const [results, setResults] = useState<ThreadMetadata[]>(threads);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
+    setLoading(true);
     void fetch("/api/state/search", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query, archived }),
       signal: controller.signal,
-    }).then((response) => response.json()).then((body: { threads?: ThreadMetadata[] }) => setResults(body.threads ?? []));
+    }).then((response) => response.json()).then((body: { threads?: ThreadMetadata[] }) => {
+      setResults(body.threads ?? []);
+      setLoading(false);
+    }).catch(() => {
+      if (controller.signal.aborted) return;
+      setResults([]);
+      setLoading(false);
+    });
     return () => controller.abort();
   }, [archived, open, query]);
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setActiveIndex(0);
     const focusInput = () => inputRef.current?.focus();
     // Dialog focus trap may land on Close; re-claim the search field (same as command palette).
     focusInput();
@@ -51,7 +94,39 @@ export function ThreadSearchDialog({
       window.clearTimeout(timer);
     };
   }, [open]);
+  useEffect(() => {
+    setActiveIndex((current) => clampThreadSearchIndex(current, results.length));
+  }, [results.length]);
+  useEffect(() => {
+    if (loading) return;
+    const activeId = threadSearchActiveDescendant(activeIndex, results.length);
+    if (!activeId) return;
+    resultsRef.current
+      ?.querySelector<HTMLElement>(`#${activeId}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, loading, results.length]);
   if (!open) return null;
+  const selectResult = (index: number) => {
+    const thread = activeThreadSearchResult(results, index, loading);
+    if (!thread) return;
+    onSelect(thread.id);
+    onClose();
+  };
+  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((current) => nextThreadSearchIndex(
+        current,
+        results.length,
+        event.key === "ArrowDown" ? "next" : "previous",
+      ));
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      selectResult(activeIndex);
+    }
+  };
   return (
     <OverlayDialog title="Search local conversations" onClose={onClose}>
       <label className="quick-search">
@@ -62,9 +137,18 @@ export function ThreadSearchDialog({
           name="thread-search-query"
           data-dialog-initial-focus
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setResults([]);
+            setActiveIndex(0);
+          }}
+          onKeyDown={onSearchKeyDown}
           placeholder="Title, project, or worktree"
           aria-label="Search conversations by title, project, or worktree"
+          aria-controls="thread-search-results"
+          aria-activedescendant={
+            loading ? undefined : threadSearchActiveDescendant(activeIndex, results.length)
+          }
         />
       </label>
       <label className="search-scope">
@@ -73,7 +157,11 @@ export function ThreadSearchDialog({
           id="thread-search-archived"
           name="thread-search-archived"
           value={archived}
-          onChange={(event) => setArchived(event.target.value as typeof archived)}
+          onChange={(event) => {
+            setArchived(event.target.value as typeof archived);
+            setResults([]);
+            setActiveIndex(0);
+          }}
         >
           <option value="exclude">Exclude</option>
           <option value="include">Include</option>
@@ -81,30 +169,38 @@ export function ThreadSearchDialog({
         </select>
       </label>
       <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
-      <div className="quick-results" role="listbox" aria-label="Matching conversations">
-        {results.map((thread) => {
+      <div
+        ref={resultsRef}
+        className="quick-results"
+        id="thread-search-results"
+        role="listbox"
+        aria-label="Matching conversations"
+      >
+        {results.map((thread, index) => {
           const detail = threadSearchDetail(thread);
           return (
             <button
               type="button"
               role="option"
+              id={`thread-search-result-${index}`}
               key={thread.id}
+              tabIndex={-1}
+              aria-selected={index === activeIndex}
               aria-label={`${thread.title}: ${detail}`}
               title={`${thread.title} · ${detail}`}
-              onClick={() => {
-                onSelect(thread.id);
-                onClose();
-              }}
+              className={index === activeIndex ? "active" : undefined}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectResult(index)}
             >
               <strong title={thread.title}>{thread.title}</strong>
               <small title={detail}>{detail}</small>
             </button>
           );
         })}
-        {results.length === 0 && <p>No matching conversations.</p>}
+        {loading && <p role="status">Searching conversations…</p>}
+        {!loading && results.length === 0 && <p>No matching conversations.</p>}
       </div>
     </OverlayDialog>
   );
 }
-
 
