@@ -126,6 +126,18 @@ test("pane-switcher tabs have usable hit targets and active chrome", () => {
   assert.match(shell, /\.pane-switcher\s*>\s*button\s*\{[^}]*text-overflow:\s*ellipsis/s);
 });
 
+test("workspace panel selector groups status-bearing controls and compacts at narrow widths", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.workspace-panel-selector\s*\{[^}]*display:\s*flex[^}]*border:\s*1px solid var\(--border\)/s);
+  assert.match(shell, /\.workspace-panel-count\s*\{[^}]*min-width:\s*18px/s);
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.workspace-panel-label\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(css, /\.preview-panel\[hidden\]\s*\{[^}]*display:\s*none/s);
+});
+
 test("minimum desktop width shows one active conversation so review stays readable", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");

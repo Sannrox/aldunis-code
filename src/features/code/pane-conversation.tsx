@@ -1,5 +1,6 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
+import type { WorkspacePanel } from "../../lib/workspace-panel";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
 
@@ -37,8 +38,7 @@ export function PaneConversation({
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
   const [changesError, setChangesError] = useState<string | null>(null);
-  const [changesOpen, setChangesOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<WorkspacePanel>("none");
   const refreshChanges = async () => {
     if (!repository) {
       setChanges([]);
@@ -66,8 +66,18 @@ export function PaneConversation({
   useEffect(() => {
     void refreshChanges();
   }, [repository?.root, repository?.selectedWorktree, conversation?.id]);
-  useEffect(() => { if (showChangesSignal > 0) { setChangesOpen(true); void refreshChanges(); } }, [showChangesSignal]);
-  useEffect(() => { if (showFilesSignal > 0) setFilesOpen(true); }, [showFilesSignal]);
+  useEffect(() => {
+    if (showChangesSignal > 0) {
+      setActivePanel("changes");
+      void refreshChanges();
+    }
+  }, [showChangesSignal]);
+  useEffect(() => {
+    if (showFilesSignal > 0) setActivePanel("files");
+  }, [showFilesSignal]);
+  useEffect(() => {
+    if (!repository) setActivePanel("none");
+  }, [repository]);
   return (
     <Conversation
       repository={repository}
@@ -83,16 +93,11 @@ export function PaneConversation({
       changes={changes}
       changesLoading={changesLoading}
       changesError={changesError}
-      changesOpen={changesOpen}
-      onShowChanges={() => { setChangesOpen(true); void refreshChanges(); }}
-      onHideChanges={() => setChangesOpen(false)}
+      activePanel={activePanel}
+      onPanelChange={setActivePanel}
       onRefreshChanges={refreshChanges}
-      filesOpen={filesOpen}
-      onBrowseFiles={() => setFilesOpen(true)}
-      onHideFiles={() => setFilesOpen(false)}
       profiles={profiles}
       onOpenProfiles={onOpenProfiles}
     />
   );
 }
-

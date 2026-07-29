@@ -11,7 +11,10 @@ import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
 import { ChangesPanel } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
-import { PreviewPanel } from "../preview/preview-panel";
+import {
+  PreviewPanel,
+  type PreviewPanelStatus,
+} from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
@@ -61,6 +64,14 @@ import {
   PROVIDER_DISCOVERY_TIMEOUT_DETAIL,
 } from "../../lib/provider-discovery-cache";
 import { shortToolCallId } from "../../lib/tool-presentation";
+import {
+  WORKSPACE_PANEL_DESTINATIONS,
+  moveWorkspacePanelFocus,
+  toggleWorkspacePanel,
+  workspacePanelTabStop,
+  type WorkspacePanel,
+  type WorkspacePanelDestination,
+} from "../../lib/workspace-panel";
 import { presentAssistantTimeline } from "../../lib/conversation-timeline";
 import { latestPlanFromEvents } from "../../lib/provider-plan";
 import {
@@ -93,13 +104,9 @@ export function Conversation({
   changes,
   changesLoading,
   changesError,
-  changesOpen,
-  onShowChanges,
-  onHideChanges,
+  activePanel,
+  onPanelChange,
   onRefreshChanges,
-  filesOpen,
-  onBrowseFiles,
-  onHideFiles,
   profiles,
   onOpenProfiles,
 }: {
@@ -117,13 +124,9 @@ export function Conversation({
   changes: ChangedFile[];
   changesLoading: boolean;
   changesError: string | null;
-  changesOpen: boolean;
-  onShowChanges: () => void;
-  onHideChanges: () => void;
+  activePanel: WorkspacePanel;
+  onPanelChange: (panel: WorkspacePanel) => void;
   onRefreshChanges: () => void;
-  filesOpen: boolean;
-  onBrowseFiles: () => void;
-  onHideFiles: () => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: (provider?: ProviderId) => void;
 }) {
@@ -577,7 +580,71 @@ export function Conversation({
       setProfileId(defaultClaudeProfileId);
     }
   }, [claudeProfiles, defaultClaudeProfileId, profileId]);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMounted, setPreviewMounted] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<PreviewPanelStatus>({
+    state: "inactive",
+    error: null,
+  });
+  const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const availableWorkspacePanels = repository ? WORKSPACE_PANEL_DESTINATIONS : [];
+  const workspacePanelStop = workspacePanelTabStop(activePanel, availableWorkspacePanels);
+  const workspacePanelTrigger = (destination: WorkspacePanelDestination) => (
+    destination === "files"
+      ? filesPanelTriggerRef.current
+      : destination === "preview"
+        ? previewPanelTriggerRef.current
+        : changesPanelTriggerRef.current
+  );
+  const updatePreviewStatus = useCallback((next: PreviewPanelStatus) => {
+    setPreviewStatus((current) => (
+      current.state === next.state && current.error === next.error ? current : next
+    ));
+  }, []);
+  const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
+    const next = toggleWorkspacePanel(activePanel, destination);
+    if (next === "preview") setPreviewMounted(true);
+    if (next === "changes" && activePanel !== "changes") onRefreshChanges();
+    onPanelChange(next);
+  };
+  const closeWorkspacePanel = (
+    destination: WorkspacePanelDestination,
+    restoreFocus = true,
+  ) => {
+    if (activePanel !== destination) return;
+    onPanelChange("none");
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => workspacePanelTrigger(destination)?.focus());
+    }
+  };
+  const moveWorkspacePanel = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    destination: WorkspacePanelDestination,
+  ) => {
+    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? "next"
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? "previous"
+        : event.key === "Home"
+          ? "first"
+          : event.key === "End"
+            ? "last"
+            : null;
+    if (!direction) return;
+    event.preventDefault();
+    const next = moveWorkspacePanelFocus(
+      destination,
+      direction,
+      availableWorkspacePanels,
+    );
+    if (next) workspacePanelTrigger(next)?.focus();
+  };
+  const previewIndicator = previewStatus.error
+    ? "error"
+    : ["approval_pending", "starting", "running", "stopping", "failed"].includes(previewStatus.state)
+      ? previewStatus.state.replace("_", " ")
+      : null;
   const [elementReferences, setElementReferences] = useState<ElementReference[]>([]);
   const [checkpoint, setCheckpoint] = useState<TurnCheckpoint | null>(null);
   const [rewindPreview, setRewindPreview] = useState<{
@@ -1664,85 +1731,87 @@ export function Conversation({
               Plan
             </button>
           )}
-          <button
-            type="button"
-            className={`btn btn-ghost btn-sm ${filesOpen ? "on" : ""}`}
-            onClick={() => {
-              // Grid control is the worktree file browser. Fall back to add-project
-              // only when nothing is open yet (first-run / empty workbench).
-              if (!repository) {
-                onOpenRepository();
-                return;
-              }
-              // Toggle browse; exclusive with preview overlay and the review dock
-              // (stacked dual-pane left browse + review fighting for ~100–200px).
-              if (filesOpen) onHideFiles();
-              else {
-                setPreviewOpen(false);
-                onHideChanges();
-                onBrowseFiles();
-              }
-            }}
-            title={repository ? "Browse worktree files" : "Open a project"}
-            aria-label={
-              repository
-                ? `Browse files, ${pane} pane`
-                : `Open project, ${pane} pane`
-            }
-            aria-pressed={repository ? filesOpen : undefined}
+          <div
+            className="workspace-panel-selector"
+            role="group"
+            aria-label={`Workspace panels, ${pane} pane`}
           >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
-            </svg>
-            {repository ? "Browse" : "Project"}
-          </button>
-          <span className="cdiv" aria-hidden="true" />
-          <button
-            type="button"
-            className={`btn btn-ghost btn-sm ${changesOpen ? "on" : ""}`}
-            onClick={() => {
-              // Toggle review; exclusive with browse/preview overlays so stacked
-              // dual-pane does not keep both a full-column overlay and the dock.
-              if (changesOpen) onHideChanges();
-              else {
-                onHideFiles();
-                setPreviewOpen(false);
-                onShowChanges();
-              }
-            }}
-            disabled={!repository}
-            title="Review panel"
-            aria-label={`${changes.length} changes, ${pane} pane`}
-            aria-pressed={changesOpen}
-          >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M15 3v18" />
-            </svg>
-            {changes.length} changes
-          </button>
-          <button
-            type="button"
-            className={`btn btn-ghost btn-sm ${previewOpen ? "on" : ""}`}
-            onClick={() => {
-              // Toggle preview; exclusive with browse overlay and review dock.
-              if (previewOpen) setPreviewOpen(false);
-              else {
-                onHideFiles();
-                onHideChanges();
-                setPreviewOpen(true);
-              }
-            }}
-            disabled={!repository}
-            title="Preview panel"
-            aria-label={`Preview, ${pane} pane`}
-            aria-pressed={previewOpen}
-          >
-            <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M3 15h18" />
-            </svg>
-          </button>
+            <span className="workspace-panel-label" aria-hidden="true">Workspace</span>
+            <button
+              ref={filesPanelTriggerRef}
+              type="button"
+              className={`btn btn-ghost btn-sm ${activePanel === "files" ? "on" : ""}`}
+              data-workspace-panel="files"
+              disabled={!repository}
+              tabIndex={workspacePanelStop === "files" ? 0 : -1}
+              title={repository ? "Browse worktree files" : "Open a repository to browse files"}
+              aria-label={repository ? `Files, ${pane} pane` : `Files unavailable, ${pane} pane: open a repository`}
+              aria-pressed={activePanel === "files"}
+              onKeyDown={(event) => moveWorkspacePanel(event, "files")}
+              onClick={() => activateWorkspacePanel("files")}
+            >
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
+              </svg>
+              Files
+            </button>
+            <button
+              ref={previewPanelTriggerRef}
+              type="button"
+              className={`btn btn-ghost btn-sm ${activePanel === "preview" ? "on" : ""}`}
+              data-workspace-panel="preview"
+              disabled={!repository}
+              tabIndex={workspacePanelStop === "preview" ? 0 : -1}
+              title={repository ? "Local web preview" : "Open a repository to use Preview"}
+              aria-label={[
+                repository ? "Preview" : "Preview unavailable: open a repository",
+                previewIndicator,
+                `${pane} pane`,
+              ].filter(Boolean).join(", ")}
+              aria-pressed={activePanel === "preview"}
+              onKeyDown={(event) => moveWorkspacePanel(event, "preview")}
+              onClick={() => activateWorkspacePanel("preview")}
+            >
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 15h18" />
+              </svg>
+              Preview
+              {previewIndicator && (
+                <span className={`workspace-panel-status ${previewStatus.error || previewStatus.state === "failed" ? "error" : ""}`}>
+                  {previewIndicator}
+                </span>
+              )}
+            </button>
+            <button
+              ref={changesPanelTriggerRef}
+              type="button"
+              className={`btn btn-ghost btn-sm ${activePanel === "changes" ? "on" : ""}`}
+              data-workspace-panel="changes"
+              disabled={!repository}
+              tabIndex={workspacePanelStop === "changes" ? 0 : -1}
+              title={repository ? "Review changed files" : "Open a repository to review changes"}
+              aria-label={[
+                repository ? `${changes.length} changes` : "Changes unavailable: open a repository",
+                changesLoading ? "loading" : null,
+                changesError ? "error" : null,
+                `${pane} pane`,
+              ].filter(Boolean).join(", ")}
+              aria-pressed={activePanel === "changes"}
+              onKeyDown={(event) => moveWorkspacePanel(event, "changes")}
+              onClick={() => activateWorkspacePanel("changes")}
+            >
+              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M15 3v18" />
+              </svg>
+              Changes
+              <span className={`workspace-panel-count ${changesError ? "error" : ""}`}>
+                {changesLoading ? "…" : changes.length}
+              </span>
+              {changesError && <span className="workspace-panel-status error">error</span>}
+            </button>
+          </div>
           {pane === "primary" && showOpenBeside && (
             <button
               type="button"
@@ -1775,7 +1844,7 @@ export function Conversation({
           )}
         </div>
       </div>
-      <div className={`split ${changesOpen ? "with-review" : ""}`}>
+      <div className={`split ${activePanel === "changes" ? "with-review" : ""}`}>
       <div className="conv">
       <div className="thread">
         <div className="wrap">
@@ -2561,17 +2630,20 @@ export function Conversation({
           </div>
         </div>
       </div>
-      {/* File browser / preview stay inside .conv so the review dock remains
-          visible and usable when both panels are open. */}
-      {previewOpen && repository && (
+      {/* File browser and preview stay inside .conv; the selector guarantees
+          only one workspace destination is visible at a time. */}
+      {repository && (previewMounted || activePanel === "preview") && (
         <PreviewPanel
+          key={`${repository.root}:${repository.selectedWorktree}`}
           repository={repository}
           pane={pane}
-          onClose={() => setPreviewOpen(false)}
+          active={activePanel === "preview"}
+          onClose={() => closeWorkspacePanel("preview")}
           onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
+          onStatusChange={updatePreviewStatus}
         />
       )}
-      {filesOpen && repository && (
+      {activePanel === "files" && repository && (
         <FileBrowserPanel
           repository={repository}
           pane={pane}
@@ -2583,11 +2655,11 @@ export function Conversation({
               setContextError(null);
             }
           }}
-          onClose={onHideFiles}
+          onClose={() => closeWorkspacePanel("files")}
         />
       )}
       </div>
-      {changesOpen && repository && (
+      {activePanel === "changes" && repository && (
         <aside className="rv review-dock" aria-label={`Review changes, ${pane} pane`}>
           <ChangesPanel
             repository={repository}
@@ -2596,11 +2668,11 @@ export function Conversation({
             files={changes}
             loading={changesLoading}
             error={changesError}
-            onClose={onHideChanges}
+            onClose={() => closeWorkspacePanel("changes")}
             onRefresh={onRefreshChanges}
             canSendRevision={historyRestored && !runActive && providerReady}
             onSendRevision={(prompt) => {
-              onHideChanges();
+              closeWorkspacePanel("changes", false);
               void send(prompt);
             }}
           />

@@ -1,19 +1,33 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
-import type { PreviewSnapshot, ElementReference, RepositoryMetadata } from "../../types";
+import type {
+  PreviewSnapshot,
+  PreviewState,
+  ElementReference,
+  RepositoryMetadata,
+} from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
+
+export interface PreviewPanelStatus {
+  state: PreviewState | "inactive";
+  error: string | null;
+}
 
 export function PreviewPanel({
   repository,
   pane = "primary",
+  active = true,
   onClose,
   onReference,
+  onStatusChange,
 }: {
   repository: RepositoryMetadata;
   /** Dual-pane scope for preview chrome labels. */
   pane?: "primary" | "secondary";
+  active?: boolean;
   onClose: () => void;
   onReference: (reference: ElementReference) => void;
+  onStatusChange?: (status: PreviewPanelStatus) => void;
 }) {
   const [origin, setOrigin] = useState("http://localhost:4173");
   const [preview, setPreview] = useState<PreviewSnapshot | null>(null);
@@ -160,6 +174,13 @@ export function PreviewPanel({
   };
   const running = preview?.state === "running";
   useEffect(() => {
+    onStatusChange?.({
+      state: preview?.state ?? "inactive",
+      error,
+    });
+  }, [error, onStatusChange, preview?.state]);
+  useEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
@@ -169,9 +190,13 @@ export function PreviewPanel({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  }, [active, onClose]);
   return (
-    <section className="preview-panel" aria-label={`Web preview, ${pane} pane`}>
+    <section
+      className="preview-panel"
+      aria-label={`Web preview, ${pane} pane`}
+      hidden={!active}
+    >
       <header>
         <div><p className="eyebrow">CONSTRAINED PREVIEW</p><h2>Local web application</h2></div>
         <div>
@@ -277,5 +302,4 @@ export function PreviewPanel({
     </section>
   );
 }
-
 
