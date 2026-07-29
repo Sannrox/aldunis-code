@@ -4,6 +4,7 @@ import {
   activeThreadSearchResult,
   clampThreadSearchIndex,
   nextThreadSearchIndex,
+  threadSearchCollisionLabels,
   threadSearchActiveDescendant,
   threadSearchDetail,
 } from "./thread-search-dialog";
@@ -47,6 +48,21 @@ test("conversation search detail survives malformed persisted update times", () 
   assert.match(
     threadSearchDetail({ ...thread, updatedAt: "not-a-date" }),
     /Codex · Updated time unknown/,
+  );
+});
+
+test("conversation search labels only exact title and detail collisions", () => {
+  const duplicate = { ...thread, id: "thread-2" };
+  const unique = { ...thread, id: "thread-3", title: "Another prompt" };
+  assert.deepEqual(
+    [...threadSearchCollisionLabels(
+      [thread, duplicate, unique],
+      () => "same detail",
+    )],
+    [
+      ["thread-1", "Match 1 of 2"],
+      ["thread-2", "Match 2 of 2"],
+    ],
   );
 });
 
