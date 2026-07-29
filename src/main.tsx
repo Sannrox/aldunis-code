@@ -4,7 +4,7 @@ import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Prefer
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import "./mock-shell.css";
-import type { ClaudeProfile, Product, RepositoryMetadata, ThreadMetadata } from "./types";
+import type { ClaudeProfile, Product, ProviderId, RepositoryMetadata, ThreadMetadata } from "./types";
 import { CodeWorkbench } from "./features/code/workbench";
 import { RepositoryDialog, type SavedProject } from "./features/dialogs/repository-dialog";
 import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
@@ -51,6 +51,7 @@ function App() {
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [profileDialog, setProfileDialog] = useState(false);
+  const [profileDialogProvider, setProfileDialogProvider] = useState<ProviderId | null>(null);
   const [adapterDialog, setAdapterDialog] = useState(false);
   const [threads, setThreads] = useState<ThreadMetadata[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -253,7 +254,10 @@ function App() {
           void openRepository(project.root, { quiet: true });
         }}
         profiles={profiles}
-        onOpenProfiles={() => setProfileDialog(true)}
+        onOpenProfiles={(provider) => {
+          setProfileDialogProvider(provider ?? null);
+          setProfileDialog(true);
+        }}
         onOpenPalette={() => setPaletteOpen(true)}
         onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
         onManageWorktrees={(path) => {
@@ -285,7 +289,11 @@ function App() {
       <ProfileSettingsDialog
         open={profileDialog}
         profiles={profiles}
-        onClose={() => setProfileDialog(false)}
+        initialProvider={profileDialogProvider}
+        onClose={() => {
+          setProfileDialog(false);
+          setProfileDialogProvider(null);
+        }}
         onChanged={loadProfiles}
       />
       <AdapterSettingsDialog open={adapterDialog} onClose={() => setAdapterDialog(false)} />

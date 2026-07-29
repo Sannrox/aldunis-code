@@ -1,5 +1,5 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
-import type { ClaudeProfile, ProfileProbeKind } from "../../types";
+import type { ClaudeProfile, ProfileProbeKind, ProviderId } from "../../types";
 import { Button, CloseButton, ModalSurface } from "../../components/ui";
 import { providerDisplayName, providerListLabel } from "../../lib/provider-readiness";
 
@@ -49,14 +49,32 @@ function profileDetail(profile: ClaudeProfile): string {
   return `${providerLabel} · Empty default`;
 }
 
+export function initialProfileForProvider(
+  profiles: ClaudeProfile[],
+  provider?: ProviderId | null,
+): ClaudeProfile | null {
+  if (provider) {
+    const profileProvider = provider.startsWith("adapter:")
+      ? provider.split("@")[0]!
+      : provider;
+    return profiles.find((profile) => profile.provider === profileProvider) ?? null;
+  }
+  return profiles.find((profile) => profile.id === "default:claude-code")
+    ?? profiles.find((profile) => profile.provider === "claude-code")
+    ?? profiles[0]
+    ?? null;
+}
+
 export function ProfileSettingsDialog({
   open,
   profiles,
+  initialProvider,
   onClose,
   onChanged,
 }: {
   open: boolean;
   profiles: ClaudeProfile[];
+  initialProvider?: ProviderId | null;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
@@ -99,19 +117,14 @@ export function ProfileSettingsDialog({
     if (!openedOnce.current) {
       if (profiles.length === 0) return;
       openedOnce.current = true;
-      const preferred =
-        profiles.find((profile) => profile.id === "default:claude-code")
-        ?? profiles.find((profile) => profile.provider === "claude-code")
-        ?? profiles[0]
-        ?? null;
-      edit(preferred);
+      edit(initialProfileForProvider(profiles, initialProvider));
       return;
     }
     // If the selected profile disappears while open, fall back cleanly.
     if (selectedId && !profiles.some((profile) => profile.id === selectedId)) {
       edit(profiles[0] ?? null);
     }
-  }, [open, profiles, selectedId]);
+  }, [open, profiles, selectedId, initialProvider]);
   useEffect(() => {
     if (!open) return;
     // ModalSurface may focus Close first; reclaim the primary form field.
