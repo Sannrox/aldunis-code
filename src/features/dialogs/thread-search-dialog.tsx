@@ -30,6 +30,25 @@ export function threadSearchDetail(
     .join(" · ");
 }
 
+export function threadSearchCollisionLabels(
+  threads: ThreadMetadata[],
+  detailFor: (thread: ThreadMetadata) => string = threadSearchDetail,
+): Map<string, string> {
+  const groups = new Map<string, ThreadMetadata[]>();
+  for (const thread of threads) {
+    const key = `${thread.title}\u0000${detailFor(thread)}`;
+    groups.set(key, [...(groups.get(key) ?? []), thread]);
+  }
+  const labels = new Map<string, string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.forEach((thread, index) => {
+      labels.set(thread.id, `Match ${index + 1} of ${group.length}`);
+    });
+  }
+  return labels;
+}
+
 export function nextThreadSearchIndex(
   current: number,
   resultCount: number,
@@ -125,6 +144,7 @@ export function ThreadSearchDialog({
       ?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, loading, results.length]);
   if (!open) return null;
+  const collisionLabels = threadSearchCollisionLabels(results);
   const selectResult = (index: number) => {
     const thread = activeThreadSearchResult(results, index, loading);
     if (!thread) return;
@@ -197,6 +217,8 @@ export function ThreadSearchDialog({
       >
         {results.map((thread, index) => {
           const detail = threadSearchDetail(thread);
+          const collisionLabel = collisionLabels.get(thread.id);
+          const disambiguatedDetail = [detail, collisionLabel].filter(Boolean).join(" · ");
           return (
             <button
               type="button"
@@ -205,14 +227,14 @@ export function ThreadSearchDialog({
               key={thread.id}
               tabIndex={-1}
               aria-selected={index === activeIndex}
-              aria-label={`${thread.title}: ${detail}`}
-              title={`${thread.title} · ${detail}`}
+              aria-label={`${thread.title}: ${disambiguatedDetail}`}
+              title={`${thread.title} · ${disambiguatedDetail}`}
               className={index === activeIndex ? "active" : undefined}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => selectResult(index)}
             >
               <strong title={thread.title}>{thread.title}</strong>
-              <small title={detail}>{detail}</small>
+              <small title={disambiguatedDetail}>{disambiguatedDetail}</small>
             </button>
           );
         })}
