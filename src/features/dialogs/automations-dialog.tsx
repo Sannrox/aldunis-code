@@ -25,12 +25,36 @@ export interface AutomationThreadOption {
   id: string;
   title: string;
   provider?: ProviderId;
+  projectName?: string;
 }
 
-function automationThreadLabel(thread: AutomationThreadOption): string {
+export function automationThreadBaseLabel(thread: AutomationThreadOption): string {
   const title = thread.title.trim() || thread.id;
-  if (!thread.provider) return title;
-  return `${title} · ${providerListLabel(thread.provider)}`;
+  return [
+    title,
+    thread.projectName,
+    thread.provider ? providerListLabel(thread.provider) : null,
+  ].filter(Boolean).join(" · ");
+}
+
+export function automationThreadLabels(
+  threads: AutomationThreadOption[],
+): Map<string, string> {
+  const groups = new Map<string, AutomationThreadOption[]>();
+  for (const thread of threads) {
+    const label = automationThreadBaseLabel(thread);
+    groups.set(label, [...(groups.get(label) ?? []), thread]);
+  }
+  const labels = new Map<string, string>();
+  for (const [label, group] of groups) {
+    group.forEach((thread) => {
+      labels.set(
+        thread.id,
+        group.length > 1 ? `${label} · Task ${thread.id.slice(0, 8)}` : label,
+      );
+    });
+  }
+  return labels;
 }
 
 export function AutomationsDialog({
@@ -85,6 +109,7 @@ export function AutomationsDialog({
   }, [open]);
 
   if (!open) return null;
+  const threadLabels = automationThreadLabels(threads);
 
   const create = async () => {
     setBusy(true);
@@ -187,7 +212,7 @@ export function AutomationsDialog({
           >
             {threads.length === 0 && <option value="">No conversations yet</option>}
             {threads.map((thread) => (
-              <option key={thread.id} value={thread.id}>{automationThreadLabel(thread)}</option>
+              <option key={thread.id} value={thread.id}>{threadLabels.get(thread.id)}</option>
             ))}
           </select>
         </Field>
