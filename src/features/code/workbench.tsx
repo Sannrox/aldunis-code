@@ -10,6 +10,7 @@ import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
+import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -75,12 +76,14 @@ export function CodeWorkbench({
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const [secondaryId, setSecondaryId] = useState<string | null>(null);
   const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
   const [splitPercent, setSplitPercent] = useState(50);
+  const renameReturnFocusReference = useRef<HTMLElement | null>(null);
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
     () => (repository ? "loading" : "idle"),
   );
@@ -237,12 +240,11 @@ export function CodeWorkbench({
     setLifecycleError(null);
     try {
       if (action === "rename") {
-        const renameHint = conversation.provider
-          ? `Rename conversation (${providerListLabel(conversation.provider)}):`
-          : "Rename conversation:";
-        const title = window.prompt(renameHint, conversation.title);
-        if (title === null) return;
-        await postLifecycle("/api/state/conversations/rename", { threadId: conversation.id, title });
+        const active = document.activeElement;
+        renameReturnFocusReference.current = active instanceof HTMLElement
+          ? active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null
+          : null;
+        setRenameTarget(conversation);
       } else if (action === "pin") {
         await postLifecycle("/api/state/conversations/pin", {
           threadId: conversation.id,
@@ -646,6 +648,23 @@ export function CodeWorkbench({
       </div>
       )}
       </main>
+      {renameTarget && (
+        <RenameConversationDialog
+          conversation={renameTarget}
+          onClose={() => {
+            setRenameTarget(null);
+            const returnFocus = renameReturnFocusReference.current;
+            renameReturnFocusReference.current = null;
+            window.requestAnimationFrame(() => returnFocus?.focus());
+          }}
+          onRename={async (title) => {
+            await postLifecycle("/api/state/conversations/rename", {
+              threadId: renameTarget.id,
+              title,
+            });
+          }}
+        />
+      )}
     </>
   );
 }
