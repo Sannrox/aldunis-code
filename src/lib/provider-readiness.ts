@@ -1,4 +1,4 @@
-import type { ProviderDiscovery, ProviderId, ReasoningEffort } from "../types";
+import type { ProfileProbe, ProviderDiscovery, ProviderId, ReasoningEffort } from "../types";
 
 export interface ProviderModelOption {
   id: string;
@@ -22,6 +22,44 @@ export function providerFailureNeedsConfiguration(message: string): boolean {
 export function providerTextReportsAuthenticationFailure(text: string): boolean {
   return /^(?:failed to authenticate\b|authentication failed\b|api error:\s*401\b|unauthorized\b|unauthenticated\b|not authenticated\b|not logged in\b)/im
     .test(text);
+}
+
+/** Require a successful authentication probe newer than the failed turn. */
+export function providerConfigurationVerifiedAfterFailure(
+  probe: ProfileProbe | undefined,
+  failureAt: string | null,
+): boolean {
+  return Boolean(
+    probe?.state === "ready"
+    && probe.authenticated === true
+    && probe.checkedAt
+    && failureAt
+    && probe.checkedAt > failureAt,
+  );
+}
+
+/** Keep historical authentication failures aligned with current provider readiness. */
+export function providerFailureRecovery(
+  providerLabel: string,
+  needsConfiguration: boolean,
+  configurationVerified: boolean,
+): { message: string; showSettings: boolean } {
+  if (!needsConfiguration) {
+    return {
+      message: `${providerLabel} stopped · review the error above before retrying`,
+      showSettings: false,
+    };
+  }
+  if (configurationVerified) {
+    return {
+      message: `${providerLabel} is ready · retry when you are ready`,
+      showSettings: false,
+    };
+  }
+  return {
+    message: `${providerLabel} needs setup · update provider settings before retrying`,
+    showSettings: true,
+  };
 }
 
 const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [

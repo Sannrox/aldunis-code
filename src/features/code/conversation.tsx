@@ -27,6 +27,8 @@ import {
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
+  providerConfigurationVerifiedAfterFailure,
+  providerFailureRecovery,
   providerFailureNeedsConfiguration,
   providerTextReportsAuthenticationFailure,
 } from "../../lib/provider-readiness";
@@ -1414,6 +1416,17 @@ export function Conversation({
     ? providerFailureNeedsConfiguration(failure.message)
       || providerTextReportsAuthenticationFailure(assistantText)
     : false;
+  const selectedClaudeProfile = claudeProfiles.find((profile) => profile.id === profileId);
+  const configurationVerifiedAfterFailure = provider === "claude-code"
+    && providerConfigurationVerifiedAfterFailure(
+      selectedClaudeProfile?.probes.authentication,
+      assistantTurnAt,
+    );
+  const failureRecovery = providerFailureRecovery(
+    providerLabel,
+    failureNeedsConfiguration,
+    configurationVerifiedAfterFailure,
+  );
   const hasAssistantContent = Boolean(assistantText.trim())
     || latestPlan != null
     || toolEvents.length > 0
@@ -1482,9 +1495,7 @@ export function Conversation({
     cancelling: "Cancelling…",
     completed: "Turn completed",
     cancelled: `${providerLabel} cancelled · send another prompt to resume`,
-    failed: failureNeedsConfiguration
-      ? `${providerLabel} needs setup · update provider settings before retrying`
-      : `${providerLabel} stopped · review the error above before retrying`,
+    failed: failureRecovery.message,
   };
   const accessScope = {
     label: accessLabel,
@@ -1936,7 +1947,7 @@ export function Conversation({
                   {failureView.question && (
                     <p className="provider-error-question">Question: {failureView.question}</p>
                   )}
-                  {failureNeedsConfiguration && (
+                  {failureRecovery.showSettings && (
                     <Button
                       type="button"
                       size="sm"

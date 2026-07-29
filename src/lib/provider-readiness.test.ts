@@ -7,6 +7,8 @@ import {
   cycleReasoningEffort,
   DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
+  providerConfigurationVerifiedAfterFailure,
+  providerFailureRecovery,
   providerFailureNeedsConfiguration,
   providerTextReportsAuthenticationFailure,
   prettifyModelId,
@@ -357,4 +359,42 @@ test("assistant text only triggers recovery for explicit authentication errors",
     false,
   );
   assert.equal(providerTextReportsAuthenticationFailure("Request timed out after checking authentication."), false);
+});
+
+test("provider failure recovery changes only after configuration is verified", () => {
+  assert.deepEqual(providerFailureRecovery("Claude", true, false), {
+    message: "Claude needs setup · update provider settings before retrying",
+    showSettings: true,
+  });
+  assert.deepEqual(providerFailureRecovery("Claude", true, true), {
+    message: "Claude is ready · retry when you are ready",
+    showSettings: false,
+  });
+  assert.deepEqual(providerFailureRecovery("Claude", false, true), {
+    message: "Claude stopped · review the error above before retrying",
+    showSettings: false,
+  });
+});
+
+test("authentication recovery requires a successful probe newer than the failed turn", () => {
+  const failureAt = "2026-07-29T12:00:00.000Z";
+  assert.equal(providerConfigurationVerifiedAfterFailure(undefined, failureAt), false);
+  assert.equal(providerConfigurationVerifiedAfterFailure({
+    state: "ready",
+    checkedAt: "2026-07-29T11:59:59.000Z",
+    detail: "Authentication is ready.",
+    authenticated: true,
+  }, failureAt), false);
+  assert.equal(providerConfigurationVerifiedAfterFailure({
+    state: "unavailable",
+    checkedAt: "2026-07-29T12:01:00.000Z",
+    detail: "Authentication failed.",
+    authenticated: false,
+  }, failureAt), false);
+  assert.equal(providerConfigurationVerifiedAfterFailure({
+    state: "ready",
+    checkedAt: "2026-07-29T12:01:00.000Z",
+    detail: "Authentication is ready.",
+    authenticated: true,
+  }, failureAt), true);
 });
