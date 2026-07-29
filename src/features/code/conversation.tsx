@@ -13,6 +13,7 @@ import { ChangesPanel } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
 import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
+import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
   canSwitchNewConversationProvider,
@@ -589,6 +590,7 @@ export function Conversation({
   const [checkpointError, setCheckpointError] = useState<string | null>(null);
   /** Hides the post-turn settle prompt until the next completed turn. */
   const [completionDismissed, setCompletionDismissed] = useState(false);
+  const [releaseWorktreeOpen, setReleaseWorktreeOpen] = useState(false);
   /**
    * Timestamp for the assistant turn chrome. Must not use conversation.updatedAt —
    * pin/archive/settle bump that and would flash "now" on an old failed turn.
@@ -1900,31 +1902,7 @@ export function Conversation({
                       type="button"
                       className="btn btn-outline btn-sm"
                       aria-label={`Settle and release worktree, ${pane} pane`}
-                      onClick={() => {
-                        const settleLabel = [
-                          conversation?.title?.trim() || "this conversation",
-                          providerListLabel(provider),
-                        ].join(" · ");
-                        if (!window.confirm(
-                          `Settle and release the managed worktree for "${settleLabel}"? The conversation is kept.`,
-                        )) return;
-                        void (async () => {
-                          const settle = await fetch("/api/state/conversations/settle", {
-                            method: "POST",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ threadId }),
-                          });
-                          if (!settle.ok) return;
-                          const release = await fetch("/api/state/conversations/release-worktree", {
-                            method: "POST",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ threadId, confirm: true }),
-                          });
-                          if (!release.ok) return;
-                          setCompletionDismissed(true);
-                          onConversationAvailable?.(threadId);
-                        })().catch(() => undefined);
-                      }}
+                      onClick={() => setReleaseWorktreeOpen(true)}
                     >
                       Settle and release worktree
                     </button>
@@ -2681,6 +2659,33 @@ export function Conversation({
           onCreated={(id) => {
             setForkOpen(false);
             onConversationAvailable?.(id);
+          }}
+        />
+      )}
+      {releaseWorktreeOpen && threadId && (
+        <ReleaseWorktreeDialog
+          title={conversation?.title?.trim() || "This conversation"}
+          provider={providerListLabel(provider)}
+          worktree={worktree?.path ?? conversation?.worktree}
+          settle
+          onClose={() => setReleaseWorktreeOpen(false)}
+          onConfirm={async () => {
+            const settle = await fetch("/api/state/conversations/settle", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ threadId }),
+            });
+            const settleResult = await settle.json() as { error?: string };
+            if (!settle.ok) throw new Error(settleResult.error ?? "Conversation could not be settled.");
+            const release = await fetch("/api/state/conversations/release-worktree", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ threadId, confirm: true }),
+            });
+            const releaseResult = await release.json() as { error?: string };
+            if (!release.ok) throw new Error(releaseResult.error ?? "Managed worktree release failed.");
+            setCompletionDismissed(true);
+            onConversationAvailable?.(threadId);
           }}
         />
       )}
