@@ -29,6 +29,11 @@ test("external panel signals select one state without preserving an invalid comb
 
 test("workspace panel roving focus prefers active, wraps, and skips unavailable destinations", () => {
   assert.equal(workspacePanelTabStop("preview", ["files", "preview", "changes"]), "preview");
+  assert.equal(
+    workspacePanelTabStop("files", ["files", "preview", "changes"], "preview"),
+    "preview",
+  );
+  assert.equal(workspacePanelTabStop("files", ["files", "changes"], "preview"), "files");
   assert.equal(workspacePanelTabStop("none", ["files", "changes"]), "files");
   assert.equal(workspacePanelTabStop("preview", ["files", "changes"]), "files");
   assert.equal(workspacePanelTabStop("none", []), null);

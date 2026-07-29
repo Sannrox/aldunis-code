@@ -589,8 +589,14 @@ export function Conversation({
   const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const [workspacePanelFocus, setWorkspacePanelFocus] =
+    useState<WorkspacePanelDestination | null>(null);
   const availableWorkspacePanels = repository ? WORKSPACE_PANEL_DESTINATIONS : [];
-  const workspacePanelStop = workspacePanelTabStop(activePanel, availableWorkspacePanels);
+  const workspacePanelStop = workspacePanelTabStop(
+    activePanel,
+    availableWorkspacePanels,
+    workspacePanelFocus,
+  );
   const workspacePanelTrigger = (destination: WorkspacePanelDestination) => (
     destination === "files"
       ? filesPanelTriggerRef.current
@@ -604,6 +610,7 @@ export function Conversation({
     ));
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
+    setWorkspacePanelFocus(destination);
     const next = toggleWorkspacePanel(activePanel, destination);
     if (next === "preview") setPreviewMounted(true);
     if (next === "changes" && activePanel !== "changes") onRefreshChanges();
@@ -639,7 +646,10 @@ export function Conversation({
       direction,
       availableWorkspacePanels,
     );
-    if (next) workspacePanelTrigger(next)?.focus();
+    if (next) {
+      setWorkspacePanelFocus(next);
+      workspacePanelTrigger(next)?.focus();
+    }
   };
   const previewIndicator = previewStatus.error
     ? "error"

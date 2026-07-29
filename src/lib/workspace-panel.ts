@@ -13,7 +13,9 @@ export function toggleWorkspacePanel(
 export function workspacePanelTabStop(
   active: WorkspacePanel,
   available: readonly WorkspacePanelDestination[],
+  focused: WorkspacePanelDestination | null = null,
 ): WorkspacePanelDestination | null {
+  if (focused && available.includes(focused)) return focused;
   if (active !== "none" && available.includes(active)) return active;
   return available[0] ?? null;
 }
