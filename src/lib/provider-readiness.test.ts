@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
+  canSwitchNewConversationProvider,
   cycleProviderModel,
   cycleReasoningEffort,
+  DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
   providerFailureNeedsConfiguration,
   providerTextReportsAuthenticationFailure,
@@ -17,6 +20,21 @@ import {
   resolveDefaultProviderModel,
 } from "./provider-readiness";
 import type { ProviderDiscovery } from "../types";
+
+test("new conversations prefer Codex before other built-in providers", () => {
+  assert.equal(DEFAULT_NEW_CONVERSATION_PROVIDER, "codex-cli");
+  assert.deepEqual(BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER, [
+    "codex-cli",
+    "claude-code",
+    "shikigami",
+  ]);
+  assert.equal(canSwitchNewConversationProvider("codex-cli", ["claude-code"]), true);
+  assert.equal(canSwitchNewConversationProvider("codex-cli", ["codex-cli"]), false);
+  assert.equal(
+    canSwitchNewConversationProvider("codex-cli", ["codex-cli", "claude-code"]),
+    true,
+  );
+});
 
 test("providerDisplayName and providerChipName cover first-class and adapter ids", () => {
   assert.equal(providerDisplayName("claude-code", undefined), "Claude Code");
