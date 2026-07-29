@@ -20,6 +20,43 @@ export interface SavedProject {
   memberIds?: string[];
 }
 
+type ProjectPickerRowKind = "project" | "parent" | "directory" | "open-path";
+type ProjectPickerPathRow = {
+  kind: ProjectPickerRowKind;
+  path?: string;
+  root?: string;
+};
+
+export function getProjectPickerInputActiveIndex(query: string): number {
+  return isFilesystemBrowseQuery(query) && !hasTrailingPathSeparator(query)
+    ? Number.MAX_SAFE_INTEGER
+    : 0;
+}
+
+export function getProjectPickerSubmitLabel(
+  rowKind: ProjectPickerRowKind | undefined,
+  busy: boolean,
+): string {
+  if (busy) return "Opening…";
+  if (rowKind === "parent") return "Go to parent";
+  if (rowKind === "directory") return "Browse folder";
+  return "Open project";
+}
+
+export function getProjectPickerPreferredPathIndex(
+  rows: ProjectPickerPathRow[],
+  query: string,
+): number {
+  if (rows.length === 0) return 0;
+  const path = query.trim();
+  const exactProject = rows.findIndex((row) => row.kind === "project" && row.root === path);
+  if (exactProject >= 0) return exactProject;
+  const exactOpenPath = rows.findIndex((row) => row.kind === "open-path" && row.path === path);
+  if (exactOpenPath >= 0) return exactOpenPath;
+  const exactDirectory = rows.findIndex((row) => row.kind === "directory" && row.path === path);
+  return exactDirectory >= 0 ? exactDirectory : rows.length - 1;
+}
+
 /**
  * T3-aligned project switcher:
  * - recent/saved projects first
@@ -49,6 +86,7 @@ export function RepositoryDialog({
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [preferTypedPath, setPreferTypedPath] = useState(false);
   const browseController = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -92,6 +130,7 @@ export function RepositoryDialog({
     setListing(null);
     setBrowseError(null);
     setActiveIndex(0);
+    setPreferTypedPath(false);
     const focus = () => inputRef.current?.focus();
     focus();
     const frame = window.requestAnimationFrame(focus);
@@ -188,13 +227,15 @@ export function RepositoryDialog({
   useEffect(() => {
     setActiveIndex((index) => {
       if (rows.length === 0) return 0;
+      if (preferTypedPath) return getProjectPickerPreferredPathIndex(rows, query);
       return Math.min(index, rows.length - 1);
     });
-  }, [rows.length]);
+  }, [preferTypedPath, query, rows]);
 
   if (!open) return null;
 
   const activate = (row: Row) => {
+    setPreferTypedPath(false);
     if (row.kind === "project") {
       onSubmit(row.root);
       return;
@@ -252,19 +293,25 @@ export function RepositoryDialog({
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
-              setActiveIndex(0);
+              const nextIndex = getProjectPickerInputActiveIndex(event.target.value);
+              setPreferTypedPath(nextIndex === Number.MAX_SAFE_INTEGER);
+              setActiveIndex(nextIndex);
             }}
             onKeyDown={(event) => {
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 if (rows.length === 0) return;
-                setActiveIndex((index) => (index + 1) % rows.length);
+                setPreferTypedPath(false);
+                setActiveIndex((index) => (Math.min(index, rows.length - 1) + 1) % rows.length);
                 return;
               }
               if (event.key === "ArrowUp") {
                 event.preventDefault();
                 if (rows.length === 0) return;
-                setActiveIndex((index) => (index - 1 + rows.length) % rows.length);
+                setPreferTypedPath(false);
+                setActiveIndex((index) => (
+                  Math.min(index, rows.length - 1) - 1 + rows.length
+                ) % rows.length);
                 return;
               }
               if (event.key === "Backspace" && query === "" && parentPath) {
@@ -320,7 +367,10 @@ export function RepositoryDialog({
                   aria-label={`${row.name}: ${row.root}${row.root === currentRoot ? ", current" : ""}`}
                   title={row.root}
                   className={`project-switcher-row ${active ? "active" : ""} ${row.root === currentRoot ? "current" : ""}`}
-                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseEnter={() => {
+                    setPreferTypedPath(false);
+                    setActiveIndex(index);
+                  }}
                   onClick={() => activate(row)}
                   disabled={busy}
                 >
@@ -343,7 +393,10 @@ export function RepositoryDialog({
                   aria-label={`Parent directory: ${row.path}`}
                   title={row.path}
                   className={`project-switcher-row ${active ? "active" : ""}`}
-                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseEnter={() => {
+                    setPreferTypedPath(false);
+                    setActiveIndex(index);
+                  }}
                   onClick={() => activate(row)}
                   disabled={busy}
                 >
@@ -364,7 +417,10 @@ export function RepositoryDialog({
                   aria-selected={active}
                   aria-label={`${row.name}: Open folder`}
                   className={`project-switcher-row ${active ? "active" : ""}`}
-                  onMouseEnter={() => setActiveIndex(index)}
+                  onMouseEnter={() => {
+                    setPreferTypedPath(false);
+                    setActiveIndex(index);
+                  }}
                   onClick={() => activate(row)}
                   disabled={busy}
                 >
@@ -385,7 +441,10 @@ export function RepositoryDialog({
                 aria-label={`${row.label}: ${row.path}`}
                 title={row.path}
                 className={`project-switcher-row ${active ? "active" : ""}`}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseEnter={() => {
+                  setPreferTypedPath(false);
+                  setActiveIndex(index);
+                }}
                 onClick={() => activate(row)}
                 disabled={busy}
               >
@@ -410,9 +469,9 @@ export function RepositoryDialog({
             variant="primary"
             type="submit"
             disabled={busy || (!query.trim() && !rows[activeIndex])}
-            aria-label={busy ? "Opening project" : "Open project"}
+            aria-label={busy ? "Opening project" : getProjectPickerSubmitLabel(rows[activeIndex]?.kind, false)}
           >
-            {busy ? "Opening…" : "Open project"}
+            {getProjectPickerSubmitLabel(rows[activeIndex]?.kind, busy)}
           </Button>
         </footer>
       </form>
