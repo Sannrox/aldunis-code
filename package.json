@@ -15,7 +15,7 @@
     "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
     "build:web": "tsc -b && vite build",
-    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
+    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
     "build": "npm run build:web && npm run build:desktop-main",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && electron-builder --publish never"
