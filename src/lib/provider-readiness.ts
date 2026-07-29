@@ -79,6 +79,21 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<string, string>> = {
   "claude-code": "claude-sonnet-5",
 };
 
+export const DEFAULT_NEW_CONVERSATION_PROVIDER: ProviderId = "codex-cli";
+
+export const BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER: readonly ProviderId[] = [
+  "codex-cli",
+  "claude-code",
+  "shikigami",
+];
+
+export function canSwitchNewConversationProvider(
+  current: ProviderId,
+  available: readonly ProviderId[],
+): boolean {
+  return available.some((provider) => provider !== current);
+}
+
 /** Package id segment of `adapter:<package>@<version>`, or null. */
 export function adapterPackageId(provider: string): string | null {
   if (!provider.startsWith("adapter:")) return null;

@@ -12,7 +12,10 @@ import { FileBrowserPanel } from "../files/file-browser-panel";
 import { PreviewPanel } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import {
+  BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
+  canSwitchNewConversationProvider,
   cycleReasoningEffort,
+  DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
   providerAvatarInitials,
   providerChipName as formatProviderChipName,
@@ -183,7 +186,7 @@ export function Conversation({
   conversationAvailableCallback.current = onConversationAvailable;
   // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
   const [provider, setProvider] = useState<ProviderId>(
-    () => conversation?.provider ?? "claude-code",
+    () => conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
   );
   const [providers, setProviders] = useState<ProviderDiscovery[]>(
     () => peekProviderDiscoveryCache() ?? [],
@@ -243,10 +246,12 @@ export function Conversation({
   const availableProviders = useMemo(() => {
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
-    // Keep Claude selectable when installed; empty profiles disable send, not the choice.
-    if (!claude || claude.installed !== false) list.push("claude-code");
-    if (codex?.installed) list.push("codex-cli");
-    if (shikigamiProvider?.installed) list.push("shikigami");
+    for (const id of BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER) {
+      if (id === "codex-cli" && codex?.installed) list.push(id);
+      // Keep Claude selectable when installed; empty profiles disable send, not the choice.
+      if (id === "claude-code" && (!claude || claude.installed !== false)) list.push(id);
+      if (id === "shikigami" && shikigamiProvider?.installed) list.push(id);
+    }
     for (const item of providers) {
       if (
         typeof item.id === "string"
@@ -268,7 +273,7 @@ export function Conversation({
   const canSwitchProvider = conversation === null
     && !threadId
     && !runId
-    && availableProviders.length > 1;
+    && canSwitchNewConversationProvider(provider, availableProviders);
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
       setProfileId((current) => current || defaultClaudeProfileId);
