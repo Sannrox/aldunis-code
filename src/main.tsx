@@ -327,6 +327,7 @@ function App() {
         threads={threads.map((thread) => ({
           id: thread.id,
           title: thread.title,
+          projectName: thread.projectName,
           provider: thread.provider,
         }))}
         onClose={() => setAutomationsOpen(false)}
