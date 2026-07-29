@@ -14,13 +14,13 @@ export interface ProviderFailureView {
 
 /** Authentication failures need configuration before another prompt can succeed. */
 export function providerFailureNeedsConfiguration(message: string): boolean {
-  return /(?:\b401\b|\bunauthenticated\b|\bunauthorized\b|\bfailed to authenticate\b|\bauthentication failed\b|\bnot authenticated\b|(?:access token|credentials?|api key)\b[^\n.!?]{0,80}\b(?:invalid|expired|revoked|missing|required)\b|(?:sign[ -]?in|log[ -]?in)(?:(?:\s+is)?\s+required\b|\s+to\b))/i
+  return /(?:\b401\b|\bunauthenticated\b|\bunauthorized\b|\bfailed to authenticate\b|\bauthentication failed\b|\bnot authenticated\b|\bnot logged in\b|(?:access token|credentials?|api key)\b[^\n.!?]{0,80}\b(?:invalid|expired|revoked|missing|required)\b|(?:sign[ -]?in|log[ -]?in)(?:(?:\s+is)?\s+required\b|\s+to\b))/i
     .test(message);
 }
 
 /** Some CLIs emit a provider error as text before a generic terminal failure. */
 export function providerTextReportsAuthenticationFailure(text: string): boolean {
-  return /^(?:failed to authenticate\b|authentication failed\b|api error:\s*401\b|unauthorized\b|unauthenticated\b|not authenticated\b)/im
+  return /^(?:failed to authenticate\b|authentication failed\b|api error:\s*401\b|unauthorized\b|unauthenticated\b|not authenticated\b|not logged in\b)/im
     .test(text);
 }
 
