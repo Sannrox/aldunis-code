@@ -1,4 +1,6 @@
-import React, { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+} from "react";
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
@@ -56,6 +58,8 @@ import {
   invalidateProviderDiscoveryCache,
   loadProviderDiscovery,
   peekProviderDiscoveryCache,
+  providerDiscoveryTimedOut,
+  PROVIDER_DISCOVERY_TIMEOUT_DETAIL,
 } from "../../lib/provider-discovery-cache";
 import { shortToolCallId } from "../../lib/tool-presentation";
 import { presentAssistantTimeline } from "../../lib/conversation-timeline";
@@ -222,21 +226,32 @@ export function Conversation({
     () => conversation?.reasoningEffort ?? "medium",
   );
   const legacyReasoningDefaultRef = useRef<string | null>(null);
+  const loadProviders = useCallback((force = false, showPending = force) => {
+    if (force) {
+      invalidateProviderDiscoveryCache();
+    }
+    if (showPending) {
+      setProvidersLoaded(false);
+    }
+    void loadProviderDiscovery()
+      .then((list) => setProviders(list))
+      .finally(() => setProvidersLoaded(true));
+  }, []);
   useEffect(() => {
-    const loadProviders = (force = false) => {
-      if (force) invalidateProviderDiscoveryCache();
-      void loadProviderDiscovery()
-        .then((list) => setProviders(list))
-        .finally(() => setProvidersLoaded(true));
-    };
     loadProviders(false);
     const onAdaptersChanged = () => loadProviders(true);
+    const onProviderRetry = () => loadProviders(false, true);
     window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
-    return () => window.removeEventListener("aldunis:adapters-changed", onAdaptersChanged);
-  }, []);
+    window.addEventListener("aldunis:providers-retry", onProviderRetry);
+    return () => {
+      window.removeEventListener("aldunis:adapters-changed", onAdaptersChanged);
+      window.removeEventListener("aldunis:providers-retry", onProviderRetry);
+    };
+  }, [loadProviders]);
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
   const selectedProvider = providers.find((item) => item.id === provider);
+  const discoveryTimedOut = providerDiscoveryTimedOut();
   const providerName = providerDisplayName(provider, selectedProvider);
   /** Short role label in the transcript (Claude / Codex / Grok Build / …). */
   const providerLabel = providerListLabel(provider);
@@ -1494,8 +1509,23 @@ export function Conversation({
     : !providerReady
       ? {
           title: `${providerName} is not ready`,
-          detail: providerReadinessMessage || `Finish setup for ${providerName}, then return here.`,
-          action: provider === "claude-code"
+          detail: discoveryTimedOut
+            ? PROVIDER_DISCOVERY_TIMEOUT_DETAIL
+            : providerReadinessMessage || `Finish setup for ${providerName}, then return here.`,
+          action: discoveryTimedOut
+            ? (
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={() => {
+                    invalidateProviderDiscoveryCache();
+                    window.dispatchEvent(new Event("aldunis:providers-retry"));
+                  }}
+                >
+                  Retry provider check
+                </Button>
+              )
+            : provider === "claude-code"
             ? <Button variant="primary" size="lg" onClick={() => onOpenProfiles(provider)}>Configure Claude</Button>
             : null,
         }
