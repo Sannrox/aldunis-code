@@ -279,6 +279,15 @@ test("composer crow chips ellipsize in narrow dual-pane columns", () => {
   assert.match(shell, /\.crow \.cc\s*\{[^}]*max-width:[^}]*text-overflow:\s*ellipsis/s);
 });
 
+test("composer grows within its established desktop height bounds", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /\.composer-input\s*\{[^}]*min-height:\s*44px[^}]*max-height:\s*160px/s,
+  );
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
