@@ -8,8 +8,10 @@ import type { ClaudeProfile, Product, ProviderId, RepositoryMetadata, ThreadMeta
 import { CodeWorkbench } from "./features/code/workbench";
 import { RepositoryDialog, type SavedProject } from "./features/dialogs/repository-dialog";
 import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
-import { ProfileSettingsDialog } from "./features/dialogs/profile-settings-dialog";
-import { AdapterSettingsDialog } from "./features/dialogs/adapter-settings-dialog";
+import {
+  ProviderManagementDialog,
+  type ProviderManagementDestination,
+} from "./features/dialogs/provider-management-dialog";
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
@@ -50,9 +52,10 @@ function App() {
   const [repositoryRestoring, setRepositoryRestoring] = useState(true);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
-  const [profileDialog, setProfileDialog] = useState(false);
-  const [profileDialogProvider, setProfileDialogProvider] = useState<ProviderId | null>(null);
-  const [adapterDialog, setAdapterDialog] = useState(false);
+  const [providerManagement, setProviderManagement] = useState<{
+    destination: ProviderManagementDestination;
+    provider: ProviderId | null;
+  } | null>(null);
   const [threads, setThreads] = useState<ThreadMetadata[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -255,8 +258,7 @@ function App() {
         }}
         profiles={profiles}
         onOpenProfiles={(provider) => {
-          setProfileDialogProvider(provider ?? null);
-          setProfileDialog(true);
+          setProviderManagement({ destination: "profiles", provider: provider ?? null });
         }}
         onOpenPalette={() => setPaletteOpen(true)}
         onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
@@ -286,17 +288,14 @@ function App() {
           }}
         />
       )}
-      <ProfileSettingsDialog
-        open={profileDialog}
+      <ProviderManagementDialog
+        open={providerManagement != null}
         profiles={profiles}
-        initialProvider={profileDialogProvider}
-        onClose={() => {
-          setProfileDialog(false);
-          setProfileDialogProvider(null);
-        }}
-        onChanged={loadProfiles}
+        initialDestination={providerManagement?.destination}
+        initialProvider={providerManagement?.provider}
+        onClose={() => setProviderManagement(null)}
+        onProfilesChanged={loadProfiles}
       />
-      <AdapterSettingsDialog open={adapterDialog} onClose={() => setAdapterDialog(false)} />
       <ThreadSearchDialog
         open={searchOpen}
         threads={threads}
@@ -313,8 +312,9 @@ function App() {
         onOpenRepository={showRepositoryDialog}
         onSearch={() => setSearchOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
-        onProviderSettings={() => setProfileDialog(true)}
-        onAdapterSettings={() => setAdapterDialog(true)}
+        onProviderManagement={() => {
+          setProviderManagement({ destination: "diagnostics", provider: null });
+        }}
         onAutomations={() => setAutomationsOpen(true)}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
@@ -336,8 +336,9 @@ function App() {
         preferences={preferences}
         recovered={preferencesRecovered}
         onClose={() => setPreferencesOpen(false)}
-        onOpenProviderSettings={() => setProfileDialog(true)}
-        onOpenAdapterSettings={() => setAdapterDialog(true)}
+        onOpenProviderManagement={() => {
+          setProviderManagement({ destination: "diagnostics", provider: null });
+        }}
         onSave={async (value) => {
           const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
           if (!response.ok) return;

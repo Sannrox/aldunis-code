@@ -67,14 +67,18 @@ export function initialProfileForProvider(
 
 export function ProfileSettingsDialog({
   open,
+  embedded = false,
   profiles,
   initialProvider,
+  targetRequest = 0,
   onClose,
   onChanged,
 }: {
   open: boolean;
+  embedded?: boolean;
   profiles: ClaudeProfile[];
   initialProvider?: ProviderId | null;
+  targetRequest?: number;
   onClose: () => void;
   onChanged: () => Promise<void>;
 }) {
@@ -101,13 +105,24 @@ export function ProfileSettingsDialog({
     setError(null);
   };
   const openedOnce = useRef(false);
+  const handledTargetRequest = useRef(-1);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const availabilityProbeGeneration = useRef(0);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
   useEffect(() => {
     if (!open) {
-      openedOnce.current = false;
+      if (!embedded) openedOnce.current = false;
+      return;
+    }
+    if (
+      embedded
+      && openedOnce.current
+      && initialProvider
+      && handledTargetRequest.current !== targetRequest
+    ) {
+      handledTargetRequest.current = targetRequest;
+      edit(initialProfileForProvider(profiles, initialProvider));
       return;
     }
     // On open: select default/first profile so the form is not blank "New profile".
@@ -117,6 +132,7 @@ export function ProfileSettingsDialog({
     if (!openedOnce.current) {
       if (profiles.length === 0) return;
       openedOnce.current = true;
+      handledTargetRequest.current = targetRequest;
       edit(initialProfileForProvider(profiles, initialProvider));
       return;
     }
@@ -124,9 +140,9 @@ export function ProfileSettingsDialog({
     if (selectedId && !profiles.some((profile) => profile.id === selectedId)) {
       edit(profiles[0] ?? null);
     }
-  }, [open, profiles, selectedId, initialProvider]);
+  }, [embedded, open, profiles, selectedId, initialProvider, targetRequest]);
   useEffect(() => {
-    if (!open) return;
+    if (!open || embedded) return;
     // ModalSurface may focus Close first; reclaim the primary form field.
     const focusName = () => nameInputRef.current?.focus();
     focusName();
@@ -136,7 +152,7 @@ export function ProfileSettingsDialog({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);
     };
-  }, [open, selectedId]);
+  }, [embedded, open, selectedId]);
   // Auto-check availability when a saved profile is selected so the probe tile
   // turns green (ready) without a manual click. Does not set form-wide busy.
   useEffect(() => {
@@ -215,18 +231,14 @@ export function ProfileSettingsDialog({
   };
   const isClaude = (selected?.provider ?? provider) === "claude-code";
   const isDefault = selected ? isDefaultProfileId(selected.id) : false;
-  return (
-    <ModalSurface
-      open={open}
-      onClose={onClose}
-      dismissible={!busy}
-      className="profile-dialog"
-      ariaLabelledBy="profile-dialog-title"
-    >
+  const content = (
+    <>
+      {!embedded && (
         <header>
           <div><p className="eyebrow">Local provider settings</p><h2 id="profile-dialog-title">Provider profiles</h2></div>
           <CloseButton onClick={onClose} label="Close profile settings" />
         </header>
+      )}
         <div className="profile-dialog-body">
           <nav aria-label="Provider profiles">
             {profiles.map((profile) => {
@@ -405,6 +417,18 @@ export function ProfileSettingsDialog({
             </footer>
           </form>
         </div>
+    </>
+  );
+  if (embedded) return content;
+  return (
+    <ModalSurface
+      open={open}
+      onClose={onClose}
+      dismissible={!busy}
+      className="profile-dialog"
+      ariaLabelledBy="profile-dialog-title"
+    >
+      {content}
     </ModalSurface>
   );
 }

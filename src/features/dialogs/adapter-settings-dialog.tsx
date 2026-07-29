@@ -3,7 +3,15 @@ import type { InstalledProviderAdapter, ReviewedAdapterCatalogEntry } from "../.
 import { Button } from "../../components/ui";
 import { OverlayDialog } from "./overlay-dialog";
 
-export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AdapterSettingsDialog({
+  open,
+  embedded = false,
+  onClose,
+}: {
+  open: boolean;
+  embedded?: boolean;
+  onClose: () => void;
+}) {
   const [adapters, setAdapters] = useState<InstalledProviderAdapter[]>([]);
   const [catalog, setCatalog] = useState<ReviewedAdapterCatalogEntry[]>([]);
   const [administrationAvailable, setAdministrationAvailable] = useState(true);
@@ -188,9 +196,8 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
     return "Not installed";
   };
 
-  return (
-    <OverlayDialog title="Provider adapters" onClose={onClose}>
-      <div className="adapter-settings" ref={bodyRef}>
+  const content = (
+    <div className="adapter-settings" ref={bodyRef}>
         <p className="adapter-policy">
           Reviewed adapters install in one click with an explicit approve step. Aldunis verifies the
           pinned digest, rejects executable package code, and keeps authority inside its ACP runtime
@@ -529,7 +536,12 @@ export function AdapterSettingsDialog({ open, onClose }: { open: boolean; onClos
           </section>
         )}
         {error && <p className="context-error" role="alert">{error}</p>}
-      </div>
+    </div>
+  );
+  if (embedded) return content;
+  return (
+    <OverlayDialog title="Provider adapters" onClose={onClose}>
+      {content}
     </OverlayDialog>
   );
 }

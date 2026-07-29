@@ -8,8 +8,7 @@ export function CommandPalette({
   onOpenRepository,
   onSearch,
   onPreferences,
-  onProviderSettings,
-  onAdapterSettings,
+  onProviderManagement,
   onManageWorktrees,
   onAutomations,
   hasRepository = false,
@@ -19,8 +18,7 @@ export function CommandPalette({
   onOpenRepository: () => void;
   onSearch: () => void;
   onPreferences: () => void;
-  onProviderSettings: () => void;
-  onAdapterSettings: () => void;
+  onProviderManagement: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
@@ -64,14 +62,9 @@ export function CommandPalette({
           run: onPreferences,
         },
         {
-          label: "Provider settings",
-          detail: "Configure local provider profiles",
-          run: onProviderSettings,
-        },
-        {
-          label: "Provider adapters",
-          detail: "Inspect and administer declarative ACP adapters",
-          run: onAdapterSettings,
+          label: "Provider management",
+          detail: "Profiles, adapter package trust, and readiness diagnostics",
+          run: onProviderManagement,
         },
         {
           label: "Automations",
@@ -94,7 +87,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAdapterSettings, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderSettings, onSearch, query],
+    [hasRepository, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
   );
 
   useEffect(() => {
