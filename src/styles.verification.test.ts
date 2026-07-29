@@ -139,6 +139,19 @@ test("minimum desktop width shows one active conversation so review stays readab
   );
 });
 
+test("default desktop width shows only the active pane while review is open", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(min-width:\s*1101px\)\s*and\s*\(max-width:\s*1440px\)\s*\{[\s\S]*?\.conversation-workspace:has\(\.review-dock\)\s+\.split-workspace\.split\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /\.conversation-workspace:has\(\.review-dock\)\[data-active-pane="primary"\]\s+\.split-workspace\.split\s*>\s*\.secondary-pane,[\s\S]*?\.conversation-workspace:has\(\.review-dock\)\[data-active-pane="secondary"\]\s+\.split-workspace\.split\s*>\s*\.primary-pane,[\s\S]*?\.conversation-workspace:has\(\.review-dock\)\s+\.split-workspace\.split\s*>\s*\.split-divider\s*\{[^}]*display:\s*none\s*!important/s,
+  );
+});
+
 test("staging checkbox hit target is expanded via label", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
