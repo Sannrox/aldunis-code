@@ -16,6 +16,7 @@ import {
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { ShikigamiAdapter } from "./shikigami-provider.ts";
+import { beginProviderEventStream } from "./provider-stream.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import { probeAcpModels } from "./acp-models.ts";
 import {
@@ -1763,13 +1764,10 @@ async function handleApi(
         } else provider.cancel(run.id);
         throw error;
       }
-      response.writeHead(200, {
-        "content-type": "application/x-ndjson; charset=utf-8",
-        "cache-control": "no-store",
-        "x-content-type-options": "nosniff",
-        "x-provider-run-id": run.id,
-        "x-thread-id": persisted.thread.id,
-        "x-turn-id": persisted.turn.id,
+      beginProviderEventStream(response, {
+        runId: run.id,
+        threadId: persisted.thread.id,
+        turnId: persisted.turn.id,
       });
       let completed = false;
       let historyFailed = false;

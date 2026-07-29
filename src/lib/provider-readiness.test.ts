@@ -316,6 +316,7 @@ test("provider failures distinguish configuration recovery from retryable failur
     true,
   );
   assert.equal(providerFailureNeedsConfiguration("Sign in to Codex CLI (codex login)."), true);
+  assert.equal(providerFailureNeedsConfiguration("Not logged in · Please run /login"), true);
   assert.equal(providerFailureNeedsConfiguration("Provider process exited unexpectedly."), false);
   assert.equal(providerFailureNeedsConfiguration("Request timed out."), false);
   assert.equal(providerFailureNeedsConfiguration("API key validation service timed out."), false);
@@ -332,6 +333,7 @@ test("assistant text only triggers recovery for explicit authentication errors",
     providerTextReportsAuthenticationFailure("Connecting…\nAuthentication failed: credentials expired."),
     true,
   );
+  assert.equal(providerTextReportsAuthenticationFailure("Not logged in · Please run /login"), true);
   assert.equal(
     providerTextReportsAuthenticationFailure("I checked the API key configuration before the process exited."),
     false,
