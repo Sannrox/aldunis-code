@@ -328,6 +328,8 @@ function App() {
         preferences={preferences}
         recovered={preferencesRecovered}
         onClose={() => setPreferencesOpen(false)}
+        onOpenProviderSettings={() => setProfileDialog(true)}
+        onOpenAdapterSettings={() => setAdapterDialog(true)}
         onSave={async (value) => {
           const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
           if (!response.ok) return;

@@ -24,6 +24,8 @@ import {
   providerModelOptions,
   providerNotReadyMessage,
   providerReasoningEfforts,
+  providerFailureNeedsConfiguration,
+  providerTextReportsAuthenticationFailure,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import {
@@ -1403,6 +1405,10 @@ export function Conversation({
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
+  const failureNeedsConfiguration = failure
+    ? providerFailureNeedsConfiguration(failure.message)
+      || providerTextReportsAuthenticationFailure(assistantText)
+    : false;
   const hasAssistantContent = Boolean(assistantText.trim())
     || latestPlan != null
     || toolEvents.length > 0
@@ -1471,7 +1477,9 @@ export function Conversation({
     cancelling: "Cancelling…",
     completed: "Turn completed",
     cancelled: `${providerLabel} cancelled · send another prompt to resume`,
-    failed: `${providerLabel} stopped · send another prompt to resume`,
+    failed: failureNeedsConfiguration
+      ? `${providerLabel} needs setup · update provider settings before retrying`
+      : `${providerLabel} stopped · review the error above before retrying`,
   };
   const accessScope = {
     label: accessLabel,
@@ -1922,6 +1930,16 @@ export function Conversation({
                   </p>
                   {failureView.question && (
                     <p className="provider-error-question">Question: {failureView.question}</p>
+                  )}
+                  {failureNeedsConfiguration && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={onOpenProfiles}
+                    >
+                      Open provider settings
+                    </Button>
                   )}
                   {failureView.resumeCommand && (
                     <div className="provider-error-resume">
