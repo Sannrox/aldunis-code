@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
 import { OverlayDialog } from "./overlay-dialog";
 
+export const CREATE_WORKTREE_ACTION_COPY = {
+  label: "Create worktree",
+  detail: "Create an isolated managed checkout for conversation work",
+} as const;
+
 export function CommandPalette({
   open,
   onClose,
@@ -74,8 +79,7 @@ export function CommandPalette({
         ...(hasRepository
           ? [
               {
-                label: "Manage worktrees",
-                detail: "Create or remove managed conversation worktrees",
+                ...CREATE_WORKTREE_ACTION_COPY,
                 run: onManageWorktrees,
               },
             ]
