@@ -126,6 +126,19 @@ test("pane-switcher tabs have usable hit targets and active chrome", () => {
   assert.match(shell, /\.pane-switcher\s*>\s*button\s*\{[^}]*text-overflow:\s*ellipsis/s);
 });
 
+test("minimum desktop width shows one active conversation so review stays readable", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.split-workspace\.split\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /\.conversation-workspace\[data-active-pane="primary"\]\s+\.split-workspace\.split\s*>\s*\.secondary-pane,[\s\S]*?\.conversation-workspace\[data-active-pane="secondary"\]\s+\.split-workspace\.split\s*>\s*\.primary-pane,[\s\S]*?\.split-workspace\.split\s*>\s*\.split-divider\s*\{[^}]*display:\s*none\s*!important/s,
+  );
+});
+
 test("staging checkbox hit target is expanded via label", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
