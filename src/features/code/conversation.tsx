@@ -14,7 +14,6 @@ import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
   canSwitchNewConversationProvider,
-  cycleReasoningEffort,
   DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
   providerAvatarInitials,
@@ -2235,7 +2234,7 @@ export function Conversation({
                     : !providerReady
                     ? providerReadinessMessage
                     : canSwitchProvider
-                    ? "Open the provider menu. Alt-click opens provider profiles."
+                    ? "Open the provider menu"
                     : conversation
                       ? "Provider is fixed for this conversation. Use Fork in the top bar to change providers. Click opens provider profiles."
                       : "Open provider profiles"
@@ -2254,8 +2253,7 @@ export function Conversation({
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  // Alt/Option-click always opens provider profile admin.
-                  if (event.altKey || !canSwitchProvider) {
+                  if (!canSwitchProvider) {
                     closeComposerMenus();
                     onOpenProfiles(provider);
                     return;
@@ -2354,28 +2352,17 @@ export function Conversation({
                 aria-haspopup="listbox"
                 aria-expanded={modelMenuOpen}
                 title={
-                  showReasoningEffort
-                    ? "Open the model menu. Alt-click cycles reasoning effort."
-                    : "Open the model menu"
+                  "Open the model menu"
                 }
                 aria-label={
                   showReasoningEffort
-                    ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model; Alt-click cycles effort.`
+                    ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model or reasoning effort.`
                     : `Model ${modelChipDisplay}. Open menu to choose a model.`
                 }
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
                   if (!canPickModel) return;
-                  if (showReasoningEffort && event.altKey) {
-                    setReasoningEffort((current) => cycleReasoningEffort(
-                      provider,
-                      model,
-                      current,
-                      selectedProvider,
-                    ));
-                    return;
-                  }
                   setProviderMenuOpen(false);
                   setModeMenuOpen(false);
                   setModelMenuOpen((open) => {
