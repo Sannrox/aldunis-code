@@ -92,6 +92,10 @@ import {
   ContextPackageSummary,
 } from "./context-package";
 
+export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
+  return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
+}
+
 export function Conversation({
   repository,
   conversation,
@@ -2430,7 +2434,7 @@ export function Conversation({
                 : !providerReady
                 ? providerReadinessMessage
                 : worktree
-                ? `Reply to ${providerName}…`
+                ? readyComposerPlaceholder(providerName, threadId)
                 : "Open a repository with an available worktree…"
             }
             id={`${pane}-composer`}
