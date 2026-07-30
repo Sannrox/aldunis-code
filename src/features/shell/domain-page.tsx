@@ -1,6 +1,8 @@
-import React from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Product, IconName } from "../../types";
 import { Icon } from "../../components/icon";
+import type { SavedProject } from "../dialogs/repository-dialog";
+import { Button, Input } from "../../components/ui";
 
 const productPages = {
   sekai: {
@@ -35,7 +37,301 @@ const productPages = {
   },
 };
 
-export function DomainPage({ product }: { product: Exclude<Product, "code"> }) {
+interface ActionRow {
+  instanceId: string;
+  typeId: string;
+  version: string;
+  operationId: string | null;
+  status: string;
+  createdAt: string;
+}
+
+interface ActionDetail {
+  action: ActionRow;
+  effects: Array<{
+    effectId: string;
+    kind: string;
+    status: string;
+    lifecycleState: string;
+    updatedAt: string;
+  }>;
+  receipt: {
+    operationId: string;
+    complete: boolean;
+    missingSurfaces: string[];
+    eventCount: number | null;
+  } | null;
+}
+
+function ChiseiActionsPanel({
+  projects,
+  selectedProjectId,
+  onProjectsChanged,
+  bindingAdministrationAvailable,
+}: {
+  projects: SavedProject[];
+  selectedProjectId: string | null;
+  onProjectsChanged?: () => Promise<void>;
+  bindingAdministrationAvailable: boolean;
+}) {
+  const selectedProject = useMemo(() => {
+    const matched = projects.find((project) => (
+      project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? "")
+    ));
+    return matched ?? (selectedProjectId === null ? projects[0] ?? null : null);
+  }, [projects, selectedProjectId]);
+  const activeProjectId = selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
+    ? selectedProjectId
+    : selectedProject?.id ?? null;
+  const hasMemberBinding = Boolean(
+    activeProjectId
+    && selectedProject?.chiseiBindings
+    && Object.hasOwn(selectedProject.chiseiBindings, activeProjectId),
+  );
+  const selectedNamespace = activeProjectId
+    ? hasMemberBinding
+      ? selectedProject?.chiseiBindings?.[activeProjectId] ?? null
+      : selectedProject?.chiseiNamespace ?? null
+    : null;
+  const [namespace, setNamespace] = useState(selectedNamespace ?? "");
+  const [boundNamespace, setBoundNamespace] = useState(selectedNamespace);
+  const [actions, setActions] = useState<ActionRow[]>([]);
+  const [projectionState, setProjectionState] = useState<"idle" | "loading" | "live" | "stale" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  const [detail, setDetail] = useState<ActionDetail | null>(null);
+  const listRequest = useRef(0);
+  const detailRequest = useRef(0);
+  const synchronizedBinding = useRef(`${activeProjectId ?? ""}\n${selectedNamespace ?? ""}`);
+
+  useEffect(() => {
+    const next = selectedNamespace;
+    const bindingKey = `${activeProjectId ?? ""}\n${next ?? ""}`;
+    if (synchronizedBinding.current === bindingKey) {
+      setNamespace(next ?? "");
+      setBoundNamespace(next);
+      return;
+    }
+    synchronizedBinding.current = bindingKey;
+    setNamespace(next ?? "");
+    setBoundNamespace(next);
+    setActions([]);
+    setDetail(null);
+    setProjectionState(next ? "idle" : "idle");
+    setMessage(null);
+    listRequest.current += 1;
+    detailRequest.current += 1;
+  }, [activeProjectId, selectedNamespace]);
+
+  const loadActions = async () => {
+    if (!activeProjectId || !boundNamespace) return;
+    const request = ++listRequest.current;
+    const projectId = activeProjectId;
+    setProjectionState("loading");
+    setMessage(null);
+    try {
+      const response = await fetch("/api/integrations/chisei/actions/list", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, limit: 25 }),
+      });
+      const body = await response.json() as {
+        state?: "live" | "stale";
+        actions?: ActionRow[];
+        warning?: string | null;
+        error?: string;
+      };
+      if (request !== listRequest.current || activeProjectId !== projectId) return;
+      if (!response.ok) throw new Error(body.error ?? "Chisei projection failed.");
+      setActions(body.actions ?? []);
+      setProjectionState(body.state ?? "live");
+      setMessage(body.warning ?? null);
+    } catch (error) {
+      if (request !== listRequest.current || activeProjectId !== projectId) return;
+      setProjectionState("error");
+      setMessage(error instanceof Error ? error.message : "Chisei projection failed.");
+    }
+  };
+
+  useEffect(() => {
+    if (boundNamespace) void loadActions();
+    // Fetch only when the server-owned binding changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId, boundNamespace]);
+
+  const saveBinding = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!activeProjectId || !bindingAdministrationAvailable) return;
+    listRequest.current += 1;
+    detailRequest.current += 1;
+    setMessage(null);
+    try {
+      const response = await fetch("/api/integrations/chisei/bind", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: activeProjectId,
+          namespace: namespace.trim() || null,
+        }),
+      });
+      const body = await response.json() as { chiseiNamespace?: string | null; error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Chisei binding failed.");
+      const nextBinding = body.chiseiNamespace ?? null;
+      synchronizedBinding.current = `${activeProjectId}\n${nextBinding ?? ""}`;
+      setBoundNamespace(nextBinding);
+      setNamespace(nextBinding ?? "");
+      if (nextBinding !== boundNamespace) {
+        setActions([]);
+        setDetail(null);
+        setProjectionState("idle");
+      }
+      setMessage(body.chiseiNamespace
+        ? "Project binding saved locally."
+        : "Project binding removed.");
+      await onProjectsChanged?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Chisei binding failed.");
+      setProjectionState("error");
+    }
+  };
+
+  const openDetail = async (instanceId: string) => {
+    if (!activeProjectId) return;
+    const request = ++detailRequest.current;
+    const projectId = activeProjectId;
+    setMessage(null);
+    try {
+      const response = await fetch("/api/integrations/chisei/actions/detail", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, instanceId }),
+      });
+      const body = await response.json() as ActionDetail & { error?: string };
+      if (request !== detailRequest.current || activeProjectId !== projectId) return;
+      if (!response.ok) throw new Error(body.error ?? "Action detail failed.");
+      setDetail(body);
+    } catch (error) {
+      if (request !== detailRequest.current || activeProjectId !== projectId) return;
+      setMessage(error instanceof Error ? error.message : "Action detail failed.");
+    }
+  };
+
+  return (
+    <section className="chisei-actions" aria-labelledby="chisei-actions-title">
+      <header>
+        <div>
+          <p className="eyebrow">Read-only project projection</p>
+          <h2 id="chisei-actions-title">Governed Actions</h2>
+        </div>
+        {boundNamespace && (
+          <Button type="button" onClick={() => void loadActions()} disabled={projectionState === "loading"}>
+            {projectionState === "loading" ? "Refreshing…" : "Refresh"}
+          </Button>
+        )}
+      </header>
+      {!selectedProject ? (
+        <p className="domain-empty">Open a local project before configuring its Chisei projection.</p>
+      ) : (
+        <>
+          <form className="chisei-binding" onSubmit={saveBinding}>
+            <label htmlFor="chisei-project-namespace">
+              Project namespace
+              <span>{selectedProject.name} · stored by this local host</span>
+            </label>
+            <Input
+              id="chisei-project-namespace"
+              value={namespace}
+              onChange={(event) => setNamespace(event.target.value)}
+              disabled={!bindingAdministrationAvailable}
+              placeholder="team/project"
+              maxLength={200}
+              autoComplete="off"
+            />
+            <Button type="submit" disabled={!bindingAdministrationAvailable}>Save binding</Button>
+          </form>
+          {!bindingAdministrationAvailable && (
+            <p className="settings-hint">Binding administration is available only on loopback.</p>
+          )}
+          <p className="boundary-copy">
+            Endpoint and credentials stay server-side. This view cannot admit, claim, retry, or mutate Actions.
+          </p>
+          {message && (
+            <p className={projectionState === "error" ? "domain-message error" : "domain-message"} role={projectionState === "error" ? "alert" : "status"}>
+              {message}
+            </p>
+          )}
+          {boundNamespace && projectionState !== "loading" && actions.length === 0 && projectionState !== "error" && (
+            <p className="domain-empty">No governed Actions are visible for this project.</p>
+          )}
+          {projectionState === "loading" && <p className="domain-empty" role="status">Loading governed Actions…</p>}
+          {actions.length > 0 && (
+            <ul className="chisei-action-list" aria-label="Governed Actions">
+              {actions.map((action) => (
+                <li key={action.instanceId}>
+                  <button type="button" onClick={() => void openDetail(action.instanceId)}>
+                    <span className={`chisei-status ${action.status}`}>{action.status}</span>
+                    <strong>{action.typeId}</strong>
+                    <span>v{action.version}</span>
+                    <span>{new Date(action.createdAt).toLocaleString()}</span>
+                    <code>{action.operationId ?? "No operation"}</code>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {detail && (
+            <article className="chisei-action-detail" aria-labelledby="chisei-action-detail-title">
+              <header>
+                <div>
+                  <p className="eyebrow">Authoritative source: Chisei</p>
+                  <h3 id="chisei-action-detail-title">{detail.action.typeId} · {detail.action.status}</h3>
+                </div>
+                <Button type="button" onClick={() => setDetail(null)}>Close detail</Button>
+              </header>
+              <dl>
+                <div><dt>Action</dt><dd><code>{detail.action.instanceId}</code></dd></div>
+                {detail.receipt && (
+                  <>
+                    <div><dt>Operation</dt><dd><code>{detail.receipt.operationId}</code></dd></div>
+                    <div><dt>Receipt</dt><dd>{detail.receipt.complete ? "Complete" : "Incomplete"}{detail.receipt.eventCount === null ? "" : ` · ${detail.receipt.eventCount} events`}</dd></div>
+                  </>
+                )}
+              </dl>
+              {!detail.receipt && (
+                <p className="domain-empty">This Action has no operation or receipt.</p>
+              )}
+              {detail.receipt && detail.receipt.missingSurfaces.length > 0 && (
+                <p className="domain-message">Missing receipt surfaces: {detail.receipt.missingSurfaces.join(", ")}</p>
+              )}
+              <ul className="chisei-effect-list" aria-label="Action effects">
+                {detail.effects.map((effect) => (
+                  <li key={effect.effectId}>
+                    <strong>{effect.kind}</strong>
+                    <span>{effect.lifecycleState || effect.status}</span>
+                    <time dateTime={effect.updatedAt}>{new Date(effect.updatedAt).toLocaleString()}</time>
+                  </li>
+                ))}
+              </ul>
+            </article>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export function DomainPage({
+  product,
+  projects = [],
+  selectedProjectId = null,
+  onProjectsChanged,
+  chiseiBindingAdministrationAvailable = true,
+}: {
+  product: Exclude<Product, "code">;
+  projects?: SavedProject[];
+  selectedProjectId?: string | null;
+  onProjectsChanged?: () => Promise<void>;
+  chiseiBindingAdministrationAvailable?: boolean;
+}) {
   const page = productPages[product];
   return (
     <main className={`domain-page ${product}`}>
@@ -65,6 +361,14 @@ export function DomainPage({ product }: { product: Exclude<Product, "code"> }) {
         <span>BOUNDARY</span>
         {page.boundary}
       </aside>
+      {product === "chisei" && (
+        <ChiseiActionsPanel
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+          onProjectsChanged={onProjectsChanged}
+          bindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+        />
+      )}
     </main>
   );
 }

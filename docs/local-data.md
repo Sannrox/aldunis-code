@@ -35,6 +35,11 @@ Projects, threads, turns, messages, typed tool activity, provider session
 references, context receipts, checkpoints, delegated-conversation
 relationships, and related records rebuild from the event log.
 
+A project may also retain one Chisei namespace binding. This is local routing
+metadata, not a copy of Chisei authority. Action/effect/receipt projections are
+not written to disk; a successful list may remain in memory for at most 30
+seconds as an explicitly stale fallback.
+
 - Active turns remain owned by the host if you navigate away and return.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
@@ -79,6 +84,9 @@ deleting stored relationships.
 - **Profile environment secrets** are Aldunis-owned, write-only in the UI, and
   deleted only when you remove the variable or profile—not when you clear a
   masked field.
+- **Chisei credentials** come from `ALDUNIS_CHISEI_TOKEN` in the host
+  environment. They are never persisted in project history or returned to the
+  browser.
 
 ## What never to commit
 

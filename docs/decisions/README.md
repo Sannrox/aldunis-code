@@ -11,6 +11,7 @@ new file over rewriting history: amend only for factual corrections.
 | [cross-provider-conversation-forks.md](cross-provider-conversation-forks.md) | Explicit fork + allowlisted context transfer across providers |
 | [conversation-automations.md](conversation-automations.md) | Timer-only automations into existing threads |
 | [delegated-human-control.md](delegated-human-control.md) | Parent UI controls reuse child-bound approval and input authority |
+| [chisei-project-projections.md](chisei-project-projections.md) | Server-owned project binding and bounded read-only Chisei projection |
 | [shikigami-provider.md](shikigami-provider.md) | First-class shikigami harness provider + PermissionBroker pre-exec |
 | [opencode-declarative-adapter.md](opencode-declarative-adapter.md) | Reviewed OpenCode ACP package (`opencode acp`) |
 

@@ -526,6 +526,9 @@ export interface CollapsedProject {
   openedAt: string;
   /** All local project record ids that share this git repository (main + worktrees). */
   memberIds: string[];
+  /** Per-record bindings retained when repository worktrees collapse into one chip. */
+  chiseiBindings: Record<string, string | null>;
+  chiseiNamespace?: string | null;
 }
 
 /**
@@ -534,7 +537,13 @@ export interface CollapsedProject {
  * as `root` when resolvable.
  */
 export async function collapseProjectsByRepository(
-  projects: Array<{ id: string; name: string; root: string; openedAt: string }>,
+  projects: Array<{
+    id: string;
+    name: string;
+    root: string;
+    openedAt: string;
+    chiseiNamespace?: string | null;
+  }>,
 ): Promise<CollapsedProject[]> {
   const sorted = [...projects].sort(
     (left, right) => right.openedAt.localeCompare(left.openedAt) || left.root.localeCompare(right.root),
@@ -594,6 +603,12 @@ export async function collapseProjectsByRepository(
       root,
       openedAt: group.winner.openedAt,
       memberIds: [...new Set(group.memberIds)],
+      chiseiBindings: Object.fromEntries(
+        projects
+          .filter((project) => group.memberIds.includes(project.id))
+          .map((project) => [project.id, project.chiseiNamespace ?? null]),
+      ),
+      chiseiNamespace: group.winner.chiseiNamespace ?? null,
     });
   }
 

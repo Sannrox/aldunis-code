@@ -38,6 +38,14 @@
     {
       "name": "ChildInputCoordinationReceipt",
       "description": "A durable receipt proving which child input request was answered, its route, and optional coordinating parent. It stores an answer digest rather than provider-visible parent context."
+    },
+    {
+      "name": "LocalProjectChiseiBinding",
+      "description": "A loopback-administered local mapping from one Aldunis Code project to one Chisei namespace. It contains no endpoint credential or remote Action content."
+    },
+    {
+      "name": "ChiseiActionProjection",
+      "description": "A bounded read-only projection of Chisei-owned Action, effect, and operation receipt identifiers and lifecycle state. It is never local domain authority."
     }
   ],
   "relations": [
@@ -82,6 +90,12 @@
         "min": 0,
         "max": 1
       }
+    },
+    {
+      "name": "projects_chisei_actions",
+      "description": "Uses a server-owned local project binding to display bounded Chisei state without transferring namespace or mutation authority.",
+      "domain": "LocalProjectChiseiBinding",
+      "range": "ChiseiActionProjection"
     }
   ],
   "provenance": [
@@ -149,6 +163,24 @@
       "subject": "produces_input_coordination_receipt",
       "source": "Aldunis Code child input routing contract",
       "locator": "server/state.ts#resolveInputRequest",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalProjectChiseiBinding",
+      "source": "Accepted Chisei project projection decision",
+      "locator": "docs/decisions/chisei-project-projections.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChiseiActionProjection",
+      "source": "GitHub Issue Sannrox/aldunis-code#207",
+      "locator": "server/chisei-client.ts#ChiseiActionProjection",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_chisei_actions",
+      "source": "Aldunis Code Chisei projection contract",
+      "locator": "server/chisei-client.ts#ChiseiProjectionClient",
       "confidence": 1.0
     }
   ]

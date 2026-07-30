@@ -74,6 +74,35 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
+test("project Chisei namespace bindings persist locally and validate their bounded identity", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const bound = await store.bindProjectChiseiNamespace("project-1", "team/project");
+  assert.equal(bound.chiseiNamespace, "team/project");
+  assert.equal(
+    (await new LocalStateStore(directory).load()).projects[0].chiseiNamespace,
+    "team/project",
+  );
+  await assert.rejects(
+    () => store.bindProjectChiseiNamespace("project-1", "../other project"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 400,
+  );
+  const unbound = await store.bindProjectChiseiNamespace("project-1", null);
+  assert.equal(unbound.chiseiNamespace, null);
+});
+
+test("project saves and Chisei binding updates serialize without losing either field", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "before", root: "/fixture" });
+  await Promise.all([
+    store.bindProjectChiseiNamespace("project-1", "team/project"),
+    store.saveProject({ id: "project-1", name: "after", root: "/fixture" }),
+  ]);
+  const project = (await store.load()).projects[0];
+  assert.equal(project.name, "after");
+  assert.equal(project.chiseiNamespace, "team/project");
+});
+
 test("provider plans update one persisted artifact and survive restart without duplication", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

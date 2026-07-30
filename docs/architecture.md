@@ -75,6 +75,11 @@ through a versioned authenticated contract.
   [explicit conversation fork](decisions/cross-provider-conversation-forks.md);
   native sessions remain provider-bound and only a reviewed allowlisted
   manifest crosses the boundary.
+- Chisei project views follow the
+  [server-owned projection decision](decisions/chisei-project-projections.md):
+  the host derives namespace authority from a loopback-administered local
+  project binding, keeps endpoint credentials server-side, and exposes only a
+  bounded read projection.
 - Tool calls are typed, rendered before approval, and audited locally without
   storing secrets.
 - Approval scope is no broader than one described action unless the user

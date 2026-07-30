@@ -51,6 +51,7 @@ function App() {
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryRestoring, setRepositoryRestoring] = useState(true);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
+  const [chiseiBindingAdministrationAvailable, setChiseiBindingAdministrationAvailable] = useState(true);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [providerManagement, setProviderManagement] = useState<{
     destination: ProviderManagementDestination;
@@ -77,8 +78,14 @@ function App() {
       // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
       const response = await fetch("/api/projects/list", { method: "POST" });
       if (!response.ok) return;
-      const body = await response.json() as { projects?: SavedProject[] };
+      const body = await response.json() as {
+        projects?: SavedProject[];
+        chiseiBindingAdministrationAvailable?: boolean;
+      };
       setSavedProjects(body.projects ?? []);
+      setChiseiBindingAdministrationAvailable(
+        body.chiseiBindingAdministrationAvailable !== false,
+      );
     } catch {
       /* leave existing list */
     }
@@ -270,6 +277,8 @@ function App() {
           setWorktreeDialog(true);
         }}
         onSettings={() => setPreferencesOpen(true)}
+        onProjectsChanged={loadSavedProjects}
+        chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
       />
       <RepositoryDialog

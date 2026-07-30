@@ -1,0 +1,79 @@
+syntax = "proto3";
+package sekai;
+
+message ActionInstance {
+  string instance_id = 1;
+  string namespace = 2;
+  string type_id = 3;
+  string version = 4;
+  string principal = 5;
+  string parameters_json = 6;
+  string request_digest = 7;
+  string idempotency_key = 8;
+  string operation_id = 9;
+  string status = 10;
+  string deny_reason = 11;
+  repeated string evidence_submission_ids = 12;
+  string policy_decision = 13;
+  string budget_decision = 14;
+  int64 created_at_ms = 15;
+  int64 decided_at_ms = 16;
+}
+
+message GetActionInstanceRequest {
+  string instance_id = 1;
+  string namespace = 2;
+  string idempotency_key = 3;
+}
+message GetActionInstanceResponse { ActionInstance instance = 1; }
+message ListActionInstancesRequest {
+  string namespace = 1;
+  string type_id = 2;
+  string status = 3;
+  uint32 limit = 4;
+}
+message ListActionInstancesResponse { repeated ActionInstance instances = 1; }
+
+message ActionEffect {
+  string effect_id = 1;
+  string instance_id = 2;
+  string namespace = 3;
+  string operation_id = 4;
+  string kind = 5;
+  string status = 6;
+  string payload_json = 7;
+  string failure_reason = 8;
+  int64 created_at_ms = 9;
+  int64 updated_at_ms = 10;
+  string claim_owner = 11;
+  uint64 claim_generation = 12;
+  string claim_fencing_token = 13;
+  int64 claim_expires_at_ms = 14;
+  string claim_request_id = 15;
+  uint64 park_generation = 16;
+  string active_resolution_id = 17;
+  uint32 claim_attempt_count = 18;
+  uint32 lease_expiry_count = 19;
+  uint32 park_count = 20;
+  string lifecycle_state = 21;
+  string retry_policy_version = 22;
+  string retry_policy_digest = 23;
+  uint32 max_claim_attempts = 24;
+  uint32 max_lease_expiries = 25;
+  uint32 max_park_cycles = 26;
+}
+
+message ListActionEffectsRequest {
+  string instance_id = 1;
+  string namespace = 2;
+  string kind = 3;
+  string status = 4;
+  uint32 limit = 5;
+}
+message ListActionEffectsResponse { repeated ActionEffect effects = 1; }
+
+service SekaiService {
+  rpc GetActionInstance(GetActionInstanceRequest) returns (GetActionInstanceResponse);
+  rpc ListActionInstances(ListActionInstancesRequest) returns (ListActionInstancesResponse);
+  rpc ListActionEffects(ListActionEffectsRequest) returns (ListActionEffectsResponse);
+}

@@ -102,6 +102,10 @@ import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
+import {
+  ChiseiClientError,
+  ChiseiProjectionClient,
+} from "./chisei-client.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -326,6 +330,7 @@ async function handleApi(
   wake: WakeBroker,
   withDelegatedControlLock: DelegatedControlLock,
   runChildFollowUp: (body: Record<string, unknown>) => Promise<void>,
+  chisei: ChiseiProjectionClient,
   remoteRequest: boolean,
   internalRequest: boolean,
   remoteAuth?: RemoteAuth,
@@ -595,7 +600,91 @@ async function handleApi(
       const projection = await state.load();
       sendJson(response, 200, {
         projects: await collapseProjectsByRepository(projection.projects),
+        chiseiBindingAdministrationAvailable: !remoteRequest,
       });
+      return true;
+    }
+    if (route === "/api/integrations/chisei/bind") {
+      if (remoteRequest) {
+        throw new LocalStateError(
+          "Remote clients cannot administer Chisei project bindings.",
+          403,
+        );
+      }
+      const body = await readJson(request) as { projectId?: unknown; namespace?: unknown };
+      if (
+        typeof body.projectId !== "string"
+        || (body.namespace !== null && typeof body.namespace !== "string")
+      ) {
+        throw new LocalStateError("A project and Chisei namespace are required.", 400);
+      }
+      const project = await state.bindProjectChiseiNamespace(
+        body.projectId,
+        body.namespace as string | null,
+      );
+      sendJson(response, 200, {
+        projectId: project.id,
+        chiseiNamespace: project.chiseiNamespace ?? null,
+      });
+      return true;
+    }
+    if (route === "/api/integrations/chisei/actions/list") {
+      const body = await readJson(request) as {
+        projectId?: unknown;
+        typeId?: unknown;
+        status?: unknown;
+        limit?: unknown;
+      };
+      if (
+        typeof body.projectId !== "string"
+        || (body.typeId !== undefined && typeof body.typeId !== "string")
+        || (body.status !== undefined && typeof body.status !== "string")
+        || (body.limit !== undefined && (
+          typeof body.limit !== "number" || !Number.isInteger(body.limit)
+        ))
+      ) {
+        throw new LocalStateError("A valid local project and bounded filters are required.", 400);
+      }
+      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
+      if (!project.chiseiNamespace) {
+        throw new ChiseiClientError(
+          "This project is not bound to a Chisei namespace.",
+          409,
+          "unconfigured",
+        );
+      }
+      sendJson(response, 200, await chisei.listActions(project.id, project.chiseiNamespace, {
+        typeId: body.typeId?.trim().slice(0, 200),
+        status: body.status?.trim().slice(0, 50),
+        limit: body.limit as number | undefined,
+      }));
+      return true;
+    }
+    if (route === "/api/integrations/chisei/actions/detail") {
+      const body = await readJson(request) as { projectId?: unknown; instanceId?: unknown };
+      if (
+        typeof body.projectId !== "string"
+        || typeof body.instanceId !== "string"
+        || !body.instanceId
+        || body.instanceId.length > 200
+      ) {
+        throw new LocalStateError("A valid local project and Action id are required.", 400);
+      }
+      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
+      if (!project.chiseiNamespace) {
+        throw new ChiseiClientError(
+          "This project is not bound to a Chisei namespace.",
+          409,
+          "unconfigured",
+        );
+      }
+      sendJson(
+        response,
+        200,
+        await chisei.actionDetail(project.chiseiNamespace, body.instanceId),
+      );
       return true;
     }
     if (route === "/api/directories/browse") {
@@ -2638,6 +2727,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       ? error.status
       : 500;
@@ -2650,6 +2740,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       ? error.message
       : "The local operation failed.";
@@ -2690,6 +2781,7 @@ export function createLocalHost(
   tls?: { key: Buffer; cert: Buffer },
   permissions = new PermissionBroker(),
   childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
+  chisei = new ChiseiProjectionClient(),
 ) {
   const internalPermissionCallback = remoteAuth
     ? createInternalPermissionCallback(permissions)
@@ -2929,6 +3021,7 @@ export function createLocalHost(
         wake,
         withDelegatedControlLock,
         runChildFollowUp,
+        chisei,
         Boolean(remoteAuth) && !internalRequest,
         internalRequest,
         remoteAuth,
