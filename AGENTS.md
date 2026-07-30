@@ -74,10 +74,6 @@ the land commit on `main` is also GitHub-signed/Verified and history stays
 linear. Avoid GitHub **rebase** merges when Verified history matters. Delete
 merged branches. Branches created by agents use the `codex/` prefix.
 
-## Reference repos
-
-- Open-source T3 Code (workflow research only): https://github.com/pingdotgg/t3code
-
 ## Documentation map
 
 - [docs/README.md](docs/README.md) — index

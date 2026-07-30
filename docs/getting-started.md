@@ -3,6 +3,8 @@
 ## Requirements
 
 - **Node.js 22** or newer
+- **npm** (included with Node.js)
+- **Git**
 - A local Git repository to open
 - Optional: provider CLIs on `PATH` (Claude Code, Codex, Shikigami, `kiro-cli`,
   `grok`, `opencode`) depending on which providers you use
@@ -10,8 +12,7 @@
 ## Install and run
 
 ```sh
-npm install
-npm run build
+npm ci
 npm start
 ```
 
@@ -20,7 +21,11 @@ Open [http://127.0.0.1:4174](http://127.0.0.1:4174).
 The host binds **loopback only** by default and refuses non-loopback addresses
 unless you enable remote mode (below).
 
+`npm start` builds the web and desktop entry points, then starts the local host.
+
 ### Development (UI + API split)
+
+Keep both commands running in separate terminals:
 
 ```sh
 # Terminal 1 — host
@@ -62,6 +67,8 @@ npm test
 npm run check
 npm run build
 ```
+
+All three commands should exit successfully before you submit a change.
 
 ## Cross-product planes
 

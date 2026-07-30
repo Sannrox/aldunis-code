@@ -12,7 +12,7 @@
 ```text
 idea -> status:triage -> shaped and dependency-ready -> status:ready
      -> one branch -> verify-code-change + autoreview -> PR
-     -> human/CI review -> rebase merge
+     -> human/CI review -> squash merge
 ```
 
 Use one status label: `status:triage`, `status:ready`, or `status:blocked`.
@@ -29,3 +29,6 @@ delivery closeout also records structured `autoreview` via the global helper
 (command, mode, and clean/accepted findings). Deterministic verify and live UI
 stress are not a substitute. Do not vendor `autoreview` into this repository.
 
+Prefer squash merge and delete the merged branch so `main` remains linear.
+When a Verified branch tip is required, follow the publishing workflow in
+[AGENTS.md](../AGENTS.md#verified-commits-on-github).

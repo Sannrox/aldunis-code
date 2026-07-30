@@ -38,9 +38,9 @@ removal. There is no automatic cleanup.
 
 ## Consequences
 
-- Worktree behavior stays provider-independent, following the useful
-  server-orchestration separation in T3 Code without adopting provider setup
-  terminals or implicit cleanup.
+- Worktree behavior stays provider-independent. Provider setup, worktree
+  coordination, and cleanup remain separate capabilities with separate
+  authority and approval boundaries.
 - A registry failure after Git creation leaves the checkout intact and reports
   that it must be treated as user-created; rollback never deletes user files.
 - Moving an owned worktree outside Aldunis Code is detected through its branch

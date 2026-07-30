@@ -11,12 +11,18 @@ human contributors and automated agents.
 3. Prefer one GitHub Issue → one branch → one PR → one observable outcome.
    See [docs/work-lifecycle.md](docs/work-lifecycle.md).
 
+Use the repository templates:
+
+- [Bug report](https://github.com/Sannrox/aldunis-code/issues/new?template=bug.yml)
+- [Feature proposal](https://github.com/Sannrox/aldunis-code/issues/new?template=feature.yml)
+- [Private security report](https://github.com/Sannrox/aldunis-code/security/advisories/new)
+
 ## Development setup
 
 ```sh
 git clone https://github.com/Sannrox/aldunis-code.git
 cd aldunis-code
-npm install
+npm ci
 npm run check
 npm test
 ```
@@ -43,7 +49,8 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 | `npm test` | Deterministic unit tests |
 | `npm run check` | TypeScript project build check |
 | `npm run build` | Web + desktop main bundles |
-| `npm run desktop` | Packaged Electron shell (local) |
+| `npm run desktop` | Build and run the local Electron shell |
+| `npm run package:desktop` | Build unsigned local test packages |
 
 ## Pull requests
 
@@ -56,6 +63,11 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 5. Do not commit credentials, provider transcripts, customer code, unredacted
    logs, local databases, or runtime state directories.
 
+A pull request should be ready for review: focused commits, no unrelated
+formatting churn, updated docs when behavior changes, and tests that cover the
+observable outcome. Draft pull requests are appropriate for early design or
+cross-platform feedback.
+
 ### Verification expectations
 
 At minimum for application changes:
@@ -67,6 +79,15 @@ npm test
 
 Add focused tests for new server logic. Provider and live UI stress are
 proportionate to risk—state what you ran.
+
+Documentation-only changes should at least pass:
+
+```sh
+git diff --check
+```
+
+Also verify every changed relative link and run any command whose documented
+behavior changed.
 
 For agent-delivered Issues, also run the **global** `autoreview` helper when
 available (see AGENTS.md). Do not vendor autoreview into this repository.
