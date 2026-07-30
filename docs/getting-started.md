@@ -47,7 +47,9 @@ The desktop shell waits for an ephemeral loopback host, enforces one instance,
 and gives the renderer no ambient Node or filesystem authority. Packaging and
 signing expectations are in [desktop-distribution.md](desktop-distribution.md).
 
-`npm run package:desktop` produces **local test artifacts only**.
+`npm run package:desktop` produces **local test artifacts only** in `release/`.
+It does not force Developer ID or Authenticode signing and never supplies
+public release evidence.
 
 ## First conversation
 

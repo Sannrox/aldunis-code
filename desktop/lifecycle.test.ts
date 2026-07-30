@@ -9,6 +9,7 @@ import {
   localApplicationUrl,
   selectedDirectoryPath,
 } from "./lifecycle.ts";
+import { validateDesktopReleaseTag } from "../scripts/verify-desktop-release-tag.ts";
 
 test("packaged startup waits for a loopback backend on an ephemeral port", async () => {
   const server = createServer((_request, response) => response.end("ready"));
@@ -49,4 +50,37 @@ test("desktop ESM build leaves CommonJS state locking outside the bundle", async
   assert.match(mainProcessBuild ?? "", /esbuild desktop\/main\.ts/);
   assert.match(mainProcessBuild ?? "", /--format=esm/);
   assert.match(mainProcessBuild ?? "", /--external:proper-lockfile/);
+  assert.match(mainProcessBuild ?? "", /--external:@grpc\/grpc-js/);
+  assert.match(mainProcessBuild ?? "", /--external:@grpc\/proto-loader/);
+});
+
+test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    scripts?: { "build:desktop-main"?: string };
+  };
+  const command = packageJson.scripts?.["build:desktop-main"] ?? "";
+
+  assert.match(command, /esbuild server\/shikigami-permission-hook\.mjs/);
+  assert.match(command, /--format=esm/);
+  assert.match(command, /--outfile=dist-electron\/shikigami-permission-hook\.mjs/);
+});
+
+test("desktop release evidence is bound to the package version", () => {
+  assert.doesNotThrow(() => validateDesktopReleaseTag("v0.1.0", "0.1.0"));
+  assert.throws(
+    () => validateDesktopReleaseTag("v0.1.1", "0.1.0"),
+    /must exactly match package version/,
+  );
+  assert.throws(
+    () => validateDesktopReleaseTag("0.1.0", "0.1.0"),
+    /must exactly match package version/,
+  );
+});
+
+test("native packages cannot overwrite the web build output", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    build?: { directories?: { output?: string } };
+  };
+
+  assert.equal(packageJson.build?.directories?.output, "release");
 });
