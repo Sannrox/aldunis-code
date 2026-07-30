@@ -237,6 +237,15 @@ test("Chisei Action projection stays keyboard-visible and stacks at narrow width
   assert.match(shellCss, /\.chisei-action-list span,[\s\S]*?overflow-wrap:\s*anywhere/s);
 });
 
+test("direct governed correlation remains readable and stacks at narrow widths", () => {
+  assert.match(shellCss, /\.governance-correlation\s*\{[^}]*grid-template-columns:/s);
+  assert.match(shellCss, /\.governance-correlation code\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(
+    shellCss,
+    /@media \(max-width:\s*720px\)[\s\S]*?\.governance-correlation\s*\{[^}]*grid-template-columns:\s*1fr/s,
+  );
+});
+
 test("keyboard-active quick results remain visibly highlighted", () => {
   assert.match(
     css,

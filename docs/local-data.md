@@ -69,6 +69,11 @@ seconds as an explicitly stale fallback.
   parent, route, timestamp, and answer digest—not the answer text. The answer
   itself is persisted only as the prompt of the originating child's native
   resume or explicitly identified follow-up turn.
+- Governed direct Shikigami turns retain only provider, governance mode,
+  thread/turn identifiers, the provider-confirmed run UUID, the equal Chisei
+  operation UUID, and creation time. Prompts, paths, tool payloads, harvest
+  output, credentials, and Chisei receipt bodies are excluded. Conversation
+  deletion, project deletion, and retention remove the correlation.
 
 ## Preferences
 

@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-26
-- Updated: 2026-07-26 (#118 PermissionBroker pre-exec)
+- Updated: 2026-07-30 (#208 governed direct-run correlation)
 
 ## Context
 
@@ -40,6 +40,10 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
    not argv, so prompts do not appear in the process table.
 9. Governance defaults to `local`; operators may set `SHIKIGAMI_GOVERNANCE_ADAPTER`
    / `SHIKIGAMI_FAIL_CLOSED` (and plane endpoint env) for governed profiles.
+10. When the effective governance adapter is `sekai-chisei`, Code waits for
+    Shikigami's provider-confirmed run UUID and persists a metadata-only direct
+    correlation with `operation_id = run_id`. It is labeled **direct governed**,
+    never admitted or claimed. Conflicting or malformed identities fail visibly.
 
 ## Consequences
 
@@ -51,3 +55,6 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
   default Code path.
 - Freeze-core for shikigami stays in the shikigami crate; Code only depends on
   the CLI + stderr event contract + settings hooks.
+- Correlation receipts retain only provider, thread/turn, run/operation IDs,
+  governance mode, and creation time. Conversation and project deletion remove
+  them with the owning history.

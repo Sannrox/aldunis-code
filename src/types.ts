@@ -364,6 +364,13 @@ export interface ProviderPlanArtifact {
 }
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
+  | {
+    kind: "governance_correlation";
+    governance: "sekai-chisei";
+    runId: string;
+    operationId: string;
+    correlationId?: string;
+  }
   | { kind: "assistant_text"; text: string }
   | {
     kind: "plan_updated";
@@ -394,6 +401,7 @@ export type ProviderEvent =
   | {
     kind: "failed";
     message: string;
+    sessionId?: string;
     code?: "unsupported_external_tool";
   };
 export type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";

@@ -79,6 +79,9 @@ conversation. The answer is never copied into the parent provider context.
   delegation is enabled, from the exact parent-child coordination card.
 - Governance defaults to `local`; operators may point
   `SHIKIGAMI_GOVERNANCE_ADAPTER` at `sekai-chisei` for plane-governed runs.
+- Governed direct runs display a **Direct governed** correlation after
+  Shikigami confirms its run UUID. Code enforces `operation_id = run_id`; this
+  is inspection metadata, not evidence of Action admission or effect claim.
 - Design record: [decisions/shikigami-provider.md](decisions/shikigami-provider.md).
 
 ## Reviewed declarative ACP adapters

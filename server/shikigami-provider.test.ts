@@ -8,6 +8,7 @@ import { isMutatingTool, PermissionBroker } from "./permission.ts";
 import {
   assertSupportedShikigamiVersion,
   buildShikigamiConfig,
+  confirmShikigamiRunId,
   normalizeShikigamiEvent,
   parseShikigamiStderrLine,
   permissionHookRuntimeEnvironment,
@@ -39,7 +40,7 @@ test("normalizeShikigamiEvent maps harness events", () => {
   }
   const finished = normalizeShikigamiEvent({
     type: "run_finished",
-    run_id: "run-1",
+    run_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     success: true,
     summary: "done",
   });
@@ -139,7 +140,12 @@ process.exit(1);
     prompt: "demo task",
     approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
     mode: "build",
-  }, { ...process.env, SHIKIGAMI_MODEL_ADAPTER: "scripted" });
+    resumeSessionId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+  }, {
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "scripted",
+    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+  });
   const kinds: string[] = [];
   for await (const event of run.events) kinds.push(event.kind);
   assert.deepEqual(kinds, [
@@ -147,8 +153,92 @@ process.exit(1);
     "tool_started",
     "tool_finished",
     "assistant_text",
+    "governance_correlation",
     "turn_completed",
   ]);
+});
+
+test("normalizeShikigamiEvent rejects malformed provider run identities", () => {
+  assert.throws(
+    () => normalizeShikigamiEvent({
+      type: "run_finished",
+      run_id: "invented-local-id",
+      success: true,
+    }),
+    /malformed run identity/,
+  );
+});
+
+test("provider-confirmed Shikigami identities reject conflicting resume output", () => {
+  const runId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  assert.equal(confirmShikigamiRunId(runId, runId), runId);
+  assert.equal(confirmShikigamiRunId(runId, runId.toUpperCase()), runId);
+  assert.throws(
+    () => confirmShikigamiRunId(runId, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"),
+    /conflicting run identities/,
+  );
+});
+
+test("ShikigamiAdapter fails visibly when stderr and stdout run identities conflict", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-conflict-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv[2] === "version") {
+  console.log("shikigami 1.0.2");
+  process.exit(0);
+}
+console.error('[shikigami] {"type":"run_finished","run_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","success":true,"summary":"done"}');
+console.error('[shikigami] {"type":"run_finished","run_id":"bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee","success":true,"summary":"duplicate"}');
+console.log("run bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee turns=1 success=true termination=completed");
+`);
+  await chmod(executable, 0o700);
+  const adapter = new ShikigamiAdapter(executable);
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "11111111-1111-4111-8111-111111111111",
+    prompt: "demo",
+    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+    mode: "build",
+  }, {
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "scripted",
+    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.ok(events.some((event) => (
+    event.kind === "failed" && /conflicting run identities/.test(event.message)
+  )));
+  assert.equal(events.some((event) => event.kind === "governance_correlation"), false);
+  assert.equal(events.some((event) => event.kind === "turn_completed"), false);
+});
+
+test("governed Shikigami runs fail when the provider confirms no run identity", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-missing-id-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv[2] === "version") console.log("shikigami 1.0.2");
+`);
+  await chmod(executable, 0o700);
+  const run = await new ShikigamiAdapter(executable).start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "11111111-1111-4111-8111-111111111111",
+    prompt: "demo",
+    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+    mode: "build",
+  }, {
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "scripted",
+    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.ok(events.some((event) => (
+    event.kind === "failed" && /without a provider-confirmed run identity/.test(event.message)
+  )));
+  assert.equal(events.some((event) => event.kind === "turn_completed"), false);
 });
 
 test("ShikigamiAdapter readiness reports install detail when missing", async () => {
@@ -221,9 +311,16 @@ process.exit(1);
     prompt: "park me",
     approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
     mode: "build",
-  }, process.env);
+  }, {
+    ...process.env,
+    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+  });
   const events = [];
   for await (const event of run.events) events.push(event);
+  assert.ok(events.some((event) => (
+    event.kind === "governance_correlation"
+    && event.runId === "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
+  )));
   const request = events.find((event) => event.kind === "input_requested");
   assert.equal(request?.kind, "input_requested");
   if (request?.kind === "input_requested") {

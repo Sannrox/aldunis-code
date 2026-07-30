@@ -687,6 +687,27 @@ async function handleApi(
       );
       return true;
     }
+    if (route === "/api/integrations/chisei/operations/detail") {
+      const body = await readJson(request) as {
+        projectId?: unknown;
+        correlationId?: unknown;
+      };
+      if (typeof body.projectId !== "string" || typeof body.correlationId !== "string") {
+        throw new LocalStateError("A project and governance correlation are required.", 400);
+      }
+      const projection = await state.load();
+      const correlation = projection.governanceCorrelations.find(
+        (item) => item.id === body.correlationId,
+      );
+      const thread = correlation
+        ? projection.threads.find((item) => item.id === correlation.threadId)
+        : null;
+      if (!correlation || !thread || thread.projectId !== body.projectId) {
+        throw new LocalStateError("The governance correlation is unavailable.", 404);
+      }
+      sendJson(response, 200, await chisei.operationReceipt(correlation.operationId));
+      return true;
+    }
     if (route === "/api/directories/browse") {
       if (remoteAuth) {
         throw new RepositoryError(
@@ -1978,6 +1999,7 @@ async function handleApi(
       await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
       previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
       for await (const event of run.events) {
+        let outgoingEvent = event;
         try {
           await state.recordProviderEvent(
             persisted.thread.id,
@@ -2037,6 +2059,12 @@ async function handleApi(
               || event.kind === "input_resolved",
           );
           previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+          if (event.kind === "governance_correlation") {
+            const correlation = (await state.load()).governanceCorrelations.find(
+              (item) => item.turnId === persisted.turn.id,
+            );
+            if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
+          }
         } catch {
           if (providerId === "codex-cli") codex.cancel(run.id);
           else if (providerId === "shikigami") shikigami.cancel(run.id);
@@ -2050,7 +2078,7 @@ async function handleApi(
           break;
         }
         if (event.kind === "turn_completed") completed = true;
-        response.write(`${JSON.stringify(event)}\n`);
+        response.write(`${JSON.stringify(outgoingEvent)}\n`);
       }
       const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
       if (checkpoint?.state === "baseline" && baselineIdentity) {

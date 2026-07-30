@@ -66,6 +66,7 @@ export interface ConversationDeletion {
     activities: number;
     plans: number;
     contextReceipts: number;
+    governanceCorrelations: number;
     providerSessions: number;
     checkpoints: number;
     annotations: number;
@@ -319,6 +320,18 @@ export interface DelegatedConversationOutcomeProjection {
   summary: string;
 }
 
+export interface GovernanceCorrelationReceipt {
+  schemaVersion: 2;
+  id: string;
+  provider: "shikigami";
+  governance: "sekai-chisei";
+  threadId: string;
+  turnId: string;
+  runId: string;
+  operationId: string;
+  createdAt: string;
+}
+
 export interface StateProjection {
   schemaVersion: 2;
   sequence: number;
@@ -329,6 +342,7 @@ export interface StateProjection {
   activities: Activity[];
   plans: PlanArtifact[];
   contextReceipts: ContextReceipt[];
+  governanceCorrelations: GovernanceCorrelationReceipt[];
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
   annotations: DiffAnnotation[];
@@ -348,6 +362,7 @@ type StateEvent =
   | { type: "activity_saved"; activity: Activity }
   | { type: "plan_saved"; plan: PlanArtifact }
   | { type: "context_receipt_saved"; contextReceipt: ContextReceipt }
+  | { type: "governance_correlation_saved"; governanceCorrelation: GovernanceCorrelationReceipt }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
   | { type: "annotation_saved"; annotation: DiffAnnotation }
@@ -384,6 +399,7 @@ function emptyProjection(): StateProjection {
     activities: [],
     plans: [],
     contextReceipts: [],
+    governanceCorrelations: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -688,6 +704,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     });
   } else if (event.type === "context_receipt_saved") {
     replaceById(projection.contextReceipts, event.contextReceipt);
+  } else if (event.type === "governance_correlation_saved") {
+    replaceById(projection.governanceCorrelations, event.governanceCorrelation);
   }
   else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
@@ -755,6 +773,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     activity_saved: "activity",
     plan_saved: "plan",
     context_receipt_saved: "contextReceipt",
+    governance_correlation_saved: "governanceCorrelation",
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
     annotation_saved: "annotation",
@@ -806,6 +825,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           activities: Number(records.activities ?? 0),
           plans: Number(records.plans ?? 0),
           contextReceipts: Number(records.contextReceipts ?? 0),
+          governanceCorrelations: Number(records.governanceCorrelations ?? 0),
           providerSessions: Number(records.providerSessions ?? 0),
           checkpoints: Number(records.checkpoints ?? 0),
           annotations: Number(records.annotations ?? 0),
@@ -1628,6 +1648,9 @@ export class LocalStateStore {
       contextReceipts: projection.contextReceipts.filter(
         (receipt) => receipt.threadId === threadId,
       ).length,
+      governanceCorrelations: projection.governanceCorrelations.filter(
+        (receipt) => receipt.threadId === threadId,
+      ).length,
       providerSessions: projection.providerSessions.filter(
         (session) => session.threadId === threadId,
       ).length,
@@ -1667,6 +1690,9 @@ export class LocalStateStore {
     projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
     projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
     projection.contextReceipts = projection.contextReceipts.filter(
+      (receipt) => receipt.threadId !== threadId,
+    );
+    projection.governanceCorrelations = projection.governanceCorrelations.filter(
       (receipt) => receipt.threadId !== threadId,
     );
     projection.providerSessions = projection.providerSessions.filter(
@@ -1933,6 +1959,48 @@ export class LocalStateStore {
       });
       return;
     }
+    if (event.kind === "governance_correlation") {
+      if (
+        provider !== "shikigami"
+        || event.governance !== "sekai-chisei"
+        || event.operationId !== event.runId
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event.runId)
+      ) {
+        throw new LocalStateError("The provider governance correlation is incompatible.", 502);
+      }
+      const projection = await this.load();
+      const turn = projection.turns.find(
+        (item) => item.id === turnId && item.threadId === threadId,
+      );
+      if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      const existing = projection.governanceCorrelations.find(
+        (receipt) => receipt.turnId === turnId,
+      );
+      if (existing && (
+        existing.runId !== event.runId || existing.operationId !== event.operationId
+      )) {
+        throw new LocalStateError("The provider reported conflicting governance correlations.", 502);
+      }
+      if (existing) return;
+      const id = createHash("sha256")
+        .update(`${threadId}\n${turnId}\n${event.runId}`, "utf8")
+        .digest("hex");
+      await this.#append({
+        type: "governance_correlation_saved",
+        governanceCorrelation: {
+          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+          id,
+          provider: "shikigami",
+          governance: "sekai-chisei",
+          threadId,
+          turnId,
+          runId: event.runId,
+          operationId: event.operationId,
+          createdAt: now,
+        },
+      });
+      return;
+    }
     if (event.kind === "session_started" || event.kind === "turn_completed") {
       const current = (await this.load()).providerSessions.find(
         (item) => item.threadId === threadId && item.provider === provider,
@@ -2115,6 +2183,9 @@ export class LocalStateStore {
       projection.contextReceipts = projection.contextReceipts.filter(
         (receipt) => !threadIds.has(receipt.threadId),
       );
+      projection.governanceCorrelations = projection.governanceCorrelations.filter(
+        (receipt) => !threadIds.has(receipt.threadId),
+      );
       projection.providerSessions = projection.providerSessions.filter(
         (session) => !threadIds.has(session.threadId),
       );
@@ -2169,6 +2240,9 @@ export class LocalStateStore {
       projection.activities = projection.activities.filter((activity) => !expiredTurns.has(activity.turnId));
       projection.plans = projection.plans.filter((plan) => !expiredThreads.has(plan.threadId));
       projection.contextReceipts = projection.contextReceipts.filter(
+        (receipt) => !expiredThreads.has(receipt.threadId),
+      );
+      projection.governanceCorrelations = projection.governanceCorrelations.filter(
         (receipt) => !expiredThreads.has(receipt.threadId),
       );
       projection.providerSessions = projection.providerSessions.filter(
@@ -2235,6 +2309,14 @@ export class LocalStateStore {
           eventSequence: undefined,
           createdAt: contextReceipt.createdAt,
           event: { type: "context_receipt_saved" as const, contextReceipt },
+        })),
+        ...next.governanceCorrelations.map((governanceCorrelation) => ({
+          eventSequence: undefined,
+          createdAt: governanceCorrelation.createdAt,
+          event: {
+            type: "governance_correlation_saved" as const,
+            governanceCorrelation,
+          },
         })),
       ].sort((left, right) => (
         left.eventSequence !== undefined && right.eventSequence !== undefined

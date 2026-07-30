@@ -266,3 +266,26 @@ test("ChiseiProjectionClient projects denied Actions without an operation", asyn
   assert.equal(detail.receipt, null);
   assert.equal(secondaryLookup, false);
 });
+
+test("ChiseiProjectionClient exposes a bounded operation receipt projection", async () => {
+  const operationId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    (() => fixtureClient({
+      getOperationReceipt(request, _metadata, callback) {
+        assert.equal(request.operationId, operationId);
+        callback(null, {
+          receiptJson: "{\"events\":[{},{}],\"prompt\":\"not projected\"}",
+          complete: true,
+          missingSurfaces: [],
+        });
+      },
+    }) as never) as never,
+  );
+  assert.deepEqual(await client.operationReceipt(operationId), {
+    operationId,
+    complete: true,
+    missingSurfaces: [],
+    eventCount: 2,
+  });
+});

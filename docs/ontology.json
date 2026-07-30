@@ -46,6 +46,10 @@
     {
       "name": "ChiseiActionProjection",
       "description": "A bounded read-only projection of Chisei-owned Action, effect, and operation receipt identifiers and lifecycle state. It is never local domain authority."
+    },
+    {
+      "name": "GovernedDirectRunCorrelation",
+      "description": "A metadata-only receipt linking a provider-confirmed Shikigami direct run to the equal Chisei operation identity. It does not imply Action admission or effect claim."
     }
   ],
   "relations": [
@@ -96,6 +100,12 @@
       "description": "Uses a server-owned local project binding to display bounded Chisei state without transferring namespace or mutation authority.",
       "domain": "LocalProjectChiseiBinding",
       "range": "ChiseiActionProjection"
+    },
+    {
+      "name": "records_governed_direct_run",
+      "description": "Associates a local Shikigami conversation with a bounded direct-run correlation receipt.",
+      "domain": "LocalConversation",
+      "range": "GovernedDirectRunCorrelation"
     }
   ],
   "provenance": [
@@ -181,6 +191,18 @@
       "subject": "projects_chisei_actions",
       "source": "Aldunis Code Chisei projection contract",
       "locator": "server/chisei-client.ts#ChiseiProjectionClient",
+      "confidence": 1.0
+    },
+    {
+      "subject": "GovernedDirectRunCorrelation",
+      "source": "GitHub Issue Sannrox/aldunis-code#208",
+      "locator": "server/state.ts#GovernanceCorrelationReceipt",
+      "confidence": 1.0
+    },
+    {
+      "subject": "records_governed_direct_run",
+      "source": "Accepted Shikigami provider decision",
+      "locator": "docs/decisions/shikigami-provider.md",
       "confidence": 1.0
     }
   ]
