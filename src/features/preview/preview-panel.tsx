@@ -13,6 +13,12 @@ export interface PreviewPanelStatus {
   error: string | null;
 }
 
+export function previewActionError(cause: unknown, fallback: string): string {
+  if (cause instanceof TypeError && cause.message === "Failed to fetch") {
+    return "Preview service is unavailable. The action was not confirmed; retry when the local host is ready.";
+  }
+  return cause instanceof Error ? cause.message : fallback;
+}
 export function PreviewPanel({
   repository,
   pane = "primary",
@@ -53,7 +59,7 @@ export function PreviewPanel({
       if (!response.ok) throw new Error("error" in body ? body.error : "Preview could not be prepared.");
       setPreview(body as PreviewSnapshot);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Preview could not be prepared.");
+      setError(previewActionError(cause, "Preview could not be prepared."));
     }
   };
   const decide = async (decision: "allow_once" | "deny") => {
@@ -74,7 +80,7 @@ export function PreviewPanel({
       setPreview(body as PreviewSnapshot);
       if ((body as PreviewSnapshot).state === "running") setFrameState("loading");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Preview decision failed.");
+      setError(previewActionError(cause, "Preview decision failed."));
     }
   };
   const stop = async () => {
@@ -92,7 +98,7 @@ export function PreviewPanel({
       setFrameState("idle");
       setReference(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Preview could not be stopped.");
+      setError(previewActionError(cause, "Preview could not be stopped."));
     }
   };
   useEffect(() => {
@@ -302,4 +308,3 @@ export function PreviewPanel({
     </section>
   );
 }
-
