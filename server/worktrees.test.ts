@@ -17,6 +17,8 @@ async function fixture(): Promise<{ data: string; root: string }> {
   const data = await mkdtemp(join(tmpdir(), "aldunis-worktrees-data-"));
   const root = await mkdtemp(join(tmpdir(), "aldunis-worktrees-repo-"));
   await execFileAsync("git", ["init", "-q", "-b", "main", root]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "aldunis-test@example.invalid"]);
   await writeFile(join(root, "tracked.txt"), "baseline\n");
   await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
   await execFileAsync("git", [
