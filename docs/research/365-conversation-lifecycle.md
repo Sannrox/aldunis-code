@@ -46,10 +46,12 @@ uses the managed-worktree registry's recoverable removal protocol:
 3. record `removedAt` and clear the pending marker.
 
 If the final registry write fails after Git removes the checkout, the pending
-record no longer counts against the worktree limit. The current implementation
-does not revisit that record on startup or expose a retry that finalizes it.
-This is a recovery gap, not another lifecycle concept. Conversation deletion,
-retention, archive, and settle never remove a worktree.
+record no longer counts against the worktree limit. Repeating Release is an
+explicit, idempotent recovery: it finalizes the record only when the registered
+path is absent, Git has no worktree for the owned branch, and the registry has
+one unambiguous ownership record. A replaced path or moved checkout is
+preserved and reported instead. Conversation deletion, retention, archive, and
+settle never remove a worktree.
 
 ## Presentation and behavior
 
@@ -194,20 +196,20 @@ This decision is based on:
   [managed conversation worktrees](../decisions/managed-conversation-worktrees.md)
   boundary and [workspace checkpoint recovery](../workspace-checkpoints.md).
 
-## Follow-up
+## Removal recovery
 
-[Issue #406](https://github.com/Sannrox/aldunis-code/issues/406) tracks
-managed-worktree removal recovery. It must:
+[Issue #406](https://github.com/Sannrox/aldunis-code/issues/406) added bounded
+operator recovery through the existing Release action:
 
 - reproduce a final registry-save failure after Git has removed the checkout;
 - preserve the existing rule that pending removal does not consume the active
   worktree limit;
 - finalize only a record whose registered path is absent and whose ownership
   identity remains unambiguous, including proving the checkout was not moved;
-- expose retry or startup recovery without deleting a branch, conversation, or
+- repeated recovery is idempotent and never deletes a branch, conversation, or
   user-created worktree;
 - cover repeated recovery, moved and replaced paths, malformed registry state,
   and concurrent worktree administration.
 
-This recovery work does not combine settle with release and does not require a
+Recovery does not combine settle with release and requires no
 conversation-history migration.

@@ -289,7 +289,159 @@ test("post-removal registry failure leaves a recoverable intent outside the acti
       branch: "codex/after-pending-removal",
       limit: 1,
     }));
+
+    const restarted = new WorktreeManager(data);
+    const recovered = await restarted.releaseManagedPath(record.path);
+    assert.equal(recovered.released, true);
+    assert.equal(recovered.count, 0);
+    const finalized = (await store.load()).records.find((candidate) => candidate.id === record.id);
+    assert.equal(finalized?.removalPendingAt, null);
+    assert.ok(finalized?.removedAt);
+
+    const repeated = await restarted.releaseManagedPath(record.path);
+    assert.equal(repeated.released, false);
+    assert.equal(repeated.count, 0);
   } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pending-removal retry preserves replaced and moved worktrees", async () => {
+  const replaced = await fixture();
+  const moved = await fixture();
+  try {
+    for (const [fixtureValue, branch, mode] of [
+      [replaced, "codex/replaced-pending", "replaced"],
+      [moved, "codex/moved-pending", "moved"],
+    ] as const) {
+      const manager = new WorktreeManager(fixtureValue.data);
+      const creation = await manager.previewCreate({
+        repository: fixtureValue.root,
+        base: "main",
+        branch,
+        limit: 10,
+      });
+      const record = await manager.create(creation.id, 10);
+      const registry = await manager.store.load();
+      await manager.store.save(registry.records.map((candidate) => (
+        candidate.id === record.id
+          ? { ...candidate, removalPendingAt: new Date().toISOString() }
+          : candidate
+      )));
+
+      if (mode === "replaced") {
+        await execFileAsync("git", ["-C", fixtureValue.root, "worktree", "remove", record.path]);
+        await mkdir(record.path, { recursive: true });
+        await assert.rejects(
+          () => new WorktreeManager(fixtureValue.data).releaseManagedPath(record.path),
+          /path exists again/,
+        );
+        assert.ok(await stat(record.path));
+      } else {
+        const destination = `${record.path}-moved`;
+        await execFileAsync("git", ["-C", fixtureValue.root, "worktree", "move", record.path, destination]);
+        await assert.rejects(
+          () => new WorktreeManager(fixtureValue.data).releaseManagedPath(record.path),
+          /worktree was moved/,
+        );
+        assert.ok(await stat(destination));
+      }
+      const retained = (await manager.store.load()).records.find((candidate) => candidate.id === record.id);
+      assert.ok(retained?.removalPendingAt);
+      assert.equal(retained?.removedAt, null);
+    }
+  } finally {
+    await rm(replaced.data, { recursive: true, force: true });
+    await rm(replaced.root, { recursive: true, force: true });
+    await rm(moved.data, { recursive: true, force: true });
+    await rm(moved.root, { recursive: true, force: true });
+  }
+});
+
+test("pending-removal retry fails visibly for malformed ownership state", async () => {
+  const { data, root } = await fixture();
+  try {
+    const manager = new WorktreeManager(data);
+    const creation = await manager.previewCreate({
+      repository: root,
+      base: "main",
+      branch: "codex/malformed-pending",
+      limit: 10,
+    });
+    const record = await manager.create(creation.id, 10);
+    await execFileAsync("git", ["-C", root, "worktree", "remove", record.path]);
+    await writeFile(join(data, "worktrees.v1.json"), JSON.stringify({
+      schemaVersion: 1,
+      records: [{ ...record, removalPendingAt: 42 }],
+    }));
+
+    await assert.rejects(
+      () => new WorktreeManager(data).releaseManagedPath(record.path),
+      /history is corrupt/,
+    );
+    assert.equal(
+      (await execFileAsync("git", ["-C", root, "branch", "--list", "codex/malformed-pending"])).stdout.includes(
+        "codex/malformed-pending",
+      ),
+      true,
+    );
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pending-removal retry restores ownership when Git changes during finalization", async () => {
+  const { data, root } = await fixture();
+  let releaseCommit: (() => void) | undefined;
+  const commitMayContinue = new Promise<void>((resolve) => {
+    releaseCommit = resolve;
+  });
+  let committed: (() => void) | undefined;
+  const commitObserved = new Promise<void>((resolve) => {
+    committed = resolve;
+  });
+  class PausingFinalizationStore extends ManagedWorktreeStore {
+    override async save(records: ManagedWorktreeRecord[]): Promise<void> {
+      await super.save(records);
+      if (records.some((candidate) => candidate.removedAt)) {
+        committed?.();
+        await commitMayContinue;
+      }
+    }
+  }
+  try {
+    const store = new PausingFinalizationStore(data);
+    const manager = new WorktreeManager(data, store);
+    const creation = await manager.previewCreate({
+      repository: root,
+      base: "main",
+      branch: "codex/concurrent-recovery",
+      limit: 10,
+    });
+    const record = await manager.create(creation.id, 10);
+    await execFileAsync("git", ["-C", root, "worktree", "remove", record.path]);
+    const registry = await store.load();
+    await store.save(registry.records.map((candidate) => (
+      candidate.id === record.id
+        ? { ...candidate, removalPendingAt: new Date().toISOString() }
+        : candidate
+    )));
+
+    const recovery = manager.releaseManagedPath(record.path);
+    await commitObserved;
+    const moved = `${record.path}-recreated`;
+    await execFileAsync("git", ["-C", root, "worktree", "add", moved, record.branch]);
+    releaseCommit?.();
+    await assert.rejects(recovery, /reappeared during recovery/);
+
+    const preserved = (await store.load()).records.find((candidate) => candidate.id === record.id);
+    assert.ok(preserved?.removalPendingAt);
+    assert.equal(preserved?.removedAt, null);
+    assert.ok(await stat(moved));
+  } finally {
+    releaseCommit?.();
     await rm(data, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
@@ -300,13 +452,14 @@ test("installation-wide registry updates serialize while branch names remain rep
   const second = await fixture();
   try {
     const manager = new WorktreeManager(first.data);
+    const secondManager = new WorktreeManager(first.data);
     const firstPlan = await manager.previewCreate({
       repository: first.root,
       base: "main",
       branch: "feature/shared-name",
       limit: 10,
     });
-    const secondPlan = await manager.previewCreate({
+    const secondPlan = await secondManager.previewCreate({
       repository: second.root,
       base: "main",
       branch: "feature/shared-name",
@@ -314,7 +467,7 @@ test("installation-wide registry updates serialize while branch names remain rep
     });
     const results = await Promise.allSettled([
       manager.create(firstPlan.id, 10),
-      manager.create(secondPlan.id, 10),
+      secondManager.create(secondPlan.id, 10),
     ]);
     assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
     const rejection = results.find((result) => result.status === "rejected");

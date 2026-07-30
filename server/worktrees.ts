@@ -12,6 +12,7 @@ import {
 import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { lock } from "proper-lockfile";
 import {
   canonicalizeRepositoryRoot,
   classifyWorktree,
@@ -85,16 +86,16 @@ function countActiveManaged(registry: ManagedWorktreeRegistry): number {
   return registry.records.filter((record) => !record.removedAt && !record.removalPendingAt).length;
 }
 
-async function findActiveManagedByPath(
+async function findManagedByPath(
   registry: ManagedWorktreeRegistry,
   pathInput: string,
 ): Promise<ManagedWorktreeRecord | undefined> {
-  const active = registry.records.filter((record) => !record.removedAt && !record.removalPendingAt);
-  const exact = active.find((record) => record.path === pathInput);
+  const retained = registry.records.filter((record) => !record.removedAt);
+  const exact = retained.find((record) => record.path === pathInput);
   if (exact) return exact;
   try {
     const resolved = await realpath(pathInput);
-    return active.find((record) => record.path === resolved);
+    return retained.find((record) => record.path === resolved);
   } catch {
     return undefined;
   }
@@ -516,7 +517,7 @@ export class WorktreeManager {
   }> {
     return this.#exclusive(pathInput, async () => {
       const registry = await this.store.load();
-      const record = await findActiveManagedByPath(registry, pathInput);
+      const record = await findManagedByPath(registry, pathInput);
       if (!record) {
         return {
           released: false,
@@ -526,21 +527,18 @@ export class WorktreeManager {
       }
       const pathExistsOnDisk = await pathExists(record.path);
       if (!pathExistsOnDisk) {
-        const next = registry.records.map((candidate) => (
-          candidate.id === record.id
-            ? {
-                ...candidate,
-                removalPendingAt: null,
-                removedAt: candidate.removedAt ?? new Date().toISOString(),
-              }
-            : candidate
-        ));
-        await this.store.save(next);
+        await this.#finalizeAbsentRemoval(registry, record);
         return {
           released: true,
           path: record.path,
-          count: countActiveManaged({ ...registry, records: next }),
+          count: await this.countActiveManaged(),
         };
+      }
+      if (record.removalPendingAt) {
+        throw new RepositoryError(
+          "The pending-removal path exists again. Recovery stopped to preserve a possibly replaced checkout.",
+          409,
+        );
       }
       await assertNoGitLocks(record.repository);
       const identity = await inspectWorktreeIdentity(record.path);
@@ -555,6 +553,109 @@ export class WorktreeManager {
         count: await this.countActiveManaged(),
       };
     });
+  }
+
+  async #finalizeAbsentRemoval(
+    registry: ManagedWorktreeRegistry,
+    record: ManagedWorktreeRecord,
+  ): Promise<void> {
+    const ownershipMatches = registry.records.filter((candidate) => (
+      !candidate.removedAt
+      && (
+        candidate.path === record.path
+        || (candidate.repository === record.repository && candidate.branch === record.branch)
+      )
+    ));
+    if (ownershipMatches.length !== 1 || ownershipMatches[0]?.id !== record.id) {
+      throw new RepositoryError(
+        "Managed worktree ownership is ambiguous. Recovery did not change the registry.",
+        409,
+      );
+    }
+    const discovered = await discoverWorktrees(record.repository);
+    const relocated = discovered.find((worktree) => (
+      worktree.path === record.path || worktree.branch === record.branch
+    ));
+    if (relocated) {
+      throw new RepositoryError(
+        relocated.path === record.path
+          ? "The managed worktree path is still registered by Git. Recovery did not change it."
+          : "The managed worktree was moved. Recovery did not remove or release the relocated checkout.",
+        409,
+      );
+    }
+    // Re-read and revalidate immediately before committing so a registry
+    // replacement outside the shared administration lock cannot be overwritten.
+    const current = await this.store.load();
+    const currentRecord = current.records.find((candidate) => candidate.id === record.id);
+    if (
+      !currentRecord
+      || currentRecord.removedAt
+      || currentRecord.repository !== record.repository
+      || currentRecord.path !== record.path
+      || currentRecord.branch !== record.branch
+      || await pathExists(record.path)
+    ) {
+      throw new RepositoryError(
+        "Managed worktree recovery state changed during inspection. Retry Release.",
+        409,
+      );
+    }
+    const currentMatches = current.records.filter((candidate) => (
+      !candidate.removedAt
+      && (
+        candidate.path === record.path
+        || (candidate.repository === record.repository && candidate.branch === record.branch)
+      )
+    ));
+    const currentDiscovered = await discoverWorktrees(record.repository);
+    if (
+      currentMatches.length !== 1
+      || currentMatches[0]?.id !== record.id
+      || currentDiscovered.some((worktree) => (
+        worktree.path === record.path || worktree.branch === record.branch
+      ))
+    ) {
+      throw new RepositoryError(
+        "Managed worktree recovery state changed during inspection. Retry Release.",
+        409,
+      );
+    }
+    const next = current.records.map((candidate) => (
+      candidate.id === record.id
+        ? {
+            ...candidate,
+            removalPendingAt: null,
+            removedAt: candidate.removedAt ?? new Date().toISOString(),
+          }
+        : candidate
+    ));
+    await this.store.save(next);
+    const [pathReturned, discoveredAfterCommit] = await Promise.all([
+      pathExists(record.path),
+      discoverWorktrees(record.repository),
+    ]);
+    if (
+      pathReturned
+      || discoveredAfterCommit.some((worktree) => (
+        worktree.path === record.path || worktree.branch === record.branch
+      ))
+    ) {
+      const afterCommit = await this.store.load();
+      await this.store.save(afterCommit.records.map((candidate) => (
+        candidate.id === record.id
+          ? {
+              ...candidate,
+              removalPendingAt: record.removalPendingAt ?? new Date().toISOString(),
+              removedAt: null,
+            }
+          : candidate
+      )));
+      throw new RepositoryError(
+        "The managed worktree reappeared during recovery. Its pending ownership record was preserved.",
+        409,
+      );
+    }
   }
 
   async #finalizeRemoval(
@@ -606,10 +707,32 @@ export class WorktreeManager {
       throw new RepositoryError("Another Aldunis Git operation is already active for this installation.", 409);
     }
     this.#operationActive = true;
+    let release: (() => Promise<void>) | undefined;
     try {
+      await mkdir(this.directory, { recursive: true, mode: 0o700 });
+      try {
+        release = await lock(join(this.directory, "worktree-admin"), {
+          realpath: false,
+          stale: 30_000,
+          update: 10_000,
+          retries: 0,
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ELOCKED") {
+          throw new RepositoryError(
+            "Another Aldunis Git operation is already active for this installation.",
+            409,
+          );
+        }
+        throw error;
+      }
       return await operation();
     } finally {
-      this.#operationActive = false;
+      try {
+        await release?.();
+      } finally {
+        this.#operationActive = false;
+      }
     }
   }
 }
