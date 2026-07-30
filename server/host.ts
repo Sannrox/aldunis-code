@@ -1365,6 +1365,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/save") {
+      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
       const body = await readJson(request) as {
         id?: unknown;
         provider?: unknown;
@@ -1413,6 +1414,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/delete") {
+      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
       const body = await readJson(request) as { id?: unknown };
       if (typeof body.id !== "string") throw new ProfileError("A provider profile is required.");
       await profiles.delete(body.id);
@@ -1420,6 +1422,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/refresh") {
+      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
       const body = await readJson(request) as { id?: unknown; kind?: unknown };
       const kinds: ProfileProbeKind[] = ["availability", "version", "authentication", "models"];
       if (
