@@ -76,17 +76,21 @@ test("allow-once is bound to one exact call and cannot be replayed", async () =>
   const token = broker.createRunToken(context.runId);
   const approval = broker.register(context);
   assert.ok(approval);
-  const waiting = broker.awaitDecision(context.runId, token, context.toolName, context.toolInput);
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
   const allowed = broker.decide(approval.id, decisionContext(), "allow_once");
   assert.equal(allowed.state, "allowed_once");
   assert.deepEqual(await waiting, { behavior: "allow", updatedInput: context.toolInput });
+  assert.deepEqual(
+    await broker.awaitRegisteredDecision(context.runId, token, approval.id),
+    { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." },
+  );
   assert.throws(
     () => broker.decide(approval.id, decisionContext(), "allow_once"),
     (error: unknown) => error instanceof PermissionError && error.status === 409,
   );
 });
 
-test("identical concurrent callbacks await their exact registered approval", async () => {
+test("identical concurrent callbacks atomically claim distinct registered approvals", async () => {
   const broker = new PermissionBroker();
   const token = broker.createRunToken(context.runId);
   const first = broker.register(context);
@@ -95,8 +99,18 @@ test("identical concurrent callbacks await their exact registered approval", asy
   assert.ok(first);
   assert.ok(second);
 
-  const firstWaiting = broker.awaitRegisteredDecision(context.runId, token, first.id);
-  const secondWaiting = broker.awaitRegisteredDecision(context.runId, token, second.id);
+  const firstWaiting = broker.awaitDecision(
+    context.runId,
+    token,
+    context.toolName,
+    context.toolInput,
+  );
+  const secondWaiting = broker.awaitDecision(
+    context.runId,
+    token,
+    secondContext.toolName,
+    secondContext.toolInput,
+  );
   assert.equal(broker.decide(first.id, decisionContext(), "allow_once").state, "allowed_once");
   assert.deepEqual(await firstWaiting, { behavior: "allow", updatedInput: context.toolInput });
 
@@ -105,6 +119,32 @@ test("identical concurrent callbacks await their exact registered approval", asy
     "denied",
   );
   assert.equal((await secondWaiting).behavior, "deny");
+});
+
+test("registered decision identifiers fail closed when missing, mismatched, or replayed", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const otherToken = broker.createRunToken("run-other");
+  const approval = broker.register(context);
+  assert.ok(approval);
+
+  const unmatched = { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
+  assert.deepEqual(
+    await broker.awaitRegisteredDecision(context.runId, token, "missing"),
+    unmatched,
+  );
+  assert.deepEqual(
+    await broker.awaitRegisteredDecision("run-other", otherToken, approval.id),
+    unmatched,
+  );
+
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
+  assert.equal(broker.decide(approval.id, decisionContext(), "deny").state, "denied");
+  assert.equal((await waiting).behavior, "deny");
+  assert.deepEqual(
+    await broker.awaitRegisteredDecision(context.runId, token, approval.id),
+    unmatched,
+  );
 });
 
 test("approval persistence completes before the provider is released", async () => {
