@@ -309,6 +309,26 @@ export function PreferencesDialog({
                     </select>
                   </div>
                 </div>
+                <div className="field">
+                  <div className="fl">
+                    <label className="fn" htmlFor="preferences-orchestration-threads">
+                      Orchestration threads beta
+                    </label>
+                    <div className="fd">
+                      Link existing conversations and show read-only child status in their parent.
+                    </div>
+                  </div>
+                  <div className="fc">
+                    <input
+                      id="preferences-orchestration-threads"
+                      name="preferences-orchestration-threads"
+                      type="checkbox"
+                      checked={draft.orchestrationThreadsBeta}
+                      onChange={(event) =>
+                        update("orchestrationThreadsBeta", event.target.checked)}
+                    />
+                  </div>
+                </div>
               </>
             )}
             {section === "Providers" && (

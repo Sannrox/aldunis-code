@@ -270,6 +270,7 @@ function App() {
           setWorktreeDialog(true);
         }}
         onSettings={() => setPreferencesOpen(true)}
+        orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
       />
       <RepositoryDialog
         open={repositoryDialog}

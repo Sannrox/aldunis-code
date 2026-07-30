@@ -94,6 +94,12 @@ export interface ConversationSummary {
   statusSince?: string;
   projectName?: string;
 }
+export interface DelegatedConversationRelationship {
+  id: string;
+  parentThreadId: string;
+  childThreadId: string;
+  createdAt: string;
+}
 export interface ForkPreview {
   sourceThreadId: string;
   sourceProvider: ProviderId;

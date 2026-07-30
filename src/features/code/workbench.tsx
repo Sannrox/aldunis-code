@@ -1,10 +1,17 @@
 import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
+import type {
+  RepositoryMetadata,
+  ConversationSummary,
+  ClaudeProfile,
+  ChangedFile,
+  ProviderId,
+  DelegatedConversationRelationship,
+} from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
-import { loadConversationList } from "./conversation-list";
+import { branchFromWorktree, loadConversationList } from "./conversation-list";
 import { Icon } from "../../components/icon";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
@@ -31,6 +38,128 @@ function paneConversationLabel(
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
+function DelegatedChildrenPanel({
+  parent,
+  conversations,
+  relationships,
+  onOpen,
+  onChanged,
+}: {
+  parent: ConversationSummary;
+  conversations: ConversationSummary[];
+  relationships: DelegatedConversationRelationship[];
+  onOpen: (id: string) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [selectedChildId, setSelectedChildId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const childRelationships = relationships.filter((item) => item.parentThreadId === parent.id);
+  const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
+  const candidates = conversations.filter((item) => (
+    item.id !== parent.id
+    && !item.archivedAt
+    && !unavailableChildIds.has(item.id)
+  ));
+  const mutate = async (route: string, childThreadId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(route, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ parentThreadId: parent.id, childThreadId }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Delegated conversation update failed.");
+      setSelectedChildId("");
+      await onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Delegated conversation update failed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
+      <div className="delegated-children-header">
+        <div>
+          <h3 id={`delegated-title-${parent.id}`}>Delegated conversations</h3>
+          <p>Read-only status. Child messages and provider context stay independent.</p>
+        </div>
+        <div className="delegated-link-control">
+          <label className="sr-only" htmlFor={`delegated-child-${parent.id}`}>
+            Existing conversation to link
+          </label>
+          <select
+            id={`delegated-child-${parent.id}`}
+            value={selectedChildId}
+            disabled={busy || candidates.length === 0}
+            onChange={(event) => setSelectedChildId(event.target.value)}
+          >
+            <option value="">Link existing…</option>
+            {candidates.map((candidate) => (
+              <option value={candidate.id} key={candidate.id}>
+                {candidate.title} · {candidate.projectName ?? "Unknown project"}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy || !selectedChildId}
+            onClick={() => void mutate(
+              "/api/state/delegated-conversations/link",
+              selectedChildId,
+            )}
+          >
+            Link
+          </Button>
+        </div>
+      </div>
+      {error && <p className="delegated-error" role="alert">{error}</p>}
+      {childRelationships.length === 0 ? (
+        <p className="delegated-empty">No delegated conversations linked.</p>
+      ) : (
+        <ul className="delegated-list">
+          {childRelationships.map((relationship) => {
+            const child = conversations.find((item) => item.id === relationship.childThreadId);
+            if (!child) return null;
+            return (
+              <li key={relationship.id}>
+                <div className="delegated-summary">
+                  <strong>{child.title}</strong>
+                  <span>{child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}</span>
+                  <span className="delegated-worktree">
+                    {branchFromWorktree(child.worktree)} · {child.worktree}
+                  </span>
+                </div>
+                <span className={`delegated-status status-${child.status ?? "idle"}`}>
+                  {(child.status ?? "idle").replaceAll("_", " ")}
+                </span>
+                <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
+                  Open child
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void mutate(
+                    "/api/state/delegated-conversations/unlink",
+                    child.id,
+                  )}
+                >
+                  Detach
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function CodeWorkbench({
   product,
   onProductChange,
@@ -46,6 +175,7 @@ export function CodeWorkbench({
   onSelectWorktree,
   onManageWorktrees,
   onSettings,
+  orchestrationThreadsBeta = false,
 }: {
   product: import("../../types").Product;
   onProductChange: (product: import("../../types").Product) => void;
@@ -64,6 +194,7 @@ export function CodeWorkbench({
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
   onSettings: () => void;
+  orchestrationThreadsBeta?: boolean;
 }) {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
     if (typeof window === "undefined") return "all";
@@ -79,6 +210,9 @@ export function CodeWorkbench({
   const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
   const [secondaryFilesSignal, setSecondaryFilesSignal] = useState(0);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [delegatedRelationships, setDelegatedRelationships] = useState<
+    DelegatedConversationRelationship[]
+  >([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
@@ -128,7 +262,9 @@ export function CodeWorkbench({
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
       const lifecycleProjection = await lifecycleResponse.json() as {
         conversationDeletions?: Array<{ threadId: string; status: string }>;
+        delegatedRelationships?: DelegatedConversationRelationship[];
       };
+      setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
       setIncompleteDeletionIds(
         (lifecycleProjection.conversationDeletions ?? [])
           .filter((deletion) => deletion.status !== "completed")
@@ -220,6 +356,51 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
+  const refreshDelegatedRelationships = async () => {
+    const response = await fetch("/api/state/load", { method: "POST" });
+    const body = await response.json() as {
+      delegatedRelationships?: DelegatedConversationRelationship[];
+      error?: string;
+    };
+    if (!response.ok) throw new Error(body.error ?? "Delegated conversations could not be loaded.");
+    setDelegatedRelationships(body.delegatedRelationships ?? []);
+  };
+  useEffect(() => {
+    if (!orchestrationThreadsBeta) return;
+    void refreshDelegatedRelationships().catch(() => undefined);
+    const events = new EventSource("/api/state/events");
+    events.addEventListener("thread_status", (event) => {
+      try {
+        const update = JSON.parse((event as MessageEvent<string>).data) as {
+          threadId?: unknown;
+          status?: unknown;
+          at?: unknown;
+        };
+        if (
+          typeof update.threadId !== "string"
+          || typeof update.status !== "string"
+          || typeof update.at !== "string"
+        ) return;
+        const threadId = update.threadId;
+        const status = update.status as ConversationSummary["status"];
+        const statusSince = update.at;
+        setConversations((current) => current.map((conversation) => (
+          conversation.id === threadId
+            ? {
+              ...conversation,
+              status,
+              statusSince,
+            }
+            : conversation
+        )));
+      } catch {
+        /* malformed status events do not replace the last valid projection */
+      }
+    });
+    return () => events.close();
+    // The host hides relationships while disabled, so enable performs a fresh load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orchestrationThreadsBeta]);
   const listedConversations = useMemo(() => {
     const memberIds = projectFilter === "all"
       ? null
@@ -596,13 +777,24 @@ export function CodeWorkbench({
                   primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
                   setPrimaryId(id);
                 }} />
-              : <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+              : <>
+                {orchestrationThreadsBeta && primary && (
+                  <DelegatedChildrenPanel
+                    parent={primary}
+                    conversations={conversations}
+                    relationships={delegatedRelationships}
+                    onOpen={openConversation}
+                    onChanged={refreshDelegatedRelationships}
+                  />
+                )}
+                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
                   }
                   void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
-                }} />}
+                }} />
+              </>}
           </div>
           {secondaryId && (
             <>
@@ -625,7 +817,17 @@ export function CodeWorkbench({
               <div className="conversation-pane secondary-pane" tabIndex={-1} ref={secondaryPaneReference} onFocusCapture={() => setActivePane("secondary")}>
                 {!secondary && !secondaryId.startsWith("new:")
                   ? <MissingConversation pane="secondary" conversations={conversations.filter((item) => item.id !== primaryId)} onReplace={setSecondaryId} onClose={() => setSecondaryId(null)} />
-                  : <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                  : <>
+                    {orchestrationThreadsBeta && secondary && (
+                      <DelegatedChildrenPanel
+                        parent={secondary}
+                        conversations={conversations}
+                        relationships={delegatedRelationships}
+                        onOpen={openConversation}
+                        onChanged={refreshDelegatedRelationships}
+                      />
+                    )}
+                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");
@@ -634,7 +836,8 @@ export function CodeWorkbench({
                       secondaryIdReference.current = id;
                       setSecondaryId(id);
                       void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
-                    }} />}
+                    }} />
+                  </>}
               </div>
             </>
           )}

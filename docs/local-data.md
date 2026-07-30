@@ -32,8 +32,8 @@ schemas still **fail visibly** rather than wiping data.
 ## Conversation history
 
 Projects, threads, turns, messages, typed tool activity, provider session
-references, context receipts, checkpoints, and related records rebuild from
-the event log.
+references, context receipts, checkpoints, delegated-conversation
+relationships, and related records rebuild from the event log.
 
 - Active turns remain owned by the host if you navigate away and return.
 - Each project is limited to a bounded number of retained conversations
@@ -43,12 +43,19 @@ the event log.
 - Context receipts retain repository-relative paths, entry types, byte counts,
   truncation state, content digests, and omission reasons. They do not retain a
   second copy of repository file content.
+- Delegated-conversation relationships contain only parent/child identifiers
+  and creation time. Their UI projections derive title, project, worktree,
+  provider, and status from the independent child conversation. Messages,
+  tool activity, approvals, and provider sessions never enter the parent
+  provider context.
 
 ## Preferences
 
 Appearance and keyboard preferences load/save via
 `/api/preferences/load` and `/api/preferences/save`. Invalid files recover to
-safe defaults with a visible recovered flag.
+safe defaults with a visible recovered flag. Experimental orchestration
+threads are disabled by default; disabling the beta hides projections without
+deleting stored relationships.
 
 ## Secrets
 

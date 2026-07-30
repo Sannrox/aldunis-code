@@ -34,10 +34,16 @@ test("preferences response rejects missing and incompatible payloads", () => {
   }), null);
 });
 
-test("preferences response migrates the version-one worktree limit default", () => {
-  const { managedWorktreeLimit: _managedWorktreeLimit, ...legacy } = DEFAULT_PREFERENCES;
-  assert.equal(readPreferencesResponse({
+test("preferences response migrates version-one beta and worktree defaults", () => {
+  const {
+    managedWorktreeLimit: _managedWorktreeLimit,
+    orchestrationThreadsBeta: _orchestrationThreadsBeta,
+    ...legacy
+  } = DEFAULT_PREFERENCES;
+  const migrated = readPreferencesResponse({
     preferences: legacy,
     recovered: false,
-  })?.preferences.managedWorktreeLimit, 10);
+  })?.preferences;
+  assert.equal(migrated?.managedWorktreeLimit, 10);
+  assert.equal(migrated?.orchestrationThreadsBeta, false);
 });
