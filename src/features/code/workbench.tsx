@@ -925,6 +925,11 @@ export function CodeWorkbench({
     window.addEventListener("aldunis:open-conversation", onOpenFromSearch);
     return () => window.removeEventListener("aldunis:open-conversation", onOpenFromSearch);
   }, [openConversation]);
+  useEffect(() => {
+    const showArchived = () => setShowingArchived(true);
+    window.addEventListener("aldunis:show-archived", showArchived);
+    return () => window.removeEventListener("aldunis:show-archived", showArchived);
+  }, []);
   const resize = (event: React.PointerEvent<HTMLDivElement>) => {
     const element = splitReference.current;
     if (!element) return;
