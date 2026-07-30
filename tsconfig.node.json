@@ -8,5 +8,10 @@
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true
   },
-  "include": ["vite.config.ts", "desktop/lifecycle.ts", "desktop/lifecycle.test.ts"]
+  "include": [
+    "vite.config.ts",
+    "desktop/lifecycle.ts",
+    "desktop/lifecycle.test.ts",
+    "scripts/verify-desktop-release-tag.ts"
+  ]
 }

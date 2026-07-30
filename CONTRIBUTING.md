@@ -50,7 +50,7 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 | `npm run check` | TypeScript project build check |
 | `npm run build` | Web + desktop main bundles |
 | `npm run desktop` | Build and run the local Electron shell |
-| `npm run package:desktop` | Build unsigned local test packages |
+| `npm run package:desktop` | Build non-release local test packages |
 
 ## Pull requests
 

@@ -10,6 +10,7 @@ import {
   buildShikigamiConfig,
   normalizeShikigamiEvent,
   parseShikigamiStderrLine,
+  permissionHookRuntimeEnvironment,
   ShikigamiAdapter,
   ShikigamiToolIdTracker,
   toolsForMode,
@@ -87,6 +88,17 @@ test("buildShikigamiConfig encodes mode tool allow-lists and pre_tool gate", () 
   assert.match(build, /event = "pre_tool"/);
   assert.match(build, /fail_closed = true/);
   assert.match(build, /hook\.mjs/);
+});
+
+test("Electron-hosted hooks run the embedded runtime as Node", () => {
+  const source = { PATH: "/bin", ELECTRON_RUN_AS_NODE: "unexpected" };
+  const electron = permissionHookRuntimeEnvironment(source, "43.2.0");
+  const node = permissionHookRuntimeEnvironment(source, undefined);
+
+  assert.notEqual(electron, source);
+  assert.equal(electron.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(node.ELECTRON_RUN_AS_NODE, "unexpected");
+  assert.deepEqual(source, { PATH: "/bin", ELECTRON_RUN_AS_NODE: "unexpected" });
 });
 
 test("ShikigamiAdapter streams events from a fixture CLI", async () => {

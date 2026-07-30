@@ -336,6 +336,20 @@ function resolveModelAdapter(env: NodeJS.ProcessEnv): {
   return { adapter: "scripted", authenticated: true };
 }
 
+/**
+ * Electron's process.execPath is the Electron executable, not a standalone
+ * Node binary. The Shikigami permission hook inherits this environment and
+ * needs Electron's documented Node mode to execute the bundled .mjs hook.
+ */
+export function permissionHookRuntimeEnvironment(
+  env: NodeJS.ProcessEnv,
+  electronVersion: string | undefined = process.versions.electron,
+): NodeJS.ProcessEnv {
+  return electronVersion
+    ? { ...env, ELECTRON_RUN_AS_NODE: "1" }
+    : { ...env };
+}
+
 export class ShikigamiAdapter {
   readonly id = "shikigami" as const;
   readonly #active = new Map<string, ActiveRun>();
@@ -505,7 +519,7 @@ export class ShikigamiAdapter {
       cwd: options.worktree,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        ...env,
+        ...permissionHookRuntimeEnvironment(env),
         // Prefer explicit paths over ambient host config for this run.
         SHIKIGAMI_CONFIG: configPath,
         SHIKIGAMI_STATE: stateDir,
