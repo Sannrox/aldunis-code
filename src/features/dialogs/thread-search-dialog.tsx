@@ -190,24 +190,29 @@ export function ThreadSearchDialog({
           }
         />
       </label>
-      <label className="search-scope">
-        Archived conversations{" "}
-        <select
-          id="thread-search-archived"
-          name="thread-search-archived"
-          value={archived}
-          onChange={(event) => {
-            setArchived(event.target.value as typeof archived);
-            setResults([]);
-            setActiveIndex(0);
-          }}
-        >
-          <option value="exclude">Exclude</option>
-          <option value="include">Include</option>
-          <option value="only">Only archived</option>
-        </select>
-      </label>
-      <p className="search-scope">Search is limited to 50 local metadata matches. Messages, provider output, and repository contents are excluded.</p>
+      <div className="thread-search-controls">
+        <label className="search-scope">
+          Archived conversations{" "}
+          <select
+            id="thread-search-archived"
+            name="thread-search-archived"
+            value={archived}
+            onChange={(event) => {
+              setArchived(event.target.value as typeof archived);
+              setResults([]);
+              setActiveIndex(0);
+            }}
+          >
+            <option value="exclude">Exclude</option>
+            <option value="include">Include</option>
+            <option value="only">Only archived</option>
+          </select>
+        </label>
+        <p className="search-scope">
+          Search is limited to 50 local metadata matches. Messages, provider output, and repository
+          contents are excluded.
+        </p>
+      </div>
       <div
         ref={resultsRef}
         className="quick-results"

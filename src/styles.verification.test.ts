@@ -196,6 +196,13 @@ test("command palette search field has a usable min-height", () => {
   assert.match(css, /\.quick-search\s*>\s*input\s*\{[^}]*min-height:\s*32px/s);
 });
 
+test("conversation search controls align with the dialog content inset", () => {
+  assert.match(
+    css,
+    /\.thread-search-controls\s*\{[^}]*padding:\s*8px 16px 4px/s,
+  );
+});
+
 test("keyboard-active quick results remain visibly highlighted", () => {
   assert.match(
     css,
