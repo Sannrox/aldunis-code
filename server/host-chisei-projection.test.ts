@@ -41,6 +41,14 @@ async function fixture(remote = false) {
         },
       };
     },
+    async operationReceipt(operationId: string) {
+      return {
+        operationId,
+        complete: true,
+        missingSurfaces: [],
+        eventCount: 2,
+      };
+    },
   } as unknown as ChiseiProjectionClient;
   const remoteAuth = remote ? { verify: async () => ({}) } as unknown as RemoteAuth : undefined;
   const server = createLocalHost(
@@ -109,6 +117,42 @@ test("browser clients cannot administer Chisei bindings when remote access is en
     });
     assert.equal(response.status, 403);
     assert.equal((await current.state.load()).projects[0].chiseiNamespace ?? null, null);
+  } finally {
+    await close(current.server);
+  }
+});
+
+test("operation inspection derives authority from a persisted project correlation", async () => {
+  const current = await fixture();
+  try {
+    await current.state.saveProject({ id: "project-2", name: "Other", root: `${tmpdir()}/other` });
+    const { thread, turn } = await current.state.startTurn({
+      projectId: "project-1",
+      worktree: (await current.state.load()).projects[0].root,
+      prompt: "governed run",
+      mode: "build",
+      provider: "shikigami",
+    });
+    const operationId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    await current.state.recordProviderEvent(thread.id, turn.id, "shikigami", {
+      kind: "governance_correlation",
+      governance: "sekai-chisei",
+      runId: operationId,
+      operationId,
+    });
+    const correlationId = (await current.state.load()).governanceCorrelations[0].id;
+    const allowed = await post(current.url, "/api/integrations/chisei/operations/detail", {
+      projectId: "project-1",
+      correlationId,
+      operationId: "attacker-selected-id",
+    });
+    assert.equal(allowed.status, 200);
+    assert.equal((await allowed.json() as { operationId: string }).operationId, operationId);
+    const denied = await post(current.url, "/api/integrations/chisei/operations/detail", {
+      projectId: "project-2",
+      correlationId,
+    });
+    assert.equal(denied.status, 404);
   } finally {
     await close(current.server);
   }

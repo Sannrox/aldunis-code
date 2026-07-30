@@ -68,11 +68,13 @@ function ChiseiActionsPanel({
   selectedProjectId,
   onProjectsChanged,
   bindingAdministrationAvailable,
+  correlationId,
 }: {
   projects: SavedProject[];
   selectedProjectId: string | null;
   onProjectsChanged?: () => Promise<void>;
   bindingAdministrationAvailable: boolean;
+  correlationId: string | null;
 }) {
   const selectedProject = useMemo(() => {
     const matched = projects.find((project) => (
@@ -99,6 +101,8 @@ function ChiseiActionsPanel({
   const [projectionState, setProjectionState] = useState<"idle" | "loading" | "live" | "stale" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [detail, setDetail] = useState<ActionDetail | null>(null);
+  const [operationReceipt, setOperationReceipt] = useState<ActionDetail["receipt"]>(null);
+  const [operationLoading, setOperationLoading] = useState(false);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
   const synchronizedBinding = useRef(`${activeProjectId ?? ""}\n${selectedNamespace ?? ""}`);
@@ -121,6 +125,37 @@ function ChiseiActionsPanel({
     listRequest.current += 1;
     detailRequest.current += 1;
   }, [activeProjectId, selectedNamespace]);
+
+  useEffect(() => {
+    if (!activeProjectId || !correlationId) {
+      setOperationReceipt(null);
+      setOperationLoading(false);
+      return;
+    }
+    setOperationReceipt(null);
+    setOperationLoading(true);
+    setMessage(null);
+    let active = true;
+    void fetch("/api/integrations/chisei/operations/detail", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: activeProjectId, correlationId }),
+    }).then(async (response) => {
+      const body = await response.json() as NonNullable<ActionDetail["receipt"]> & { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Operation receipt failed.");
+      if (active) {
+        setOperationReceipt(body);
+        setOperationLoading(false);
+      }
+    }).catch((error) => {
+      if (active) {
+        setOperationReceipt(null);
+        setOperationLoading(false);
+        setMessage(error instanceof Error ? error.message : "Operation receipt failed.");
+      }
+    });
+    return () => { active = false; };
+  }, [activeProjectId, correlationId]);
 
   const loadActions = async () => {
     if (!activeProjectId || !boundNamespace) return;
@@ -259,6 +294,20 @@ function ChiseiActionsPanel({
               {message}
             </p>
           )}
+          {operationReceipt && (
+            <article className="chisei-action-detail" aria-label="Direct governed operation receipt">
+              <p className="eyebrow">Direct governed · Shikigami</p>
+              <h3>Operation receipt</h3>
+              <dl>
+                <div><dt>Operation</dt><dd><code>{operationReceipt.operationId}</code></dd></div>
+                <div><dt>Receipt</dt><dd>{operationReceipt.complete ? "Complete" : "Incomplete"}</dd></div>
+                <div><dt>Events</dt><dd>{operationReceipt.eventCount ?? "Not reported"}</dd></div>
+              </dl>
+            </article>
+          )}
+          {operationLoading && (
+            <p className="domain-empty" role="status">Loading operation receipt…</p>
+          )}
           {boundNamespace && projectionState !== "loading" && actions.length === 0 && projectionState !== "error" && (
             <p className="domain-empty">No governed Actions are visible for this project.</p>
           )}
@@ -325,12 +374,14 @@ export function DomainPage({
   selectedProjectId = null,
   onProjectsChanged,
   chiseiBindingAdministrationAvailable = true,
+  chiseiCorrelationId = null,
 }: {
   product: Exclude<Product, "code">;
   projects?: SavedProject[];
   selectedProjectId?: string | null;
   onProjectsChanged?: () => Promise<void>;
   chiseiBindingAdministrationAvailable?: boolean;
+  chiseiCorrelationId?: string | null;
 }) {
   const page = productPages[product];
   return (
@@ -367,6 +418,7 @@ export function DomainPage({
           selectedProjectId={selectedProjectId}
           onProjectsChanged={onProjectsChanged}
           bindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+          correlationId={chiseiCorrelationId}
         />
       )}
     </main>

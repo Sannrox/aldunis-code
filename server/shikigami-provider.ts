@@ -76,7 +76,21 @@ interface ActiveRun {
   spawnFailed: boolean;
   cleanup: () => Promise<void>;
   runId: string | null;
+  governed: boolean;
   permissionToken: string;
+}
+
+const SHIKIGAMI_RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function confirmShikigamiRunId(current: string | null, candidate: string): string {
+  if (!SHIKIGAMI_RUN_ID.test(candidate)) {
+    throw new ProviderProtocolError("Shikigami emitted a malformed run identity.");
+  }
+  const canonical = candidate.toLocaleLowerCase();
+  if (current && current.toLocaleLowerCase() !== canonical) {
+    throw new ProviderProtocolError("Shikigami emitted conflicting run identities.");
+  }
+  return canonical;
 }
 
 function record(value: unknown): JsonRecord | null {
@@ -166,13 +180,16 @@ export function normalizeShikigamiEvent(
     return text ? [{ kind: "assistant_text", text: `[${level}] ${text}` }] : [];
   }
   if (event.type === "run_finished") {
-    const runId = typeof event.run_id === "string" ? event.run_id : "unknown";
+    const runId = typeof event.run_id === "string"
+      ? confirmShikigamiRunId(null, event.run_id)
+      : confirmShikigamiRunId(null, "");
     const success = event.success === true;
     const summary = typeof event.summary === "string" ? event.summary : "";
     if (!success) {
       return [{
         kind: "failed",
         message: summary || "Shikigami run reported failure.",
+        sessionId: runId,
       }];
     }
     return [
@@ -534,10 +551,10 @@ export class ShikigamiAdapter {
       spawnFailed: false,
       // Persist conversation state for resume; do not wipe after each turn.
       cleanup: async () => undefined,
-      runId: options.resumeSessionId
-        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.resumeSessionId)
-        ? options.resumeSessionId
-        : null,
+      // Code starts a fresh harness run for every message. The prior provider
+      // session is historical context, not an identity for this invocation.
+      runId: null,
+      governed: env.SHIKIGAMI_GOVERNANCE_ADAPTER === "sekai-chisei",
       permissionToken,
     };
     child.once("error", () => {
@@ -569,6 +586,7 @@ export class ShikigamiAdapter {
     timeout.unref();
 
     let sawTerminal = false;
+    let correlationEmitted = false;
     // Buffer run_finished terminals until stdout is inspected so parked runs
     // can replace a generic failure with CLI resume guidance.
     let pendingTerminal: ProviderEvent | null = null;
@@ -596,6 +614,9 @@ export class ShikigamiAdapter {
               message: error instanceof ProviderProtocolError
                 ? error.message
                 : "Shikigami emitted an unreadable event.",
+              ...(error instanceof ProviderProtocolError
+                ? { code: "provider_protocol_error" as const }
+                : {}),
             };
             active.cancelled = true;
             this.#terminate(active.child);
@@ -606,11 +627,44 @@ export class ShikigamiAdapter {
             if (active.cancelled && event.kind !== "failed") break;
             if (event.kind === "session_started") continue;
             if (event.kind === "turn_completed") {
-              active.runId = event.sessionId;
+              try {
+                active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
+              } catch (error) {
+                sawTerminal = true;
+                pendingTerminal = null;
+                active.cancelled = true;
+                this.#terminate(active.child);
+                yield {
+                  kind: "failed",
+                  message: error instanceof ProviderProtocolError
+                    ? error.message
+                    : "Shikigami emitted an invalid run identity.",
+                  code: "provider_protocol_error",
+                };
+                break;
+              }
               pendingTerminal = event;
               continue;
             }
             if (event.kind === "failed") {
+              if (event.sessionId) {
+                try {
+                  active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
+                } catch (error) {
+                  sawTerminal = true;
+                  pendingTerminal = null;
+                  active.cancelled = true;
+                  this.#terminate(active.child);
+                  yield {
+                    kind: "failed",
+                    message: error instanceof ProviderProtocolError
+                      ? error.message
+                      : "Shikigami emitted an invalid run identity.",
+                    code: "provider_protocol_error",
+                  };
+                  break;
+                }
+              }
               pendingTerminal = event;
               continue;
             }
@@ -670,8 +724,33 @@ export class ShikigamiAdapter {
       const stdout = await stdoutPromise.catch(() => "");
       if (!active.cancelled) {
         const runMatch = stdout.match(/run\s+([0-9a-f-]{36})/i);
-        if (runMatch) active.runId = runMatch[1];
-        if (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout)) {
+        if (runMatch) {
+          try {
+            active.runId = confirmShikigamiRunId(active.runId, runMatch[1]);
+          } catch (error) {
+            sawTerminal = true;
+            pendingTerminal = null;
+            active.cancelled = true;
+            this.#terminate(active.child);
+            yield {
+              kind: "failed",
+              message: error instanceof ProviderProtocolError
+                ? error.message
+                : "Shikigami emitted an invalid run identity.",
+              code: "provider_protocol_error",
+            };
+          }
+        }
+        if (!active.cancelled && active.governed && active.runId) {
+          correlationEmitted = true;
+          yield {
+            kind: "governance_correlation",
+            governance: "sekai-chisei",
+            runId: active.runId,
+            operationId: active.runId,
+          };
+        }
+        if (!active.cancelled && (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout))) {
           sawTerminal = true;
           pendingTerminal = null;
           const resumeId = active.runId ?? "<run-id>";
@@ -721,15 +800,31 @@ export class ShikigamiAdapter {
       }
       if (pendingTerminal) {
         sawTerminal = true;
+        if (active.governed && active.runId && !correlationEmitted) {
+          yield {
+            kind: "governance_correlation",
+            governance: "sekai-chisei",
+            runId: active.runId,
+            operationId: active.runId,
+          };
+        }
         yield pendingTerminal;
       } else if (!sawTerminal) {
         const code = active.child.exitCode;
         if (code === 0) {
-          yield {
-            kind: "turn_completed",
-            sessionId: active.runId ?? `shikigami-pending:${id}`,
-            costUsd: null,
-          };
+          if (active.governed && !active.runId) {
+            yield {
+              kind: "failed",
+              message: "Shikigami completed without a provider-confirmed run identity.",
+              code: "provider_protocol_error",
+            };
+          } else {
+            yield {
+              kind: "turn_completed",
+              sessionId: active.runId ?? `shikigami-pending:${id}`,
+              costUsd: null,
+            };
+          }
         } else {
           yield {
             kind: "failed",

@@ -96,6 +96,34 @@ export function readyComposerPlaceholder(providerName: string, threadId: string 
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
 }
 
+export function GovernanceCorrelationSummary({
+  correlation,
+}: {
+  correlation: Extract<ProviderEvent, { kind: "governance_correlation" }>;
+}) {
+  return (
+    <aside className="governance-correlation" aria-label="Direct governed run correlation">
+      <div>
+        <strong>Direct governed</strong>
+        <span>Shikigami run</span>
+      </div>
+      <code>{correlation.operationId}</code>
+      <Button
+        type="button"
+        disabled={!correlation.correlationId}
+        onClick={() => {
+          if (!correlation.correlationId) return;
+          window.dispatchEvent(new CustomEvent("aldunis:inspect-chisei-operation", {
+            detail: { correlationId: correlation.correlationId },
+          }));
+        }}
+      >
+        Inspect in Chisei
+      </Button>
+    </aside>
+  );
+}
+
 export function Conversation({
   repository,
   conversation,
@@ -795,6 +823,14 @@ export function Conversation({
           model?: string | null;
           profileId?: string;
         }>;
+        governanceCorrelations?: Array<{
+          id: string;
+          turnId: string;
+          runId: string;
+          operationId: string;
+          governance: "sekai-chisei";
+          createdAt: string;
+        }>;
       };
       if (!active) return;
       const thread = conversation
@@ -913,6 +949,19 @@ export function Conversation({
           .map((request) => ({
             event: { ...request, kind: "input_requested" as const },
             createdAt: request.createdAt,
+            eventSequence: undefined,
+          })),
+        ...(projection.governanceCorrelations ?? [])
+          .filter((receipt) => receipt.turnId === turnId)
+          .map((receipt) => ({
+            event: {
+              kind: "governance_correlation" as const,
+              governance: receipt.governance,
+              runId: receipt.runId,
+              operationId: receipt.operationId,
+              correlationId: receipt.id,
+            },
+            createdAt: receipt.createdAt,
             eventSequence: undefined,
           })),
       ].sort((left, right) => (
@@ -1993,6 +2042,13 @@ export function Conversation({
                 turn.state === "interrupted" || turn.state === "cancelled" ? "cancelled" : "running",
               )}
               {renderArchivedFailure(turn.events)}
+              {turn.events
+                .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
+                  event.kind === "governance_correlation"
+                ))
+                .map((correlation) => (
+                  <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
+                ))}
               {(turn.state === "interrupted" || turn.state === "cancelled") && (
                 <p className="provider-state">{providerLabel} cancelled</p>
               )}
@@ -2033,6 +2089,13 @@ export function Conversation({
                 "current",
                 providerState === "cancelled" ? "cancelled" : "running",
               )}
+              {providerEvents
+                .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
+                  event.kind === "governance_correlation"
+                ))
+                .map((correlation) => (
+                  <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
+                ))}
               {providerState === "completed" && threadId && !completionDismissed && (
                 <div className="done" role="status">
                   <div className="h">

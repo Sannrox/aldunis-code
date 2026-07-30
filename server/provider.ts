@@ -59,6 +59,13 @@ export interface ProviderInputRequest {
 
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
+  | {
+    kind: "governance_correlation";
+    governance: "sekai-chisei";
+    runId: string;
+    operationId: string;
+    correlationId?: string;
+  }
   | { kind: "assistant_text"; text: string }
   | {
     kind: "plan_updated";
@@ -76,6 +83,7 @@ export type ProviderEvent =
   | {
     kind: "failed";
     message: string;
+    sessionId?: string;
     code?:
       | "unsupported_external_tool"
       | "provider_authentication"
@@ -95,6 +103,9 @@ export function persistedProviderFailureMessage(
       || event.message === CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE
       || event.message === CODEX_UNSUPPORTED_ITEM_MESSAGE
       || event.message === CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE
+      || event.message === "Shikigami emitted a malformed run identity."
+      || event.message === "Shikigami emitted conflicting run identities."
+      || event.message === "Shikigami completed without a provider-confirmed run identity."
       || event.message === "Codex stream processing failed."
     ) {
       return event.message;

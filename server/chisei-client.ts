@@ -400,4 +400,33 @@ export class ChiseiProjectionClient {
       },
     };
   }
+
+  async operationReceipt(operationId: string): Promise<ChiseiReceiptProjection> {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)
+    ) {
+      throw new ChiseiClientError("The Chisei operation identity is incompatible.", 502, "incompatible");
+    }
+    const response = await this.#call("chisei", "getOperationReceipt", {
+      operationId,
+      requestId: randomUUID(),
+      callerScope: "aldunis-code",
+      attempt: 1,
+    });
+    const missing = response.missingSurfaces;
+    if (
+      typeof response.complete !== "boolean"
+      || !Array.isArray(missing)
+      || missing.length > 50
+      || missing.some((item) => typeof item !== "string" || item.length > 200)
+    ) {
+      throw new ChiseiClientError("Chisei returned an incompatible operation receipt.", 502, "incompatible");
+    }
+    return {
+      operationId,
+      complete: response.complete,
+      missingSurfaces: missing as string[],
+      eventCount: eventCount(response.receiptJson),
+    };
+  }
 }

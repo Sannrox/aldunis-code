@@ -472,6 +472,27 @@ export function CodeWorkbench({
   chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
 }) {
+  const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
+  useEffect(() => {
+    setChiseiCorrelationId(null);
+  }, [repository?.projectId]);
+  const previousProduct = useRef(product);
+  useEffect(() => {
+    if (previousProduct.current === "chisei" && product !== "chisei") {
+      setChiseiCorrelationId(null);
+    }
+    previousProduct.current = product;
+  }, [product]);
+  useEffect(() => {
+    const inspect = (event: Event) => {
+      const correlationId = (event as CustomEvent<{ correlationId?: unknown }>).detail?.correlationId;
+      if (typeof correlationId !== "string") return;
+      setChiseiCorrelationId(correlationId);
+      onProductChange("chisei");
+    };
+    window.addEventListener("aldunis:inspect-chisei-operation", inspect);
+    return () => window.removeEventListener("aldunis:inspect-chisei-operation", inspect);
+  }, [onProductChange]);
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
     if (typeof window === "undefined") return "all";
     try {
@@ -1034,6 +1055,7 @@ export function CodeWorkbench({
           selectedProjectId={repository?.projectId ?? null}
           onProjectsChanged={onProjectsChanged}
           chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+          chiseiCorrelationId={chiseiCorrelationId}
         />
       ) : (
       <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">

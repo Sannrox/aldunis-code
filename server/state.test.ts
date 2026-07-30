@@ -229,6 +229,57 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "active");
 });
 
+test("governed Shikigami correlation receipts survive restart without sensitive run content", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "sensitive prompt sentinel",
+    mode: "build",
+    provider: "shikigami",
+  });
+  const runId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  await store.recordProviderEvent(thread.id, turn.id, "shikigami", {
+    kind: "governance_correlation",
+    governance: "sekai-chisei",
+    runId,
+    operationId: runId,
+  });
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.deepEqual(rebuilt.governanceCorrelations, [{
+    schemaVersion: 2,
+    id: rebuilt.governanceCorrelations[0].id,
+    provider: "shikigami",
+    governance: "sekai-chisei",
+    threadId: thread.id,
+    turnId: turn.id,
+    runId,
+    operationId: runId,
+    createdAt: rebuilt.governanceCorrelations[0].createdAt,
+  }]);
+  const journal = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  const correlationLine = journal.split("\n").find((line) => line.includes("governance_correlation_saved"));
+  assert.ok(correlationLine);
+  assert.doesNotMatch(correlationLine, /sensitive prompt sentinel|\/fixture/);
+  await assert.rejects(
+    () => store.recordProviderEvent(thread.id, turn.id, "shikigami", {
+      kind: "governance_correlation",
+      governance: "sekai-chisei",
+      runId,
+      operationId: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    }),
+    /incompatible/,
+  );
+  await store.recordProviderEvent(thread.id, turn.id, "shikigami", {
+    kind: "turn_completed",
+    sessionId: runId,
+    costUsd: null,
+  });
+  await store.deleteConversation(thread.id);
+  assert.equal((await store.load()).governanceCorrelations.length, 0);
+});
+
 test("typed provider failures survive reload without arbitrary error text", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -514,6 +565,7 @@ test("project deletion and retention physically remove sensitive conversation da
     activities: [],
     plans: [],
     contextReceipts: [],
+    governanceCorrelations: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
@@ -666,6 +718,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     activities: 0,
     plans: 0,
     contextReceipts: 0,
+    governanceCorrelations: 0,
     providerSessions: 1,
     checkpoints: 0,
     annotations: 0,

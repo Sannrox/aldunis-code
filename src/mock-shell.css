@@ -991,12 +991,27 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
 }
 .chisei-effect-list span,
 .chisei-effect-list time { color: var(--muted-foreground); }
+.governance-correlation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, auto) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+}
+.governance-correlation div { display: grid; gap: 2px; }
+.governance-correlation span { color: var(--muted-foreground); font-size: 12px; }
+.governance-correlation code { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 720px) {
   .domain-page { padding: 18px; }
   .chisei-binding { grid-template-columns: 1fr; align-items: stretch; }
   .chisei-action-list button { grid-template-columns: auto minmax(0, 1fr); }
   .chisei-action-list button > :nth-child(n + 3) { grid-column: 2; }
   .chisei-effect-list li { grid-template-columns: 1fr; gap: 3px; }
+  .governance-correlation { grid-template-columns: 1fr; }
 }
 
 /* settings full-screen (mock .settings) — already in extracted CSS; ensure live wins */
