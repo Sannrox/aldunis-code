@@ -1,0 +1,67 @@
+name: Bug
+description: Report a reproducible Aldunis Code defect.
+title: ""
+labels: ["status:triage", "type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private source code, provider transcripts,
+        customer data, or unredacted logs. Report security vulnerabilities
+        through a private GitHub security advisory instead.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest safe sequence that reproduces the defect.
+      placeholder: |
+        1. Start Aldunis Code with …
+        2. Open …
+        3. Observe …
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Version or revision
+      description: Release tag or commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      options:
+        - Browser and local host
+        - Desktop shell
+        - Remote workbench
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.5, Ubuntu 24.04, Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence
+      description: Add minimal logs, screenshots, or checks with sensitive data removed.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, private repository content, provider transcripts, and identifying paths.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

@@ -49,3 +49,16 @@ want to change it.
    that identify private machines beyond `127.0.0.1` examples.
 4. **Decisions stay small** — one accepted choice per ADR under `decisions/`.
 5. **Index stays current** — when you add a top-level guide, link it here.
+
+## Contributing to documentation
+
+Choose one primary page type for each document:
+
+- A guide helps a reader complete a task.
+- A reference records exhaustive fields, limits, or contracts.
+- An explanation describes architecture or design rationale.
+- A troubleshooting page starts from an observable symptom.
+
+Verify behavior-sensitive claims against source or tests, keep commands
+copy-ready, and avoid duplicating a contract across pages. Before opening a
+pull request, check changed links and run `git diff --check`.

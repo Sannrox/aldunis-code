@@ -2,29 +2,26 @@
 
 ## Purpose
 
-Aldunis Code's interface grew without a written design language. It lives as
-literal color values repeated across 565 selectors in one stylesheet, which is
-why the same light-theme defect has been found and fixed five times.
+This document defines the durable interaction and visual rules for the
+workbench. It explains which states receive emphasis, how thread lifecycle and
+permissions appear, and where the implementation sources of truth live.
 
-This document records the design decisions taken so far, what they are based
-on, and what remains open. A working mock of these decisions is in
+A working mock of these decisions is in
 [design/workbench-mock.html](design/workbench-mock.html); see
 [design/README.md](design/README.md) for what it does and does not cover.
 
-## Base
+## Implementation model
 
-`pingdotgg/t3code` is the structural base. Taken from it:
+The shipped interface uses:
 
-- The token model: one semantic table, redefined per theme under the same
-  names, with no per-component theme overrides.
-- The primitive inventory and variant-driven components (`cva`-style
-  `variant` × `size`), rather than styling each call site.
-- The sidebar shape: search and new thread, a project scope, a thread list,
-  a footer.
-- Thread lifecycle vocabulary, including `settle`.
-- `@base-ui/react` for dialog, popover, select, and tooltip.
+- Semantic color and typography tokens shared by light and dark themes.
+- Reusable primitives under `src/components/ui/` for common controls.
+- `@base-ui/react` primitives for accessible dialogs, popovers, selects, and
+  tooltips.
+- Feature components under `src/features/` for domain-specific behavior.
 
-Not taken from it: the blue primary. See "Color".
+Do not add component-specific theme patches when a semantic token can express
+the state. Do not put domain behavior into a generic UI primitive.
 
 ## Color
 
@@ -61,7 +58,7 @@ badge, no green health dot, and no success chrome.
 
 ## Thread rows
 
-Three lines, following t3code:
+Thread rows use three lines:
 
 ```
 [folder] project              status | time
@@ -79,17 +76,14 @@ is the field the operator most needs before opening a thread.
 
 ## Settle
 
-Adopted from t3code, with one deliberate difference.
-
 Settling moves a finished thread to a collapsed `Settled (N)` shelf at the
 bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
 
-**Settling does not release the worktree.** In t3code this is free, because
-threads holding worktrees cost nothing. Aldunis Code enforces a managed
-worktree limit (`server/worktrees.ts`), so a settled shelf silently
-accumulates the scarce resource until dispatch fails.
+**Settling does not release the worktree.** Aldunis Code enforces a managed
+worktree limit (`server/worktrees.ts`), so settled conversations can continue
+to consume that finite local resource.
 
 The interface therefore makes the cost visible rather than changing the
 semantics:
@@ -125,9 +119,8 @@ it where the decision is actually made.
 Anything not touched during work belongs in Settings, not in the chrome.
 Theme is the clearest case: nobody changes theme mid-approval.
 
-Settings sections follow t3code's routes, mapped to this product: General,
-Providers, Worktrees, Approvals, Access, Keybindings, Diagnostics, and
-Archived threads.
+Settings group installation-level concerns into General, Providers, Worktrees,
+Approvals, Access, Keybindings, Diagnostics, and Archived threads.
 
 Two constraints that previously existed only as error messages are surfaced
 here: the managed worktree limit, and `MAX_THREADS_PER_PROJECT`.
@@ -154,57 +147,44 @@ rather than a generic disclaimer:
 The failure mode is not a user mistaking placeholder data for real data. It
 is a user mistaking a local action for an authoritative one.
 
-## Known defect
+## Implementation sources
 
-`src/main.tsx:568` renders a provider footer that is entirely static: the
-provider name is hardcoded, "Not connected" is a literal string with no state
-behind it, and the `Connect` button has no handler. `server/provider.ts` and
-`server/provider-adapters.ts` contain no connection concept at all, because
-providers are spawned per session as subprocesses.
+Use the live application and automated checks as the source of truth:
 
-The shipped UI therefore claims "Not connected" while working normally. This
-should be deleted rather than redesigned.
+| Concern | Source |
+| --- | --- |
+| Semantic tokens and component styling | `src/styles.css` |
+| Shell layout | `src/mock-shell.css` |
+| Shared UI primitives | `src/components/ui/` |
+| Sidebar and settled shelf | `src/features/code/sidebar.tsx` |
+| Preferences and worktree limits | `src/features/dialogs/preferences-dialog.tsx` |
+| Structural style checks | `src/styles.verification.test.ts` |
+| Exploratory reference mock | `docs/design/workbench-mock.html` |
 
-## Sequence
-
-Each step is independently shippable and revertable.
-
-1. Define the token table: `:root` plus a dark block redefining the same
-   names. Additive; nothing changes visually.
-2. Migrate `styles.css` from literal values onto tokens, deleting each
-   `[data-theme="light"]` patch as its component becomes token-driven. The
-   51-line block reaching zero is the completion test.
-3. Delete the static provider footer.
-4. Raise the type floor. 37 rendered elements are currently below 11px, 18 of
-   them at 9.6px, with the smallest at 8px. The layout is spacious, so the
-   small type buys no density.
-5. Optionally self-host DM Sans / JetBrains Mono / Newsreader later for
-   closer mock parity. Remote Google Fonts imports are already removed from
-   the app shell (`index.html`, `src/styles.css`) so the workbench stays
-   local-first; system stacks are the interim.
-6. Extract primitives into `src/components/ui/`, starting with `Button`.
-7. Replace `useDialogFocus` (`src/main.tsx:352`) with `@base-ui/react`.
+The HTML mock is design evidence, not a runtime contract. When it differs from
+the shipped application, update or annotate the mock rather than documenting
+the mock as shipped behavior.
 
 ## Verification
 
-Theme defects are currently found only by looking. Before step 2 is complete:
+`src/styles.verification.test.ts` enforces structural constraints that are
+cheap and deterministic, including:
 
-- Assert `[data-theme="light"]` contains only token definitions, never
-  component selectors. This makes the defect class structurally impossible
-  rather than merely fixed.
-- Assert `styles.css` contains no literal color values outside token blocks.
-- Assert no declared `font-size` is below the floor.
+- Semantic token tables exist for light and dark themes.
+- Custom properties do not refer circularly to themselves.
+- Shared primitive classes exist.
+- Styles do not load remote Google Fonts.
+- Critical controls retain their minimum hit sizes.
+- Narrow and dual-pane layouts keep the conversation usable.
 
-These are cheap greps and they prevent regression permanently. They matter
-more than the migration itself.
+Also verify keyboard navigation, visible focus, reduced motion, narrow layouts,
+and both themes in the live UI whenever a change affects interaction or layout.
 
 ## Open
 
 - What finishing review unlocks. `Mark reviewed` and `Settle thread` are
   currently unrelated; reviewing every file is plausibly the moment settling
   and worktree release become safe.
-- Whether Sekai and Chisei remain two products, given one repository and one
-  service.
 - What cross-product pages look like once connected. This needs a real
   contract to design against.
 - Whether the thread list should scroll at six threads, which is roughly the

@@ -2,6 +2,10 @@
 
 Local-first workbench for agent-assisted software development.
 
+[![CI](https://github.com/Sannrox/aldunis-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Sannrox/aldunis-code/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
+
 Aldunis Code gives you one loopback-bound interface for repositories, worktrees,
 conversations, tool approvals, and diffs. Provider CLIs (Claude Code, Codex,
 Shikigami, and reviewed ACP adapters) run as **local subprocesses** under an
@@ -21,9 +25,6 @@ is a **local host + web UI** that:
 - requires **scoped, inspectable approval** for mutating tools
 - keeps secrets and state on the machine, not in the browser
 
-It is an independent implementation. It does not copy T3 Code source or product
-identity; open projects may inform workflows, but shipped code is owned here.
-
 ## Product family
 
 | Product | Role |
@@ -40,22 +41,27 @@ appear in the product switcher only when configured (see
 
 ## Quick start
 
-**Requirements:** Node.js 22+
+**Requirements:** Node.js 22+, npm, Git, and a local Git repository to open.
 
 ```sh
-npm install
-npm run build
+npm ci
 npm start
 ```
 
 Open [http://127.0.0.1:4174](http://127.0.0.1:4174).
 
-Development (API host + Vite):
+For development, run the API host and Vite in separate terminals:
 
 ```sh
+# Terminal 1
 npm run host -- --port 4175
-npm run dev   # http://127.0.0.1:4174 → proxies to host
+
+# Terminal 2
+npm run dev
 ```
+
+Open [http://127.0.0.1:4174](http://127.0.0.1:4174); Vite proxies API requests
+to the host on port 4175.
 
 Verify:
 
@@ -67,6 +73,15 @@ npm run build
 
 Full install, providers, remote access, and desktop packaging:
 **[docs/getting-started.md](docs/getting-started.md)**
+
+## Contributing
+
+Contributions are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md), use the issue templates for bugs and
+features, and report vulnerabilities privately through
+[SECURITY.md](SECURITY.md). The project is pre-release, so proposals that
+reduce unsafe authority, clarify provider boundaries, or improve deterministic
+verification are especially useful.
 
 ## Documentation
 
@@ -83,7 +98,7 @@ Full install, providers, remote access, and desktop packaging:
 | [Decisions](docs/decisions/README.md) | Accepted design decisions |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
 | [Security](SECURITY.md) | Vulnerability reporting |
-| [AGENTS.md](AGENTS.md) | Engineering rules for humans and agents |
+| [AGENTS.md](AGENTS.md) | Repository-specific engineering rules for agents |
 
 ## License
 
