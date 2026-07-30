@@ -44,6 +44,7 @@
   "build": {
     "appId": "com.aldunis.code",
     "productName": "Aldunis Code",
+    "icon": "public/aldunis-mark.png",
     "asar": true,
     "files": [
       "dist/**/*",

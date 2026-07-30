@@ -114,7 +114,10 @@ function App() {
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
-      document.documentElement.dataset.theme = resolveTheme(preferences.theme, media.matches);
+      const theme = resolveTheme(preferences.theme, media.matches);
+      document.documentElement.dataset.theme = theme;
+      const icon = document.querySelector<HTMLLinkElement>("#app-icon");
+      if (icon) icon.href = `/aldunis-mark-${theme}.png`;
     };
     applyTheme();
     document.documentElement.dataset.density = preferences.density;
