@@ -52,12 +52,21 @@ Sensitive environment values live in the host secret store (write-only in the UI
   can show sign-in guidance.
 - Build-mode network and file mutations pause for scoped approval; sandbox
   escapes that cannot be confined to the selected worktree are declined.
+- A single non-secret `request_user_input` question is normalized and resumed
+  through the original app-server JSON-RPC request. Multi-question and secret
+  requests fail closed until the normalized UI can preserve their distinct
+  answer semantics.
 
 ### Shikigami
 
 First-class harness provider (`provider: "shikigami"`). Seeds
 `default:shikigami`. Requires **shikigami 1.0.2+** on `PATH`
 (`inplace` workspace + `--task-file`).
+
+Parked Shikigami questions normalize to a bounded Aldunis input request.
+Because the current adapter does not keep a parked subprocess resumable, an
+answer starts an explicitly identified follow-up turn in the same child
+conversation. The answer is never copied into the parent provider context.
 
 - Code generates a run config with the selected worktree as workspace.
 - Progress is streamed from stderr events (`[shikigami] {…}`).
@@ -66,8 +75,8 @@ First-class harness provider (`provider: "shikigami"`). Seeds
 - Discovery reports an operator-facing readiness `detail` when the binary is
   missing, the version is unsupported, or a forced HTTP model adapter has no
   API key. The composer surfaces that copy instead of a generic “not ready”.
-- Parked runs still end with CLI resume guidance until Code grows park-answer
-  UX (`shikigami run --resume <id> --answer "…"`).
+- Parked questions remain actionable in the child conversation and, when beta
+  delegation is enabled, from the exact parent-child coordination card.
 - Governance defaults to `local`; operators may point
   `SHIKIGAMI_GOVERNANCE_ADAPTER` at `sekai-chisei` for plane-governed runs.
 - Design record: [decisions/shikigami-provider.md](decisions/shikigami-provider.md).

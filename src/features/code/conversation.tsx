@@ -228,6 +228,9 @@ export function Conversation({
   const [forkOpen, setForkOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
+  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
+  const [inputBusyId, setInputBusyId] = useState<string | null>(null);
+  const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
   const planTriggerRef = useRef<HTMLButtonElement>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     () => conversation?.reasoningEffort ?? "medium",
@@ -778,6 +781,9 @@ export function Conversation({
           eventSequence?: number;
         }>;
         contextReceipts?: ContextReceipt[];
+        inputRequests?: Array<Extract<ProviderEvent, { kind: "input_requested" }> & {
+          turnId: string;
+        }>;
         providerSessions: Array<{
           threadId: string;
           provider?: ProviderId;
@@ -898,6 +904,13 @@ export function Conversation({
             createdAt: plan.createdAt,
             eventSequence: plan.eventSequence,
           })),
+        ...(projection.inputRequests ?? [])
+          .filter((request) => request.turnId === turnId && request.state === "pending")
+          .map((request) => ({
+            event: { ...request, kind: "input_requested" as const },
+            createdAt: request.createdAt,
+            eventSequence: undefined,
+          })),
       ].sort((left, right) => (
         left.eventSequence !== undefined && right.eventSequence !== undefined
           ? left.eventSequence - right.eventSequence
@@ -933,6 +946,8 @@ export function Conversation({
         ? "streaming"
         : latest.status === "waiting_for_approval"
           ? "waiting_for_approval"
+          : latest.status === "waiting_for_user"
+            ? "waiting_for_input"
           : latest.status === "interrupted" || latest.status === "cancelled"
             ? "cancelled"
             : latest.status === "failed"
@@ -989,6 +1004,7 @@ export function Conversation({
         latest.status === "active"
         || latest.status === "running"
         || latest.status === "waiting_for_approval"
+        || latest.status === "waiting_for_user"
       ) {
         timer = window.setTimeout(() => attempt(), 10_000);
       }
@@ -1010,6 +1026,7 @@ export function Conversation({
     };
   }, [
     conversation?.id,
+    historyRefreshSignal,
     notificationsEnabled,
     provider,
     quietDelegatedChild,
@@ -1093,6 +1110,7 @@ export function Conversation({
   const runActive = providerState === "starting"
     || providerState === "streaming"
     || providerState === "waiting_for_approval"
+    || providerState === "waiting_for_input"
     || providerState === "cancelling";
   const canPickModel = !runActive && modelOptions.length > 0;
   const canPickMode = !runActive;
@@ -1342,7 +1360,16 @@ export function Conversation({
               newline = buffer.indexOf("\n");
               continue;
             }
+            if (event.kind === "input_resolved") {
+              setProviderEvents((current) => current.filter((candidate) => (
+                candidate.kind !== "input_requested" || candidate.id !== event.id
+              )));
+              setProviderState("streaming");
+              newline = buffer.indexOf("\n");
+              continue;
+            }
             setProviderEvents((current) => [...current, event]);
+            if (event.kind === "input_requested") setProviderState("waiting_for_input");
             if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
             if (event.kind === "turn_completed") {
               setProviderState("completed");
@@ -1498,6 +1525,41 @@ export function Conversation({
       }]);
     }
   };
+  const answerInput = async (
+    input: Extract<ProviderEvent, { kind: "input_requested" }>,
+  ) => {
+    const answer = (inputAnswers[input.id] ?? "").trim();
+    if (!answer || !threadId) return;
+    setInputBusyId(input.id);
+    try {
+      const response = await fetch(`/api/provider/input-requests/${input.id}/respond`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ childThreadId: threadId, answer }),
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Input response failed.");
+      setProviderEvents((current) => current.map((event) => (
+        event.kind === "input_requested" && event.id === input.id
+          ? { kind: "input_resolved" as const, id: input.id, state: "answered" as const }
+          : event
+      )));
+      if (input.responseMode === "native_resume") {
+        setProviderState("streaming");
+      } else {
+        setProviderState("streaming");
+        setHistoryRefreshSignal((current) => current + 1);
+      }
+      conversationAvailableCallback.current?.(threadId);
+    } catch (error) {
+      setProviderEvents((current) => [...current, {
+        kind: "failed",
+        message: error instanceof Error ? error.message : "Input response failed.",
+      }]);
+    } finally {
+      setInputBusyId(null);
+    }
+  };
   const assistantTimeline = presentAssistantTimeline(providerEvents);
   const latestPlan = useMemo(() => latestPlanFromEvents([
     ...archivedTurns.map((turn) => turn.events),
@@ -1534,6 +1596,12 @@ export function Conversation({
   const approvals = providerEvents.filter(
     (event): event is Extract<ProviderEvent, { kind: "approval_pending" }> => event.kind === "approval_pending",
   );
+  const inputs = providerEvents.filter(
+    (event): event is Extract<ProviderEvent, { kind: "input_requested" }> => (
+      event.kind === "input_requested"
+      && (event.state === undefined || event.state === "pending")
+    ),
+  );
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
@@ -1557,6 +1625,7 @@ export function Conversation({
     || latestPlan != null
     || toolEvents.length > 0
     || approvals.length > 0
+    || inputs.length > 0
     || failure != null;
   // Avoid empty assistant shells after restore (header-only with no body).
   // runActive covers starting/streaming/waiting_for_approval/cancelling.
@@ -1633,6 +1702,7 @@ export function Conversation({
     starting: `Starting ${providerName}…`,
     streaming: `${providerName} is working…`,
     waiting_for_approval: "Waiting for your approval…",
+    waiting_for_input: "Waiting for your input…",
     cancelling: "Cancelling…",
     completed: "Turn completed",
     cancelled: `${providerLabel} cancelled · send another prompt to resume`,
@@ -1951,7 +2021,7 @@ export function Conversation({
                     : "now"}
               </span>
             </div>
-              {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "cancelling") && (
+              {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "waiting_for_input" || providerState === "cancelling") && (
                 <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
               )}
               {assistantTimeline.length > 0 && renderTimeline(
@@ -2054,6 +2124,61 @@ export function Conversation({
                       </Button>
                     </footer>
                   )}
+                </section>
+              ))}
+              {inputs.map((input) => (
+                <section
+                  className="input-request-card"
+                  key={input.id}
+                  aria-label={`${pane} pane input required: ${input.question}`}
+                >
+                  <header>
+                    <strong>{input.question}</strong>
+                    <span>Response stays in this child conversation</span>
+                  </header>
+                  {input.recommendation && <p>Recommendation: {input.recommendation}</p>}
+                  {input.choices.length > 0 && (
+                    <div className="input-request-choices">
+                      {input.choices.map((choice) => (
+                        <Button
+                          type="button"
+                          size="sm"
+                          key={choice.id}
+                          title={choice.description ?? undefined}
+                          onClick={() => setInputAnswers((current) => ({
+                            ...current,
+                            [input.id]: choice.label,
+                          }))}
+                        >
+                          {choice.label}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  <label htmlFor={`input-request-${pane}-${input.id}`}>
+                    Answer for this conversation
+                  </label>
+                  <textarea
+                    id={`input-request-${pane}-${input.id}`}
+                    maxLength={4_000}
+                    readOnly={!input.allowFreeForm}
+                    value={inputAnswers[input.id] ?? ""}
+                    onChange={(event) => setInputAnswers((current) => ({
+                      ...current,
+                      [input.id]: event.target.value,
+                    }))}
+                  />
+                  <footer>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      disabled={inputBusyId === input.id || !(inputAnswers[input.id] ?? "").trim()}
+                      onClick={() => void answerInput(input)}
+                    >
+                      Send answer
+                    </Button>
+                  </footer>
                 </section>
               ))}
               {failureView && (

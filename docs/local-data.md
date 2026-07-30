@@ -59,6 +59,11 @@ relationships, and related records rebuild from the event log.
   original child-bound, single-use approval and records the resolution in the
   child's history; the parent stores no copied approval or provider-visible
   response.
+- Normalized child input requests and coordination receipts are durable local
+  records. A receipt stores the originating child, optional coordinating
+  parent, route, timestamp, and answer digest—not the answer text. The answer
+  itself is persisted only as the prompt of the originating child's native
+  resume or explicitly identified follow-up turn.
 
 ## Preferences
 

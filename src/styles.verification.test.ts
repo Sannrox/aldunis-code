@@ -214,6 +214,18 @@ test("delegated approval cards stay readable in narrow parent panels", () => {
   );
 });
 
+test("delegated input cards keep bounded full-width answer controls", () => {
+  const shell = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css"),
+    "utf8",
+  );
+  assert.match(shell, /\.delegated-input-card\s*\{[\s\S]*?flex:\s*1 0 100%/);
+  assert.match(
+    shell,
+    /\.delegated-input-card textarea,[\s\S]*?\.input-request-card textarea\s*\{[\s\S]*?min-height:\s*88px/,
+  );
+});
+
 test("keyboard-active quick results remain visibly highlighted", () => {
   assert.match(
     css,

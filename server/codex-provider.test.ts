@@ -268,6 +268,74 @@ if (process.argv.includes("--version")) {
   }
 });
 
+test("Codex native input requests normalize and resume only after the bound answer", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-input-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"thread-input"},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-input"}}}));
+      console.log(JSON.stringify({
+        id:42,
+        method:"item/tool/requestUserInput",
+        params:{
+          threadId:"thread-input",
+          turnId:"turn-input",
+          itemId:"item-input",
+          questions:[{
+            id:"strategy",
+            header:"Strategy",
+            question:"Choose a strategy",
+            options:[{label:"Safe",description:"Preserve compatibility"}]
+          }]
+        }
+      }));
+    }
+    if (message.id === 42 && message.result?.answers?.strategy?.answers?.[0] === "Safe") {
+      console.log(JSON.stringify({
+        method:"turn/completed",
+        params:{threadId:"thread-input",turn:{id:"turn-input",status:"completed"}}
+      }));
+    }
+  });
+}
+`);
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  try {
+    const run = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-input",
+      prompt: "Ask",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      mode: "build",
+    });
+    const events = [];
+    for await (const event of run.events) {
+      events.push(event);
+      if (event.kind === "input_requested") {
+        assert.equal(event.responseMode, "native_resume");
+        assert.equal(event.choices[0].label, "Safe");
+        assert.equal(adapter.answerInput(run.id, event.id, "Safe"), true);
+        assert.equal(adapter.answerInput(run.id, event.id, "Safe"), false);
+      }
+    }
+    assert.ok(events.some((event) => event.kind === "turn_completed"));
+  } finally {
+    adapter.close();
+  }
+});
+
 test("Codex skills expose enabled metadata without local paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-skills-"));
   const executable = join(directory, "fake-codex");

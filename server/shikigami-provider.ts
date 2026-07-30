@@ -654,7 +654,7 @@ export class ShikigamiAdapter {
       }
 
       const stdout = await stdoutPromise.catch(() => "");
-      if (!active.cancelled || (!sawTerminal && !pendingTerminal)) {
+      if (!active.cancelled) {
         const runMatch = stdout.match(/run\s+([0-9a-f-]{36})/i);
         if (runMatch) active.runId = runMatch[1];
         if (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout)) {
@@ -665,13 +665,16 @@ export class ShikigamiAdapter {
           const reason = reasonMatch?.[1]?.trim();
           const questionMatch = stdout.match(/parked question=(.+)/i);
           const question = questionMatch?.[1]?.trim();
-          const lead = reason
-            ? `Shikigami parked: ${reason}.`
-            : "Shikigami parked awaiting an operator answer.";
-          const questionPart = question ? ` Question: ${question}.` : "";
           yield {
-            kind: "failed",
-            message: `${lead}${questionPart} Resume is not wired in Aldunis Code yet; use the CLI: shikigami run --resume ${resumeId} --answer "...".`,
+            kind: "input_requested",
+            id: randomUUID(),
+            question: question || reason || "Shikigami is waiting for operator input.",
+            choices: [],
+            recommendation: null,
+            responseMode: "child_follow_up",
+            providerRequestId: resumeId === "<run-id>" ? null : resumeId,
+            expiresAt: null,
+            allowFreeForm: true,
           };
         }
       }

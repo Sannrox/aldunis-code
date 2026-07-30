@@ -6,6 +6,7 @@ import type {
   ConversationSummary,
   DelegatedApprovalProjection,
   DelegatedConversationRelationship,
+  DelegatedInputProjection,
 } from "../../types";
 import { DelegatedChildrenPanel } from "./workbench";
 
@@ -101,4 +102,45 @@ test("a projected approval overrides a running child status in parent attention"
   assert.match(html, />1 approval</);
   assert.match(html, />pending approval</);
   assert.doesNotMatch(html, />1 working</);
+});
+
+test("delegated child input identifies its recipient, choices, and recommendation", () => {
+  const input: DelegatedInputProjection = {
+    parentThreadId: parent.id,
+    childThreadId: child.id,
+    request: {
+      id: "request",
+      threadId: child.id,
+      question: "Choose the migration strategy",
+      choices: [{
+        id: "safe",
+        label: "Safe migration",
+        description: "Preserve compatibility",
+      }],
+      recommendation: "Safe migration",
+      responseMode: "child_follow_up",
+      state: "pending",
+      createdAt: "2026-07-30T10:02:00.000Z",
+      expiresAt: null,
+      allowFreeForm: false,
+    },
+  };
+  const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
+    parent,
+    conversations: [parent, { ...child, status: "awaiting_input" }],
+    relationships: [relationship],
+    outcomes: [],
+    approvals: [],
+    inputs: [input],
+    onOpen: () => undefined,
+    onChanged: async () => undefined,
+  }));
+  for (const expected of [
+    "Input required for Child delivery: Choose the migration strategy",
+    "Recommendation: Safe migration",
+    "Answer for Child delivery",
+    "Send to Child delivery",
+  ]) {
+    assert.match(html, new RegExp(expected));
+  }
 });
