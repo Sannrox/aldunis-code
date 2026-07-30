@@ -30,6 +30,10 @@
     {
       "name": "DelegatedConversationOutcomeProjection",
       "description": "A beta-gated, read-only UI projection of the latest completed child turn. Its bounded summary is derived from child history and never enters parent provider context."
+    },
+    {
+      "name": "ChildBoundHumanRequest",
+      "description": "A single-use approval or input request whose authority remains bound to the originating delegated child. A parent may project and resolve it only as a beta-gated human control surface."
     }
   ],
   "relations": [
@@ -58,6 +62,12 @@
         "min": 0,
         "max": 1
       }
+    },
+    {
+      "name": "projects_child_human_request",
+      "description": "Projects a pending child-bound human request without transferring its authority to the parent conversation.",
+      "domain": "DelegatedConversationRelationship",
+      "range": "ChildBoundHumanRequest"
     }
   ],
   "provenance": [
@@ -101,6 +111,18 @@
       "subject": "projects_quiet_outcome",
       "source": "Aldunis Code local state projection",
       "locator": "server/state.ts#projectDelegatedConversationOutcomes",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChildBoundHumanRequest",
+      "source": "Accepted delegated human control decision",
+      "locator": "docs/decisions/delegated-human-control.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_child_human_request",
+      "source": "GitHub Issues Sannrox/aldunis-code#411 and #413",
+      "locator": "docs/decisions/delegated-human-control.md",
       "confidence": 1.0
     }
   ]

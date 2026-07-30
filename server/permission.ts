@@ -173,8 +173,14 @@ export class PermissionBroker {
   readonly #tokens = new Map<string, string>();
   readonly #claimed = new Set<string>();
   readonly #resolving = new Set<string>();
+  readonly #listeners = new Set<(approval: ApprovalSnapshot) => void>();
 
   constructor(private readonly timeoutMs = 5 * 60_000) {}
+
+  subscribe(listener: (approval: ApprovalSnapshot) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
 
   createRunToken(runId: string): string {
     const token = randomUUID();
@@ -286,6 +292,12 @@ export class PermissionBroker {
     ) {
       throw new PermissionError("The approval request is bound to a different context.", 403);
     }
+    if (
+      approval.state === "pending"
+      && Date.parse(approval.expiresAt) <= Date.now()
+    ) {
+      this.#finish(approval, "expired");
+    }
     if (approval.state !== "pending") {
       throw new PermissionError("The approval request has already been resolved.", 409);
     }
@@ -315,6 +327,12 @@ export class PermissionBroker {
       || approval.toolCallId !== context.toolCallId
     ) {
       throw new PermissionError("The approval request is bound to a different context.", 403);
+    }
+    if (
+      approval.state === "pending"
+      && Date.parse(approval.expiresAt) <= Date.now()
+    ) {
+      this.#finish(approval, "expired");
     }
     if (approval.state !== "pending" || this.#resolving.has(id)) {
       throw new PermissionError("The approval request has already been resolved.", 409);
@@ -378,10 +396,16 @@ export class PermissionBroker {
       .map((approval) => this.#snapshot(approval));
   }
 
+  approvals(): ApprovalSnapshot[] {
+    return [...this.#approvals.values()].map((approval) => this.#snapshot(approval));
+  }
+
   #finish(approval: PendingApproval, state: ApprovalState): void {
     if (approval.state !== "pending") return;
     approval.state = state;
     clearTimeout(approval.timer);
+    const snapshot = this.#snapshot(approval);
+    for (const listener of this.#listeners) listener(snapshot);
     if (state === "allowed_once") {
       approval.resolve({ behavior: "allow", updatedInput: approval.originalInput });
     } else {

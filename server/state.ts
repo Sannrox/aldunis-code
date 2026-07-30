@@ -1559,6 +1559,9 @@ export class LocalStateStore {
     if (event.kind === "approval_pending" || event.kind === "approval_resolved") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      if (["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
+        return;
+      }
       const nextStatus = event.kind === "approval_pending" && event.state === "pending"
         ? "waiting_for_approval" as const
         : "active" as const;

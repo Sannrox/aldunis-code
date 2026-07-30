@@ -20,8 +20,9 @@ Assignment means active ownership. Keep one observable outcome per Issue and
 one Issue per PR.
 
 Changes to provider trust, filesystem scope, approval authority, credential
-handling, remote tenant context, or product ownership require a Discussion
-before implementation.
+handling, remote tenant context, or product ownership require an accepted
+durable decision before implementation. Use a Discussion by default; explicit
+maintainer direction may instead be captured in a focused decision record.
 
 Every PR records checks actually run and explicitly identifies skipped
 provider, platform, accessibility, packaging, or security evidence. Agent

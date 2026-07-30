@@ -79,6 +79,10 @@ through a versioned authenticated contract.
   storing secrets.
 - Approval scope is no broader than one described action unless the user
   explicitly creates a durable rule.
+- Delegated parent controls follow the
+  [delegated human control decision](decisions/delegated-human-control.md):
+  the parent is a beta-gated control surface while approval and input authority
+  remain single-use and bound to the originating child.
 - Unknown provider events and incompatible contract versions fail closed.
 - No integrated general-purpose terminal is exposed.
 - Repository selection follows the split accepted for

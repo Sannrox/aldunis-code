@@ -54,6 +54,11 @@ relationships, and related records rebuild from the event log.
   raise a desktop notification. Approval, input, and failure states remain
   eligible for attention. Disabling the beta restores the standard independent
   conversation presentation and notification behavior.
+- Pending child approvals are projected from the in-memory permission broker
+  only while the beta is enabled. Resolving one from the parent reuses the
+  original child-bound, single-use approval and records the resolution in the
+  child's history; the parent stores no copied approval or provider-visible
+  response.
 
 ## Preferences
 
