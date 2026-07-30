@@ -5,13 +5,23 @@ import type {
   ClaudeProfile,
   ChangedFile,
   ProviderId,
+  DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
 } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
-import { branchFromWorktree, loadConversationList } from "./conversation-list";
+import {
+  branchFromWorktree,
+  conversationListFromProjection,
+  loadConversationList,
+  type ConversationListProjection,
+} from "./conversation-list";
+import {
+  isQuietDelegatedChild,
+  summarizeDelegatedOutcomes,
+} from "./delegated-outcomes";
 import { Icon } from "../../components/icon";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
@@ -43,19 +53,21 @@ function DelegatedChildrenPanel({
   parent,
   conversations,
   relationships,
+  outcomes,
   onOpen,
   onChanged,
 }: {
   parent: ConversationSummary;
   conversations: ConversationSummary[];
   relationships: DelegatedConversationRelationship[];
+  outcomes: DelegatedConversationOutcomeProjection[];
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
   const [selectedChildId, setSelectedChildId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const childRelationships = relationships.filter((item) => item.parentThreadId === parent.id);
+  const outcomeSummary = summarizeDelegatedOutcomes(parent.id, conversations, relationships);
   const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
   const candidates = conversations.filter((item) => (
     item.id !== parent.id
@@ -87,7 +99,16 @@ function DelegatedChildrenPanel({
       <div className="delegated-children-header">
         <div>
           <h3 id={`delegated-title-${parent.id}`}>Delegated conversations</h3>
-          <p>Read-only status. Child messages and provider context stay independent.</p>
+          <p>Quiet status summary. Child messages and provider context stay independent.</p>
+          {outcomeSummary.outcomes.length > 0 && (
+            <div className="delegated-counts" aria-live="polite" aria-atomic="true">
+              <span>{outcomeSummary.running} working</span>
+              <span>{outcomeSummary.approvals} approval</span>
+              <span>{outcomeSummary.inputs} input</span>
+              <span>{outcomeSummary.failures} failed</span>
+              <span>{outcomeSummary.completed} completed</span>
+            </div>
+          )}
         </div>
         <div className="delegated-link-control">
           <label className="sr-only" htmlFor={`delegated-child-${parent.id}`}>
@@ -120,15 +141,52 @@ function DelegatedChildrenPanel({
         </div>
       </div>
       {error && <p className="delegated-error" role="alert">{error}</p>}
-      {childRelationships.length === 0 ? (
+      {outcomeSummary.outcomes.length === 0 ? (
         <p className="delegated-empty">No delegated conversations linked.</p>
       ) : (
         <ul className="delegated-list">
-          {childRelationships.map((relationship) => {
-            const child = conversations.find((item) => item.id === relationship.childThreadId);
-            if (!child) return null;
+          {outcomeSummary.outcomes.map(({ relationship, child }) => {
+            const status = child.status ?? "idle";
+            if (status === "completed") {
+              const outcome = outcomes.find((item) => item.childThreadId === child.id);
+              return (
+                <li key={relationship.id} className="delegated-outcome completed">
+                  <details>
+                    <summary>
+                      <strong>{child.title}</strong>
+                      <span>Completed · Review outcome</span>
+                    </summary>
+                    <div className="delegated-outcome-body">
+                      <div className="delegated-summary">
+                        <span>{child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}</span>
+                        <span className="delegated-worktree">
+                          {branchFromWorktree(child.worktree)} · {child.worktree}
+                        </span>
+                        <p className="delegated-result">
+                          {outcome?.summary ?? "Outcome summary is loading…"}
+                        </p>
+                      </div>
+                      <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
+                        Open child
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => void mutate(
+                          "/api/state/delegated-conversations/unlink",
+                          child.id,
+                        )}
+                      >
+                        Detach
+                      </Button>
+                    </div>
+                  </details>
+                </li>
+              );
+            }
             return (
-              <li key={relationship.id}>
+              <li key={relationship.id} className={`delegated-outcome ${status}`}>
                 <div className="delegated-summary">
                   <strong>{child.title}</strong>
                   <span>{child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}</span>
@@ -136,8 +194,8 @@ function DelegatedChildrenPanel({
                     {branchFromWorktree(child.worktree)} · {child.worktree}
                   </span>
                 </div>
-                <span className={`delegated-status status-${child.status ?? "idle"}`}>
-                  {(child.status ?? "idle").replaceAll("_", " ")}
+                <span className={`delegated-status status-${status}`}>
+                  {status.replaceAll("_", " ")}
                 </span>
                 <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
                   Open child
@@ -215,6 +273,9 @@ export function CodeWorkbench({
   const [delegatedRelationships, setDelegatedRelationships] = useState<
     DelegatedConversationRelationship[]
   >([]);
+  const [delegatedOutcomes, setDelegatedOutcomes] = useState<
+    DelegatedConversationOutcomeProjection[]
+  >([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
@@ -264,9 +325,11 @@ export function CodeWorkbench({
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
       const lifecycleProjection = await lifecycleResponse.json() as {
         conversationDeletions?: Array<{ threadId: string; status: string }>;
+        delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
         delegatedRelationships?: DelegatedConversationRelationship[];
       };
       setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
+      setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
       setIncompleteDeletionIds(
         (lifecycleProjection.conversationDeletions ?? [])
           .filter((deletion) => deletion.status !== "completed")
@@ -345,6 +408,16 @@ export function CodeWorkbench({
   }, [secondaryId]);
   const primary = conversations.find((conversation) => conversation.id === primaryId) ?? null;
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
+  const quietPrimaryChild = orchestrationThreadsBeta && isQuietDelegatedChild(
+    primaryId,
+    activePane === "secondary" ? secondaryId : null,
+    delegatedRelationships,
+  );
+  const quietSecondaryChild = orchestrationThreadsBeta && isQuietDelegatedChild(
+    secondaryId,
+    activePane === "primary" ? primaryId : null,
+    delegatedRelationships,
+  );
   // Full labels also used as title tooltips when ellipsis truncates narrow dual-pane tabs.
   const paneSwitcherPrimaryLabel = `Primary · ${paneConversationLabel(
     primary,
@@ -358,19 +431,35 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const refreshDelegatedRelationships = async () => {
+  const loadDelegatedProjection = async () => {
     const response = await fetch("/api/state/load", { method: "POST" });
-    const body = await response.json() as {
+    const body = await response.json() as ConversationListProjection & {
+      delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
       delegatedRelationships?: DelegatedConversationRelationship[];
       error?: string;
     };
     if (!response.ok) throw new Error(body.error ?? "Delegated conversations could not be loaded.");
+    return body;
+  };
+  const refreshDelegatedRelationships = async () => {
+    const body = await loadDelegatedProjection();
     setDelegatedRelationships(body.delegatedRelationships ?? []);
+    setDelegatedOutcomes(body.delegatedOutcomes ?? []);
   };
   useEffect(() => {
     if (!orchestrationThreadsBeta) return;
-    void refreshDelegatedRelationships().catch(() => undefined);
+    let active = true;
+    const synchronize = () => {
+      void loadDelegatedProjection().then((delegated) => {
+        if (!active) return;
+        setConversations(conversationListFromProjection(delegated));
+        setDelegatedRelationships(delegated.delegatedRelationships ?? []);
+        setDelegatedOutcomes(delegated.delegatedOutcomes ?? []);
+      }).catch(() => undefined);
+    };
+    synchronize();
     const events = new EventSource("/api/state/events");
+    events.addEventListener("open", synchronize);
     events.addEventListener("thread_status", (event) => {
       try {
         const update = JSON.parse((event as MessageEvent<string>).data) as {
@@ -395,11 +484,17 @@ export function CodeWorkbench({
             }
             : conversation
         )));
+        if (status === "completed") {
+          void refreshDelegatedRelationships().catch(() => undefined);
+        }
       } catch {
         /* malformed status events do not replace the last valid projection */
       }
     });
-    return () => events.close();
+    return () => {
+      active = false;
+      events.close();
+    };
     // The host hides relationships while disabled, so enable performs a fresh load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orchestrationThreadsBeta]);
@@ -785,11 +880,12 @@ export function CodeWorkbench({
                     parent={primary}
                     conversations={conversations}
                     relationships={delegatedRelationships}
+                    outcomes={delegatedOutcomes}
                     onOpen={openConversation}
                     onChanged={refreshDelegatedRelationships}
                   />
                 )}
-                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
@@ -825,11 +921,12 @@ export function CodeWorkbench({
                         parent={secondary}
                         conversations={conversations}
                         relationships={delegatedRelationships}
+                        outcomes={delegatedOutcomes}
                         onOpen={openConversation}
                         onChanged={refreshDelegatedRelationships}
                       />
                     )}
-                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");

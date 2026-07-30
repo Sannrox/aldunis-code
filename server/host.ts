@@ -51,6 +51,7 @@ import {
 import {
   LocalStateError,
   LocalStateStore,
+  projectDelegatedConversationOutcomes,
   projectThreadStatus,
   projectThreadStatuses,
   type ThreadStatus,
@@ -698,6 +699,9 @@ async function handleApi(
         ...projection,
         delegatedRelationships: currentPreferences.orchestrationThreadsBeta
           ? projection.delegatedRelationships
+          : [],
+        delegatedOutcomes: currentPreferences.orchestrationThreadsBeta
+          ? projectDelegatedConversationOutcomes(projection)
           : [],
         threadStatuses: projectThreadStatuses(projection),
       });

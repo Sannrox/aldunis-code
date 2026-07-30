@@ -100,6 +100,11 @@ export interface DelegatedConversationRelationship {
   childThreadId: string;
   createdAt: string;
 }
+export interface DelegatedConversationOutcomeProjection {
+  childThreadId: string;
+  completedAt: string;
+  summary: string;
+}
 export interface ForkPreview {
   sourceThreadId: string;
   sourceProvider: ProviderId;

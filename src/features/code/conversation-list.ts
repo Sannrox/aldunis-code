@@ -8,22 +8,16 @@ import {
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
 
-/**
- * Load threads for the inbox. Pass a project id to scope, or null/undefined for
- * T3-style "All" (every registered project).
- */
-export async function loadConversationList(
+export interface ConversationListProjection {
+  threads: ConversationSummary[];
+  projects?: Array<{ id: string; name: string }>;
+  threadStatuses?: ThreadStatusProjection[];
+}
+
+export function conversationListFromProjection(
+  projection: ConversationListProjection,
   projectId?: string | null,
-  options: { fresh?: boolean } = {},
-): Promise<ConversationSummary[]> {
-  const loadProjection = options.fresh
-    ? loadFreshLocalStateProjection
-    : loadLocalStateProjection;
-  const projection = await loadProjection() as {
-    threads: ConversationSummary[];
-    projects?: Array<{ id: string; name: string }>;
-    threadStatuses?: ThreadStatusProjection[];
-  };
+): ConversationSummary[] {
   const statusById = new Map(
     (projection.threadStatuses ?? []).map((item) => [item.threadId, item]),
   );
@@ -47,6 +41,21 @@ export async function loadConversationList(
       if (Boolean(left.pinnedAt) !== Boolean(right.pinnedAt)) return left.pinnedAt ? -1 : 1;
       return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
     });
+}
+
+/**
+ * Load threads for the inbox. Pass a project id to scope, or null/undefined for
+ * T3-style "All" (every registered project).
+ */
+export async function loadConversationList(
+  projectId?: string | null,
+  options: { fresh?: boolean } = {},
+): Promise<ConversationSummary[]> {
+  const loadProjection = options.fresh
+    ? loadFreshLocalStateProjection
+    : loadLocalStateProjection;
+  const projection = await loadProjection() as ConversationListProjection;
+  return conversationListFromProjection(projection, projectId);
 }
 
 /** @deprecated Prefer loadConversationList(projectId). Kept for call sites that pass a repository. */
