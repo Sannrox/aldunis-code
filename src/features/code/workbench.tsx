@@ -23,6 +23,7 @@ import {
   type ConversationDeletionPreview,
 } from "../dialogs/delete-conversation-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
+import { delegatedConversationLabels } from "./delegated-conversation-labels";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -61,6 +62,7 @@ function DelegatedChildrenPanel({
     && !item.archivedAt
     && !unavailableChildIds.has(item.id)
   ));
+  const candidateLabels = delegatedConversationLabels(candidates);
   const mutate = async (route: string, childThreadId: string) => {
     setBusy(true);
     setError(null);
@@ -100,7 +102,7 @@ function DelegatedChildrenPanel({
             <option value="">Link existing…</option>
             {candidates.map((candidate) => (
               <option value={candidate.id} key={candidate.id}>
-                {candidate.title} · {candidate.projectName ?? "Unknown project"}
+                {candidateLabels.get(candidate.id)}
               </option>
             ))}
           </select>
