@@ -32,7 +32,6 @@ is a **local host + web UI** that:
 | **Aldunis Code** (this repo) | Local workbench, providers, approvals, diffs |
 | [Sekai Chisei](https://github.com/Sannrox/sekai-chisei) | Governance, policy, budgets, evidence, audit |
 | [Tenkai](https://github.com/Sannrox/tenkai) | Releases, environments, delivery, recovery |
-| Aldunis Platform | Enterprise identity, tenants, commercial composition |
 
 Cross-product screens consume **authenticated contracts** only. They never share
 databases or treat cached UI projections as authority. Sekai / Chisei / Tenkai

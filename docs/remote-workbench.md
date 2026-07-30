@@ -48,10 +48,10 @@ remote workbench.
 | --- | --- | --- | --- |
 | Repository and worktrees | Store a user-visible host label and opaque repository identifier. Do not cache source as authority. Render requested source and diffs ephemerally. | Canonicalize roots, constrain file access, run Git operations, and retain repository authority. | None. |
 | Provider process and session | Render normalized events and cancellation state. | Launch, resume, cancel, and supervise the provider. Store provider-session references in the remote event log. | Provider owns its supported credential store. |
-| Credentials | Store the paired device private key in OS-protected storage and refer to SSH configuration by name. Never import SSH or provider private keys. | Keep provider credentials and paired-client public keys locally on the remote machine with restricted permissions. | Aldunis Platform owns enterprise authentication and tenant sessions; it does not become a repository credential store. |
+| Credentials | Store the paired device private key in OS-protected storage and refer to SSH configuration by name. Never import SSH or provider private keys. | Keep provider credentials and paired-client public keys locally on the remote machine with restricted permissions. | Provider owns its supported credential store. |
 | Conversations and logs | Keep only explicit connection metadata and user-selected local exports. Logs exclude repository content, prompts, tool data, tokens, and endpoints containing secrets. | Persist the authoritative conversation event log and sanitized operational logs under the remote user's account. Apply retention and deletion there. | Sekai Chisei may receive explicit governance, evidence, provenance, usage, and audit events through an authenticated contract, never raw local state by default. |
 | Approvals | Present the exact remote action, host identity, repository/worktree, scope, and expiry; sign the response with the paired device key. Do not silently replay an approval after reconnect. | Enforce approval at the mutation point, bind it to the turn, action digest, repository/worktree, device, nonce, and expiry, and append the outcome to the remote event log. | Sekai Chisei may supply policy; it does not execute the local action. |
-| Delivery and enterprise projections | Display authenticated projections only. | No authority over tenant or delivery records. | Aldunis Platform owns enterprise identity, sessions, and tenants. Tenkai owns releases, environments, delivery plans, deployments, rollback, and recovery. |
+| Delivery projections | Display authenticated projections only. | No authority over delivery records. | Tenkai owns releases, environments, delivery plans, deployments, rollback, and recovery. |
 
 Disconnecting the desktop must not terminate an already accepted provider
 operation implicitly. The remote host records whether the operation continued,
@@ -61,8 +61,8 @@ valid scoped approval remain denied.
 
 ## Pairing and session lifecycle
 
-Pairing establishes a device grant for one remote workbench host. It is not an
-enterprise login and must work without Aldunis Platform.
+Pairing establishes a device grant for one remote workbench host. It is local
+workbench authentication, not a federated product login.
 
 1. The remote host creates a high-entropy, single-use pairing secret with a
    short expiry and displays it only in the user's authenticated remote shell.
@@ -80,11 +80,10 @@ enterprise login and must work without Aldunis Platform.
    duplicate, expired, wrong-audience, and wrong-instance requests.
 
 This borrows the short-lived, high-entropy, rate-limited, user-confirmed
-properties of the OAuth device flow without treating pairing as OAuth or
-delegating it to enterprise identity. [RFC 8628][] describes device-code brute
-force and remote-phishing risks. Sender-constrained credentials reduce the
-value of a stolen token; [RFC 9449][] provides the relevant proof-of-possession
-and replay considerations.
+properties of the OAuth device flow without treating pairing as OAuth.
+[RFC 8628][] describes device-code brute force and remote-phishing risks.
+Sender-constrained credentials reduce the value of a stolen token; [RFC 9449][]
+provides the relevant proof-of-possession and replay considerations.
 
 Each paired device has an independent grant, display name, creation time, last
 use, and revocation state. The remote user can list and revoke grants from an
@@ -146,8 +145,7 @@ The desktop and remote host own their updates independently. Neither side may
 upload and execute an update on the other. Each follows its platform's signed
 package and rollback policy. A compatibility window can be promised only
 after protocol fixtures test the oldest and newest supported combinations.
-Enterprise identity and Tenkai delivery state do not control workbench binary
-updates.
+Tenkai delivery state does not control workbench binary updates.
 
 ## Threat model and required controls
 
@@ -190,7 +188,7 @@ updates.
 | Provider lifecycle | Provider runs where the repository is available. | Adapter fixtures for launch, stream, cancel, failure, reconnect, and unknown events across the protocol. | Aldunis Code | High |
 | Permissions | Approval crosses a device boundary but is enforced remotely. | Signed, scoped, expiring approval protocol with deny, replay, alteration, and reconnect tests. | Aldunis Code | Critical |
 | Transport and credentials | SSH supplies the first transport; paired device proof supplies application identity. | Threat-model Discussion, launcher isolation tests, key storage, revocation, redaction, and protocol review. | Aldunis Code | Critical |
-| Enterprise and delivery | Remote connection does not create tenant or delivery authority. | Authenticated, versioned clients only if those projections are added. | Aldunis Platform / Tenkai | Medium |
+| Delivery | Remote connection does not create delivery authority. | Authenticated, versioned clients only if delivery projections are added. | Tenkai | Medium |
 | Packaging and operations | Desktop and remote host update independently. | Signed packages, compatibility matrix, clean install, upgrade, downgrade rejection, and rollback evidence. | Aldunis Code | High |
 
 There is no data migration in this research PR. A future implementation must
