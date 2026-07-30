@@ -316,7 +316,14 @@ export function CodeSidebar({
               Search
               <span className="kbd">⌘K</span>
             </button>
-            <button type="button" className="newthr" title="New thread" aria-label="New conversation" onClick={onNewConversation}>
+            <button
+              type="button"
+              className="newthr"
+              title={repositoryRestoring ? "Restoring projects…" : "New thread"}
+              aria-label="New conversation"
+              disabled={repositoryRestoring}
+              onClick={onNewConversation}
+            >
               <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
               </svg>
