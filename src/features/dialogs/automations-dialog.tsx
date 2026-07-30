@@ -216,12 +216,13 @@ export function AutomationsDialog({
 
   return (
     <OverlayDialog title="Automations" onClose={onClose}>
-      <p className="muted">
-        Timer-only schedules for existing conversations. Evaluated while the local host is running.
-        Mutating tools still require explicit approval.
-      </p>
-      {error && <p role="alert" className="error-text">{error}</p>}
-      <div className="stack gap-sm">
+      <div className="automations-dialog-body">
+        <p className="muted">
+          Timer-only schedules for existing conversations. Evaluated while the local host is running.
+          Mutating tools still require explicit approval.
+        </p>
+        {error && <p role="alert" className="error-text">{error}</p>}
+        <div className="stack gap-sm">
         <Field label="Name" htmlFor="automation-name">
           <Input
             ref={nameRef}
@@ -315,12 +316,12 @@ export function AutomationsDialog({
         >
           Create automation
         </Button>
-      </div>
-      <hr />
-      <ul className="stack gap-sm" aria-label="Saved automations">
-        {items.length === 0 && <li className="muted">No automations yet.</li>}
-        {items.map((item) => (
-          <li key={item.id} className="card muted-border">
+        </div>
+        <hr />
+        <ul className="stack gap-sm" aria-label="Saved automations">
+          {items.length === 0 && <li className="muted">No automations yet.</li>}
+          {items.map((item) => (
+            <li key={item.id} className="card muted-border">
             <div className="row gap-sm" style={{ justifyContent: "space-between" }}>
               <strong>{item.name}</strong>
               <span className="muted">{item.enabled ? "enabled" : "paused"}</span>
@@ -361,9 +362,10 @@ export function AutomationsDialog({
                 Delete
               </Button>
             </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
     </OverlayDialog>
   );
 }

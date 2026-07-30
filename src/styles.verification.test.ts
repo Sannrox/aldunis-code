@@ -195,6 +195,19 @@ test("bare .ui-input (including native selects) defaults to md height", () => {
   assert.match(css, /\.ui-input\s*\{[^}]*min-height:\s*36px/s);
 });
 
+test("automations dialog keeps content inset and independently scrollable", () => {
+  const dialogPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "features/dialogs/automations-dialog.tsx",
+  );
+  const dialog = readFileSync(dialogPath, "utf8");
+  assert.match(dialog, /className="automations-dialog-body"/);
+  assert.match(
+    css,
+    /\.automations-dialog-body\s*\{[^}]*overflow-y:\s*auto[^}]*padding:\s*16px/s,
+  );
+});
+
 test("adapter catalog docs links and advanced toggle meet min hit size", () => {
   assert.match(css, /\.adapter-catalog-meta\s+a\s*\{[^}]*min-height:\s*28px/s);
   assert.match(css, /\.adapter-advanced-toggle\s*\{[^}]*min-height:\s*28px/s);

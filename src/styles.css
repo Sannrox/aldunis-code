@@ -789,6 +789,13 @@ select.ui-input {
   border-bottom: 1px solid var(--border);
 }
 .quick-dialog .ui-dialog__title { font-size: 14px; font-weight: 600; }
+.automations-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.automations-dialog-body > :first-child { margin-top: 0; }
+.automations-dialog-body > :last-child { margin-bottom: 0; }
 .rename-conversation-form {
   display: flex; flex-direction: column; gap: 14px; padding: 16px;
 }
