@@ -1,12 +1,12 @@
 ---
-name: deliver-code-issue
+name: deliver-ready-issue
 description: >
   Deliver one explicitly selected, dependency-ready Aldunis Code Issue through
   implementation and a ready pull request. Use when asked to build or publish
   one local workbench outcome.
 ---
 
-# Deliver Code Issue
+# Deliver Ready Issue
 
 Keep the Issue as planning truth and the PR as implementation truth.
 

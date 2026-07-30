@@ -1,4 +1,0 @@
-interface:
-  display_name: "Deliver Code Issue"
-  short_description: "Deliver one ready Aldunis Code issue"
-  default_prompt: "Use -code-issue to implement this ready Aldunis Code issue."

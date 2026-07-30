@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deliver Ready Issue"
+  short_description: "Deliver one ready Aldunis Code issue"
+  default_prompt: "Use $deliver-ready-issue to implement this ready Aldunis Code issue."
