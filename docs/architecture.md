@@ -26,8 +26,7 @@ local Aldunis Code host
 
 optional product clients (projections only)
     |-- Sekai / Chisei: knowledge + governance APIs
-    |-- Tenkai: delivery APIs
-    `-- Aldunis Platform: enterprise identity / composition
+    `-- Tenkai: delivery APIs
 ```
 
 The browser never receives provider credentials or unrestricted filesystem
@@ -53,7 +52,6 @@ private-network trust, and a public workbench listener are not approved.
 | Local projects, worktrees, provider sessions, approvals, diffs | Aldunis Code |
 | Governance, policy, evidence, provenance, usage, audit | Sekai Chisei |
 | Releases, environments, plans, deployments, rollback | Tenkai |
-| Enterprise tenants, sessions, commercial access, composition | Aldunis Platform |
 
 Displayed remote data is a projection. Mutations go to the owning service
 through a versioned authenticated contract.

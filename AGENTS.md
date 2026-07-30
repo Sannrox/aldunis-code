@@ -18,8 +18,6 @@ clear boundaries, no secrets in tree, and verifiable changes.
   routing, usage, and audit.
 - Public `Sannrox/tenkai` owns releases, environments, delivery plans,
   deployments, rollback, and recovery.
-- `Sannrox/aldunis-platform` owns enterprise tenant identity, sessions,
-  commercial behavior, and browser-facing composition.
 - Cross-product screens are clients of authenticated contracts. They never
   share databases, accept caller-selected tenant authority, or turn cached
   projections into domain authority.

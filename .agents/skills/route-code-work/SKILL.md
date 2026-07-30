@@ -1,6 +1,6 @@
 ---
 name: route-code-work
-description: Route and shape Aldunis Code ideas, bugs, refactors, and research across the local workbench, sekai-chisei, tenkai, and aldunis-platform boundaries. Use before creating or substantially changing a work item whose owner, trust boundary, or cross-repository dependency is uncertain.
+description: Route and shape Aldunis Code ideas, bugs, refactors, and research across the local workbench, sekai-chisei, and tenkai boundaries. Use before creating or substantially changing a work item whose owner, trust boundary, or cross-repository dependency is uncertain.
 ---
 
 # Route Aldunis Code Work
@@ -18,9 +18,7 @@ Route work to the authority that owns the outcome.
    - `Sannrox/sekai-chisei`: governance, policy, evidence, provenance, routing,
      usage, and audit;
    - `Sannrox/tenkai`: releases, environments, plans, deployments, rollback,
-     and recovery;
-   - `Sannrox/aldunis-platform`: enterprise identity, tenants, sessions,
-     commercial behavior, and browser-facing composition.
+     and recovery.
 3. Escalate provider trust, filesystem scope, approval authority, credentials,
    tenant context, or difficult-to-reverse ownership to a Discussion.
 4. Draft one observable outcome with non-goals, acceptance evidence, risks, and
@@ -31,4 +29,3 @@ Route work to the authority that owns the outcome.
 Return the owner, route rationale, duplicate search, draft work item,
 dependencies, labels, and unresolved blockers. Never duplicate another
 product's authority for UI convenience.
-
