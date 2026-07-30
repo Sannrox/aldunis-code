@@ -64,6 +64,38 @@ export function ProviderSettingsLinks({
   );
 }
 
+export function ArchivedSettingsLinks({
+  onOpenArchivedThreads,
+  disabled = false,
+}: {
+  onOpenArchivedThreads: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="provider-settings-links">
+      <p className="preference-note">
+        Archived threads remain in local history. Settled is a separate shelf state and does not
+        archive.
+      </p>
+      <div>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={onOpenArchivedThreads}
+          disabled={disabled}
+        >
+          Open archived threads
+        </Button>
+      </div>
+      {disabled && (
+        <p className="preference-note" role="status">
+          Save or cancel your preference changes before opening archived threads.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -84,6 +116,7 @@ export function PreferencesDialog({
   onClose,
   onSave,
   onOpenProviderManagement,
+  onOpenArchivedThreads,
 }: {
   open: boolean;
   preferences: Preferences;
@@ -91,6 +124,7 @@ export function PreferencesDialog({
   onClose: () => void;
   onSave: (preferences: Preferences) => Promise<void>;
   onOpenProviderManagement: () => void;
+  onOpenArchivedThreads: () => void;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [busy, setBusy] = useState(false);
@@ -216,7 +250,7 @@ export function PreferencesDialog({
             {section === "Access" && "Loopback and paired remote sessions."}
             {section === "Keybindings" && "Command palette and product switch shortcuts."}
             {section === "Diagnostics" && "Where to look when a provider will not start."}
-            {section === "Archived" && "Archived threads remain in local history."}
+            {section === "Archived" && "Review conversations hidden from the active sidebar."}
           </div>
 
           <form
@@ -430,10 +464,10 @@ export function PreferencesDialog({
               </p>
             )}
             {section === "Archived" && (
-              <p className="preference-note">
-                Archived threads remain in local history and are available from the sidebar Archived
-                filter. Settled is a separate shelf state and does not archive.
-              </p>
+              <ArchivedSettingsLinks
+                onOpenArchivedThreads={onOpenArchivedThreads}
+                disabled={draftDirty}
+              />
             )}
             {(preferenceSectionHasEditableFields(section) || draftDirty) && (
               <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>

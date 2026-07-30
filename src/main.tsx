@@ -344,6 +344,10 @@ function App() {
         onOpenProviderManagement={() => {
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
+        onOpenArchivedThreads={() => {
+          setPreferencesOpen(false);
+          window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
+        }}
         onSave={async (value) => {
           const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
           if (!response.ok) return;

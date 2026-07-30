@@ -3,6 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  ArchivedSettingsLinks,
   preferenceSectionHasEditableFields,
   preferencesHaveUnsavedChanges,
   PreferencesDialog,
@@ -31,6 +32,7 @@ test("preferences dialog keeps its exit separate from scrollable sections", () =
       onClose={() => undefined}
       onSave={async () => undefined}
       onOpenProviderManagement={() => undefined}
+      onOpenArchivedThreads={() => undefined}
     />,
   );
 
@@ -40,6 +42,29 @@ test("preferences dialog keeps its exit separate from scrollable sections", () =
   );
   assert.match(html, /class="snav-i on" aria-current="true">General/);
   assert.match(html, /type="submit"[^>]*disabled=""[^>]*aria-label="Save settings"/);
+});
+
+test("archived settings provide a direct path to archived conversations", () => {
+  const html = renderToStaticMarkup(
+    <ArchivedSettingsLinks
+      onOpenArchivedThreads={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Open archived threads/);
+  assert.match(html, /Settled is a separate shelf state/);
+});
+
+test("archived navigation can be guarded while preference changes are unsaved", () => {
+  const html = renderToStaticMarkup(
+    <ArchivedSettingsLinks
+      onOpenArchivedThreads={() => undefined}
+      disabled
+    />,
+  );
+
+  assert.match(html, /disabled=""/);
+  assert.match(html, /Save or cancel your preference changes/);
 });
 
 test("informational settings sections do not imply unsaved changes", () => {
