@@ -171,6 +171,7 @@ export class PermissionError extends Error {
 export class PermissionBroker {
   readonly #approvals = new Map<string, PendingApproval>();
   readonly #tokens = new Map<string, string>();
+  readonly #claimed = new Set<string>();
   readonly #resolving = new Set<string>();
 
   constructor(private readonly timeoutMs = 5 * 60_000) {}
@@ -235,12 +236,17 @@ export class PermissionBroker {
         && candidate.toolName === toolName
         && candidate.inputDigest === inputDigest
         && candidate.state === "pending"
+        && !this.#claimed.has(candidate.id)
       ));
       if (!approval) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     if (!approval) {
       return { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
     }
+    // Claude's permission-prompt callback currently supplies tool name and input
+    // but no tool-use identity. Claim one registered approval synchronously before
+    // waiting so concurrent byte-identical callbacks cannot share allow-once.
+    this.#claimed.add(approval.id);
     return approval.decision;
   }
 
@@ -251,9 +257,10 @@ export class PermissionBroker {
   ): Promise<PermissionDecision> {
     this.#assertToken(runId, token);
     const approval = this.#approvals.get(approvalId);
-    if (!approval || approval.runId !== runId) {
+    if (!approval || approval.runId !== runId || this.#claimed.has(approvalId)) {
       return { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
     }
+    this.#claimed.add(approvalId);
     return approval.decision;
   }
 
