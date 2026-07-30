@@ -72,6 +72,21 @@ export function formatAutomationInterval(seconds: number): string {
   return `every ${seconds} second${seconds === 1 ? "" : "s"}`;
 }
 
+export function formatAutomationLastStatus(
+  status: AutomationItem["lastStatus"],
+): string {
+  switch (status) {
+    case "ok":
+      return "Last run succeeded";
+    case "skipped_busy":
+      return "Last run skipped — conversation was busy";
+    case "error":
+      return "Last run failed";
+    default:
+      return "Not run yet";
+  }
+}
+
 export function AutomationsDialog({
   open,
   threads,
@@ -315,7 +330,7 @@ export function AutomationsDialog({
                 ? formatAutomationInterval(item.schedule.seconds)
                 : `cron ${item.schedule.expression}`}
               {" · "}
-              last: {item.lastStatus ?? "seed pending"}
+              {formatAutomationLastStatus(item.lastStatus)}
               {item.lastError ? ` (${item.lastError})` : ""}
             </div>
             <div className="row gap-sm">
