@@ -39,6 +39,7 @@ test("preferences dialog keeps its exit separate from scrollable sections", () =
     /class="sback"[^>]*>← Back to threads<\/button><div class="snav-sections">/,
   );
   assert.match(html, /class="snav-i on" aria-current="true">General/);
+  assert.match(html, /type="submit"[^>]*disabled=""[^>]*aria-label="Save settings"/);
 });
 
 test("informational settings sections do not imply unsaved changes", () => {
@@ -57,6 +58,16 @@ test("preference drafts expose unsaved changes before cross-dialog navigation", 
   assert.equal(
     preferencesHaveUnsavedChanges(
       { ...DEFAULT_PREFERENCES, theme: DEFAULT_PREFERENCES.theme === "dark" ? "light" : "dark" },
+      DEFAULT_PREFERENCES,
+    ),
+    true,
+  );
+  assert.equal(
+    preferencesHaveUnsavedChanges(
+      {
+        ...DEFAULT_PREFERENCES,
+        orchestrationThreadsBeta: !DEFAULT_PREFERENCES.orchestrationThreadsBeta,
+      },
       DEFAULT_PREFERENCES,
     ),
     true,

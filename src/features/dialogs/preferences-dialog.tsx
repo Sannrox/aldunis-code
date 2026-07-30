@@ -27,6 +27,7 @@ export function preferencesHaveUnsavedChanges(
     || draft.density !== saved.density
     || draft.zoom !== saved.zoom
     || draft.reducedMotion !== saved.reducedMotion
+    || draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta
     || draft.commandPaletteShortcut !== saved.commandPaletteShortcut
     || draft.managedWorktreeLimit !== saved.managedWorktreeLimit;
 }
@@ -440,7 +441,7 @@ export function PreferencesDialog({
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={busy}
+                  disabled={busy || !draftDirty}
                   aria-label={busy ? "Saving settings" : "Save settings"}
                 >
                   {busy ? "Saving…" : "Save settings"}
