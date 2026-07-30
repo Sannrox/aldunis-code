@@ -3,12 +3,38 @@ import { test } from "node:test";
 import type { ConversationSummary } from "../../types";
 import {
   branchFromWorktree,
+  conversationListFromProjection,
   formatElapsed,
   groupSidebarConversations,
   isBlockingStatus,
   isUnread,
   providerLabel,
 } from "./conversation-list";
+
+test("one state projection supplies conversation metadata and status atomically", () => {
+  const conversations = conversationListFromProjection({
+    threads: [{
+      id: "child",
+      projectId: "project",
+      title: "Child",
+      worktree: "/repo/child",
+      provider: "codex-cli",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      projectName: "stale",
+      pinnedAt: null,
+      archivedAt: null,
+    }],
+    projects: [{ id: "project", name: "Current project" }],
+    threadStatuses: [{
+      threadId: "child",
+      status: "completed",
+      since: "2026-01-02T00:00:00.000Z",
+    }],
+  });
+  assert.equal(conversations[0].projectName, "Current project");
+  assert.equal(conversations[0].status, "completed");
+  assert.equal(conversations[0].statusSince, "2026-01-02T00:00:00.000Z");
+});
 
 test("unread is lastVisitedAt < wokeAt and never stored", () => {
   assert.equal(isUnread({ wokeAt: "2026-01-02T00:00:00.000Z", lastVisitedAt: null } as never), true);

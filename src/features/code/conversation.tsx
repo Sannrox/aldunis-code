@@ -81,6 +81,7 @@ import {
 } from "../../lib/thread-status-transition";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
+import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
 import {
   ProviderPlanActions,
   ProviderPlanCard,
@@ -110,6 +111,7 @@ export function Conversation({
   onRefreshChanges,
   profiles,
   onOpenProfiles,
+  quietDelegatedChild = false,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -130,6 +132,8 @@ export function Conversation({
   onRefreshChanges: () => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: (provider?: ProviderId) => void;
+  /** Suppress ordinary child completion notifications while its linked parent is focused. */
+  quietDelegatedChild?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -962,14 +966,19 @@ export function Conversation({
         }
       }
       if (
-        notificationsEnabled
-        && document.visibilityState !== "visible"
-        && lastAttentionState.current !== latest.status
-        && ["waiting_for_approval", "completed", "failed", "interrupted"].includes(latest.status)
+        lastAttentionState.current !== latest.status
+        && shouldNotifyForRestoredTurn(
+          latest.status,
+          notificationsEnabled,
+          document.visibilityState,
+          quietDelegatedChild,
+        )
       ) {
         new Notification("Aldunis Code needs attention", {
           body: latest.status === "waiting_for_approval"
             ? "A local action is waiting for your decision."
+            : latest.status === "waiting_for_user"
+              ? "A conversation is waiting for your input."
             : "A background turn changed state.",
         });
       }
@@ -999,7 +1008,14 @@ export function Conversation({
       if (timer) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [conversation?.id, notificationsEnabled, provider, repository?.projectId, repository?.selectedWorktree]);
+  }, [
+    conversation?.id,
+    notificationsEnabled,
+    provider,
+    quietDelegatedChild,
+    repository?.projectId,
+    repository?.selectedWorktree,
+  ]);
   useEffect(() => {
     void loadProviderCapabilities().then((caps) => {
       if (caps) setCapabilities(caps);

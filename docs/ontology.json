@@ -26,6 +26,10 @@
     {
       "name": "ManagedWorktreeRemovalApproval",
       "description": "A short-lived, single-use approval bound to the exact managed checkout inspected during preview. Branch, HEAD, Git administrative directory, filesystem identity, and nanosecond change times must still match before removal."
+    },
+    {
+      "name": "DelegatedConversationOutcomeProjection",
+      "description": "A beta-gated, read-only UI projection of the latest completed child turn. Its bounded summary is derived from child history and never enters parent provider context."
     }
   ],
   "relations": [
@@ -42,6 +46,16 @@
       "range": "LocalConversation",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "projects_quiet_outcome",
+      "description": "Exposes the latest bounded completed outcome for review without transferring conversation authority.",
+      "domain": "DelegatedConversationRelationship",
+      "range": "DelegatedConversationOutcomeProjection",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     }
@@ -75,6 +89,18 @@
       "subject": "ManagedWorktreeRemovalApproval",
       "source": "Aldunis Code managed worktree contract",
       "locator": "server/worktrees.ts#WorktreeRemovalPlan",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedConversationOutcomeProjection",
+      "source": "GitHub Issue Sannrox/aldunis-code#412",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/412",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_quiet_outcome",
+      "source": "Aldunis Code local state projection",
+      "locator": "server/state.ts#projectDelegatedConversationOutcomes",
       "confidence": 1.0
     }
   ]

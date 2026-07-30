@@ -19,6 +19,7 @@ export function PaneConversation({
   showChangesSignal,
   showFilesSignal,
   onManageWorktrees,
+  quietDelegatedChild = false,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -34,6 +35,7 @@ export function PaneConversation({
   showChangesSignal: number;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
+  quietDelegatedChild?: boolean;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -84,6 +86,7 @@ export function PaneConversation({
       conversation={conversation}
       pane={pane}
       active={active}
+      quietDelegatedChild={quietDelegatedChild}
       onOpenBeside={onOpenBeside}
       showOpenBeside={showOpenBeside}
       onClosePane={onClosePane}

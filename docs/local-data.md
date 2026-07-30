@@ -48,6 +48,12 @@ relationships, and related records rebuild from the event log.
   provider, and status from the independent child conversation. Messages,
   tool activity, approvals, and provider sessions never enter the parent
   provider context.
+- While an orchestration parent is focused, its child statuses remain a quiet
+  projection: running and blocking counts are aggregated, completed outcomes
+  stay collapsed in relationship order, and ordinary child completion does not
+  raise a desktop notification. Approval, input, and failure states remain
+  eligible for attention. Disabling the beta restores the standard independent
+  conversation presentation and notification behavior.
 
 ## Preferences
 

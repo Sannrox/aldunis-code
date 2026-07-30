@@ -7,6 +7,7 @@ import {
   LocalStateError,
   LocalStateStore,
   MAX_THREADS_PER_PROJECT,
+  projectDelegatedConversationOutcomes,
   projectThreadStatus,
 } from "./state.ts";
 
@@ -696,6 +697,159 @@ test("delegated conversation relationships persist, enforce one parent, and deta
   const rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.delegatedRelationships.length, 0);
   assert.equal(rebuilt.threads.some((thread) => thread.id === child.id), true);
+});
+
+test("delegated completion outcomes project only the latest bounded child result", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const parent = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/parent",
+    prompt: "Coordinate",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Deliver",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  await store.linkDelegatedConversation(parent.thread.id, child.thread.id);
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "Result ",
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "ready.",
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "##",
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: " Verified",
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "child-session",
+    costUsd: 0,
+  });
+
+  let outcomes = projectDelegatedConversationOutcomes(await store.load());
+  assert.equal(outcomes.length, 1);
+  assert.equal(outcomes[0].childThreadId, child.thread.id);
+  assert.equal(outcomes[0].summary, "Result ready.\n## Verified");
+  assert.ok(outcomes[0].completedAt);
+
+  const latest = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Deliver the follow-up",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: child.thread.id,
+  });
+  await store.recordProviderEvent(child.thread.id, latest.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "x".repeat(501),
+  });
+  await store.recordProviderEvent(child.thread.id, latest.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "latest-child-session",
+    costUsd: 0,
+  });
+  outcomes = projectDelegatedConversationOutcomes(await store.load());
+  assert.equal(outcomes[0].summary, `…${"x".repeat(500)}`);
+  assert.equal(outcomes[0].completedAt, (await store.load()).turns.at(-1)?.completedAt);
+
+  const finalSegment = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Deliver after inspection",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: child.thread.id,
+  });
+  await store.recordProviderEvent(child.thread.id, finalSegment.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "Progress before the tool.",
+  });
+  await store.recordProviderEvent(child.thread.id, finalSegment.turn.id, "codex-cli", {
+    kind: "tool_started",
+    toolCallId: "tool-final",
+    name: "Read",
+  });
+  await store.recordProviderEvent(child.thread.id, finalSegment.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "Final outcome after the tool.",
+  });
+  await store.recordProviderEvent(child.thread.id, finalSegment.turn.id, "codex-cli", {
+    kind: "tool_finished",
+    toolCallId: "tool-final",
+    failed: false,
+  });
+  await store.recordProviderEvent(child.thread.id, finalSegment.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "final-child-session",
+    costUsd: 0,
+  });
+  outcomes = projectDelegatedConversationOutcomes(await store.load());
+  assert.equal(outcomes[0].summary, "Final outcome after the tool.");
+
+  const whitespaceFallback = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Complete without a post-tool summary",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: child.thread.id,
+  });
+  await store.recordProviderEvent(child.thread.id, whitespaceFallback.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: `Meaningful pre-tool result.${"\n".repeat(600)}`,
+  });
+  await store.recordProviderEvent(child.thread.id, whitespaceFallback.turn.id, "codex-cli", {
+    kind: "tool_started",
+    toolCallId: "tool-whitespace",
+    name: "Read",
+  });
+  await store.recordProviderEvent(child.thread.id, whitespaceFallback.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "\n".repeat(600),
+  });
+  await store.recordProviderEvent(child.thread.id, whitespaceFallback.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "whitespace-child-session",
+    costUsd: 0,
+  });
+  outcomes = projectDelegatedConversationOutcomes(await store.load());
+  assert.equal(outcomes[0].summary, "Meaningful pre-tool result.");
+
+  const splitWhitespace = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Preserve streamed formatting",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: child.thread.id,
+  });
+  for (const text of ["Result\n", " ", "Details"]) {
+    await store.recordProviderEvent(child.thread.id, splitWhitespace.turn.id, "codex-cli", {
+      kind: "assistant_text",
+      text,
+    });
+  }
+  await store.recordProviderEvent(child.thread.id, splitWhitespace.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "split-whitespace-session",
+    costUsd: 0,
+  });
+  outcomes = projectDelegatedConversationOutcomes(await store.load());
+  assert.equal(outcomes[0].summary, "Result\n\nDetails");
 });
 
 test("state compaction preserves message and activity event order", async () => {

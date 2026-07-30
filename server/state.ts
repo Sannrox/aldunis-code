@@ -3,6 +3,7 @@ import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { lock } from "proper-lockfile";
+import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
 import {
   type InteractionMode,
   persistedProviderFailureMessage,
@@ -280,6 +281,12 @@ export interface ThreadStatusProjection {
   since: string;
 }
 
+export interface DelegatedConversationOutcomeProjection {
+  childThreadId: string;
+  completedAt: string;
+  summary: string;
+}
+
 export interface StateProjection {
   schemaVersion: 2;
   sequence: number;
@@ -418,6 +425,109 @@ export function projectThreadStatus(
 
 export function projectThreadStatuses(projection: StateProjection): ThreadStatusProjection[] {
   return projection.threads.map((thread) => projectThreadStatus(projection, thread.id));
+}
+
+export function projectDelegatedConversationOutcomes(
+  projection: StateProjection,
+): DelegatedConversationOutcomeProjection[] {
+  const childIds = new Set(
+    projection.delegatedRelationships.map((relationship) => relationship.childThreadId),
+  );
+  const latestByChild = new Map<string, Turn>();
+  for (const turn of projection.turns) {
+    if (!childIds.has(turn.threadId) || turn.status !== "completed") continue;
+    const previous = latestByChild.get(turn.threadId);
+    if (
+      !previous
+      || turn.createdAt > previous.createdAt
+      || (turn.createdAt === previous.createdAt && turn.id > previous.id)
+    ) {
+      latestByChild.set(turn.threadId, turn);
+    }
+  }
+  const childByTurn = new Map(
+    [...latestByChild].map(([childThreadId, turn]) => [turn.id, childThreadId]),
+  );
+  const lastToolStartByTurn = new Map<string, number>();
+  for (const activity of projection.activities) {
+    if (
+      !childByTurn.has(activity.turnId)
+      || activity.kind !== "tool_started"
+      || activity.eventSequence === undefined
+    ) continue;
+    lastToolStartByTurn.set(
+      activity.turnId,
+      Math.max(lastToolStartByTurn.get(activity.turnId) ?? 0, activity.eventSequence),
+    );
+  }
+  type BoundedSummary = {
+    text: string;
+    truncated: boolean;
+    pendingWhitespace: string;
+  };
+  const appendBoundedTail = (
+    current: BoundedSummary | undefined,
+    next: string,
+  ): BoundedSummary => {
+    if (!next.trim()) {
+      const whitespace = `${current?.pendingWhitespace ?? ""}${next}`;
+      return {
+        text: current?.text ?? "",
+        truncated: current?.truncated ?? false,
+        pendingWhitespace: whitespace.includes("\n") ? "\n\n" : " ",
+      };
+    }
+    const substantive = next.trimEnd();
+    const trailingWhitespace = next.slice(substantive.length);
+    const joined = joinAssistantTextChunks([
+      current?.text ?? "",
+      current?.pendingWhitespace ?? "",
+      substantive,
+    ]);
+    const characters = Array.from(joined);
+    return {
+      text: characters.slice(-500).join(""),
+      truncated: Boolean(current?.truncated) || characters.length > 500,
+      pendingWhitespace: trailingWhitespace.includes("\n") ? "\n\n" : trailingWhitespace,
+    };
+  };
+  const allAssistantByChild = new Map<string, BoundedSummary>();
+  const finalAssistantByChild = new Map<string, BoundedSummary>();
+  for (const message of projection.messages) {
+    const childThreadId = childByTurn.get(message.turnId);
+    if (!childThreadId || message.role !== "assistant") continue;
+    allAssistantByChild.set(
+      childThreadId,
+      appendBoundedTail(allAssistantByChild.get(childThreadId), message.text),
+    );
+    const lastToolStart = lastToolStartByTurn.get(message.turnId);
+    if (
+      lastToolStart === undefined
+      || message.eventSequence === undefined
+      || message.eventSequence > lastToolStart
+    ) {
+      finalAssistantByChild.set(
+        childThreadId,
+        appendBoundedTail(finalAssistantByChild.get(childThreadId), message.text),
+      );
+    }
+  }
+  return [...childIds].flatMap((childThreadId) => {
+    const latest = latestByChild.get(childThreadId);
+    if (!latest) return [];
+    const finalAssistant = finalAssistantByChild.get(childThreadId);
+    const projected = finalAssistant?.text.trim()
+      ? finalAssistant
+      : allAssistantByChild.get(childThreadId);
+    const summary = (projected?.text ?? "").trim();
+    return [{
+      childThreadId,
+      completedAt: latest.completedAt ?? latest.createdAt,
+      summary: summary
+        ? `${projected?.truncated ? "…" : ""}${summary}`
+        : "No written result was recorded.",
+    }];
+  });
 }
 
 export function isWakeThreadStatus(status: ThreadStatus): boolean {
