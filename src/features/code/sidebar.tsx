@@ -9,6 +9,7 @@ import {
   isProductAvailable,
   type ProductAvailability,
 } from "../../lib/product-availability";
+import { AldunisBrandMark } from "../../components/brand-mark";
 
 export type ProjectFilter = "all" | string;
 
@@ -256,7 +257,9 @@ export function CodeSidebar({
           aria-expanded={productOpen}
           aria-label={`Product: ${current.label}`}
         >
-          <div className="logo">{current.mark}</div>
+          <div className="logo" aria-hidden="true">
+            {product === "code" ? <AldunisBrandMark /> : current.mark}
+          </div>
           <div className="sb-name">{brandName}</div>
           <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
             <path d="m6 9 6 6 6-6" />
@@ -287,7 +290,9 @@ export function CodeSidebar({
                     setProductOpen(false);
                   }}
                 >
-                  <span className="m2" aria-hidden="true">{item.mark}</span>
+                  <span className="m2" aria-hidden="true">
+                    {item.id === "code" ? <AldunisBrandMark /> : item.mark}
+                  </span>
                   <span className="b2">
                     <span className="n2">{item.label}</span>
                     <span className="p2">{detail}</span>

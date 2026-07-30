@@ -7,6 +7,7 @@ import {
   isProductAvailable,
   type ProductAvailability,
 } from "../../lib/product-availability";
+import { AldunisBrandMark } from "../../components/brand-mark";
 
 const nav: Array<{ id: Product; label: string; icon: IconName; detail: string; mark: string }> = [
   { id: "code", label: "Code", icon: "code", detail: "Local workbench", mark: "A" },
@@ -76,7 +77,9 @@ export function PageHeader({
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((value) => !value)}
         >
-          <span className="mock-logo sm">{current.mark}</span>
+          <span className="mock-logo sm" aria-hidden="true">
+            {product === "code" ? <AldunisBrandMark /> : current.mark}
+          </span>
           <span className="mock-brand-label">{current.label}</span>
           <Icon name="chevron" />
         </button>
@@ -99,7 +102,9 @@ export function PageHeader({
                     setMenuOpen(false);
                   }}
                 >
-                  <span className={`mock-logo xs ${item.id === product ? "on" : ""}`}>{item.mark}</span>
+                  <span className={`mock-logo xs ${item.id === product ? "on" : ""}`} aria-hidden="true">
+                    {item.id === "code" ? <AldunisBrandMark /> : item.mark}
+                  </span>
                   <span>
                     <strong>{item.label}</strong>
                     <small>{available ? item.detail : "Not configured"}</small>

@@ -54,6 +54,20 @@ test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /@import\s+url\(/i);
 });
 
+test("Aldunis brand mark follows the resolved application theme", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*none/s);
+  assert.match(
+    shell,
+    /\[data-theme="dark"\]\s+\.aldunis-brand-mark__light\s*\{[^}]*display:\s*none/s,
+  );
+  assert.match(
+    shell,
+    /\[data-theme="dark"\]\s+\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*block/s,
+  );
+});
+
 test("conversation overlays are contained by .conv (not review dock)", () => {
   // File browser and web preview are absolute under a positioned .conv so they
   // do not climb to .app (covering the product sidebar) or cover the review
