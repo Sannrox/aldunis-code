@@ -1,8 +1,13 @@
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
+import {
+  createServer as createHttpServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +47,10 @@ import {
   assertParentRoutedApproval,
   projectDelegatedApprovals,
 } from "./delegated-approvals.ts";
+import {
+  assertParentRoutedInput,
+  projectDelegatedInputs,
+} from "./delegated-inputs.ts";
 import {
   canonicalizeRepositoryRoot,
   captureCheckpoint,
@@ -316,7 +325,9 @@ async function handleApi(
   activeAcp: Map<string, AcpProviderAdapter>,
   wake: WakeBroker,
   withDelegatedControlLock: DelegatedControlLock,
+  runChildFollowUp: (body: Record<string, unknown>) => Promise<void>,
   remoteRequest: boolean,
+  internalRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
 ): Promise<boolean> {
@@ -717,6 +728,9 @@ async function handleApi(
           : [],
         delegatedApprovals: currentPreferences.orchestrationThreadsBeta
           ? projectDelegatedApprovals(projection, permissions.approvals())
+          : [],
+        delegatedInputs: currentPreferences.orchestrationThreadsBeta
+          ? projectDelegatedInputs(projection)
           : [],
         threadStatuses: projectThreadStatuses(projection),
       });
@@ -1527,6 +1541,7 @@ async function handleApi(
         elementReferences?: unknown;
         provider?: unknown;
         reasoningEffort?: unknown;
+        inputRequestId?: unknown;
       };
       const providerId = (body.provider ?? "claude-code") as ProviderId;
       const isDeclarativeAdapter = typeof providerId === "string" && providerId.startsWith("adapter:");
@@ -1541,6 +1556,7 @@ async function handleApi(
         || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
         || (body.projectId !== undefined && typeof body.projectId !== "string")
         || (body.threadId !== undefined && typeof body.threadId !== "string")
+        || (body.inputRequestId !== undefined && typeof body.inputRequestId !== "string")
         || !["ask", "plan", "build"].includes(body.mode as string)
         || (body.attachments !== undefined && (
           !Array.isArray(body.attachments)
@@ -1610,6 +1626,22 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const resumedInput = typeof body.inputRequestId === "string"
+        ? projection.inputRequests.find((item) => (
+          item.id === body.inputRequestId
+          && item.threadId === body.threadId
+          && item.state === "answered"
+          && item.responseMode === "child_follow_up"
+        ))
+        : undefined;
+      if (body.inputRequestId !== undefined && (!internalRequest || !resumedInput)) {
+        throw new LocalStateError("The child follow-up request is no longer pending.", 409);
+      }
+      const resumedCheckpoint = resumedInput
+        ? projection.checkpoints.find((item) => (
+          item.turnId === resumedInput.turnId && item.state === "baseline"
+        ))
+        : undefined;
       const pendingFork = typeof body.threadId === "string"
         ? projection.forks.find((fork) => (
             fork.destinationThreadId === body.threadId && fork.status === "pending"
@@ -1699,16 +1731,16 @@ async function handleApi(
       const effectiveProviderPrompt = forkPrompt
         ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
         : providerPrompt;
-      const checkpointId = randomUUID();
+      const checkpointId = resumedCheckpoint?.id ?? randomUUID();
       const checkpointCreatedAt = new Date().toISOString();
-      let baselineIdentity: string | null = null;
-      let commonGitDirectory: string | null = null;
+      let baselineIdentity: string | null = resumedCheckpoint?.baselineIdentity ?? null;
+      let commonGitDirectory: string | null = resumedCheckpoint?.gitDirectory ?? null;
       try {
         commonGitDirectory = await checkpointGitDirectory(context.worktree);
       } catch {
         // Capture below records a visible unavailable state without creating refs.
       }
-      const checkpointIntent = await state.saveCheckpoint({
+      const checkpointIntent = resumedCheckpoint ?? await state.saveCheckpoint({
         id: checkpointId,
         turnId: persisted.turn.id,
         threadId: persisted.thread.id,
@@ -1724,7 +1756,7 @@ async function handleApi(
         message: "Baseline capture did not complete.",
         createdAt: checkpointCreatedAt,
       });
-      try {
+      if (!resumedCheckpoint) try {
         const baseline = await captureCheckpoint(
           context.worktree,
           false,
@@ -1819,7 +1851,7 @@ async function handleApi(
         }, profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined);
         await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
         const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
-        if (checkpoint && checkpoint.state === "baseline") {
+        if (!resumedCheckpoint && checkpoint && checkpoint.state === "baseline") {
           await state.saveCheckpoint({
             ...checkpoint,
             state: "failed",
@@ -1831,6 +1863,9 @@ async function handleApi(
         throw error;
       }
       try {
+        if (resumedCheckpoint) {
+          await state.saveCheckpoint({ ...resumedCheckpoint, turnId: persisted.turn.id });
+        }
         await state.bindProviderRun(persisted.turn.id, run.id);
         await state.markForkStarted(persisted.thread.id);
       } catch (error) {
@@ -1875,12 +1910,42 @@ async function handleApi(
               );
             }
           }
+          if (event.kind === "input_requested" && event.expiresAt) {
+            const timeout = setTimeout(() => {
+              if (!codex.expireInput(run.id, event.id)) return;
+              void state.recordProviderEvent(
+                persisted.thread.id,
+                persisted.turn.id,
+                providerId,
+                { kind: "input_resolved", id: event.id, state: "cancelled" },
+              ).then(async () => {
+                if (!response.destroyed && !response.writableEnded) {
+                  response.write(`${JSON.stringify({
+                    kind: "input_resolved",
+                    id: event.id,
+                    state: "cancelled",
+                  })}\n`);
+                }
+                await publishThreadStatusTransition(
+                  wake,
+                  state,
+                  persisted.thread.id,
+                  null,
+                  true,
+                );
+              }).catch(() => undefined);
+            }, Math.max(0, Date.parse(event.expiresAt) - Date.now()));
+            timeout.unref();
+          }
           await publishThreadStatusTransition(
             wake,
             state,
             persisted.thread.id,
             previousStatus,
-            event.kind === "approval_pending" || event.kind === "approval_resolved",
+            event.kind === "approval_pending"
+              || event.kind === "approval_resolved"
+              || event.kind === "input_requested"
+              || event.kind === "input_resolved",
           );
           previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
         } catch {
@@ -1944,6 +2009,13 @@ async function handleApi(
                 : "Completed checkpoint capture failed.",
             });
           }
+        } else if ((await state.load()).inputRequests.some((item) => (
+          item.turnId === persisted.turn.id
+          && item.state === "pending"
+          && item.responseMode === "child_follow_up"
+        ))) {
+          // Preserve the original baseline while the parked child awaits its
+          // explicit follow-up turn; that turn rebinds and finalizes this checkpoint.
         } else {
           await state.saveCheckpoint({
             ...checkpoint,
@@ -2080,6 +2152,125 @@ async function handleApi(
         ? await withDelegatedControlLock(resolveApproval)
         : await resolveApproval();
       sendJson(response, 200, decided);
+      return true;
+    }
+    const inputResponseMatch = route.match(
+      /^\/api\/provider\/input-requests\/([0-9a-f-]+)\/respond$/,
+    );
+    if (inputResponseMatch) {
+      const body = await readJson(request) as {
+        childThreadId?: unknown;
+        parentThreadId?: unknown;
+        answer?: unknown;
+      };
+      if (
+        typeof body.childThreadId !== "string"
+        || typeof body.answer !== "string"
+        || (body.parentThreadId !== undefined && typeof body.parentThreadId !== "string")
+      ) {
+        throw new LocalStateError("A complete child-bound input response is required.", 400);
+      }
+      const respond = async () => {
+        let selectedRequest;
+        if (typeof body.parentThreadId === "string") {
+          const { preferences: currentPreferences } = await preferences.load();
+          if (!currentPreferences.orchestrationThreadsBeta) {
+            throw new LocalStateError("Parent-routed input requires beta orchestration.", 403);
+          }
+          selectedRequest = assertParentRoutedInput(
+            await state.load(),
+            body.parentThreadId,
+            body.childThreadId as string,
+            inputResponseMatch[1],
+          );
+          if (selectedRequest.state !== "pending") {
+            throw new LocalStateError("The input request has already been resolved.", 409);
+          }
+        } else {
+          const requestProjection = (await state.load()).inputRequests.find((item) => (
+            item.id === inputResponseMatch[1]
+            && item.threadId === body.childThreadId
+            && item.state === "pending"
+          ));
+          if (!requestProjection) {
+            throw new LocalStateError("The input request is not pending for this child.", 403);
+          }
+          selectedRequest = requestProjection;
+        }
+        await state.validateInputResponse(selectedRequest.id, body.answer as string);
+        if (selectedRequest.responseMode === "child_follow_up") {
+          const projection = await state.load();
+          const child = projection.threads.find((item) => item.id === body.childThreadId);
+          const childSession = projection.providerSessions.find((item) => (
+            item.threadId === body.childThreadId && item.provider === child?.provider
+          ));
+          const sourceTurn = projection.turns.find((item) => item.id === selectedRequest.turnId);
+          const project = child
+            ? projection.projects.find((item) => item.id === child.projectId)
+            : undefined;
+          if (!child || !project || !sourceTurn) {
+            throw new LocalStateError("The child follow-up route is unavailable.", 503);
+          }
+          const followUpPrompt = [
+            `Operator response to child input request ${selectedRequest.id}:`,
+            selectedRequest.question,
+            "",
+            (body.answer as string).trim(),
+          ].join("\n");
+          const result = await state.resolveInputRequest(
+            inputResponseMatch[1],
+            body.answer as string,
+            typeof body.parentThreadId === "string" ? body.parentThreadId : null,
+          );
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                await runChildFollowUp({
+                  root: project.root,
+                  worktree: child.worktree,
+                  prompt: followUpPrompt,
+                  mode: sourceTurn.mode ?? "ask",
+                  conversationId: child.id,
+                  projectId: child.projectId,
+                  threadId: child.id,
+                  contextPins: child.contextPins ?? [],
+                  profileId: child.profileId ?? null,
+                  model: child.model ?? childSession?.model ?? "default",
+                  provider: child.provider,
+                  reasoningEffort: child.reasoningEffort,
+                  inputRequestId: selectedRequest.id,
+                });
+                break;
+              } catch (error) {
+                if (!(error instanceof LocalStateError) || error.status !== 409 || attempt >= 24) {
+                  await state.failInputResolution(selectedRequest.id);
+                  throw error;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+            }
+          await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
+          return result;
+        }
+        const result = await state.resolveInputRequest(
+          inputResponseMatch[1],
+          body.answer as string,
+          typeof body.parentThreadId === "string" ? body.parentThreadId : null,
+        );
+        if (
+          !codex.answerInput(
+            selectedRequest.providerRunId,
+            selectedRequest.id,
+            (body.answer as string).trim(),
+          )
+        ) {
+          await state.failInputResolution(selectedRequest.id);
+          throw new LocalStateError("The native input request is no longer resumable.", 409);
+        }
+        await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
+        return result;
+      };
+      const result = await withDelegatedControlLock(respond);
+      sendJson(response, 200, result);
       return true;
     }
     if (route === "/api/changes") {
@@ -2498,6 +2689,7 @@ export function createLocalHost(
   remoteAuth?: RemoteAuth,
   tls?: { key: Buffer; cert: Buffer },
   permissions = new PermissionBroker(),
+  childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
 ) {
   const internalPermissionCallback = remoteAuth
     ? createInternalPermissionCallback(permissions)
@@ -2514,6 +2706,7 @@ export function createLocalHost(
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
+  const internalRequestToken = randomUUID();
   let delegatedControlTail = Promise.resolve();
   const withDelegatedControlLock: DelegatedControlLock = async (action) => {
     const previous = delegatedControlTail;
@@ -2576,6 +2769,58 @@ export function createLocalHost(
     ));
   }
 
+  async function runChildFollowUp(body: Record<string, unknown>): Promise<void> {
+    if (childFollowUpOverride) return childFollowUpOverride(body);
+    const address = serverRef?.address();
+    if (!address || typeof address === "string") {
+      throw new LocalStateError("The child follow-up route is unavailable.", 503);
+    }
+    const payload = Buffer.from(JSON.stringify(body), "utf8");
+    const internalHost = address.address === "::"
+      ? "::1"
+      : address.address === "0.0.0.0"
+        ? "127.0.0.1"
+        : address.address;
+    await new Promise<void>((resolve, reject) => {
+      const send = tls ? httpsRequest : httpRequest;
+      const outgoing = send({
+        host: internalHost,
+        port: address.port,
+        path: "/api/provider/runs",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(payload.length),
+          "x-aldunis-internal-request": internalRequestToken,
+        },
+        ...(tls ? { rejectUnauthorized: false } : {}),
+      }, (incoming) => {
+        if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
+          // The run endpoint sends headers immediately after provider startup.
+          // Resolve on those headers and drain the event stream independently so
+          // the delegated-control lock never spans the child turn's lifetime.
+          incoming.resume();
+          resolve();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        incoming.on("end", () => {
+          let message = `Child follow-up failed (${incoming.statusCode ?? 500}).`;
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error?: string };
+            if (parsed.error) message = parsed.error;
+          } catch {
+            // Keep the bounded repository-owned fallback.
+          }
+          reject(new LocalStateError(message, incoming.statusCode ?? 500));
+        });
+      });
+      outgoing.once("error", reject);
+      outgoing.end(payload);
+    });
+  }
+
   async function fireAutomation(automation: Automation): Promise<void> {
     const address = serverRef?.address();
     if (!address || typeof address === "string") {
@@ -2635,8 +2880,20 @@ export function createLocalHost(
     await recovery;
     await profileBootstrap;
     const route = new URL(request.url ?? "/", "http://localhost").pathname;
+    const listeningAddress = serverRef?.address();
+    const internalRequest = request.socket.remoteAddress !== undefined
+      && (
+        LOOPBACK_HOSTS.has(request.socket.remoteAddress)
+        || (
+          listeningAddress
+          && typeof listeningAddress !== "string"
+          && request.socket.remoteAddress === listeningAddress.address
+        )
+      )
+      && request.headers["x-aldunis-internal-request"] === internalRequestToken;
     if (
       remoteAuth
+      && !internalRequest
       && route.startsWith("/api/")
       && route !== "/api/remote/pair"
       && route !== "/api/remote/descriptor"
@@ -2671,7 +2928,9 @@ export function createLocalHost(
         activeAcp,
         wake,
         withDelegatedControlLock,
-        Boolean(remoteAuth),
+        runChildFollowUp,
+        Boolean(remoteAuth) && !internalRequest,
+        internalRequest,
         remoteAuth,
         internalPermissionCallback?.url,
       )

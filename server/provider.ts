@@ -46,6 +46,17 @@ export interface ProviderPlanArtifact {
   updatedAt?: string;
 }
 
+export interface ProviderInputRequest {
+  id: string;
+  question: string;
+  choices: Array<{ id: string; label: string; description: string | null }>;
+  recommendation: string | null;
+  responseMode: "native_resume" | "child_follow_up";
+  providerRequestId: string | null;
+  expiresAt: string | null;
+  allowFreeForm: boolean;
+}
+
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | { kind: "assistant_text"; text: string }
@@ -57,6 +68,8 @@ export type ProviderEvent =
   | { kind: "tool_started"; toolCallId: string; name: string }
   | ({ kind: "approval_pending" } & ApprovalSnapshot)
   | { kind: "approval_resolved"; id: string; state: ApprovalSnapshot["state"] }
+  | ({ kind: "input_requested" } & ProviderInputRequest)
+  | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }

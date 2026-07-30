@@ -6,6 +6,7 @@ import type {
   ChangedFile,
   ProviderId,
   DelegatedApprovalProjection,
+  DelegatedInputProjection,
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
 } from "../../types";
@@ -56,6 +57,7 @@ export function DelegatedChildrenPanel({
   relationships,
   outcomes,
   approvals,
+  inputs = [],
   onOpen,
   onChanged,
 }: {
@@ -64,12 +66,15 @@ export function DelegatedChildrenPanel({
   relationships: DelegatedConversationRelationship[];
   outcomes: DelegatedConversationOutcomeProjection[];
   approvals: DelegatedApprovalProjection[];
+  inputs?: DelegatedInputProjection[];
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
   const [selectedChildId, setSelectedChildId] = useState("");
   const [busy, setBusy] = useState(false);
   const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+  const [inputBusyId, setInputBusyId] = useState<string | null>(null);
+  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
   const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -155,6 +160,33 @@ export function DelegatedChildrenPanel({
       setApprovalBusyId(null);
     }
   };
+  const answerInput = async (delegated: DelegatedInputProjection) => {
+    const answer = (inputAnswers[delegated.request.id] ?? "").trim();
+    if (!answer) return;
+    setInputBusyId(delegated.request.id);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/provider/input-requests/${delegated.request.id}/respond`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            childThreadId: delegated.childThreadId,
+            parentThreadId: parent.id,
+            answer,
+          }),
+        },
+      );
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Child input response failed.");
+      await onChanged();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Child input response failed.");
+    } finally {
+      setInputBusyId(null);
+    }
+  };
   return (
     <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
       <div className="delegated-children-header">
@@ -212,8 +244,13 @@ export function DelegatedChildrenPanel({
               && item.childThreadId === child.id
               && !resolvedApprovalIds.has(item.approval.id)
             ));
+            const childInputs = inputs.filter((item) => (
+              item.parentThreadId === parent.id && item.childThreadId === child.id
+            ));
             const status = childApprovals.length > 0
               ? "pending_approval"
+              : childInputs.length > 0
+                ? "awaiting_input"
               : child.status ?? "idle";
             if (status === "completed") {
               const outcome = outcomes.find((item) => item.childThreadId === child.id);
@@ -326,6 +363,66 @@ export function DelegatedChildrenPanel({
                     </footer>
                   </section>
                 ))}
+                {childInputs.map((delegatedInput) => (
+                  <section
+                    className="delegated-input-card"
+                    key={delegatedInput.request.id}
+                    aria-label={`Input required for ${child.title}: ${delegatedInput.request.question}`}
+                  >
+                    <header>
+                      <strong>{delegatedInput.request.question}</strong>
+                      <span>Answer routes only to {child.title}</span>
+                    </header>
+                    {delegatedInput.request.recommendation && (
+                      <p>Recommendation: {delegatedInput.request.recommendation}</p>
+                    )}
+                    {delegatedInput.request.choices.length > 0 && (
+                      <div className="delegated-input-choices">
+                        {delegatedInput.request.choices.map((choice) => (
+                          <Button
+                            type="button"
+                            size="sm"
+                            key={choice.id}
+                            title={choice.description ?? undefined}
+                            onClick={() => setInputAnswers((current) => ({
+                              ...current,
+                              [delegatedInput.request.id]: choice.label,
+                            }))}
+                          >
+                            {choice.label}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                    <label htmlFor={`delegated-input-${delegatedInput.request.id}`}>
+                      Answer for {child.title}
+                    </label>
+                    <textarea
+                      id={`delegated-input-${delegatedInput.request.id}`}
+                      maxLength={4_000}
+                      readOnly={!delegatedInput.request.allowFreeForm}
+                      value={inputAnswers[delegatedInput.request.id] ?? ""}
+                      onChange={(event) => setInputAnswers((current) => ({
+                        ...current,
+                        [delegatedInput.request.id]: event.target.value,
+                      }))}
+                    />
+                    <footer>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        disabled={
+                          inputBusyId === delegatedInput.request.id
+                          || !(inputAnswers[delegatedInput.request.id] ?? "").trim()
+                        }
+                        onClick={() => void answerInput(delegatedInput)}
+                      >
+                        Send to {child.title}
+                      </Button>
+                    </footer>
+                  </section>
+                ))}
               </li>
             );
           })}
@@ -394,6 +491,7 @@ export function CodeWorkbench({
   const [delegatedApprovals, setDelegatedApprovals] = useState<
     DelegatedApprovalProjection[]
   >([]);
+  const [delegatedInputs, setDelegatedInputs] = useState<DelegatedInputProjection[]>([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
@@ -447,12 +545,14 @@ export function CodeWorkbench({
         conversationDeletions?: Array<{ threadId: string; status: string }>;
         delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
         delegatedApprovals?: DelegatedApprovalProjection[];
+        delegatedInputs?: DelegatedInputProjection[];
         delegatedRelationships?: DelegatedConversationRelationship[];
       };
       if (requestSequence === delegatedProjectionRequestReference.current) {
         setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
         setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
         setDelegatedApprovals(lifecycleProjection.delegatedApprovals ?? []);
+        setDelegatedInputs(lifecycleProjection.delegatedInputs ?? []);
       }
       setIncompleteDeletionIds(
         (lifecycleProjection.conversationDeletions ?? [])
@@ -560,6 +660,7 @@ export function CodeWorkbench({
     const body = await response.json() as ConversationListProjection & {
       delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
       delegatedApprovals?: DelegatedApprovalProjection[];
+      delegatedInputs?: DelegatedInputProjection[];
       delegatedRelationships?: DelegatedConversationRelationship[];
       error?: string;
     };
@@ -580,6 +681,7 @@ export function CodeWorkbench({
     setDelegatedRelationships(body.delegatedRelationships ?? []);
     setDelegatedOutcomes(body.delegatedOutcomes ?? []);
     setDelegatedApprovals(body.delegatedApprovals ?? []);
+    setDelegatedInputs(body.delegatedInputs ?? []);
   };
   const refreshDelegatedRelationships = async () => {
     const requestSequence = ++delegatedProjectionRequestReference.current;
@@ -1011,6 +1113,7 @@ export function CodeWorkbench({
                     relationships={delegatedRelationships}
                     outcomes={delegatedOutcomes}
                     approvals={delegatedApprovals}
+                    inputs={delegatedInputs}
                     onOpen={openConversation}
                     onChanged={refreshDelegatedRelationships}
                   />
@@ -1053,6 +1156,7 @@ export function CodeWorkbench({
                         relationships={delegatedRelationships}
                         outcomes={delegatedOutcomes}
                         approvals={delegatedApprovals}
+                        inputs={delegatedInputs}
                         onOpen={openConversation}
                         onChanged={refreshDelegatedRelationships}
                       />

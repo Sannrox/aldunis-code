@@ -45,6 +45,7 @@ interface ActiveRun {
   turnId: string | null;
   fileChanges: Map<string, string[]>;
   activeToolCalls: Set<string>;
+  pendingInputs: Map<string, { rpcId: RpcId; questionIds: string[] }>;
 }
 
 export interface CodexModel {
@@ -108,10 +109,6 @@ export function codexAppServerArguments(version: string): string[] {
     args.push(
       "--stdio",
       "--strict-config",
-      // Aldunis Code has no mid-turn question UI yet, so the provider must not
-      // advertise a request type the host cannot complete.
-      "--disable",
-      "default_mode_request_user_input",
     );
   }
   args.push(
@@ -673,6 +670,7 @@ export class CodexCliAdapter {
       turnId: null,
       fileChanges: new Map(),
       activeToolCalls: new Set(),
+      pendingInputs: new Map(),
     };
     child.once("error", () => { active.spawnFailed = true; });
     child.once("exit", () => {
@@ -711,6 +709,34 @@ export class CodexCliAdapter {
       force.unref();
     }
     return true;
+  }
+
+  answerInput(runId: string, requestId: string, answer: string): boolean {
+    const active = this.#active.get(runId);
+    const pending = active?.pendingInputs.get(requestId);
+    if (!active || !pending || active.cancelled) return false;
+    const sent = this.#send(active.child, {
+      id: pending.rpcId,
+      result: {
+        answers: Object.fromEntries(
+          pending.questionIds.map((questionId) => [questionId, { answers: [answer] }]),
+        ),
+      },
+    });
+    if (sent) active.pendingInputs.delete(requestId);
+    return sent;
+  }
+
+  expireInput(runId: string, requestId: string): boolean {
+    const active = this.#active.get(runId);
+    const pending = active?.pendingInputs.get(requestId);
+    if (!active || !pending || active.cancelled) return false;
+    const sent = this.#send(active.child, {
+      id: pending.rpcId,
+      result: { answers: {} },
+    });
+    if (sent) active.pendingInputs.delete(requestId);
+    return sent;
   }
 
   close(): void {
@@ -880,6 +906,57 @@ export class CodexCliAdapter {
             };
             this.#terminate(active.child);
             return;
+          }
+          if (message.method === "item/tool/requestUserInput") {
+            const questions = Array.isArray(params.questions)
+              ? params.questions.map(record).filter((item): item is JsonRecord => item !== null)
+              : [];
+            if (
+              questions.length !== 1
+              || questions.some((question) => (
+                typeof question.id !== "string"
+                || typeof question.question !== "string"
+                || question.isSecret === true
+              ))
+            ) {
+              this.#send(active.child, { id: message.id as RpcId, error: {
+                code: -32602,
+                message: "Aldunis Code cannot safely render this input request.",
+              } });
+              continue;
+            }
+            const requestId = randomUUID();
+            active.pendingInputs.set(requestId, {
+              rpcId: message.id as RpcId,
+              questionIds: questions.map((question) => question.id as string),
+            });
+            const firstOptions = Array.isArray(questions[0].options)
+              ? questions[0].options.map(record).filter((item): item is JsonRecord => item !== null)
+              : [];
+            yield {
+              kind: "input_requested",
+              id: requestId,
+              question: questions.map((question) => question.question).join("\n\n"),
+              choices: firstOptions.slice(0, 12).flatMap((option, index) => (
+                typeof option.label === "string"
+                  ? [{
+                    id: `${questions[0].id}:${index}`,
+                    label: option.label,
+                    description: typeof option.description === "string"
+                      ? option.description
+                      : null,
+                  }]
+                  : []
+              )),
+              recommendation: null,
+              responseMode: "native_resume",
+              providerRequestId: String(message.id),
+              expiresAt: typeof params.autoResolutionMs === "number"
+                ? new Date(Date.now() + params.autoResolutionMs).toISOString()
+                : null,
+              allowFreeForm: questions[0].isOther === true || firstOptions.length === 0,
+            };
+            continue;
           }
           const isCommand = message.method === "item/commandExecution/requestApproval";
           const isFile = message.method === "item/fileChange/requestApproval";

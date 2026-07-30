@@ -492,6 +492,8 @@ test("project deletion and retention physically remove sensitive conversation da
     conversationDeletions: [],
     forks: [],
     delegatedRelationships: [],
+    inputRequests: [],
+    inputReceipts: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -641,6 +643,8 @@ test("conversation deletion previews and physically compacts only conversation-o
     fileReviews: 0,
     forks: 0,
     delegatedRelationships: 0,
+    inputRequests: 0,
+    inputReceipts: 0,
   });
   const deletion = await store.deleteConversation(thread.id);
   assert.equal(deletion.status, "completed");
@@ -850,6 +854,176 @@ test("delegated completion outcomes project only the latest bounded child result
   });
   outcomes = projectDelegatedConversationOutcomes(await store.load());
   assert.equal(outcomes[0].summary, "Result\n\nDetails");
+});
+
+test("child input requests and parent coordination receipts persist and resolve once", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const parent = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/parent",
+    prompt: "Coordinate",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Work",
+    mode: "build",
+    provider: "shikigami",
+  });
+  await store.linkDelegatedConversation(parent.thread.id, child.thread.id);
+  await store.bindProviderRun(child.turn.id, "provider-run-1");
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "request-1",
+    question: "Continue with migration?",
+    choices: [{ id: "continue", label: "Continue", description: null }],
+    recommendation: "Continue",
+    responseMode: "native_resume",
+    providerRequestId: "native-request-1",
+    expiresAt: null,
+    allowFreeForm: false,
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "request-2",
+    question: "Choose a migration window.",
+    choices: [{ id: "later", label: "Later", description: null }],
+    recommendation: "Later",
+    responseMode: "native_resume",
+    providerRequestId: "native-request-2",
+    expiresAt: null,
+    allowFreeForm: false,
+  });
+  assert.equal((await store.load()).inputRequests.length, 2);
+  assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
+
+  const resolved = await store.resolveInputRequest(
+    "request-1",
+    "Continue",
+    parent.thread.id,
+  );
+  assert.equal(resolved.receipt.parentThreadId, parent.thread.id);
+  assert.equal(resolved.receipt.answerDigest.length, 64);
+  assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
+  await assert.rejects(
+    () => store.resolveInputRequest("request-1", "Again", parent.thread.id),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.inputRequests[0].state, "answered");
+  assert.equal(rebuilt.inputReceipts.length, 1);
+});
+
+test("failed child follow-up startup rolls back its receipt and interrupts the source turn", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Work",
+    mode: "plan",
+    provider: "shikigami",
+  });
+  await store.bindProviderRun(child.turn.id, "run-child");
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "request-failed-follow-up",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    providerRequestId: null,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await store.resolveInputRequest("request-failed-follow-up", "Continue", null);
+  await store.failInputResolution("request-failed-follow-up");
+  const projection = await store.load();
+  assert.equal(projection.inputRequests[0].state, "cancelled");
+  assert.equal(projection.inputReceipts.length, 0);
+  assert.equal(projection.turns[0].status, "interrupted");
+});
+
+test("recovery cancels dead native input RPCs but preserves child follow-up requests", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  for (const [index, responseMode] of ["native_resume", "child_follow_up"].entries()) {
+    const started = await store.startTurn({
+      projectId: "project-1",
+      worktree: `/fixture/${index}`,
+      prompt: "Work",
+      mode: "plan",
+      provider: responseMode === "native_resume" ? "codex-cli" : "shikigami",
+    });
+    await store.bindProviderRun(started.turn.id, `run-${index}`);
+    await store.recordProviderEvent(started.thread.id, started.turn.id, started.thread.provider, {
+      kind: "input_requested",
+      id: `request-${index}`,
+      question: "Continue?",
+      choices: [],
+      recommendation: null,
+      responseMode: responseMode as "native_resume" | "child_follow_up",
+      providerRequestId: null,
+      expiresAt: null,
+      allowFreeForm: true,
+    });
+    if (responseMode === "native_resume") {
+      await store.recordProviderEvent(started.thread.id, started.turn.id, "codex-cli", {
+        kind: "input_requested",
+        id: "request-native-sibling",
+        question: "And choose a window?",
+        choices: [],
+        recommendation: null,
+        responseMode: "native_resume",
+        providerRequestId: null,
+        expiresAt: null,
+        allowFreeForm: true,
+      });
+    }
+  }
+  await store.recoverInterruptedTurns();
+  const projection = await store.load();
+  const nativeRequests = projection.inputRequests.filter((request) => request.responseMode === "native_resume");
+  const followUpRequest = projection.inputRequests.find((request) => request.responseMode === "child_follow_up");
+  assert.equal(nativeRequests.length, 2);
+  assert.ok(nativeRequests.every((request) => request.state === "cancelled"));
+  assert.equal(projection.turns.find((turn) => turn.id === nativeRequests[0].turnId)?.status, "interrupted");
+  assert.equal(followUpRequest?.state, "pending");
+  assert.equal(projection.turns.find((turn) => turn.id === followUpRequest?.turnId)?.status, "waiting_for_user");
+});
+
+test("recovery reopens a claimed child answer when no follow-up turn was persisted", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Work",
+    mode: "plan",
+    provider: "shikigami",
+  });
+  await store.bindProviderRun(started.turn.id, "run-orphan");
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "request-orphan",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    providerRequestId: null,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await store.resolveInputRequest("request-orphan", "Continue", null);
+  await store.recoverInterruptedTurns();
+  const projection = await store.load();
+  assert.equal(projection.inputRequests[0].state, "pending");
+  assert.equal(projection.inputReceipts.length, 0);
+  assert.equal(projection.turns[0].status, "waiting_for_user");
 });
 
 test("state compaction preserves message and activity event order", async () => {

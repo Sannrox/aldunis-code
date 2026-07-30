@@ -181,7 +181,7 @@ console.log("shikigami 1.0.2");
   assert.match(readiness.detail ?? "", /OPENAI_API_KEY|SHIKIGAMI_API_KEY_ENV|scripted/);
 });
 
-test("ShikigamiAdapter surfaces park resume guidance over generic failure", async () => {
+test("ShikigamiAdapter normalizes a parked question as a child follow-up request", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-park-"));
   const executable = join(directory, "fake-shikigami");
   await writeFile(executable, `#!/usr/bin/env node
@@ -212,13 +212,12 @@ process.exit(1);
   }, process.env);
   const events = [];
   for await (const event of run.events) events.push(event);
-  const failed = events.find((event) => event.kind === "failed");
-  assert.equal(failed?.kind, "failed");
-  if (failed?.kind === "failed") {
-    assert.match(failed.message, /parked/i);
-    assert.match(failed.message, /--resume bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee/);
-    assert.match(failed.message, /need operator input/);
-    assert.match(failed.message, /Question: continue\?/);
+  const request = events.find((event) => event.kind === "input_requested");
+  assert.equal(request?.kind, "input_requested");
+  if (request?.kind === "input_requested") {
+    assert.equal(request.question, "continue?");
+    assert.equal(request.providerRequestId, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee");
+    assert.equal(request.responseMode, "child_follow_up");
   }
 });
 
@@ -525,6 +524,11 @@ if (args[0] === "version") {
   process.exit(0);
 }
 console.error('[shikigami] {"type":"status","status":"running"}');
+process.on("SIGTERM", () => {
+  console.log("run bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee termination=parked");
+  console.log("parked question=should not survive cancellation?");
+  process.exit(0);
+});
 setInterval(() => {}, 1000);
 `);
   await chmod(executable, 0o700);
@@ -545,5 +549,6 @@ setInterval(() => {}, 1000);
   }
   assert.ok(kinds.includes("session_started"));
   assert.ok(kinds.includes("cancelled") || kinds.includes("failed"));
+  assert.ok(!kinds.includes("input_requested"));
   assert.equal(adapter.cancel(run.id), false);
 });

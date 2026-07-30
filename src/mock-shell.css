@@ -620,6 +620,31 @@ html, body { height: 100%; }
 .delegated-approval-card dd { overflow-wrap: anywhere; font-size: 12px; }
 .delegated-approval-card ul { margin: 0; padding-left: 18px; font-size: 12px; }
 .delegated-approval-card footer { display: flex; justify-content: flex-end; gap: 8px; }
+.delegated-input-card,
+.input-request-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  background: var(--background);
+}
+.delegated-input-card { flex: 1 0 100%; }
+.delegated-input-card header,
+.input-request-card header { display: grid; gap: 2px; }
+.delegated-input-card header span,
+.input-request-card header span { color: var(--muted-foreground); font-size: 11px; }
+.delegated-input-card textarea,
+.input-request-card textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+}
+.delegated-input-card footer,
+.input-request-card footer,
+.delegated-input-choices,
+.input-request-choices { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .delegated-error { color: var(--destructive) !important; }
 .delegated-empty { margin-top: 10px !important; }
 @media (max-width: 760px) {

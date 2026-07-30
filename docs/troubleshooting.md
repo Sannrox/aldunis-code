@@ -26,8 +26,9 @@ The host defaults to loopback. Do not pass a public `--host` unless you intend
    specific fix when known (missing binary, bad version, missing sign-in / key).
 3. For Claude, open Settings → profiles and check authentication probe.
 4. For Codex, run `codex login` when install is present but not authenticated.
-5. For Shikigami, install **1.0.2+**; park resume remains CLI-only
-   (`shikigami run --resume <id> --answer "…"`) until park-answer UX ships.
+5. For Shikigami, install **1.0.2+**; answer parked questions in the child
+   conversation or from its parent coordination card when beta delegation is
+   enabled.
 6. For ACP adapters, install the reviewed package under Provider adapters and
    ensure the exact launch (`… acp` / `grok agent stdio`) matches the digest.
 7. Remote mode disables adapter administration—return to loopback to install.

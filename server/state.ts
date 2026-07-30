@@ -71,6 +71,8 @@ export interface ConversationDeletion {
     fileReviews: number;
     forks: number;
     delegatedRelationships: number;
+    inputRequests: number;
+    inputReceipts: number;
   };
   requestedAt: string;
   completedAt: string | null;
@@ -82,6 +84,35 @@ export interface DelegatedConversationRelationship {
   id: string;
   parentThreadId: string;
   childThreadId: string;
+  createdAt: string;
+}
+
+export interface ChildInputRequest {
+  schemaVersion: 2;
+  id: string;
+  threadId: string;
+  turnId: string;
+  providerRunId: string;
+  question: string;
+  choices: Array<{ id: string; label: string; description: string | null }>;
+  recommendation: string | null;
+  responseMode: "native_resume" | "child_follow_up";
+  providerRequestId: string | null;
+  expiresAt: string | null;
+  allowFreeForm: boolean;
+  state: "pending" | "answered" | "cancelled";
+  createdAt: string;
+  answeredAt: string | null;
+}
+
+export interface ChildInputReceipt {
+  schemaVersion: 2;
+  id: string;
+  requestId: string;
+  childThreadId: string;
+  parentThreadId: string | null;
+  answerDigest: string;
+  route: "native_resume" | "child_follow_up";
   createdAt: string;
 }
 
@@ -304,6 +335,8 @@ export interface StateProjection {
   conversationDeletions: ConversationDeletion[];
   forks: ConversationFork[];
   delegatedRelationships: DelegatedConversationRelationship[];
+  inputRequests: ChildInputRequest[];
+  inputReceipts: ChildInputReceipt[];
 }
 
 type StateEvent =
@@ -321,7 +354,9 @@ type StateEvent =
   | { type: "conversation_deletion_saved"; conversationDeletion: ConversationDeletion }
   | { type: "fork_created"; thread: Thread; fork: ConversationFork }
   | { type: "fork_saved"; fork: ConversationFork }
-  | { type: "delegated_relationship_saved"; delegatedRelationship: DelegatedConversationRelationship };
+  | { type: "delegated_relationship_saved"; delegatedRelationship: DelegatedConversationRelationship }
+  | { type: "input_request_saved"; inputRequest: ChildInputRequest }
+  | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt };
 
 interface EventEnvelope {
   schemaVersion: 2;
@@ -355,6 +390,8 @@ function emptyProjection(): StateProjection {
     conversationDeletions: [],
     forks: [],
     delegatedRelationships: [],
+    inputRequests: [],
+    inputReceipts: [],
   };
 }
 
@@ -677,6 +714,10 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.forks, event.fork);
   } else if (event.type === "delegated_relationship_saved") {
     replaceById(projection.delegatedRelationships, event.delegatedRelationship);
+  } else if (event.type === "input_request_saved") {
+    replaceById(projection.inputRequests, event.inputRequest);
+  } else if (event.type === "input_receipt_saved") {
+    replaceById(projection.inputReceipts, event.inputReceipt);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -721,6 +762,8 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     fork_created: "fork",
     fork_saved: "fork",
     delegated_relationship_saved: "delegatedRelationship",
+    input_request_saved: "inputRequest",
+    input_receipt_saved: "inputReceipt",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -768,6 +811,8 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           fileReviews: Number(records.fileReviews ?? 0),
           forks: Number(records.forks ?? 0),
           delegatedRelationships: Number(records.delegatedRelationships ?? 0),
+          inputRequests: Number(records.inputRequests ?? 0),
+          inputReceipts: Number(records.inputReceipts ?? 0),
         },
       };
     } else {
@@ -1365,6 +1410,107 @@ export class LocalStateStore {
     });
   }
 
+  async resolveInputRequest(
+    requestId: string,
+    answer: string,
+    parentThreadId: string | null,
+  ): Promise<{ request: ChildInputRequest; receipt: ChildInputReceipt }> {
+    await this.validateInputResponse(requestId, answer);
+    const trimmed = answer.trim();
+    let resolved: { request: ChildInputRequest; receipt: ChildInputReceipt } | null = null;
+    await this.#compact((projection) => {
+      const request = projection.inputRequests.find((item) => item.id === requestId);
+      if (!request) throw new LocalStateError("The input request is not available.", 404);
+      if (request.state !== "pending") {
+        throw new LocalStateError("The input request has already been resolved.", 409);
+      }
+      if (
+        !request.allowFreeForm
+        && !request.choices.some((choice) => choice.label === trimmed)
+      ) {
+        throw new LocalStateError("Select one of the available answers.", 400);
+      }
+      const turn = projection.turns.find(
+        (item) => item.id === request.turnId && item.providerRunId === request.providerRunId,
+      );
+      if (!turn || turn.status !== "waiting_for_user") {
+        throw new LocalStateError("The input request is stale.", 409);
+      }
+      const now = new Date().toISOString();
+      const nextRequest = { ...request, state: "answered" as const, answeredAt: now };
+      const receipt: ChildInputReceipt = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        requestId,
+        childThreadId: request.threadId,
+        parentThreadId,
+        answerDigest: createHash("sha256").update(trimmed, "utf8").digest("hex"),
+        route: request.responseMode,
+        createdAt: now,
+      };
+      replaceById(projection.inputRequests, nextRequest);
+      projection.inputReceipts.push(receipt);
+      const hasOtherPendingInput = projection.inputRequests.some(
+        (item) => item.id !== requestId
+          && item.turnId === request.turnId
+          && item.providerRunId === request.providerRunId
+          && item.state === "pending",
+      );
+      replaceById(projection.turns, request.responseMode === "native_resume"
+        ? { ...turn, status: hasOtherPendingInput ? "waiting_for_user" : "active" }
+        : { ...turn, status: "completed", completedAt: now });
+      resolved = { request: nextRequest, receipt };
+    });
+    if (!resolved) throw new LocalStateError("The input request could not be resolved.");
+    return resolved;
+  }
+
+  async validateInputResponse(requestId: string, answer: string): Promise<ChildInputRequest> {
+    const trimmed = answer.trim();
+    if (!trimmed || Array.from(trimmed).length > 4_000) {
+      throw new LocalStateError("An answer between 1 and 4,000 characters is required.", 400);
+    }
+    const projection = await this.load();
+    const request = projection.inputRequests.find((item) => item.id === requestId);
+    if (!request) throw new LocalStateError("The input request is not available.", 404);
+    if (request.state !== "pending") {
+      throw new LocalStateError("The input request has already been resolved.", 409);
+    }
+    if (!request.allowFreeForm && !request.choices.some((choice) => choice.label === trimmed)) {
+      throw new LocalStateError("Select one of the available answers.", 400);
+    }
+    const turn = projection.turns.find(
+      (item) => item.id === request.turnId && item.providerRunId === request.providerRunId,
+    );
+    if (!turn || turn.status !== "waiting_for_user") {
+      throw new LocalStateError("The input request is stale.", 409);
+    }
+    return request;
+  }
+
+  async failInputResolution(requestId: string): Promise<void> {
+    await this.#compact((projection) => {
+      const request = projection.inputRequests.find((item) => item.id === requestId);
+      if (!request || request.state !== "answered") return;
+      replaceById(projection.inputRequests, {
+        ...request,
+        state: "cancelled",
+        answeredAt: null,
+      });
+      projection.inputReceipts = projection.inputReceipts.filter(
+        (receipt) => receipt.requestId !== requestId,
+      );
+      const turn = projection.turns.find((item) => item.id === request.turnId);
+      if (turn && !["failed", "interrupted", "cancelled"].includes(turn.status)) {
+        replaceById(projection.turns, {
+          ...turn,
+          status: "interrupted",
+          completedAt: new Date().toISOString(),
+        });
+      }
+    });
+  }
+
   async deleteConversation(threadId: string): Promise<ConversationDeletion> {
     const projection = await this.load();
     const existingDeletion = projection.conversationDeletions.find(
@@ -1474,6 +1620,12 @@ export class LocalStateStore {
           relationship.parentThreadId === threadId || relationship.childThreadId === threadId
         ),
       ).length,
+      inputRequests: projection.inputRequests.filter(
+        (request) => request.threadId === threadId,
+      ).length,
+      inputReceipts: projection.inputReceipts.filter(
+        (receipt) => receipt.childThreadId === threadId || receipt.parentThreadId === threadId,
+      ).length,
     };
   }
 
@@ -1514,6 +1666,15 @@ export class LocalStateStore {
         relationship.parentThreadId !== threadId && relationship.childThreadId !== threadId
       ),
     );
+    const removedRequestIds = new Set(
+      projection.inputRequests.filter((request) => request.threadId === threadId).map((request) => request.id),
+    );
+    projection.inputRequests = projection.inputRequests.filter((request) => !removedRequestIds.has(request.id));
+    projection.inputReceipts = projection.inputReceipts.filter(
+      (receipt) => !removedRequestIds.has(receipt.requestId)
+        && receipt.childThreadId !== threadId
+        && receipt.parentThreadId !== threadId,
+    );
     projection.threads = projection.threads.map((thread) => (
       thread.parentThreadId === threadId || (thread.forkId && removedForkIds.has(thread.forkId))
         ? { ...thread, parentThreadId: undefined, forkId: undefined }
@@ -1522,10 +1683,56 @@ export class LocalStateStore {
   }
 
   async recoverInterruptedTurns(): Promise<void> {
+    await this.#compact((current) => {
+      for (const request of current.inputRequests) {
+        if (request.state !== "answered" || request.responseMode !== "child_follow_up") continue;
+        const receipt = current.inputReceipts.find((item) => item.requestId === request.id);
+        if (!receipt) continue;
+        const followUpPrefix = `Operator response to child input request ${request.id}:`;
+        const persistedFollowUp = current.messages.some((message) => {
+          if (message.role !== "user" || !message.text.startsWith(followUpPrefix)) return false;
+          const turn = current.turns.find((item) => item.id === message.turnId);
+          return turn?.threadId === request.threadId && message.createdAt >= receipt.createdAt;
+        });
+        if (persistedFollowUp) continue;
+        replaceById(current.inputRequests, {
+          ...request,
+          state: "pending",
+          answeredAt: null,
+        });
+        current.inputReceipts = current.inputReceipts.filter((item) => item.id !== receipt.id);
+        const sourceTurn = current.turns.find((item) => item.id === request.turnId);
+        if (sourceTurn) {
+          replaceById(current.turns, {
+            ...sourceTurn,
+            status: "waiting_for_user",
+            completedAt: null,
+          });
+        }
+      }
+    });
     const projection = await this.load();
     for (const turn of projection.turns) {
-      if (turn.status !== "active" && turn.status !== "running" && turn.status !== "waiting_for_approval") {
+      const nativeInputs = turn.status === "waiting_for_user"
+        ? projection.inputRequests.filter((request) => (
+          request.turnId === turn.id
+          && request.state === "pending"
+          && request.responseMode === "native_resume"
+        ))
+        : [];
+      if (
+        turn.status !== "active"
+        && turn.status !== "running"
+        && turn.status !== "waiting_for_approval"
+        && nativeInputs.length === 0
+      ) {
         continue;
+      }
+      for (const nativeInput of nativeInputs) {
+        await this.#append({
+          type: "input_request_saved",
+          inputRequest: { ...nativeInput, state: "cancelled", answeredAt: null },
+        });
       }
       await this.#append({
         type: "turn_saved",
@@ -1556,6 +1763,72 @@ export class LocalStateStore {
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
     const now = new Date().toISOString();
+    if (event.kind === "input_requested") {
+      const turn = (await this.load()).turns.find((item) => item.id === turnId);
+      if (!turn || !turn.providerRunId) {
+        throw new LocalStateError("The provider turn is missing its run binding.");
+      }
+      if (!["active", "running", "waiting_for_user"].includes(turn.status)) return;
+      const request: ChildInputRequest = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: event.id,
+        threadId,
+        turnId,
+        providerRunId: turn.providerRunId,
+        question: event.question.slice(0, 1_000),
+        choices: event.choices.slice(0, 12).map((choice) => ({
+          id: choice.id.slice(0, 100),
+          label: choice.label.slice(0, 200),
+          description: choice.description?.slice(0, 500) ?? null,
+        })),
+        recommendation: event.recommendation?.slice(0, 500) ?? null,
+        responseMode: event.responseMode,
+        providerRequestId: event.providerRequestId,
+        expiresAt: event.expiresAt,
+        allowFreeForm: event.allowFreeForm,
+        state: "pending",
+        createdAt: now,
+        answeredAt: null,
+      };
+      await this.#append({ type: "input_request_saved", inputRequest: request });
+      if (turn.status !== "waiting_for_user") {
+        await this.#append({
+          type: "turn_saved",
+          turn: { ...turn, status: "waiting_for_user" },
+        });
+      }
+      await this.#markThreadWoke(threadId, now);
+      return;
+    }
+    if (event.kind === "input_resolved") {
+      const projection = await this.load();
+      const request = projection.inputRequests.find(
+        (item) => item.id === event.id && item.threadId === threadId,
+      );
+      const turn = projection.turns.find((item) => item.id === turnId);
+      if (!request || request.state !== "pending" || !turn) return;
+      await this.#append({
+        type: "input_request_saved",
+        inputRequest: {
+          ...request,
+          state: event.state === "answered" ? "answered" : "cancelled",
+          answeredAt: event.state === "answered" ? now : null,
+        },
+      });
+      if (!["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
+        const hasOtherPendingInput = projection.inputRequests.some(
+          (item) => item.id !== request.id
+            && item.turnId === request.turnId
+            && item.providerRunId === request.providerRunId
+            && item.state === "pending",
+        );
+        await this.#append({
+          type: "turn_saved",
+          turn: { ...turn, status: hasOtherPendingInput ? "waiting_for_user" : "active" },
+        });
+      }
+      return;
+    }
     if (event.kind === "approval_pending" || event.kind === "approval_resolved") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
@@ -1674,7 +1947,8 @@ export class LocalStateStore {
       });
     }
     if (event.kind === "turn_completed" || event.kind === "cancelled" || event.kind === "failed") {
-      const turn = (await this.load()).turns.find((item) => item.id === turnId);
+      const projection = await this.load();
+      const turn = projection.turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
       const nextStatus = event.kind === "turn_completed"
         ? "completed" as const
@@ -1689,6 +1963,14 @@ export class LocalStateStore {
           completedAt: now,
         },
       });
+      for (const request of projection.inputRequests.filter(
+        (item) => item.turnId === turnId && item.state === "pending",
+      )) {
+        await this.#append({
+          type: "input_request_saved",
+          inputRequest: { ...request, state: "cancelled", answeredAt: null },
+        });
+      }
       if (nextStatus === "failed") {
         await this.#markThreadWoke(threadId, now);
       }
@@ -1826,6 +2108,15 @@ export class LocalStateStore {
           && !threadIds.has(relationship.childThreadId)
         ),
       );
+      const requestIds = new Set(
+        projection.inputRequests.filter((request) => threadIds.has(request.threadId)).map((request) => request.id),
+      );
+      projection.inputRequests = projection.inputRequests.filter((request) => !requestIds.has(request.id));
+      projection.inputReceipts = projection.inputReceipts.filter(
+        (receipt) => !requestIds.has(receipt.requestId)
+          && !threadIds.has(receipt.childThreadId)
+          && (!receipt.parentThreadId || !threadIds.has(receipt.parentThreadId)),
+      );
     });
   }
 
@@ -1875,6 +2166,15 @@ export class LocalStateStore {
           !expiredThreads.has(relationship.parentThreadId)
           && !expiredThreads.has(relationship.childThreadId)
         ),
+      );
+      const requestIds = new Set(
+        projection.inputRequests.filter((request) => expiredThreads.has(request.threadId)).map((request) => request.id),
+      );
+      projection.inputRequests = projection.inputRequests.filter((request) => !requestIds.has(request.id));
+      projection.inputReceipts = projection.inputReceipts.filter(
+        (receipt) => !requestIds.has(receipt.requestId)
+          && !expiredThreads.has(receipt.childThreadId)
+          && (!receipt.parentThreadId || !expiredThreads.has(receipt.parentThreadId)),
       );
     });
   }
@@ -1942,6 +2242,14 @@ export class LocalStateStore {
         ...next.delegatedRelationships.map((delegatedRelationship): StateEvent => ({
           type: "delegated_relationship_saved",
           delegatedRelationship,
+        })),
+        ...next.inputRequests.map((inputRequest): StateEvent => ({
+          type: "input_request_saved",
+          inputRequest,
+        })),
+        ...next.inputReceipts.map((inputReceipt): StateEvent => ({
+          type: "input_receipt_saved",
+          inputReceipt,
         })),
       ];
       const rebuilt = emptyProjection();

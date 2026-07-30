@@ -34,6 +34,10 @@
     {
       "name": "ChildBoundHumanRequest",
       "description": "A single-use approval or input request whose authority remains bound to the originating delegated child. A parent may project and resolve it only as a beta-gated human control surface."
+    },
+    {
+      "name": "ChildInputCoordinationReceipt",
+      "description": "A durable receipt proving which child input request was answered, its route, and optional coordinating parent. It stores an answer digest rather than provider-visible parent context."
     }
   ],
   "relations": [
@@ -68,6 +72,16 @@
       "description": "Projects a pending child-bound human request without transferring its authority to the parent conversation.",
       "domain": "DelegatedConversationRelationship",
       "range": "ChildBoundHumanRequest"
+    },
+    {
+      "name": "produces_input_coordination_receipt",
+      "description": "Records the single child-bound routing outcome of an answered input request.",
+      "domain": "ChildBoundHumanRequest",
+      "range": "ChildInputCoordinationReceipt",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
     }
   ],
   "provenance": [
@@ -123,6 +137,18 @@
       "subject": "projects_child_human_request",
       "source": "GitHub Issues Sannrox/aldunis-code#411 and #413",
       "locator": "docs/decisions/delegated-human-control.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChildInputCoordinationReceipt",
+      "source": "GitHub Issue Sannrox/aldunis-code#413",
+      "locator": "server/state.ts#ChildInputReceipt",
+      "confidence": 1.0
+    },
+    {
+      "subject": "produces_input_coordination_receipt",
+      "source": "Aldunis Code child input routing contract",
+      "locator": "server/state.ts#resolveInputRequest",
       "confidence": 1.0
     }
   ]

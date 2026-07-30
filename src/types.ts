@@ -348,7 +348,7 @@ export interface ElementReference {
   text: string | null;
   screenshot: string | null;
 }
-export type ProviderState = "idle" | "starting" | "streaming" | "waiting_for_approval" | "cancelling" | "completed" | "cancelled" | "failed";
+export type ProviderState = "idle" | "starting" | "streaming" | "waiting_for_approval" | "waiting_for_input" | "cancelling" | "completed" | "cancelled" | "failed";
 export type ProviderPlanStepStatus = "pending" | "active" | "completed" | "neutral";
 export interface ProviderPlanStep {
   content: string;
@@ -386,6 +386,8 @@ export type ProviderEvent =
     expiresAt: string;
   }
   | { kind: "approval_resolved"; id: string; state: ApprovalState }
+  | ({ kind: "input_requested" } & ChildInputRequest)
+  | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
@@ -399,6 +401,23 @@ export interface DelegatedApprovalProjection {
   parentThreadId: string;
   childThreadId: string;
   approval: Omit<Extract<ProviderEvent, { kind: "approval_pending" }>, "kind">;
+}
+export interface ChildInputRequest {
+  id: string;
+  threadId: string;
+  question: string;
+  choices: Array<{ id: string; label: string; description: string | null }>;
+  recommendation: string | null;
+  responseMode: "native_resume" | "child_follow_up";
+  state: "pending" | "answered" | "cancelled";
+  createdAt: string;
+  expiresAt: string | null;
+  allowFreeForm: boolean;
+}
+export interface DelegatedInputProjection {
+  parentThreadId: string;
+  childThreadId: string;
+  request: ChildInputRequest;
 }
 export type InteractionMode = "ask" | "plan" | "build";
 export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
