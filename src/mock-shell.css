@@ -1328,13 +1328,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   display: flex !important;
   align-items: flex-start !important;
   gap: 6px !important;
-  min-width: 0 !important;
+  min-width: max-content !important;
 }
 .diff-view pre > span > code {
   flex: 1 1 auto !important;
-  min-width: 0 !important;
-  white-space: pre-wrap !important;
-  word-break: break-word !important;
+  min-width: max-content !important;
+  white-space: pre !important;
+  word-break: normal !important;
 }
 /* Keep icon dismiss controls from flex-shrinking in narrow review headers. */
 .ui-button--icon {
