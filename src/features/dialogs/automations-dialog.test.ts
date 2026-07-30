@@ -4,6 +4,7 @@ import {
   automationThreadBaseLabel,
   automationThreadLabels,
   formatAutomationInterval,
+  formatAutomationLastStatus,
   type AutomationThreadOption,
 } from "./automations-dialog";
 
@@ -36,4 +37,14 @@ test("automation interval summaries use the largest exact readable unit", () => 
   assert.equal(formatAutomationInterval(5_400), "every 90 minutes");
   assert.equal(formatAutomationInterval(7_200), "every 2 hours");
   assert.equal(formatAutomationInterval(172_800), "every 2 days");
+});
+
+test("automation run statuses use reader-facing language", () => {
+  assert.equal(formatAutomationLastStatus(null), "Not run yet");
+  assert.equal(formatAutomationLastStatus("ok"), "Last run succeeded");
+  assert.equal(
+    formatAutomationLastStatus("skipped_busy"),
+    "Last run skipped — conversation was busy",
+  );
+  assert.equal(formatAutomationLastStatus("error"), "Last run failed");
 });
