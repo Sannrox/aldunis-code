@@ -10,6 +10,7 @@ new file over rewriting history: amend only for factual corrections.
 | [managed-conversation-worktrees.md](managed-conversation-worktrees.md) | Host-owned worktree create/remove; providers cannot rebind silently |
 | [cross-provider-conversation-forks.md](cross-provider-conversation-forks.md) | Explicit fork + allowlisted context transfer across providers |
 | [conversation-automations.md](conversation-automations.md) | Timer-only automations into existing threads |
+| [delegated-human-control.md](delegated-human-control.md) | Parent UI controls reuse child-bound approval and input authority |
 | [shikigami-provider.md](shikigami-provider.md) | First-class shikigami harness provider + PermissionBroker pre-exec |
 | [opencode-declarative-adapter.md](opencode-declarative-adapter.md) | Reviewed OpenCode ACP package (`opencode acp`) |
 

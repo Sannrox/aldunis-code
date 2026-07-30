@@ -203,6 +203,17 @@ test("conversation search controls align with the dialog content inset", () => {
   );
 });
 
+test("delegated approval cards stay readable in narrow parent panels", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.delegated-list\s*>\s*li\s*\{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(shell, /\.delegated-approval-card\s*\{[^}]*flex:\s*1 0 100%/s);
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*760px\)[\s\S]*?\.delegated-approval-card dl\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+});
+
 test("keyboard-active quick results remain visibly highlighted", () => {
   assert.match(
     css,

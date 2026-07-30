@@ -395,6 +395,11 @@ export type ProviderEvent =
     code?: "unsupported_external_tool";
   };
 export type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
+export interface DelegatedApprovalProjection {
+  parentThreadId: string;
+  childThreadId: string;
+  approval: Omit<Extract<ProviderEvent, { kind: "approval_pending" }>, "kind">;
+}
 export type InteractionMode = "ask" | "plan" | "build";
 export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
 export interface TurnCheckpoint {

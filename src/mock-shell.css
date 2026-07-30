@@ -537,7 +537,7 @@ html, body { height: 100%; }
 }
 .delegated-children-header,
 .delegated-link-control,
-.delegated-list li,
+.delegated-list > li,
 .delegated-counts,
 .delegated-outcome-body {
   display: flex;
@@ -559,7 +559,11 @@ html, body { height: 100%; }
 }
 .delegated-link-control select { min-width: 150px; max-width: 240px; }
 .delegated-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
-.delegated-list li { padding-top: 8px; border-top: 1px solid var(--border); }
+.delegated-list > li {
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
 .delegated-outcome.pending_approval,
 .delegated-outcome.awaiting_input,
 .delegated-outcome.failed { border-left: 3px solid var(--destructive); padding-left: 8px; }
@@ -591,12 +595,38 @@ html, body { height: 100%; }
 .delegated-summary strong,
 .delegated-worktree { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .delegated-status { font-size: 11px; text-transform: capitalize; white-space: nowrap; }
+.delegated-approval-card {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--destructive);
+  border-radius: 8px;
+  background: var(--background);
+}
+.delegated-approval-card header { display: grid; gap: 2px; }
+.delegated-approval-card header span,
+.delegated-approval-card dt { color: var(--muted-foreground); font-size: 11px; }
+.delegated-approval-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0;
+}
+.delegated-approval-card dl div { min-width: 0; }
+.delegated-approval-card dt,
+.delegated-approval-card dd { margin: 0; }
+.delegated-approval-card dd { overflow-wrap: anywhere; font-size: 12px; }
+.delegated-approval-card ul { margin: 0; padding-left: 18px; font-size: 12px; }
+.delegated-approval-card footer { display: flex; justify-content: flex-end; gap: 8px; }
 .delegated-error { color: var(--destructive) !important; }
 .delegated-empty { margin-top: 10px !important; }
 @media (max-width: 760px) {
   .delegated-children-header,
-  .delegated-list li,
+  .delegated-list > li,
   .delegated-outcome-body { align-items: stretch; flex-direction: column; }
+  .delegated-approval-card dl { grid-template-columns: minmax(0, 1fr); }
   .delegated-link-control select { min-width: 0; max-width: none; flex: 1; }
   .delegated-outcome.completed summary { align-items: flex-start; flex-direction: column; }
 }

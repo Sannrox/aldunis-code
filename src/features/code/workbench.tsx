@@ -5,6 +5,7 @@ import type {
   ClaudeProfile,
   ChangedFile,
   ProviderId,
+  DelegatedApprovalProjection,
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
 } from "../../types";
@@ -49,11 +50,12 @@ function paneConversationLabel(
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
-function DelegatedChildrenPanel({
+export function DelegatedChildrenPanel({
   parent,
   conversations,
   relationships,
   outcomes,
+  approvals,
   onOpen,
   onChanged,
 }: {
@@ -61,13 +63,35 @@ function DelegatedChildrenPanel({
   conversations: ConversationSummary[];
   relationships: DelegatedConversationRelationship[];
   outcomes: DelegatedConversationOutcomeProjection[];
+  approvals: DelegatedApprovalProjection[];
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
   const [selectedChildId, setSelectedChildId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
+  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [error, setError] = useState<string | null>(null);
   const outcomeSummary = summarizeDelegatedOutcomes(parent.id, conversations, relationships);
+  const approvalChildIds = new Set(
+    approvals
+      .filter((item) => (
+        item.parentThreadId === parent.id
+        && !resolvedApprovalIds.has(item.approval.id)
+      ))
+      .map((item) => item.childThreadId),
+  );
+  const approvalCount = new Set([
+    ...outcomeSummary.outcomes
+      .filter(({ child }) => child.status === "pending_approval")
+      .map(({ child }) => child.id),
+    ...approvalChildIds,
+  ]).size;
+  const runningCount = outcomeSummary.outcomes.filter(({ child }) => (
+    child.status === "running" && !approvalChildIds.has(child.id)
+  )).length;
   const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
   const candidates = conversations.filter((item) => (
     item.id !== parent.id
@@ -94,6 +118,43 @@ function DelegatedChildrenPanel({
       setBusy(false);
     }
   };
+  const decideApproval = async (
+    delegated: DelegatedApprovalProjection,
+    decision: "allow_once" | "deny",
+  ) => {
+    setApprovalBusyId(delegated.approval.id);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/provider/approvals/${delegated.approval.id}/decide`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            runId: delegated.approval.runId,
+            conversationId: delegated.approval.conversationId,
+            repository: delegated.approval.repository,
+            worktree: delegated.approval.worktree,
+            toolCallId: delegated.approval.toolCallId,
+            decision,
+            parentThreadId: parent.id,
+          }),
+        },
+      );
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Approval decision failed.");
+      setResolvedApprovalIds((current) => new Set(current).add(delegated.approval.id));
+      try {
+        await onChanged();
+      } catch {
+        setError("Approval resolved. Status refresh failed; reconnect to confirm child state.");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Approval decision failed.");
+    } finally {
+      setApprovalBusyId(null);
+    }
+  };
   return (
     <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
       <div className="delegated-children-header">
@@ -102,8 +163,8 @@ function DelegatedChildrenPanel({
           <p>Quiet status summary. Child messages and provider context stay independent.</p>
           {outcomeSummary.outcomes.length > 0 && (
             <div className="delegated-counts" aria-live="polite" aria-atomic="true">
-              <span>{outcomeSummary.running} working</span>
-              <span>{outcomeSummary.approvals} approval</span>
+              <span>{runningCount} working</span>
+              <span>{approvalCount} approval</span>
               <span>{outcomeSummary.inputs} input</span>
               <span>{outcomeSummary.failures} failed</span>
               <span>{outcomeSummary.completed} completed</span>
@@ -146,7 +207,14 @@ function DelegatedChildrenPanel({
       ) : (
         <ul className="delegated-list">
           {outcomeSummary.outcomes.map(({ relationship, child }) => {
-            const status = child.status ?? "idle";
+            const childApprovals = approvals.filter((item) => (
+              item.parentThreadId === parent.id
+              && item.childThreadId === child.id
+              && !resolvedApprovalIds.has(item.approval.id)
+            ));
+            const status = childApprovals.length > 0
+              ? "pending_approval"
+              : child.status ?? "idle";
             if (status === "completed") {
               const outcome = outcomes.find((item) => item.childThreadId === child.id);
               return (
@@ -211,6 +279,53 @@ function DelegatedChildrenPanel({
                 >
                   Detach
                 </Button>
+                {childApprovals.map((delegatedApproval) => (
+                  <section
+                    className="delegated-approval-card"
+                    key={delegatedApproval.approval.id}
+                    aria-label={`Approval required for ${child.title}: ${delegatedApproval.approval.scope.summary}`}
+                  >
+                    <header>
+                      <strong>{delegatedApproval.approval.scope.summary}</strong>
+                      <span>{delegatedApproval.approval.toolName} · one action only</span>
+                    </header>
+                    <dl>
+                      <div><dt>Conversation</dt><dd>{child.title}</dd></div>
+                      <div><dt>Project</dt><dd>{child.projectName ?? "Unknown project"}</dd></div>
+                      <div><dt>Worktree</dt><dd title={delegatedApproval.approval.worktree}>{delegatedApproval.approval.worktree}</dd></div>
+                      <div><dt>Provider</dt><dd>{providerListLabel(delegatedApproval.approval.provider)}</dd></div>
+                      <div><dt>Tool</dt><dd>{delegatedApproval.approval.toolName}</dd></div>
+                      <div><dt>Target</dt><dd>{delegatedApproval.approval.scope.target}</dd></div>
+                      <div><dt>Expires</dt><dd>{new Date(delegatedApproval.approval.expiresAt).toLocaleString()}</dd></div>
+                    </dl>
+                    {delegatedApproval.approval.scope.details.length > 0 && (
+                      <ul>
+                        {delegatedApproval.approval.scope.details.map((detail) => (
+                          <li key={detail}>{detail}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <footer>
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={approvalBusyId === delegatedApproval.approval.id}
+                        onClick={() => void decideApproval(delegatedApproval, "deny")}
+                      >
+                        Deny
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        disabled={approvalBusyId === delegatedApproval.approval.id}
+                        onClick={() => void decideApproval(delegatedApproval, "allow_once")}
+                      >
+                        Allow once
+                      </Button>
+                    </footer>
+                  </section>
+                ))}
               </li>
             );
           })}
@@ -276,6 +391,9 @@ export function CodeWorkbench({
   const [delegatedOutcomes, setDelegatedOutcomes] = useState<
     DelegatedConversationOutcomeProjection[]
   >([]);
+  const [delegatedApprovals, setDelegatedApprovals] = useState<
+    DelegatedApprovalProjection[]
+  >([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ConversationSummary | null>(null);
@@ -305,6 +423,7 @@ export function CodeWorkbench({
   const secondaryIdReference = useRef<string | null>(null);
   const primaryPaneReference = useRef<HTMLDivElement>(null);
   const secondaryPaneReference = useRef<HTMLDivElement>(null);
+  const delegatedProjectionRequestReference = useRef(0);
   useEffect(() => {
     try {
       window.localStorage.setItem(PROJECT_FILTER_KEY, projectFilter);
@@ -322,14 +441,19 @@ export function CodeWorkbench({
       const available = await loadConversationList(null);
       if (!active) return;
       setConversations(available);
+      const requestSequence = ++delegatedProjectionRequestReference.current;
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
       const lifecycleProjection = await lifecycleResponse.json() as {
         conversationDeletions?: Array<{ threadId: string; status: string }>;
         delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
+        delegatedApprovals?: DelegatedApprovalProjection[];
         delegatedRelationships?: DelegatedConversationRelationship[];
       };
-      setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
-      setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
+      if (requestSequence === delegatedProjectionRequestReference.current) {
+        setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
+        setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
+        setDelegatedApprovals(lifecycleProjection.delegatedApprovals ?? []);
+      }
       setIncompleteDeletionIds(
         (lifecycleProjection.conversationDeletions ?? [])
           .filter((deletion) => deletion.status !== "completed")
@@ -435,26 +559,45 @@ export function CodeWorkbench({
     const response = await fetch("/api/state/load", { method: "POST" });
     const body = await response.json() as ConversationListProjection & {
       delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
+      delegatedApprovals?: DelegatedApprovalProjection[];
       delegatedRelationships?: DelegatedConversationRelationship[];
       error?: string;
     };
     if (!response.ok) throw new Error(body.error ?? "Delegated conversations could not be loaded.");
     return body;
   };
-  const refreshDelegatedRelationships = async () => {
-    const body = await loadDelegatedProjection();
+  const applyDelegatedProjection = (body: Awaited<ReturnType<typeof loadDelegatedProjection>>) => {
+    const projected = conversationListFromProjection(body);
+    setConversations((current) => {
+      const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
+      return projected.map((conversation) => {
+        const optimisticVisit = currentById.get(conversation.id)?.lastVisitedAt;
+        return optimisticVisit && (!conversation.lastVisitedAt || optimisticVisit > conversation.lastVisitedAt)
+          ? { ...conversation, lastVisitedAt: optimisticVisit }
+          : conversation;
+      });
+    });
     setDelegatedRelationships(body.delegatedRelationships ?? []);
     setDelegatedOutcomes(body.delegatedOutcomes ?? []);
+    setDelegatedApprovals(body.delegatedApprovals ?? []);
+  };
+  const refreshDelegatedRelationships = async () => {
+    const requestSequence = ++delegatedProjectionRequestReference.current;
+    const body = await loadDelegatedProjection();
+    if (requestSequence !== delegatedProjectionRequestReference.current) return;
+    applyDelegatedProjection(body);
   };
   useEffect(() => {
     if (!orchestrationThreadsBeta) return;
     let active = true;
     const synchronize = () => {
+      const requestSequence = ++delegatedProjectionRequestReference.current;
       void loadDelegatedProjection().then((delegated) => {
-        if (!active) return;
-        setConversations(conversationListFromProjection(delegated));
-        setDelegatedRelationships(delegated.delegatedRelationships ?? []);
-        setDelegatedOutcomes(delegated.delegatedOutcomes ?? []);
+        if (
+          !active
+          || requestSequence !== delegatedProjectionRequestReference.current
+        ) return;
+        applyDelegatedProjection(delegated);
       }).catch(() => undefined);
     };
     synchronize();
@@ -472,21 +615,7 @@ export function CodeWorkbench({
           || typeof update.status !== "string"
           || typeof update.at !== "string"
         ) return;
-        const threadId = update.threadId;
-        const status = update.status as ConversationSummary["status"];
-        const statusSince = update.at;
-        setConversations((current) => current.map((conversation) => (
-          conversation.id === threadId
-            ? {
-              ...conversation,
-              status,
-              statusSince,
-            }
-            : conversation
-        )));
-        if (status === "completed") {
-          void refreshDelegatedRelationships().catch(() => undefined);
-        }
+        synchronize();
       } catch {
         /* malformed status events do not replace the last valid projection */
       }
@@ -520,7 +649,7 @@ export function CodeWorkbench({
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    setConversations(await loadConversationList(null, { fresh: true }));
+    await refreshDelegatedRelationships();
     return result;
   };
   const manageConversation = async (
@@ -881,6 +1010,7 @@ export function CodeWorkbench({
                     conversations={conversations}
                     relationships={delegatedRelationships}
                     outcomes={delegatedOutcomes}
+                    approvals={delegatedApprovals}
                     onOpen={openConversation}
                     onChanged={refreshDelegatedRelationships}
                   />
@@ -922,6 +1052,7 @@ export function CodeWorkbench({
                         conversations={conversations}
                         relationships={delegatedRelationships}
                         outcomes={delegatedOutcomes}
+                        approvals={delegatedApprovals}
                         onOpen={openConversation}
                         onChanged={refreshDelegatedRelationships}
                       />
@@ -986,8 +1117,7 @@ export function CodeWorkbench({
             if (primaryId === conversation.id) setPrimaryId(null);
             if (secondaryId === conversation.id) setSecondaryId(null);
             setConversations((current) => current.filter((item) => item.id !== conversation.id));
-            void loadConversationList(null, { fresh: true })
-              .then(setConversations)
+            void refreshDelegatedRelationships()
               .catch(() => setLifecycleError(
                 "Conversation deleted, but the conversation list could not be refreshed.",
               ));

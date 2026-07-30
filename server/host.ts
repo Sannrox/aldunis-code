@@ -33,7 +33,15 @@ import {
   MAX_ANNOTATION_TEXT,
 } from "./annotations.ts";
 import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery.ts";
-import { PermissionBroker, PermissionError } from "./permission.ts";
+import {
+  PermissionBroker,
+  PermissionError,
+  type ApprovalSnapshot,
+} from "./permission.ts";
+import {
+  assertParentRoutedApproval,
+  projectDelegatedApprovals,
+} from "./delegated-approvals.ts";
 import {
   canonicalizeRepositoryRoot,
   captureCheckpoint,
@@ -146,15 +154,18 @@ async function publishThreadStatusTransition(
   state: LocalStateStore,
   threadId: string,
   previous: ThreadStatus | null,
+  force = false,
 ): Promise<void> {
   const next = projectThreadStatus(await state.load(), threadId);
-  if (previous !== null && previous === next.status) return;
+  if (!force && previous !== null && previous === next.status) return;
   wake.publish({
     threadId,
     status: next.status,
     at: new Date().toISOString(),
   });
 }
+
+type DelegatedControlLock = <T>(action: () => Promise<T>) => Promise<T>;
 
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const cached = requestBodies.get(request);
@@ -304,6 +315,7 @@ async function handleApi(
   adapters: ProviderAdapterStore,
   activeAcp: Map<string, AcpProviderAdapter>,
   wake: WakeBroker,
+  withDelegatedControlLock: DelegatedControlLock,
   remoteRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
@@ -703,6 +715,9 @@ async function handleApi(
         delegatedOutcomes: currentPreferences.orchestrationThreadsBeta
           ? projectDelegatedConversationOutcomes(projection)
           : [],
+        delegatedApprovals: currentPreferences.orchestrationThreadsBeta
+          ? projectDelegatedApprovals(projection, permissions.approvals())
+          : [],
         threadStatuses: projectThreadStatuses(projection),
       });
       return true;
@@ -920,7 +935,11 @@ async function handleApi(
       if (typeof body.threadId !== "string" || body.confirm !== true) {
         throw new LocalStateError("A confirmed conversation deletion is required.", 400);
       }
-      sendJson(response, 200, await state.deleteConversation(body.threadId));
+      sendJson(
+        response,
+        200,
+        await withDelegatedControlLock(() => state.deleteConversation(body.threadId as string)),
+      );
       return true;
     }
     if (route === "/api/state/delegated-conversations/link") {
@@ -928,17 +947,19 @@ async function handleApi(
         parentThreadId?: unknown;
         childThreadId?: unknown;
       };
-      const { preferences: currentPreferences } = await preferences.load();
-      if (!currentPreferences.orchestrationThreadsBeta) {
-        throw new LocalStateError("Orchestration threads beta is disabled.", 403);
-      }
       if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
         throw new LocalStateError("A parent and child conversation are required.", 400);
       }
       sendJson(
         response,
         200,
-        await state.linkDelegatedConversation(body.parentThreadId, body.childThreadId),
+        await withDelegatedControlLock(async () => {
+          const { preferences: currentPreferences } = await preferences.load();
+          if (!currentPreferences.orchestrationThreadsBeta) {
+            throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+          }
+          return state.linkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
+        }),
       );
       return true;
     }
@@ -947,14 +968,16 @@ async function handleApi(
         parentThreadId?: unknown;
         childThreadId?: unknown;
       };
-      const { preferences: currentPreferences } = await preferences.load();
-      if (!currentPreferences.orchestrationThreadsBeta) {
-        throw new LocalStateError("Orchestration threads beta is disabled.", 403);
-      }
       if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
         throw new LocalStateError("A parent and child conversation are required.", 400);
       }
-      await state.unlinkDelegatedConversation(body.parentThreadId, body.childThreadId);
+      await withDelegatedControlLock(async () => {
+        const { preferences: currentPreferences } = await preferences.load();
+        if (!currentPreferences.orchestrationThreadsBeta) {
+          throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+        }
+        await state.unlinkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
+      });
       sendJson(response, 200, { status: "unlinked" });
       return true;
     }
@@ -963,7 +986,12 @@ async function handleApi(
       return true;
     }
     if (route === "/api/preferences/save") {
-      sendJson(response, 200, await preferences.save(await readJson(request)));
+      const nextPreferences = await readJson(request);
+      sendJson(
+        response,
+        200,
+        await withDelegatedControlLock(() => preferences.save(nextPreferences)),
+      );
       return true;
     }
     if (route === "/api/products/availability") {
@@ -1056,32 +1084,34 @@ async function handleApi(
       if (typeof body.projectId !== "string") {
         throw new RepositoryError("A project is required.");
       }
-      const projection = await state.load();
-      if (activeCheckpointProjects.has(body.projectId) || projectHasActiveCheckpoint(body.projectId)) {
-        throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
-      }
-      activeCheckpointProjects.add(body.projectId);
-      try {
-        const threadIds = new Set(
-          projection.threads.filter((thread) => thread.projectId === body.projectId).map((thread) => thread.id),
-        );
-        const checkpoints = projection.checkpoints.filter((item) => threadIds.has(item.threadId));
-        for (const checkpoint of checkpoints) {
-          await state.saveCheckpoint({
-            ...checkpoint,
-            state: "unavailable",
-            message: "Checkpoint cleanup is pending project deletion.",
-          });
+      await withDelegatedControlLock(async () => {
+        const projection = await state.load();
+        if (activeCheckpointProjects.has(body.projectId as string) || projectHasActiveCheckpoint(body.projectId as string)) {
+          throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
         }
-        for (const checkpoint of checkpoints) {
-          if (checkpoint.gitDirectory) {
-            await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+        activeCheckpointProjects.add(body.projectId as string);
+        try {
+          const threadIds = new Set(
+            projection.threads.filter((thread) => thread.projectId === body.projectId).map((thread) => thread.id),
+          );
+          const checkpoints = projection.checkpoints.filter((item) => threadIds.has(item.threadId));
+          for (const checkpoint of checkpoints) {
+            await state.saveCheckpoint({
+              ...checkpoint,
+              state: "unavailable",
+              message: "Checkpoint cleanup is pending project deletion.",
+            });
           }
+          for (const checkpoint of checkpoints) {
+            if (checkpoint.gitDirectory) {
+              await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+            }
+          }
+          await state.deleteProject(body.projectId as string);
+        } finally {
+          activeCheckpointProjects.delete(body.projectId as string);
         }
-        await state.deleteProject(body.projectId);
-      } finally {
-        activeCheckpointProjects.delete(body.projectId);
-      }
+      });
       sendJson(response, 200, { status: "deleted" });
       return true;
     }
@@ -1090,40 +1120,42 @@ async function handleApi(
       if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
         throw new RepositoryError("A valid retention cutoff is required.");
       }
-      const cutoff = new Date(body.olderThan);
-      const projection = await state.load();
-      const expiredThreads = new Set(
-        projection.threads.filter((thread) => new Date(thread.updatedAt) < cutoff).map((thread) => thread.id),
-      );
-      const expiredProjectIds = new Set(
-        projection.threads
-          .filter((thread) => expiredThreads.has(thread.id))
-          .map((thread) => thread.projectId),
-      );
-      if ([...expiredProjectIds].some((projectId) => (
-        activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId)
-      ))) {
-        throw new LocalStateError("Retention cannot run while an affected project has an active turn.", 409);
-      }
-      for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
-      try {
-        const checkpoints = projection.checkpoints.filter((item) => expiredThreads.has(item.threadId));
-        for (const checkpoint of checkpoints) {
-          await state.saveCheckpoint({
-            ...checkpoint,
-            state: "unavailable",
-            message: "Checkpoint cleanup is pending retention.",
-          });
+      await withDelegatedControlLock(async () => {
+        const cutoff = new Date(body.olderThan as string);
+        const projection = await state.load();
+        const expiredThreads = new Set(
+          projection.threads.filter((thread) => new Date(thread.updatedAt) < cutoff).map((thread) => thread.id),
+        );
+        const expiredProjectIds = new Set(
+          projection.threads
+            .filter((thread) => expiredThreads.has(thread.id))
+            .map((thread) => thread.projectId),
+        );
+        if ([...expiredProjectIds].some((projectId) => (
+          activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId)
+        ))) {
+          throw new LocalStateError("Retention cannot run while an affected project has an active turn.", 409);
         }
-        for (const checkpoint of checkpoints) {
-          if (checkpoint.gitDirectory) {
-            await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+        for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
+        try {
+          const checkpoints = projection.checkpoints.filter((item) => expiredThreads.has(item.threadId));
+          for (const checkpoint of checkpoints) {
+            await state.saveCheckpoint({
+              ...checkpoint,
+              state: "unavailable",
+              message: "Checkpoint cleanup is pending retention.",
+            });
           }
+          for (const checkpoint of checkpoints) {
+            if (checkpoint.gitDirectory) {
+              await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
+            }
+          }
+          await state.enforceRetention(cutoff);
+        } finally {
+          for (const projectId of expiredProjectIds) activeCheckpointProjects.delete(projectId);
         }
-        await state.enforceRetention(cutoff);
-      } finally {
-        for (const projectId of expiredProjectIds) activeCheckpointProjects.delete(projectId);
-      }
+      });
       sendJson(response, 200, { status: "compacted" });
       return true;
     }
@@ -1727,7 +1759,7 @@ async function handleApi(
           ? await codex.start({
             repository: context.root,
             worktree: context.worktree,
-            conversationId: body.conversationId,
+            conversationId: persisted.thread.id,
             prompt: effectiveProviderPrompt,
             approvalUrl: await approvalUrl,
             mode,
@@ -1739,7 +1771,7 @@ async function handleApi(
           ? await shikigami.start({
             repository: context.root,
             worktree: context.worktree,
-            conversationId: body.conversationId,
+            conversationId: persisted.thread.id,
             prompt: effectiveProviderPrompt,
             approvalUrl: await approvalUrl,
             mode,
@@ -1753,7 +1785,7 @@ async function handleApi(
               const started = await adapter.start({
                 repository: context.root,
                 worktree: context.worktree,
-                conversationId: body.conversationId,
+                conversationId: persisted.thread.id,
                 prompt: providerPrompt,
                 approvalUrl: await approvalUrl,
                 mode,
@@ -1767,7 +1799,7 @@ async function handleApi(
           : await provider.start(
             context.root,
             context.worktree,
-            body.conversationId,
+            persisted.thread.id,
             effectiveProviderPrompt,
             await approvalUrl,
             mode,
@@ -1830,7 +1862,26 @@ async function handleApi(
             event,
             profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined,
           );
-          await publishThreadStatusTransition(wake, state, persisted.thread.id, previousStatus);
+          if (event.kind === "approval_resolved") {
+            const sibling = permissions.approvalsFor(run.id).find(
+              (approval) => approval.state === "pending",
+            );
+            if (sibling) {
+              await state.recordProviderEvent(
+                persisted.thread.id,
+                persisted.turn.id,
+                providerId,
+                { kind: "approval_pending", ...sibling },
+              );
+            }
+          }
+          await publishThreadStatusTransition(
+            wake,
+            state,
+            persisted.thread.id,
+            previousStatus,
+            event.kind === "approval_pending" || event.kind === "approval_resolved",
+          );
           previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
         } catch {
           if (providerId === "codex-cli") codex.cancel(run.id);
@@ -1944,6 +1995,7 @@ async function handleApi(
         worktree?: unknown;
         toolCallId?: unknown;
         decision?: unknown;
+        parentThreadId?: unknown;
       };
       if (
         typeof body.runId !== "string"
@@ -1951,37 +2003,82 @@ async function handleApi(
         || typeof body.repository !== "string"
         || typeof body.worktree !== "string"
         || typeof body.toolCallId !== "string"
+        || (
+          body.parentThreadId !== undefined
+          && typeof body.parentThreadId !== "string"
+        )
         || (body.decision !== "allow_once" && body.decision !== "deny")
       ) {
         throw new PermissionError("A complete scoped approval decision is required.");
       }
-      const decided = await permissions.decideAfter(
-        approvalMatch[1],
-        {
-          runId: body.runId,
-          conversationId: body.conversationId,
-          repository: body.repository,
-          worktree: body.worktree,
-          toolCallId: body.toolCallId,
-        },
-        body.decision,
-        async (resolution) => {
-          const projection = await state.load();
-          const turn = projection.turns.find((item) => item.providerRunId === body.runId);
-          const thread = turn
-            ? projection.threads.find((item) => item.id === turn.threadId)
-            : undefined;
-          if (!turn || !thread) {
-            throw new LocalStateError("The provider turn is missing from local history.", 404);
+      const runId = body.runId;
+      const conversationId = body.conversationId;
+      const repository = body.repository;
+      const worktree = body.worktree;
+      const toolCallId = body.toolCallId;
+      const decision = body.decision;
+      const parentThreadId = body.parentThreadId;
+      const resolveApproval = async () => {
+        if (typeof parentThreadId === "string") {
+          const { preferences: currentPreferences } = await preferences.load();
+          if (!currentPreferences.orchestrationThreadsBeta) {
+            throw new PermissionError("Parent-routed approvals require beta orchestration.", 403);
           }
-          await state.recordProviderEvent(
-            thread.id,
-            turn.id,
-            thread.provider ?? "claude-code",
-            { kind: "approval_resolved", id: resolution.id, state: resolution.state },
-          );
-        },
-      );
+          const projection = await state.load();
+          assertParentRoutedApproval(projection, permissions.approvals(), {
+            parentThreadId,
+            childThreadId: conversationId,
+            approvalId: approvalMatch[1],
+          });
+        }
+        const previousStatus = projectThreadStatus(
+          await state.load(),
+          conversationId,
+        ).status;
+        const decided = await permissions.decideAfter(
+          approvalMatch[1],
+          { runId, conversationId, repository, worktree, toolCallId },
+          decision,
+          async (resolution) => {
+            const projection = await state.load();
+            const turn = projection.turns.find((item) => item.providerRunId === runId);
+            const thread = turn
+              ? projection.threads.find((item) => item.id === turn.threadId)
+              : undefined;
+            if (!turn || !thread) {
+              throw new LocalStateError("The provider turn is missing from local history.", 404);
+            }
+            await state.recordProviderEvent(
+              thread.id,
+              turn.id,
+              thread.provider ?? "claude-code",
+              { kind: "approval_resolved", id: resolution.id, state: resolution.state },
+            );
+            const sibling = permissions.approvalsFor(runId).find(
+              (approval) => approval.state === "pending",
+            );
+            if (sibling) {
+              await state.recordProviderEvent(
+                thread.id,
+                turn.id,
+                thread.provider ?? "claude-code",
+                { kind: "approval_pending", ...sibling },
+              );
+            }
+          },
+        );
+        await publishThreadStatusTransition(
+          wake,
+          state,
+          conversationId,
+          previousStatus,
+          true,
+        );
+        return decided;
+      };
+      const decided = typeof parentThreadId === "string"
+        ? await withDelegatedControlLock(resolveApproval)
+        : await resolveApproval();
       sendJson(response, 200, decided);
       return true;
     }
@@ -2400,8 +2497,8 @@ export function createLocalHost(
   profiles = new ClaudeProfileStore(state.directory),
   remoteAuth?: RemoteAuth,
   tls?: { key: Buffer; cert: Buffer },
+  permissions = new PermissionBroker(),
 ) {
-  const permissions = new PermissionBroker();
   const internalPermissionCallback = remoteAuth
     ? createInternalPermissionCallback(permissions)
     : undefined;
@@ -2417,6 +2514,54 @@ export function createLocalHost(
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
+  let delegatedControlTail = Promise.resolve();
+  const withDelegatedControlLock: DelegatedControlLock = async (action) => {
+    const previous = delegatedControlTail;
+    let release!: () => void;
+    delegatedControlTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await action();
+    } finally {
+      release();
+    }
+  };
+  const reconcileApprovalState = async (
+    approval: ApprovalSnapshot,
+    recordResolution: boolean,
+  ): Promise<void> => {
+    const projection = await state.load();
+    const turn = projection.turns.find((item) => item.providerRunId === approval.runId);
+    const thread = turn
+      ? projection.threads.find((item) => item.id === turn.threadId)
+      : undefined;
+    if (!turn || !thread) return;
+    if (recordResolution) {
+      await state.recordProviderEvent(
+        thread.id,
+        turn.id,
+        thread.provider ?? "claude-code",
+        { kind: "approval_resolved", id: approval.id, state: approval.state },
+      );
+    }
+    const sibling = permissions.approvalsFor(approval.runId).find(
+      (candidate) => candidate.state === "pending",
+    );
+    if (sibling) {
+      await state.recordProviderEvent(
+        thread.id,
+        turn.id,
+        thread.provider ?? "claude-code",
+        { kind: "approval_pending", ...sibling },
+      );
+    }
+    await publishThreadStatusTransition(wake, state, approval.conversationId, null, true);
+  };
+  const unsubscribePermissionChanges = permissions.subscribe((approval) => {
+    void reconcileApprovalState(approval, approval.state === "expired").catch(() => undefined);
+  });
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
   const recovery = state.recoverInterruptedTurns();
@@ -2525,6 +2670,7 @@ export function createLocalHost(
         adapters,
         activeAcp,
         wake,
+        withDelegatedControlLock,
         Boolean(remoteAuth),
         remoteAuth,
         internalPermissionCallback?.url,
@@ -2536,6 +2682,7 @@ export function createLocalHost(
   serverRef = server;
   automationScheduler.start();
   server.once("close", () => {
+    unsubscribePermissionChanges();
     automationScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();

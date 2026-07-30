@@ -237,6 +237,8 @@ test("deny, cancellation, expiry, and provider failure resolve fail-closed", asy
   }
 
   const expiring = new PermissionBroker(5);
+  const expiryStates: string[] = [];
+  expiring.subscribe((approval) => expiryStates.push(approval.state));
   const expiryToken = expiring.createRunToken("run-expired");
   const expiryInput = { ...context, runId: "run-expired" };
   assert.ok(expiring.register(expiryInput));
@@ -248,6 +250,19 @@ test("deny, cancellation, expiry, and provider failure resolve fail-closed", asy
   );
   assert.equal(expired.behavior, "deny");
   assert.match("message" in expired ? expired.message : "", /expired/);
+  assert.deepEqual(expiryStates, ["expired"]);
+
+  const overdue = new PermissionBroker(0);
+  const overdueApproval = overdue.register({ ...context, runId: "run-overdue" });
+  assert.ok(overdueApproval);
+  assert.throws(
+    () => overdue.decide(
+      overdueApproval.id,
+      decisionContext({ ...context, runId: "run-overdue" }),
+      "allow_once",
+    ),
+    (error: unknown) => error instanceof PermissionError && error.status === 409,
+  );
 });
 
 test("cross-worktree and unmatched provider requests are rejected", async () => {
