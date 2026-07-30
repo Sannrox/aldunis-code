@@ -88,6 +88,25 @@ authenticated product contracts; they must not treat cached UI as domain
 authority. Governed agent harness work is expected to use **Shikigami** with
 Chisei as the policy plane—see architecture and product-boundary discussions.
 
+For authenticated Chisei projections, set the optional bearer token only in
+the host environment:
+
+```sh
+export ALDUNIS_CHISEI_ENDPOINT=http://127.0.0.1:50051
+export ALDUNIS_CHISEI_TOKEN=…
+```
+
+Chisei connections require HTTPS unless the endpoint is a literal loopback
+address (`127.0.0.1` or `[::1]`); the host rejects every insecure remote
+endpoint before creating a client.
+
+After opening Code on loopback, switch to Chisei and bind each local project to
+its authorized namespace. Remote workbench clients cannot create or change
+that binding. When remote access is enabled, browser binding administration is
+disabled for both direct and proxied sessions because a loopback reverse proxy
+is not proof of local authority; configure bindings before enabling remote
+access. The browser never receives the endpoint or token.
+
 ## Remote access (optional)
 
 Remote access is **off by default**. Recommended path: Tailscale Serve.

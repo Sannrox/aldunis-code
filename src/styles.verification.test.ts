@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 const stylesPath = join(dirname(fileURLToPath(import.meta.url)), "styles.css");
 const css = readFileSync(stylesPath, "utf8");
+const shellCss = readFileSync(join(dirname(stylesPath), "mock-shell.css"), "utf8");
 
 test("semantic token tables exist for light (:root) and dark themes", () => {
   assert.match(css, /:root\s*\{[\s\S]*?--primary\s*:/);
@@ -224,6 +225,16 @@ test("delegated input cards keep bounded full-width answer controls", () => {
     shell,
     /\.delegated-input-card textarea,[\s\S]*?\.input-request-card textarea\s*\{[\s\S]*?min-height:\s*88px/,
   );
+});
+
+test("Chisei Action projection stays keyboard-visible and stacks at narrow widths", () => {
+  assert.match(shellCss, /\.chisei-action-list button:focus-visible\s*\{[^}]*outline:/s);
+  assert.match(shellCss, /\.chisei-action-list button\s*\{[^}]*min-height:\s*48px/s);
+  assert.match(
+    shellCss,
+    /@media \(max-width:\s*720px\)[\s\S]*?\.chisei-binding\s*\{[^}]*grid-template-columns:\s*1fr/s,
+  );
+  assert.match(shellCss, /\.chisei-action-list span,[\s\S]*?overflow-wrap:\s*anywhere/s);
 });
 
 test("keyboard-active quick results remain visibly highlighted", () => {

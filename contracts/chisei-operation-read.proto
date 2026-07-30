@@ -1,0 +1,18 @@
+syntax = "proto3";
+package chisei;
+
+message GetOperationReceiptRequest {
+  string operation_id = 1;
+  string request_id = 2;
+  string caller_scope = 3;
+  uint32 attempt = 4;
+}
+message GetOperationReceiptResponse {
+  string receipt_json = 1;
+  bool complete = 2;
+  repeated string missing_surfaces = 3;
+}
+
+service ChiseiService {
+  rpc GetOperationReceipt(GetOperationReceiptRequest) returns (GetOperationReceiptResponse);
+}

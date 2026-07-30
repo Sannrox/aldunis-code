@@ -25,6 +25,7 @@ export interface Project {
   name: string;
   root: string;
   openedAt: string;
+  chiseiNamespace?: string | null;
 }
 
 export interface Thread {
@@ -958,14 +959,24 @@ export class LocalStateStore {
   }
 
   async #append(event: StateEvent): Promise<void> {
+    await this.#appendComputed(() => ({ event, value: undefined }));
+  }
+
+  async #appendComputed<T>(
+    compute: (projection: StateProjection) => { event: StateEvent | null; value: T },
+  ): Promise<T> {
     await this.load();
+    let result!: T;
     const operation = this.#writeQueue.then(async () => {
+      const computed = compute(this.#projection);
+      result = computed.value;
+      if (!computed.event) return;
       const envelope: EventEnvelope = {
         schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
         sequence: this.#projection.sequence + 1,
         id: randomUUID(),
         recordedAt: new Date().toISOString(),
-        event,
+        event: computed.event,
       };
       const handle = await open(this.#eventPath, "a", 0o600);
       try {
@@ -978,34 +989,51 @@ export class LocalStateStore {
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;
+    return result;
   }
 
   async saveProject(
     input: Omit<Project, "schemaVersion" | "openedAt"> & { openedAt?: string },
   ): Promise<Project> {
-    const projection = await this.load();
-    const existing = projection.projects.find((project) => project.id === input.id);
-    // Preserve first-open time on reselect so project chips do not reshuffle.
-    const openedAt = input.openedAt ?? existing?.openedAt ?? new Date().toISOString();
-    const project: Project = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: input.id,
-      name: input.name,
-      root: input.root,
-      openedAt,
-    };
-    // Skip no-op writes (same id/name/root/openedAt) — selecting a chat must not
-    // emit project_saved events or change list order.
-    if (
-      existing
-      && existing.name === project.name
-      && existing.root === project.root
-      && existing.openedAt === project.openedAt
-    ) {
-      return existing;
+    return this.#appendComputed((projection) => {
+      const existing = projection.projects.find((project) => project.id === input.id);
+      // Preserve first-open time on reselect so project chips do not reshuffle.
+      const openedAt = input.openedAt ?? existing?.openedAt ?? new Date().toISOString();
+      const project: Project = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: input.id,
+        name: input.name,
+        root: input.root,
+        openedAt,
+        chiseiNamespace: input.chiseiNamespace ?? existing?.chiseiNamespace ?? null,
+      };
+      const unchanged = existing
+        && existing.name === project.name
+        && existing.root === project.root
+        && existing.openedAt === project.openedAt
+        && (existing.chiseiNamespace ?? null) === project.chiseiNamespace;
+      return {
+        event: unchanged ? null : { type: "project_saved", project },
+        value: unchanged ? existing : project,
+      };
+    });
+  }
+
+  async bindProjectChiseiNamespace(projectId: string, namespace: string | null): Promise<Project> {
+    const normalized = namespace?.trim() || null;
+    if (normalized && (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(normalized))) {
+      throw new LocalStateError("The Chisei namespace is invalid.", 400);
     }
-    await this.#append({ type: "project_saved", project });
-    return project;
+    return this.#appendComputed((projection) => {
+      const project = projection.projects.find((item) => item.id === projectId);
+      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
+      const next = { ...project, chiseiNamespace: normalized };
+      const unchanged = (project.chiseiNamespace ?? null) === normalized;
+      return {
+        event: unchanged ? null : { type: "project_saved", project: next },
+        value: unchanged ? project : next,
+      };
+    });
   }
 
   async startTurn(input: {

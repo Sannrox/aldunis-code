@@ -18,6 +18,8 @@ export interface SavedProject {
   openedAt: string;
   /** All project record ids that collapse into this chip (main + worktrees). */
   memberIds?: string[];
+  chiseiBindings?: Record<string, string | null>;
+  chiseiNamespace?: string | null;
 }
 
 type ProjectPickerRowKind = "project" | "parent" | "directory" | "open-path";

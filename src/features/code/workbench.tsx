@@ -447,6 +447,8 @@ export function CodeWorkbench({
   onSelectWorktree,
   onManageWorktrees,
   onSettings,
+  onProjectsChanged,
+  chiseiBindingAdministrationAvailable = true,
   orchestrationThreadsBeta = false,
 }: {
   product: import("../../types").Product;
@@ -466,6 +468,8 @@ export function CodeWorkbench({
   onSelectWorktree: (path: string) => void;
   onManageWorktrees: (path?: string) => void;
   onSettings: () => void;
+  onProjectsChanged?: () => Promise<void>;
+  chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
 }) {
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
@@ -1024,7 +1028,13 @@ export function CodeWorkbench({
       />
       <main className="main">
       {product !== "code" ? (
-        <DomainPage product={product as Exclude<import("../../types").Product, "code">} />
+        <DomainPage
+          product={product as Exclude<import("../../types").Product, "code">}
+          projects={projects}
+          selectedProjectId={repository?.projectId ?? null}
+          onProjectsChanged={onProjectsChanged}
+          chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+        />
       ) : (
       <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
         {lifecycleError && (
