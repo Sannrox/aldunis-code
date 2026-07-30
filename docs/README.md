@@ -28,6 +28,7 @@ want to change it.
 | [design/README.md](design/README.md) | Design artifacts and evidence |
 | [research/363-workspace-panel-selector.md](research/363-workspace-panel-selector.md) | Files, Preview, and Changes navigation decision |
 | [research/364-provider-management-entry.md](research/364-provider-management-entry.md) | Provider administration entry-point decision |
+| [research/365-conversation-lifecycle.md](research/365-conversation-lifecycle.md) | Pin, archive, settle, and worktree-release lifecycle decision |
 | [decisions/README.md](decisions/README.md) | Accepted design decisions (ADRs) |
 
 ## Repository root
