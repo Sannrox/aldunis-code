@@ -405,6 +405,76 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
   const allowed = await allowWait;
   assert.equal(allowed.code, 0, allowed.stderr);
 
+  const identicalInput = { path: "same.txt", content: "same" };
+  const firstIdentical = permissions.register({
+    runId,
+    conversationId: "c1",
+    repository: "/repo",
+    worktree: "/repo/wt",
+    toolCallId: "shikigami:write_file:identical-1",
+    toolName: "write_file",
+    toolInput: identicalInput,
+    provider: "Shikigami",
+  });
+  const secondIdentical = permissions.register({
+    runId,
+    conversationId: "c1",
+    repository: "/repo",
+    worktree: "/repo/wt",
+    toolCallId: "shikigami:write_file:identical-2",
+    toolName: "write_file",
+    toolInput: identicalInput,
+    provider: "Shikigami",
+  });
+  assert.ok(firstIdentical);
+  assert.ok(secondIdentical);
+
+  const firstIdenticalSeen = nextRequest();
+  const firstIdenticalWait = runHook({
+    event: "pre_tool",
+    payload: {
+      run_id: "h1",
+      tool: "write_file",
+      args_json: JSON.stringify(identicalInput),
+    },
+  });
+  await firstIdenticalSeen;
+  const secondIdenticalSeen = nextRequest();
+  let secondIdenticalSettled = false;
+  const secondIdenticalWait = runHook({
+    event: "pre_tool",
+    payload: {
+      run_id: "h1",
+      tool: "write_file",
+      args_json: JSON.stringify(identicalInput),
+    },
+  }).finally(() => {
+    secondIdenticalSettled = true;
+  });
+  await secondIdenticalSeen;
+
+  permissions.decide(firstIdentical.id, {
+    runId,
+    conversationId: "c1",
+    repository: "/repo",
+    worktree: "/repo/wt",
+    toolCallId: "shikigami:write_file:identical-1",
+  }, "allow_once");
+  const firstIdenticalResult = await firstIdenticalWait;
+  assert.equal(firstIdenticalResult.code, 0, firstIdenticalResult.stderr);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(secondIdenticalSettled, false, "one allow-once must not release an identical operation");
+
+  permissions.decide(secondIdentical.id, {
+    runId,
+    conversationId: "c1",
+    repository: "/repo",
+    worktree: "/repo/wt",
+    toolCallId: "shikigami:write_file:identical-2",
+  }, "deny");
+  const secondIdenticalResult = await secondIdenticalWait;
+  assert.equal(secondIdenticalResult.code, 1, secondIdenticalResult.stderr);
+
   const denyApproval = permissions.register({
     runId,
     conversationId: "c1",
