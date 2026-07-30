@@ -372,6 +372,16 @@ test("composer grows within its established desktop height bounds", () => {
   );
 });
 
+test("diff source lines scroll horizontally instead of wrapping", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.diff-view pre\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(
+    shell,
+    /\.diff-view pre > span > code\s*\{[^}]*min-width:\s*max-content[^}]*white-space:\s*pre[^}]*word-break:\s*normal/s,
+  );
+});
+
 test("index.html must not load remote Google Fonts (local-first)", () => {
   const indexPath = join(dirname(fileURLToPath(import.meta.url)), "..", "index.html");
   const html = readFileSync(indexPath, "utf8");
