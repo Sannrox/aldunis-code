@@ -44,7 +44,7 @@ export AUTOREVIEW="$HOME/.grok/skills/autoreview/scripts/autoreview"
 "$AUTOREVIEW" --mode local   # or --mode branch / --mode commit as appropriate
 ```
 
-See `deliver-code-issue`. Do not report delivery as complete with only
+See `deliver-ready-issue`. Do not report delivery as complete with only
 deterministic verify.
 
 ## Output

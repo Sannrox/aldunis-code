@@ -81,7 +81,7 @@ Use repository skills under `.agents/skills/` when shaping or delivering work:
 
 - `route-code-work` — ownership across Code / Chisei / Tenkai / Platform
 - `assess-code-impact` — security and boundary impact
-- `deliver-code-issue` — implementation through a ready PR
+- `deliver-ready-issue` — implementation through a ready PR
 - `verify-code-change` — proportionate verification
 - `capture-code-decision` — promote accepted design into docs
 

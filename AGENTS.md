@@ -90,11 +90,11 @@ merged branches. Branches created by agents use the `codex/` prefix.
 
 - `route-code-work` — route work to Aldunis Code or the owning product.
 - `assess-code-impact` — map provider, local-data, UX, contract, and security impact.
-- `deliver-code-issue` — deliver one dependency-ready Issue through a PR.
+- `deliver-ready-issue` — deliver one dependency-ready Issue through a PR.
 - `verify-code-change` — run proportionate UI, provider, contract, and security checks.
 - `capture-code-decision` — preserve accepted architecture outcomes.
 
-Before committing work delivered through `deliver-code-issue`, run the **global**
+Before committing work delivered through `deliver-ready-issue`, run the **global**
 `autoreview` helper when available (for example
 `$HOME/.grok/skills/autoreview/scripts/autoreview`, with
 `$HOME/.agents/...` or `$HOME/.claude/...` as fallbacks). Do not vendor
