@@ -693,8 +693,12 @@ async function handleApi(
     }
     if (route === "/api/state/load") {
       const projection = await state.load();
+      const { preferences: currentPreferences } = await preferences.load();
       sendJson(response, 200, {
         ...projection,
+        delegatedRelationships: currentPreferences.orchestrationThreadsBeta
+          ? projection.delegatedRelationships
+          : [],
         threadStatuses: projectThreadStatuses(projection),
       });
       return true;
@@ -913,6 +917,41 @@ async function handleApi(
         throw new LocalStateError("A confirmed conversation deletion is required.", 400);
       }
       sendJson(response, 200, await state.deleteConversation(body.threadId));
+      return true;
+    }
+    if (route === "/api/state/delegated-conversations/link") {
+      const body = await readJson(request) as {
+        parentThreadId?: unknown;
+        childThreadId?: unknown;
+      };
+      const { preferences: currentPreferences } = await preferences.load();
+      if (!currentPreferences.orchestrationThreadsBeta) {
+        throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+      }
+      if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
+        throw new LocalStateError("A parent and child conversation are required.", 400);
+      }
+      sendJson(
+        response,
+        200,
+        await state.linkDelegatedConversation(body.parentThreadId, body.childThreadId),
+      );
+      return true;
+    }
+    if (route === "/api/state/delegated-conversations/unlink") {
+      const body = await readJson(request) as {
+        parentThreadId?: unknown;
+        childThreadId?: unknown;
+      };
+      const { preferences: currentPreferences } = await preferences.load();
+      if (!currentPreferences.orchestrationThreadsBeta) {
+        throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+      }
+      if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
+        throw new LocalStateError("A parent and child conversation are required.", 400);
+      }
+      await state.unlinkDelegatedConversation(body.parentThreadId, body.childThreadId);
+      sendJson(response, 200, { status: "unlinked" });
       return true;
     }
     if (route === "/api/preferences/load") {

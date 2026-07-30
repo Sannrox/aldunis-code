@@ -69,10 +69,19 @@ export interface ConversationDeletion {
     annotations: number;
     fileReviews: number;
     forks: number;
+    delegatedRelationships: number;
   };
   requestedAt: string;
   completedAt: string | null;
   error: string | null;
+}
+
+export interface DelegatedConversationRelationship {
+  schemaVersion: 2;
+  id: string;
+  parentThreadId: string;
+  childThreadId: string;
+  createdAt: string;
 }
 
 export interface ForkTransferMessage {
@@ -287,6 +296,7 @@ export interface StateProjection {
   fileReviews: FileReview[];
   conversationDeletions: ConversationDeletion[];
   forks: ConversationFork[];
+  delegatedRelationships: DelegatedConversationRelationship[];
 }
 
 type StateEvent =
@@ -303,7 +313,8 @@ type StateEvent =
   | { type: "file_review_saved"; fileReview: FileReview }
   | { type: "conversation_deletion_saved"; conversationDeletion: ConversationDeletion }
   | { type: "fork_created"; thread: Thread; fork: ConversationFork }
-  | { type: "fork_saved"; fork: ConversationFork };
+  | { type: "fork_saved"; fork: ConversationFork }
+  | { type: "delegated_relationship_saved"; delegatedRelationship: DelegatedConversationRelationship };
 
 interface EventEnvelope {
   schemaVersion: 2;
@@ -336,6 +347,7 @@ function emptyProjection(): StateProjection {
     fileReviews: [],
     conversationDeletions: [],
     forks: [],
+    delegatedRelationships: [],
   };
 }
 
@@ -553,6 +565,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.forks, event.fork);
   } else if (event.type === "fork_saved") {
     replaceById(projection.forks, event.fork);
+  } else if (event.type === "delegated_relationship_saved") {
+    replaceById(projection.delegatedRelationships, event.delegatedRelationship);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -596,6 +610,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     conversation_deletion_saved: "conversationDeletion",
     fork_created: "fork",
     fork_saved: "fork",
+    delegated_relationship_saved: "delegatedRelationship",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -642,6 +657,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           annotations: Number(records.annotations ?? 0),
           fileReviews: Number(records.fileReviews ?? 0),
           forks: Number(records.forks ?? 0),
+          delegatedRelationships: Number(records.delegatedRelationships ?? 0),
         },
       };
     } else {
@@ -1196,6 +1212,49 @@ export class LocalStateStore {
     return this.#conversationRecordCounts(projection, threadId);
   }
 
+  async linkDelegatedConversation(
+    parentThreadId: string,
+    childThreadId: string,
+  ): Promise<DelegatedConversationRelationship> {
+    const projection = await this.load();
+    this.#requireThread(projection, parentThreadId);
+    this.#requireThread(projection, childThreadId);
+    if (parentThreadId === childThreadId) {
+      throw new LocalStateError("A conversation cannot be delegated to itself.", 400);
+    }
+    const existing = projection.delegatedRelationships.find(
+      (item) => item.childThreadId === childThreadId,
+    );
+    if (existing?.parentThreadId === parentThreadId) return existing;
+    if (existing) {
+      throw new LocalStateError("This conversation already has a delegated parent.", 409);
+    }
+    const relationship: DelegatedConversationRelationship = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      id: randomUUID(),
+      parentThreadId,
+      childThreadId,
+      createdAt: new Date().toISOString(),
+    };
+    await this.#append({ type: "delegated_relationship_saved", delegatedRelationship: relationship });
+    return relationship;
+  }
+
+  async unlinkDelegatedConversation(parentThreadId: string, childThreadId: string): Promise<void> {
+    const projection = await this.load();
+    const relationship = projection.delegatedRelationships.find(
+      (item) => item.parentThreadId === parentThreadId && item.childThreadId === childThreadId,
+    );
+    if (!relationship) {
+      throw new LocalStateError("The delegated relationship is not available.", 404);
+    }
+    await this.#compact((next) => {
+      next.delegatedRelationships = next.delegatedRelationships.filter(
+        (item) => item.id !== relationship.id,
+      );
+    });
+  }
+
   async deleteConversation(threadId: string): Promise<ConversationDeletion> {
     const projection = await this.load();
     const existingDeletion = projection.conversationDeletions.find(
@@ -1300,6 +1359,11 @@ export class LocalStateStore {
       forks: projection.forks.filter(
         (fork) => fork.sourceThreadId === threadId || fork.destinationThreadId === threadId,
       ).length,
+      delegatedRelationships: projection.delegatedRelationships.filter(
+        (relationship) => (
+          relationship.parentThreadId === threadId || relationship.childThreadId === threadId
+        ),
+      ).length,
     };
   }
 
@@ -1335,6 +1399,11 @@ export class LocalStateStore {
         .map((fork) => fork.id),
     );
     projection.forks = projection.forks.filter((fork) => !removedForkIds.has(fork.id));
+    projection.delegatedRelationships = projection.delegatedRelationships.filter(
+      (relationship) => (
+        relationship.parentThreadId !== threadId && relationship.childThreadId !== threadId
+      ),
+    );
     projection.threads = projection.threads.map((thread) => (
       thread.parentThreadId === threadId || (thread.forkId && removedForkIds.has(thread.forkId))
         ? { ...thread, parentThreadId: undefined, forkId: undefined }
@@ -1638,6 +1707,12 @@ export class LocalStateStore {
       projection.forks = projection.forks.filter(
         (fork) => !threadIds.has(fork.sourceThreadId) && !threadIds.has(fork.destinationThreadId),
       );
+      projection.delegatedRelationships = projection.delegatedRelationships.filter(
+        (relationship) => (
+          !threadIds.has(relationship.parentThreadId)
+          && !threadIds.has(relationship.childThreadId)
+        ),
+      );
     });
   }
 
@@ -1680,6 +1755,12 @@ export class LocalStateStore {
         (fork) => (
           !expiredThreads.has(fork.sourceThreadId)
           && !expiredThreads.has(fork.destinationThreadId)
+        ),
+      );
+      projection.delegatedRelationships = projection.delegatedRelationships.filter(
+        (relationship) => (
+          !expiredThreads.has(relationship.parentThreadId)
+          && !expiredThreads.has(relationship.childThreadId)
         ),
       );
     });
@@ -1745,6 +1826,10 @@ export class LocalStateStore {
           conversationDeletion,
         })),
         ...next.forks.map((fork): StateEvent => ({ type: "fork_saved", fork })),
+        ...next.delegatedRelationships.map((delegatedRelationship): StateEvent => ({
+          type: "delegated_relationship_saved",
+          delegatedRelationship,
+        })),
       ];
       const rebuilt = emptyProjection();
       const envelopes = events.map((event, index) => {

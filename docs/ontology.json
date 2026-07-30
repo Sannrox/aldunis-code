@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "classes": [
+    {
+      "name": "LocalConversation",
+      "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
+      "properties": [
+        {
+          "name": "provider",
+          "type": "string",
+          "required": true,
+          "description": "The provider adapter bound to the conversation."
+        },
+        {
+          "name": "worktree",
+          "type": "string",
+          "required": true,
+          "description": "The canonical local worktree bound to the conversation."
+        }
+      ]
+    },
+    {
+      "name": "DelegatedConversationRelationship",
+      "description": "A local, metadata-only association from one parent conversation to one existing child conversation. It never transfers messages, provider context, tool state, or approvals."
+    }
+  ],
+  "relations": [
+    {
+      "name": "has_delegated_relationship",
+      "description": "Associates a parent conversation with a durable delegated-conversation relationship.",
+      "domain": "LocalConversation",
+      "range": "DelegatedConversationRelationship"
+    },
+    {
+      "name": "projects_delegated_child",
+      "description": "Identifies the one existing child conversation projected by a delegated-conversation relationship.",
+      "domain": "DelegatedConversationRelationship",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    }
+  ],
+  "provenance": [
+    {
+      "subject": "LocalConversation",
+      "source": "Aldunis Code local state contract",
+      "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedConversationRelationship",
+      "source": "GitHub Issue Sannrox/aldunis-code#410",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/410",
+      "confidence": 1.0
+    },
+    {
+      "subject": "has_delegated_relationship",
+      "source": "Aldunis Code local state contract",
+      "locator": "server/state.ts#DelegatedConversationRelationship",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_delegated_child",
+      "source": "GitHub Issue Sannrox/aldunis-code#410",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/410",
+      "confidence": 1.0
+    }
+  ]
+}

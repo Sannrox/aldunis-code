@@ -6,6 +6,7 @@ export interface Preferences {
   reducedMotion: "system" | "reduce" | "no-preference";
   commandPaletteShortcut: "mod+k" | "mod+shift+p";
   managedWorktreeLimit: number | null;
+  orchestrationThreadsBeta: boolean;
 }
 
 export function resolveTheme(
@@ -24,6 +25,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   reducedMotion: "system",
   commandPaletteShortcut: "mod+k",
   managedWorktreeLimit: 10,
+  orchestrationThreadsBeta: false,
 };
 
 export function readPreferencesResponse(value: unknown): {
@@ -43,6 +45,10 @@ export function readPreferencesResponse(value: unknown): {
     || !["system", "reduce", "no-preference"].includes(input.reducedMotion as string)
     || !["mod+k", "mod+shift+p"].includes(input.commandPaletteShortcut as string)
     || (
+      input.orchestrationThreadsBeta !== undefined
+      && typeof input.orchestrationThreadsBeta !== "boolean"
+    )
+    || (
       input.managedWorktreeLimit !== undefined
       && input.managedWorktreeLimit !== null
       && (
@@ -57,10 +63,11 @@ export function readPreferencesResponse(value: unknown): {
   }
   return {
     preferences: {
-      ...(input as unknown as Omit<Preferences, "managedWorktreeLimit">),
+      ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta">),
       managedWorktreeLimit: input.managedWorktreeLimit === undefined
         ? DEFAULT_PREFERENCES.managedWorktreeLimit
         : input.managedWorktreeLimit as number | null,
+      orchestrationThreadsBeta: input.orchestrationThreadsBeta === true,
     },
     recovered: body.recovered,
   };

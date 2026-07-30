@@ -490,6 +490,7 @@ test("project deletion and retention physically remove sensitive conversation da
     fileReviews: [],
     conversationDeletions: [],
     forks: [],
+    delegatedRelationships: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
@@ -638,6 +639,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     annotations: 0,
     fileReviews: 0,
     forks: 0,
+    delegatedRelationships: 0,
   });
   const deletion = await store.deleteConversation(thread.id);
   assert.equal(deletion.status, "completed");
@@ -653,6 +655,47 @@ test("conversation deletion previews and physically compacts only conversation-o
   const persisted = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal(persisted.includes("secret sentinel"), false);
   assert.equal(persisted.includes("worktree-that-must-survive"), false);
+});
+
+test("delegated conversation relationships persist, enforce one parent, and detach on deletion", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const createConversation = async (prompt: string) => {
+    const created = await store.startTurn({
+      projectId: "project-1",
+      worktree: `/fixture/${prompt}`,
+      prompt,
+      mode: "ask",
+      provider: "codex-cli",
+    });
+    await store.recordProviderEvent(created.thread.id, created.turn.id, "codex-cli", {
+      kind: "turn_completed",
+      sessionId: `session-${prompt}`,
+      costUsd: 0,
+    });
+    return created.thread;
+  };
+  const firstParent = await createConversation("parent-a");
+  const secondParent = await createConversation("parent-b");
+  const child = await createConversation("child");
+
+  const relationship = await store.linkDelegatedConversation(firstParent.id, child.id);
+  assert.equal(relationship.parentThreadId, firstParent.id);
+  assert.equal((await new LocalStateStore(directory).load()).delegatedRelationships.length, 1);
+  await assert.rejects(
+    () => store.linkDelegatedConversation(secondParent.id, child.id),
+    /already has a delegated parent/,
+  );
+  await assert.rejects(
+    () => store.linkDelegatedConversation(child.id, child.id),
+    /cannot be delegated to itself/,
+  );
+
+  assert.equal((await store.previewConversationDeletion(firstParent.id)).delegatedRelationships, 1);
+  await store.deleteConversation(firstParent.id);
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.delegatedRelationships.length, 0);
+  assert.equal(rebuilt.threads.some((thread) => thread.id === child.id), true);
 });
 
 test("state compaction preserves message and activity event order", async () => {
