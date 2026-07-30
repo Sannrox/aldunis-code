@@ -73,6 +73,8 @@ export interface WorktreeRemovalPlan {
   gitDirectory: string;
   device: number;
   inode: number;
+  directoryChangeTimeNs: string;
+  gitMarkerChangeTimeNs: string;
   expiresAt: string;
 }
 
@@ -487,6 +489,8 @@ export class WorktreeManager {
         || identity.gitDirectory !== plan.gitDirectory
         || identity.device !== plan.device
         || identity.inode !== plan.inode
+        || identity.directoryChangeTimeNs !== plan.directoryChangeTimeNs
+        || identity.gitMarkerChangeTimeNs !== plan.gitMarkerChangeTimeNs
       ) {
         throw new RepositoryError(
           "The approved worktree checkout was replaced or changed. Removal was cancelled.",
@@ -760,11 +764,13 @@ async function inspectWorktreeIdentity(path: string): Promise<{
   gitDirectory: string;
   device: number;
   inode: number;
+  directoryChangeTimeNs: string;
+  gitMarkerChangeTimeNs: string;
 }> {
-  const details = await stat(path).catch(() => {
+  const details = await stat(path, { bigint: true }).catch(() => {
     throw new RepositoryError("The managed worktree is missing or inaccessible.", 409);
   });
-  const [branch, head, rawGitDirectory] = await Promise.all([
+  const [branch, head, rawGitDirectory, gitMarkerDetails] = await Promise.all([
     git(
       path,
       ["symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -772,6 +778,9 @@ async function inspectWorktreeIdentity(path: string): Promise<{
     ),
     git(path, ["rev-parse", "--verify", "HEAD"], "The managed worktree HEAD is unavailable."),
     git(path, ["rev-parse", "--git-dir"], "The managed worktree Git directory is unavailable."),
+    stat(join(path, ".git"), { bigint: true }).catch(() => {
+      throw new RepositoryError("The managed worktree Git identity is unavailable.", 409);
+    }),
   ]);
   const gitDirectory = await realpath(resolve(path, rawGitDirectory.trim())).catch(() => {
     throw new RepositoryError("The managed worktree Git identity is unavailable.", 409);
@@ -780,8 +789,10 @@ async function inspectWorktreeIdentity(path: string): Promise<{
     branch: branch.trim(),
     head: head.trim(),
     gitDirectory,
-    device: details.dev,
-    inode: details.ino,
+    device: Number(details.dev),
+    inode: Number(details.ino),
+    directoryChangeTimeNs: details.ctimeNs.toString(),
+    gitMarkerChangeTimeNs: gitMarkerDetails.ctimeNs.toString(),
   };
 }
 

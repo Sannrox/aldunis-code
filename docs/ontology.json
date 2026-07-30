@@ -22,6 +22,10 @@
     {
       "name": "DelegatedConversationRelationship",
       "description": "A local, metadata-only association from one parent conversation to one existing child conversation. It never transfers messages, provider context, tool state, or approvals."
+    },
+    {
+      "name": "ManagedWorktreeRemovalApproval",
+      "description": "A short-lived, single-use approval bound to the exact managed checkout inspected during preview. Branch, HEAD, Git administrative directory, filesystem identity, and nanosecond change times must still match before removal."
     }
   ],
   "relations": [
@@ -65,6 +69,12 @@
       "subject": "projects_delegated_child",
       "source": "GitHub Issue Sannrox/aldunis-code#410",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/410",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedWorktreeRemovalApproval",
+      "source": "Aldunis Code managed worktree contract",
+      "locator": "server/worktrees.ts#WorktreeRemovalPlan",
       "confidence": 1.0
     }
   ]
