@@ -40,7 +40,7 @@ test("native directory selection returns one path and cancellation returns no au
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
 });
 
-test("desktop ESM build leaves CommonJS state locking outside the bundle", async () => {
+test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
     scripts?: { "build:desktop-main"?: string };
   };
@@ -52,6 +52,7 @@ test("desktop ESM build leaves CommonJS state locking outside the bundle", async
   assert.match(mainProcessBuild ?? "", /--external:proper-lockfile/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/grpc-js/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/proto-loader/);
+  assert.match(mainProcessBuild ?? "", /--external:@iarna\/toml/);
 });
 
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
