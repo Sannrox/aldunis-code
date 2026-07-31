@@ -10,6 +10,7 @@ import {
   checkpointDiff,
   checkpointReference,
   classifyWorktree,
+  collapseProjectsByRepository,
   constrainPath,
   deleteCheckpointReferences,
   rewindCheckpoint,
@@ -77,6 +78,30 @@ test("worktree state covers available, detached, missing, and inaccessible paths
   } finally {
     await chmod(inaccessible, 0o700);
   }
+});
+
+test("collapsed projects retain the project record that owns each worktree root", async () => {
+  const root = await gitFixture();
+  const sibling = join(await mkdtemp(join(tmpdir(), "aldunis-code-member-roots-")), "worktree");
+  await execFileAsync("git", ["-C", root, "worktree", "add", "-q", "-b", "fixture-worktree", sibling]);
+
+  const [project] = await collapseProjectsByRepository([
+    {
+      id: "main-project",
+      name: "fixture",
+      root,
+      openedAt: "2026-01-01T00:00:00.000Z",
+    },
+    {
+      id: "worktree-project",
+      name: "fixture",
+      root: sibling,
+      openedAt: "2026-01-02T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(project?.memberRoots["main-project"], root);
+  assert.equal(project?.memberRoots["worktree-project"], sibling);
 });
 
 test("stable checkpoint identities produce diffs and rewind only the exact workspace", async () => {

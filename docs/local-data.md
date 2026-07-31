@@ -19,6 +19,7 @@ Typical contents (names may evolve; do not commit these files):
 | `events.v1.jsonl` | Append-only conversation history log |
 | `preferences.v1.json` | Theme, density, worktree limit, shortcuts |
 | `automations.v1.json` | Scheduled automations |
+| `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references |
 | Profile / secret store | Provider profile metadata (all providers + adapters) + env secrets |
 | Provider adapter metadata | Installed declarative adapters |
 | Shikigami run dirs | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
@@ -74,6 +75,12 @@ seconds as an explicitly stale fallback.
   operation UUID, and creation time. Prompts, paths, tool payloads, harvest
   output, credentials, and Chisei receipt bodies are excluded. Conversation
   deletion, project deletion, and retention remove the correlation.
+- Local release-delivery sessions retain the candidate document and identity,
+  build/test status and evidence digest, bounded Chisei receipt references, and
+  bounded Tenkai release/plan/environment references. They do not retain source,
+  command output, the signed provenance envelope, trust-root files, credentials,
+  approval material, database paths, or raw logs. The store is capped at 50
+  recent sessions and fails visibly on corruption.
 
 ## Preferences
 

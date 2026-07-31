@@ -109,6 +109,12 @@ disabled for both direct and proxied sessions because a loopback reverse proxy
 is not proof of local authority; configure bindings before enabling remote
 access. The browser never receives the endpoint or token.
 
+The Tenkai screen also contains the loopback-only candidate-to-local-release
+workflow. It requires `ALDUNIS_TENKAI_DATABASE` plus authenticated Chisei
+configuration and compatible `sekaictl` / `tenkaictl` binaries. See
+[local delivery](local-delivery.md) for its deliberately narrow version 1
+profile and recovery behavior.
+
 ## Remote access (optional)
 
 Remote access is **off by default**. Recommended path: Tailscale Serve.

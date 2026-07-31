@@ -49,6 +49,40 @@ test("Chisei page retains the active worktree binding when projects are collapse
   assert.doesNotMatch(html, /value="team\/main"/);
 });
 
+test("the selected worktree resolves the project record that owns delivery authority", () => {
+  const html = renderToStaticMarkup(
+    <DomainPage
+      product="chisei"
+      selectedProjectId="main-project"
+      repository={{
+        projectId: "main-project",
+        name: "Aldunis",
+        root: "/tmp/aldunis",
+        selectedWorktree: "/tmp/aldunis-worktree",
+        worktrees: [],
+      }}
+      projects={[{
+        id: "main-project",
+        name: "Aldunis",
+        root: "/tmp/aldunis",
+        openedAt: "2026-01-01T00:00:00.000Z",
+        memberIds: ["main-project", "worktree-2"],
+        memberRoots: {
+          "main-project": "/tmp/aldunis",
+          "worktree-2": "/tmp/aldunis-worktree",
+        },
+        chiseiNamespace: "team/main",
+        chiseiBindings: {
+          "main-project": "team/main",
+          "worktree-2": "team/worktree",
+        },
+      }]}
+    />,
+  );
+  assert.match(html, /value="team\/worktree"/);
+  assert.doesNotMatch(html, /value="team\/main"/);
+});
+
 test("Chisei page preserves an explicitly unbound active worktree", () => {
   const html = renderToStaticMarkup(
     <DomainPage

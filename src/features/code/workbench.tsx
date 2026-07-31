@@ -1056,6 +1056,7 @@ export function CodeWorkbench({
           onProjectsChanged={onProjectsChanged}
           chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
           chiseiCorrelationId={chiseiCorrelationId}
+          repository={repository}
         />
       ) : (
       <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
