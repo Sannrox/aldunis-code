@@ -166,6 +166,37 @@ test("minimum desktop width shows one active conversation so review stays readab
   );
 });
 
+test("touch tablet clients get readable type and touch-sized shell controls", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /@media\s*\(any-pointer:\s*coarse\)\s*\{/);
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.search\s*\{[^}]*height:\s*44px/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.send\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.turn\s+p\s*\{[^}]*font-size:\s*16px/s,
+  );
+});
+
+test("touch portrait clients stack the shell and review dock", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*and\s*\(orientation:\s*portrait\)\s*\{[\s\S]*?\.app\s*\{[^}]*flex-direction:\s*column/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*and\s*\(orientation:\s*portrait\)[\s\S]*?\.review-dock,[\s\S]*?\.rv\s*\{[^}]*width:\s*100%/s,
+  );
+});
+
 test("default desktop width shows only the active pane while review is open", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
