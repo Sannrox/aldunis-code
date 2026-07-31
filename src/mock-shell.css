@@ -1943,3 +1943,135 @@ html[data-theme="dark"], html[data-theme="dark"] body {
   background: #0a0a0a !important;
   color: #f5f5f5 !important;
 }
+
+/* Touch/tablet clients such as iPad Safari can advertise a desktop-width CSS
+   viewport even though the primary interaction is still touch. Keep the
+   landscape workbench side-by-side, but give it readable type and touch-sized
+   controls; portrait mode uses the existing stacked composition. */
+@media (any-pointer: coarse) {
+  body,
+  .app {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+  }
+
+  body { font-size: 15px; }
+
+  .sb-hd { padding: 16px 16px 12px; }
+  .sb-name { font-size: 16px; }
+  .g1 { gap: 8px; padding: 8px 12px 12px; }
+  .search {
+    height: 44px;
+    padding: 0 13px;
+    font-size: 15px;
+  }
+  .newthr {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+  .g2 { padding: 0 12px 12px; }
+  .proj { min-height: 60px; padding: 10px 12px; }
+  .proj .n { font-size: 15px; }
+  .proj .p { font-size: 12.5px; }
+  .list { padding: 0 12px 8px; }
+  .glabel { padding: 12px 8px 8px; font-size: 13px; }
+  .row-main { min-height: 72px; padding: 12px; }
+  .row .rp .pn { font-size: 13px; }
+  .row .rt { font-size: 15px; }
+  .row .rb .br,
+  .row .rb .pl,
+  .row .tm { font-size: 12px; }
+  .row-actions { right: 10px; top: 10px; }
+  .settle,
+  .beside,
+  .row-more,
+  .sbtn {
+    min-height: 44px;
+    height: 44px;
+    font-size: 13px;
+  }
+  .row-more { min-width: 44px; }
+  .sb-ft { gap: 10px; padding: 12px 14px; }
+  .sb-ft .btn { min-height: 44px; height: 44px; font-size: 13px; }
+
+  .topbar { gap: 8px 12px; padding: 12px 20px !important; }
+  .tb-r .btn,
+  .tb-r .btn-ghost {
+    min-height: 44px !important;
+    height: 44px !important;
+    padding: 0 12px !important;
+    font-size: 14px !important;
+  }
+  .thread { padding: 28px 0 !important; }
+  .wrap,
+  .cbox {
+    max-width: 860px !important;
+    padding-left: 36px !important;
+    padding-right: 36px !important;
+  }
+  .role .rname { font-size: 15px; }
+  .role .rtime { font-size: 13px; }
+  .turn p { font-size: 16px !important; }
+  .cwrap { padding: 0 36px 28px; }
+  .cbox { padding-top: 16px; padding-bottom: 16px; }
+  .composer-input {
+    min-height: 56px;
+    margin-bottom: 14px;
+    font-size: 16px;
+  }
+  .send {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    border-radius: 10px;
+  }
+  .workspace-state { margin: 16px 20px; padding: 12px 14px; font-size: 15px; }
+  .project-filter-option { min-height: 48px; padding: 10px 12px; }
+  .project-filter-option .n { font-size: 14px; }
+  .project-filter-option .p { font-size: 12px; }
+  .pi2 { min-height: 48px; padding: 10px 12px; }
+}
+
+@media (any-pointer: coarse) and (min-width: 681px) {
+  .sb {
+    width: 320px !important;
+    flex: 0 0 320px !important;
+  }
+}
+
+@media (any-pointer: coarse) and (orientation: portrait) {
+  .app { flex-direction: column !important; }
+  .sb {
+    width: 100% !important;
+    flex: 0 1 auto !important;
+    height: auto !important;
+    max-height: 42dvh;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings { flex-direction: column !important; }
+  .settings .snav {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    overflow-x: auto !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--border);
+  }
+  .settings .snav-sections { display: flex; min-width: max-content; }
+  .settings .snav-i,
+  .settings .sback { flex: 0 0 auto; white-space: nowrap; }
+  .split { flex-direction: column !important; }
+  .review-dock,
+  .rv {
+    width: 100% !important;
+    flex: 0 1 min(50dvh, 55%) !important;
+    max-height: min(50dvh, 58%) !important;
+    min-height: 200px !important;
+    border-left: 0 !important;
+    border-top: 1px solid var(--border);
+  }
+  .split.with-review > .conv { min-height: 100px !important; }
+}
