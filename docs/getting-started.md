@@ -132,6 +132,29 @@ npm run host -- --remote lan --host 192.168.1.20 \
   --tls-key /path/to/key.pem
 ```
 
+For a quick private-WLAN setup, use the repository helper. It detects the
+WLAN address, builds the web UI, generates a temporary certificate with
+`mkcert` when no certificate is supplied, and starts the same authenticated LAN
+mode. Install `mkcert` for the zero-argument path, or pass certificate files
+explicitly:
+
+```sh
+npm run wlan
+```
+
+Pass certificate files when using a certificate trusted by the client device:
+
+```sh
+npm run wlan -- \
+  --tls-cert /path/to/cert.pem \
+  --tls-key /path/to/key.pem
+```
+
+Use `--no-build` for subsequent runs when the existing web build is current.
+The helper never writes certificates or private keys into the repository. The
+client must trust the certificate authority, and the host prints a one-time
+pairing URL to open on the WLAN device.
+
 The host prints a short-lived pairing URL. Manage sessions:
 
 ```sh

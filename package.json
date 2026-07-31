@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 4174",
     "host": "tsx server/main.ts",
+    "wlan": "bash scripts/start-wlan.sh",
     "start": "npm run build && npm run host",
     "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
