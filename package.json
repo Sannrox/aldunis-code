@@ -16,7 +16,7 @@
     "check": "tsc -b --pretty false",
     "verify:desktop-release-tag": "tsx scripts/verify-desktop-release-tag.ts",
     "build:web": "tsc -b && vite build",
-    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs",
+    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs",
     "build": "npm run build:web && npm run build:desktop-main",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && electron-builder --publish never"
