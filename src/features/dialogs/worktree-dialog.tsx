@@ -5,11 +5,13 @@ import { Button, ModalSurface } from "../../components/ui";
 export function WorktreeDialog({
   repository,
   selectedPath,
+  managedMode = false,
   onClose,
   onChanged,
 }: {
   repository: RepositoryMetadata | null;
   selectedPath: string | null;
+  managedMode?: boolean;
   onClose: () => void;
   onChanged: (repository: RepositoryMetadata) => void;
 }) {
@@ -56,7 +58,7 @@ export function WorktreeDialog({
       root: repository.root,
       base,
       branch,
-      ...(path.trim() ? { path } : {}),
+      ...(!managedMode && path.trim() ? { path } : {}),
     });
     if (result && "action" in result && result.action === "create") setPlan(result);
   };
@@ -80,7 +82,12 @@ export function WorktreeDialog({
     }
     const result = await request("/api/worktrees/remove", { planId: plan.id, confirm: true });
     if (!result) return;
-    const refreshed = await request("/api/repositories/open", { path: repository.root });
+    const refreshed = await request(
+      "/api/repositories/open",
+      managedMode
+        ? { repositoryId: repository.managedRepositoryId }
+        : { path: repository.root },
+    );
     if (refreshed && "worktrees" in refreshed) onChanged(refreshed);
     onClose();
   };
@@ -141,15 +148,18 @@ export function WorktreeDialog({
               placeholder="codex/26-isolated-worktree"
               disabled={busy}
             />
-            <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
-            <input
-              id="worktree-path"
-              name="worktree-path"
-              value={path}
-              onChange={(event) => { setPath(event.target.value); setPlan(null); }}
-              placeholder="Managed application path"
-              disabled={busy}
-            />
+            {!managedMode && <>
+              <label htmlFor="worktree-path">Worktree path <span>(optional)</span></label>
+              <input
+                id="worktree-path"
+                name="worktree-path"
+                value={path}
+                onChange={(event) => { setPath(event.target.value); setPlan(null); }}
+                placeholder="Managed application path"
+                disabled={busy}
+              />
+            </>}
+            {managedMode && <p>Code will choose a same-filesystem worktree path for this managed repository.</p>}
             {!plan && (
               <footer>
                 <Button type="button" onClick={onClose} aria-label="Cancel worktree changes">Cancel</Button>
@@ -208,5 +218,4 @@ export function WorktreeDialog({
     </ModalSurface>
   );
 }
-
 

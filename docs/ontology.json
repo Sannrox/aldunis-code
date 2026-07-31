@@ -28,6 +28,36 @@
       "description": "A short-lived, single-use approval bound to the exact managed checkout inspected during preview. Branch, HEAD, Git administrative directory, filesystem identity, and nanosecond change times must still match before removal."
     },
     {
+      "name": "ManagedHostedWorkbench",
+      "description": "The explicit single-tenant Aldunis Code hosted mode that starts only with trusted gateway assertion configuration, a canonical repository catalogue, and a fixed fail-closed Shikigami Build profile; it never falls back to loopback or paired remote authority.",
+      "properties": [
+        {
+          "name": "mode",
+          "type": "string",
+          "required": true,
+          "description": "The immutable managed host mode selected at startup."
+        },
+        {
+          "name": "recovery_policy",
+          "type": "string",
+          "required": true,
+          "description": "Dedicated-volume restart preservation with visible loss and no implicit backup."
+        }
+      ]
+    },
+    {
+      "name": "ManagedHostedAssertion",
+      "description": "A short-lived EdDSA gateway assertion bound to the configured issuer, audience, tenant, instance, Code workbench scope, managed profile, and single-use identity; altered, expired, replayed, or cross-context assertions are denied."
+    },
+    {
+      "name": "ManagedRepositoryCatalogue",
+      "description": "The operator-owned allowlist of canonical Git repositories and discovered worktrees available to one managed hosted Code instance; symlink, URL, arbitrary path, and filesystem-mount escapes are rejected."
+    },
+    {
+      "name": "ManagedShikigamiProfile",
+      "description": "The fixed managed Shikigami 1.0.5+ Build profile using plane model routing, fail-closed sekai-chisei governance, and an environment allowlist that excludes ambient provider, platform, source-control, proxy, and host credentials."
+    },
+    {
       "name": "DelegatedConversationOutcomeProjection",
       "description": "A beta-gated, read-only UI projection of the latest completed child turn. Its bounded summary is derived from child history and never enters parent provider context."
     },
@@ -73,6 +103,36 @@
     }
   ],
   "relations": [
+    {
+      "name": "authenticates_managed_host",
+      "description": "The managed hosted workbench accepts API authority only from a verified gateway assertion.",
+      "domain": "ManagedHostedWorkbench",
+      "range": "ManagedHostedAssertion",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "constrains_managed_repository_access",
+      "description": "The managed hosted workbench resolves repository and worktree operations only through its operator-owned canonical catalogue.",
+      "domain": "ManagedHostedWorkbench",
+      "range": "ManagedRepositoryCatalogue",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "uses_managed_shikigami_profile",
+      "description": "The managed hosted workbench resolves every provider run to the fixed Shikigami Build profile.",
+      "domain": "ManagedHostedWorkbench",
+      "range": "ManagedShikigamiProfile",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
     {
       "name": "has_delegated_relationship",
       "description": "Associates a parent conversation with a durable delegated-conversation relationship.",
@@ -195,6 +255,48 @@
       "subject": "ManagedWorktreeRemovalApproval",
       "source": "Aldunis Code managed worktree contract",
       "locator": "server/worktrees.ts#WorktreeRemovalPlan",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedHostedWorkbench",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts; Issue #438",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedHostedAssertion",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#ManagedHost.verify",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedRepositoryCatalogue",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#loadManagedHostConfiguration",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedShikigamiProfile",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "docs/decisions/managed-hosted-workbench.md; server/shikigami-provider.ts#buildShikigamiConfig",
+      "confidence": 1.0
+    },
+    {
+      "subject": "authenticates_managed_host",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "server/managed-host.ts#ManagedHost.verify",
+      "confidence": 1.0
+    },
+    {
+      "subject": "constrains_managed_repository_access",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "server/managed-host.ts#ManagedHost.selectWorktree",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_managed_shikigami_profile",
+      "source": "Accepted Aldunis Code hosted workbench decision",
+      "locator": "server/host.ts#/api/provider/runs; server/shikigami-provider.ts#buildShikigamiConfig",
       "confidence": 1.0
     },
     {

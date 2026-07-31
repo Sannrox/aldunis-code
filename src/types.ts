@@ -6,6 +6,7 @@ export interface RepositoryMetadata {
   projectId: string;
   name: string;
   root: string;
+  managedRepositoryId?: string;
   selectedWorktree: string;
   worktrees: Array<{
     path: string;
@@ -16,6 +17,35 @@ export interface RepositoryMetadata {
     recovery: WorktreeRecovery;
     originalPath: string | null;
   }>;
+}
+export interface HostCapabilities {
+  mode: "local" | "remote" | "managed";
+  managed: boolean;
+  tenantScoped: boolean;
+  singleTenantAlpha?: boolean;
+  provider?: {
+    id: ProviderId;
+    name: string;
+    execution: string;
+    model: string;
+    modelAdapter: string;
+    governanceAdapter: string;
+  };
+  capabilities: {
+    providerSelection: boolean;
+    profileAdministration: boolean;
+    adapterAdministration: boolean;
+    modelSelection: boolean;
+    modeSelection: boolean;
+    arbitraryRepositorySelection: boolean;
+    directoryBrowsing: boolean;
+  };
+  repositories?: Array<{ id: string; name: string }>;
+  state?: {
+    policy: string;
+    restart: string;
+    loss: string;
+  };
 }
 export interface DirectoryListing {
   path: string;

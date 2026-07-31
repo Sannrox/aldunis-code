@@ -19,6 +19,8 @@ export function PaneConversation({
   showChangesSignal,
   showFilesSignal,
   onManageWorktrees,
+  managedMode = false,
+  managedModel,
   quietDelegatedChild = false,
 }: {
   repository: RepositoryMetadata | null;
@@ -35,6 +37,8 @@ export function PaneConversation({
   showChangesSignal: number;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
+  managedMode?: boolean;
+  managedModel?: string;
   quietDelegatedChild?: boolean;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
@@ -101,6 +105,8 @@ export function PaneConversation({
       onRefreshChanges={refreshChanges}
       profiles={profiles}
       onOpenProfiles={onOpenProfiles}
+      managedMode={managedMode}
+      managedModel={managedModel}
     />
   );
 }

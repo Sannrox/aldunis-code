@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
 import { createLocalHost, assertLoopbackHost } from "./host.ts";
+import { loadManagedHostConfiguration, ManagedHost } from "./managed-host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
 
@@ -21,6 +22,15 @@ const authAction = argument("--remote-auth");
 const publicUrlInput = argument("--public-url");
 const tlsCertificatePath = argument("--tls-cert");
 const tlsKeyPath = argument("--tls-key");
+const configuredHostMode = process.env.ALDUNIS_HOST_MODE;
+const managedMode = configuredHostMode === "managed";
+
+if (configuredHostMode && configuredHostMode !== "local" && configuredHostMode !== "managed") {
+  throw new Error("ALDUNIS_HOST_MODE must be 'local' or 'managed'.");
+}
+if (managedMode && remoteMode) {
+  throw new Error("Managed hosted mode cannot be combined with paired remote mode.");
+}
 
 if (authAction) {
   const auth = new RemoteAuth(defaultStateDirectory());
@@ -49,8 +59,16 @@ function isPrivateAddress(value: string): boolean {
     || value.toLocaleLowerCase().startsWith("fc"));
 }
 
-if (!remoteMode) assertLoopbackHost(host);
-else if (remoteMode === "lan") {
+const loopbackHost = host === "127.0.0.1" || host === "::1" || host === "localhost";
+const managedNetworkBind = managedMode && !loopbackHost;
+
+if (!remoteMode && !managedMode) {
+  assertLoopbackHost(host);
+} else if (managedMode) {
+  if (!loopbackHost && !isPrivateAddress(host)) {
+    throw new Error("Managed hosted mode requires a loopback or private bind address behind its gateway.");
+  }
+} else if (remoteMode === "lan") {
   if (!isPrivateAddress(host)) {
     throw new Error("LAN remote access requires an explicit private IPv4 or unique-local IPv6 address.");
   }
@@ -73,12 +91,18 @@ if (remoteMode === "lan") {
     throw new Error("LAN remote access requires --tls-cert and --tls-key PEM files.");
   }
 }
+if (managedNetworkBind && (!tlsCertificatePath || !tlsKeyPath)) {
+  throw new Error("Managed hosted mode requires --tls-cert and --tls-key PEM files for non-loopback binds.");
+}
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid port: ${portValue}`);
 }
 
 const remoteAuth = remoteMode ? new RemoteAuth(defaultStateDirectory()) : undefined;
-const tls = remoteMode === "lan"
+const managedHost = managedMode
+  ? new ManagedHost(await loadManagedHostConfiguration())
+  : undefined;
+const tls = remoteMode === "lan" || managedNetworkBind
   ? {
       cert: await readFile(tlsCertificatePath!),
       key: await readFile(tlsKeyPath!),
@@ -86,7 +110,17 @@ const tls = remoteMode === "lan"
   : undefined;
 const state = new LocalStateStore();
 const releaseWriterLease = await state.acquireWriterLease();
-const server = createLocalHost(undefined, state, undefined, remoteAuth, tls);
+const server = createLocalHost(
+  undefined,
+  state,
+  undefined,
+  remoteAuth,
+  tls,
+  undefined,
+  undefined,
+  undefined,
+  managedHost,
+);
 let tailscaleConfigured = false;
 
 async function disableTailscaleServe(): Promise<void> {
@@ -118,7 +152,11 @@ process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
 
 server.listen(port, host, async () => {
   const formattedHost = isIP(host) === 6 ? `[${host}]` : host;
-  const localUrl = `${remoteMode === "lan" ? "https" : "http"}://${formattedHost}:${port}`;
+  const localUrl = `${remoteMode === "lan" || managedNetworkBind ? "https" : "http"}://${formattedHost}:${port}`;
+  if (managedHost) {
+    console.log(`Aldunis Code managed hosted workbench is available at ${localUrl}`);
+    return;
+  }
   if (!remoteAuth) {
     console.log(`Aldunis Code is available at ${localUrl}`);
     return;

@@ -4,7 +4,14 @@ import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Prefer
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import "./mock-shell.css";
-import type { ClaudeProfile, Product, ProviderId, RepositoryMetadata, ThreadMetadata } from "./types";
+import type {
+  ClaudeProfile,
+  HostCapabilities,
+  Product,
+  ProviderId,
+  RepositoryMetadata,
+  ThreadMetadata,
+} from "./types";
 import { CodeWorkbench } from "./features/code/workbench";
 import { RepositoryDialog, type SavedProject } from "./features/dialogs/repository-dialog";
 import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
@@ -67,6 +74,40 @@ function App() {
   const [productAvailability, setProductAvailability] = useState<ProductAvailability>(
     DEFAULT_PRODUCT_AVAILABILITY,
   );
+  const [hostCapabilities, setHostCapabilities] = useState<HostCapabilities>({
+    mode: "local",
+    managed: false,
+    tenantScoped: false,
+    capabilities: {
+      providerSelection: true,
+      profileAdministration: true,
+      adapterAdministration: true,
+      modelSelection: true,
+      modeSelection: true,
+      arbitraryRepositorySelection: true,
+      directoryBrowsing: true,
+    },
+  });
+  const [hostCapabilitiesLoaded, setHostCapabilitiesLoaded] = useState(false);
+  const [hostCapabilitiesError, setHostCapabilitiesError] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/host/capabilities", { method: "POST" });
+        if (!response.ok) throw new Error("The host capability contract is unavailable.");
+        const body = await response.json() as HostCapabilities;
+        if (body.mode !== "local" && body.mode !== "remote" && body.mode !== "managed") {
+          throw new Error("The host capability contract is invalid.");
+        }
+        setHostCapabilities(body);
+        setHostCapabilitiesLoaded(true);
+      } catch (error) {
+        setHostCapabilitiesError(
+          error instanceof Error ? error.message : "The host capability contract is unavailable.",
+        );
+      }
+    })();
+  }, []);
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
@@ -152,20 +193,22 @@ function App() {
     setRepositoryError(null);
     setRepositoryDialog(true);
   };
-  const openRepository = async (path: string, options?: { quiet?: boolean }) => {
+  const openRepository = async (target: string, options?: { quiet?: boolean }) => {
     setRepositoryBusy(true);
     if (!options?.quiet) setRepositoryError(null);
     try {
       const response = await fetch("/api/repositories/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path }),
+        body: JSON.stringify(hostCapabilities.managed
+          ? { repositoryId: target }
+          : { path: target }),
       });
       const body = await response.json() as RepositoryMetadata | { error?: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
       const next = body as RepositoryMetadata;
       setRepository(next);
-      writeLastRepositoryRoot(next.root);
+      if (!hostCapabilities.managed) writeLastRepositoryRoot(next.root);
       // Quiet opens (chat select / restore) must not reshuffle project chips.
       if (options?.quiet) {
         await loadThreads();
@@ -185,12 +228,13 @@ function App() {
   };
   // Restore the last selected project after refresh/restart.
   useEffect(() => {
+    if (!hostCapabilitiesLoaded) return;
     let active = true;
     const restore = async () => {
       try {
         const params = new URLSearchParams(window.location.search);
         const urlProjectId = params.get("project");
-        const lastRoot = readLastRepositoryRoot();
+        const lastRoot = hostCapabilities.managed ? null : readLastRepositoryRoot();
         let projects: SavedProject[] = [];
         try {
           const response = await fetch("/api/projects/list", { method: "POST" });
@@ -212,12 +256,22 @@ function App() {
               project.id === urlProjectId
               || project.memberIds?.includes(urlProjectId)
             ) {
-              rootCandidates.push(project.root);
+              rootCandidates.push(
+                hostCapabilities.managed
+                  ? (project.managedRepositoryId ?? "")
+                  : project.root,
+              );
             }
           }
         }
         if (lastRoot) rootCandidates.push(lastRoot);
-        for (const project of projects) rootCandidates.push(project.root);
+        for (const project of projects) {
+          rootCandidates.push(
+            hostCapabilities.managed
+              ? (project.managedRepositoryId ?? "")
+              : project.root,
+          );
+        }
 
         const seen = new Set<string>();
         for (const root of rootCandidates) {
@@ -237,9 +291,15 @@ function App() {
     return () => {
       active = false;
     };
-    // Run once on mount — openRepository is intentionally stable for restore.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hostCapabilitiesLoaded, hostCapabilities.managed]);
+  if (hostCapabilitiesError) {
+    return (
+      <main className="remote-pairing-error" role="alert">
+        <h1>Host configuration unavailable</h1>
+        <p>{hostCapabilitiesError} Reload this page after the configured host or gateway is available.</p>
+      </main>
+    );
+  }
   return (
     <div className="app">
       <CodeWorkbench
@@ -255,19 +315,25 @@ function App() {
             item.id === projectId || item.memberIds?.includes(projectId),
           );
           if (!project) return;
+          const target = hostCapabilities.managed
+            ? project.managedRepositoryId
+            : project.root;
+          if (!target) return;
           // Already on this logical project — do not re-open (bumps openedAt / reorders chips).
           if (
             repository
-            && (repository.projectId === project.id
+            && (!hostCapabilities.managed && (repository.projectId === project.id
               || project.memberIds?.includes(repository.projectId)
               || repository.root === project.root)
+              || hostCapabilities.managed && repository.managedRepositoryId === target)
           ) {
             return;
           }
-          void openRepository(project.root, { quiet: true });
+          void openRepository(target, { quiet: true });
         }}
         profiles={profiles}
         onOpenProfiles={(provider) => {
+          if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "profiles", provider: provider ?? null });
         }}
         onOpenPalette={() => setPaletteOpen(true)}
@@ -280,6 +346,8 @@ function App() {
         onProjectsChanged={loadSavedProjects}
         chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
+        managedMode={hostCapabilities.managed}
+        managedModel={hostCapabilities.provider?.model}
       />
       <RepositoryDialog
         open={repositoryDialog}
@@ -287,6 +355,7 @@ function App() {
         error={repositoryError}
         projects={savedProjects}
         currentRoot={repository?.root ?? null}
+        managedRepositories={hostCapabilities.managed ? hostCapabilities.repositories : undefined}
         onClose={() => setRepositoryDialog(false)}
         onSubmit={(path) => { void openRepository(path); }}
       />
@@ -294,6 +363,7 @@ function App() {
         <WorktreeDialog
           repository={repository}
           selectedPath={managedWorktreePath}
+          managedMode={hostCapabilities.managed}
           onClose={() => setWorktreeDialog(false)}
           onChanged={(next) => {
             setRepository(next);
@@ -302,7 +372,7 @@ function App() {
         />
       )}
       <ProviderManagementDialog
-        open={providerManagement != null}
+        open={providerManagement != null && !hostCapabilities.managed}
         profiles={profiles}
         initialDestination={providerManagement?.destination}
         initialProvider={providerManagement?.provider}
@@ -326,6 +396,7 @@ function App() {
         onSearch={() => setSearchOpen(true)}
         onPreferences={() => setPreferencesOpen(true)}
         onProviderManagement={() => {
+          if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
         onAutomations={() => setAutomationsOpen(true)}
@@ -351,6 +422,7 @@ function App() {
         recovered={preferencesRecovered}
         onClose={() => setPreferencesOpen(false)}
         onOpenProviderManagement={() => {
+          if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
         onOpenArchivedThreads={() => {

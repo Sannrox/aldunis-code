@@ -4,14 +4,17 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { loadManagedHostConfiguration } from "./managed-host.ts";
 import { isMutatingTool, PermissionBroker } from "./permission.ts";
 import {
+  assertManagedShikigamiVersion,
   assertSupportedShikigamiVersion,
   buildShikigamiConfig,
   confirmShikigamiRunId,
   normalizeShikigamiEvent,
   parseShikigamiStderrLine,
   permissionHookRuntimeEnvironment,
+  managedShikigamiEnvironment,
   ShikigamiAdapter,
   ShikigamiToolIdTracker,
   toolsForMode,
@@ -21,6 +24,69 @@ test("assertSupportedShikigamiVersion accepts 1.0.2+ product lines", () => {
   assert.equal(assertSupportedShikigamiVersion("shikigami 1.0.2"), "1.0.2");
   assert.throws(() => assertSupportedShikigamiVersion("shikigami 0.2.0"), /major version 1/);
   assert.throws(() => assertSupportedShikigamiVersion("shikigami 1.0.1"), /1\.0\.2/);
+});
+
+test("managed Shikigami requires plane-compatible version and emits the fixed profile", () => {
+  assert.equal(assertManagedShikigamiVersion("shikigami 1.0.5"), "1.0.5");
+  assert.throws(
+    () => assertManagedShikigamiVersion("shikigami 1.0.4"),
+    /1\.0\.5/,
+  );
+  const runtime = {
+    executable: "/opt/shikigami",
+    model: "operator-model",
+    governanceEndpoint: "https://chisei.internal",
+    principal: "service:managed-code",
+    namespace: "tenant/code",
+    tokenEnv: "SEKAI_TOKEN",
+    token: "secret-token",
+    path: "/usr/bin:/bin",
+  };
+  const config = buildShikigamiConfig({
+    worktree: "/srv/repos/code",
+    mode: "build",
+    modelAdapter: "http",
+    modelId: "caller-model",
+    managed: runtime,
+  });
+  assert.match(config, /name = "aldunis-code-managed"/);
+  assert.match(config, /adapter = "plane"/);
+  assert.match(config, /model = "operator-model"/);
+  assert.match(config, /adapter = "sekai-chisei"/);
+  assert.match(config, /fail_closed = true/);
+  assert.match(config, /token_env = "SEKAI_TOKEN"/);
+  assert.doesNotMatch(config, /enabled = \[[^\]]*"bash/);
+  assert.doesNotMatch(config, /caller-model/);
+
+  const environment = managedShikigamiEnvironment(runtime, "/srv/state/run", undefined);
+  assert.equal(environment.SEKAI_TOKEN, "secret-token");
+  assert.equal(environment.HOME, "/srv/state/run");
+  assert.equal(environment.OPENAI_API_KEY, undefined);
+  assert.equal(environment.GITHUB_TOKEN, undefined);
+  assert.equal(environment.HTTPS_PROXY, undefined);
+  assert.equal(environment.NODE_OPTIONS, undefined);
+});
+
+test("managed Shikigami reserves runtime environment names for its token", async () => {
+  const env = {
+    ALDUNIS_MANAGED_ASSERTION_ISSUER: "https://aldunis.test",
+    ALDUNIS_MANAGED_ASSERTION_AUDIENCE: "aldunis-code-managed",
+    ALDUNIS_MANAGED_TENANT_ID: "tenant-test",
+    ALDUNIS_MANAGED_INSTANCE_ID: "code-instance-test",
+    ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_PEM: "invalid",
+    ALDUNIS_MANAGED_REPOSITORIES_JSON: "[]",
+    ALDUNIS_MANAGED_SHIKIGAMI_EXECUTABLE: "/bin/shikigami",
+    ALDUNIS_MANAGED_SHIKIGAMI_MODEL: "model",
+    ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT: "https://chisei.test",
+    ALDUNIS_MANAGED_SHIKIGAMI_PRINCIPAL: "service:test",
+    ALDUNIS_MANAGED_SHIKIGAMI_NAMESPACE: "tenant/code",
+    ALDUNIS_MANAGED_SHIKIGAMI_TOKEN_ENV: "PATH",
+    PATH: "token",
+  };
+  await assert.rejects(
+    () => loadManagedHostConfiguration(env),
+    /collides with a reserved runtime key/,
+  );
 });
 
 test("normalizeShikigamiEvent maps harness events", () => {
