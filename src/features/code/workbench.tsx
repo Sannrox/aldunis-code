@@ -453,6 +453,8 @@ export function CodeWorkbench({
   onProjectsChanged,
   chiseiBindingAdministrationAvailable = true,
   orchestrationThreadsBeta = false,
+  managedMode = false,
+  managedModel,
 }: {
   product: import("../../types").Product;
   onProductChange: (product: import("../../types").Product) => void;
@@ -474,6 +476,8 @@ export function CodeWorkbench({
   onProjectsChanged?: () => Promise<void>;
   chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
+  managedMode?: boolean;
+  managedModel?: string;
 }) {
   const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
   useEffect(() => {
@@ -1159,7 +1163,7 @@ export function CodeWorkbench({
                     onChanged={refreshDelegatedRelationships}
                   />
                 )}
-                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
@@ -1202,7 +1206,7 @@ export function CodeWorkbench({
                         onChanged={refreshDelegatedRelationships}
                       />
                     )}
-                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");

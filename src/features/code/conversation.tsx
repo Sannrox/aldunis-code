@@ -143,6 +143,8 @@ export function Conversation({
   onRefreshChanges,
   profiles,
   onOpenProfiles,
+  managedMode = false,
+  managedModel,
   quietDelegatedChild = false,
 }: {
   repository: RepositoryMetadata | null;
@@ -164,6 +166,8 @@ export function Conversation({
   onRefreshChanges: () => void;
   profiles: ClaudeProfile[];
   onOpenProfiles: (provider?: ProviderId) => void;
+  managedMode?: boolean;
+  managedModel?: string;
   /** Suppress ordinary child completion notifications while its linked parent is focused. */
   quietDelegatedChild?: boolean;
 }) {
@@ -185,7 +189,7 @@ export function Conversation({
   useEffect(() => {
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
   }, [promptHistory]);
-  const [mode, setMode] = useState<InteractionMode>("ask");
+  const [mode, setMode] = useState<InteractionMode>(managedMode ? "build" : "ask");
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
@@ -235,7 +239,7 @@ export function Conversation({
   const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
     ?? claudeProfiles[0]?.id
     ?? "";
-  const [model, setModel] = useState("default");
+  const [model, setModel] = useState(managedMode ? (managedModel ?? "default") : "default");
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
@@ -248,7 +252,7 @@ export function Conversation({
   conversationAvailableCallback.current = onConversationAvailable;
   // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
   const [provider, setProvider] = useState<ProviderId>(
-    () => conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
+    () => managedMode ? "shikigami" : conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
   );
   const [providers, setProviders] = useState<ProviderDiscovery[]>(
     () => peekProviderDiscoveryCache() ?? [],
@@ -320,6 +324,7 @@ export function Conversation({
    * upgrade) instead of hiding the choice entirely.
    */
   const availableProviders = useMemo(() => {
+    if (managedMode) return shikigamiProvider?.installed === false ? [] : ["shikigami" as ProviderId];
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
     for (const id of BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER) {
@@ -339,7 +344,7 @@ export function Conversation({
       }
     }
     return list;
-  }, [codex?.installed, shikigamiProvider?.installed, providers]);
+  }, [codex?.installed, managedMode, shikigamiProvider?.installed, providers]);
   /**
    * New conversations only, before a thread/run is created. Once threadId or
    * runId exists the provider is fixed (cross-provider moves use fork).
@@ -349,6 +354,7 @@ export function Conversation({
   const canSwitchProvider = conversation === null
     && !threadId
     && !runId
+    && !managedMode
     && canSwitchNewConversationProvider(provider, availableProviders);
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
@@ -461,7 +467,13 @@ export function Conversation({
       return true;
     });
   };
-  const modelOptions = providerModelOptions(provider, selectedProvider);
+  const modelOptions = managedMode
+    ? [{
+        id: managedModel ?? model,
+        displayName: managedModel ?? model,
+        isDefault: true,
+      }]
+    : providerModelOptions(provider, selectedProvider);
   useEffect(() => {
     if (!providerMenuOpen) return;
     const optionButtons = () => Array.from(
@@ -733,7 +745,7 @@ export function Conversation({
     setThreadId(conversation?.id ?? null);
     // Prefer the summary provider immediately so crumb/empty state match the thread
     // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
-    if (conversation?.provider && conversation.provider !== provider) {
+    if (!managedMode && conversation?.provider && conversation.provider !== provider) {
       setProvider(conversation.provider);
       return;
     }
@@ -751,7 +763,7 @@ export function Conversation({
     setContextOpen(false);
     setProviderState("idle");
     setRunId(null);
-  }, [conversation?.id, conversation?.provider, repository?.projectId, repository?.selectedWorktree, provider]);
+  }, [conversation?.id, conversation?.provider, managedMode, repository?.projectId, repository?.selectedWorktree, provider]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -844,7 +856,7 @@ export function Conversation({
         setHistoryRestored(true);
         return;
       }
-      const threadProvider = thread.provider ?? "claude-code";
+      const threadProvider = managedMode ? "shikigami" : thread.provider ?? "claude-code";
       if (threadProvider !== provider) {
         setProvider(threadProvider);
         return;
@@ -1080,12 +1092,20 @@ export function Conversation({
   }, [
     conversation?.id,
     historyRefreshSignal,
+    managedMode,
     notificationsEnabled,
     provider,
     quietDelegatedChild,
     repository?.projectId,
     repository?.selectedWorktree,
   ]);
+  useEffect(() => {
+    if (!managedMode) return;
+    setProvider("shikigami");
+    setMode("build");
+    setProfileId("");
+    if (managedModel) setModel(managedModel);
+  }, [managedMode, managedModel]);
   useEffect(() => {
     void loadProviderCapabilities().then((caps) => {
       if (caps) setCapabilities(caps);
@@ -1165,8 +1185,8 @@ export function Conversation({
     || providerState === "waiting_for_approval"
     || providerState === "waiting_for_input"
     || providerState === "cancelling";
-  const canPickModel = !runActive && modelOptions.length > 0;
-  const canPickMode = !runActive;
+  const canPickModel = !managedMode && !runActive && modelOptions.length > 0;
+  const canPickMode = !managedMode && !runActive;
   useEffect(() => {
     if (!canPickModel) setModelMenuOpen(false);
   }, [canPickModel]);
@@ -1176,6 +1196,13 @@ export function Conversation({
   /** Whether the selected provider can start a run right now. */
   const providerReady = !providersLoaded
     ? false
+    : managedMode
+    ? Boolean(
+        provider === "shikigami"
+        && shikigamiProvider?.installed
+        && shikigamiProvider.authenticated
+        && (!managedModel || model === managedModel),
+      )
     : provider === "claude-code"
     ? Boolean(profileId)
     : provider === "codex-cli"
@@ -1196,7 +1223,9 @@ export function Conversation({
       hasClaudeProfile: Boolean(profileId),
       providerName,
     });
-  const effectiveModel = (() => {
+  const effectiveModel = managedMode
+    ? managedModel ?? model
+    : (() => {
     const base = model === "default"
       ? resolveDefaultProviderModel(provider, selectedProvider)
       : model;
@@ -1320,7 +1349,9 @@ export function Conversation({
       || runActive
       || !historyRestored
     ) return;
-    const turnMode = mode;
+    const turnMode: InteractionMode = managedMode ? "build" : mode;
+    const turnProvider: ProviderId = managedMode ? "shikigami" : provider;
+    const turnModel = managedMode ? (managedModel ?? effectiveModel) : effectiveModel;
     const previousMessage = messages.at(-1);
     if (previousMessage) {
       setArchivedTurns((current) => [
@@ -1362,12 +1393,13 @@ export function Conversation({
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           contextPins,
-          profileId: provider === "claude-code" ? profileId : null,
-          model: effectiveModel,
-          provider,
+          profileId: managedMode ? null : provider === "claude-code" ? profileId : null,
+          model: turnModel,
+          provider: turnProvider,
           reasoningEffort: (
-            (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
-            && effectiveModel !== "default"
+            !managedMode
+            && (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
+            && turnModel !== "default"
           )
             ? reasoningEffort
             : undefined,
@@ -1978,7 +2010,7 @@ export function Conversation({
               Beside
             </button>
           )}
-          {threadId && (
+          {threadId && !managedMode && (
             <button
               type="button"
               className="btn btn-ghost btn-sm"
@@ -2258,7 +2290,7 @@ export function Conversation({
                   {failureView.question && (
                     <p className="provider-error-question">Question: {failureView.question}</p>
                   )}
-                  {failureRecovery.showSettings && (
+                  {failureRecovery.showSettings && !managedMode && (
                     <Button
                       type="button"
                       size="sm"
@@ -2520,11 +2552,13 @@ export function Conversation({
               <button
                 type="button"
                 className="cc"
-                disabled={runActive}
-                aria-haspopup={canSwitchProvider ? "listbox" : undefined}
-                aria-expanded={canSwitchProvider ? providerMenuOpen : undefined}
+                disabled={runActive || managedMode}
+                aria-haspopup={managedMode ? undefined : canSwitchProvider ? "listbox" : undefined}
+                aria-expanded={managedMode ? undefined : canSwitchProvider ? providerMenuOpen : undefined}
                 title={
-                  !providersLoaded
+                  managedMode
+                    ? "Managed hosted mode fixes Shikigami and does not allow provider selection."
+                    : !providersLoaded
                     ? "Checking provider…"
                     : !providerReady
                     ? providerReadinessMessage
@@ -2535,7 +2569,9 @@ export function Conversation({
                       : "Open provider profiles"
                 }
                 aria-label={
-                  !providersLoaded
+                  managedMode
+                    ? "Managed hosted mode: Shikigami"
+                    : !providersLoaded
                     ? `Checking ${providerName}…`
                     : !providerReady
                     ? `${providerName} not ready: ${providerReadinessMessage}`
@@ -2548,6 +2584,7 @@ export function Conversation({
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  if (managedMode) return;
                   if (!canSwitchProvider) {
                     closeComposerMenus();
                     onOpenProfiles(provider);
@@ -2567,7 +2604,7 @@ export function Conversation({
                   {providerAvatarInitials(provider, providerLabel)}
                 </span>
                 {providerChipName}
-                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
               </button>
               {providerMenuOpen && canSwitchProvider && (
                 <div
@@ -2644,19 +2681,22 @@ export function Conversation({
                 type="button"
                 className="cc"
                 disabled={!canPickModel}
-                aria-haspopup="listbox"
-                aria-expanded={modelMenuOpen}
+                aria-haspopup={managedMode ? undefined : "listbox"}
+                aria-expanded={managedMode ? undefined : modelMenuOpen}
                 title={
-                  "Open the model menu"
+                  managedMode ? "Managed hosted mode fixes the operator-approved model." : "Open the model menu"
                 }
                 aria-label={
-                  showReasoningEffort
+                  managedMode
+                    ? `Managed model ${modelChipDisplay}`
+                    : showReasoningEffort
                     ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model or reasoning effort.`
                     : `Model ${modelChipDisplay}. Open menu to choose a model.`
                 }
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  if (managedMode) return;
                   if (!canPickModel) return;
                   setProviderMenuOpen(false);
                   setModeMenuOpen(false);
@@ -2670,7 +2710,7 @@ export function Conversation({
                 {showReasoningEffort
                   ? `${modelChipDisplay} · ${reasoningEffort}`
                   : modelChipDisplay}
-                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
               </button>
               {modelMenuOpen && canPickModel && (
                 <div
@@ -2748,14 +2788,17 @@ export function Conversation({
                 type="button"
                 className={`cc ${accessScope.warning ? "scoped" : ""}`}
                 disabled={!canPickMode}
-                aria-haspopup="listbox"
-                aria-expanded={modeMenuOpen}
-                aria-controls={modeMenuOpen ? "composer-mode-menu" : undefined}
-                title={`${modeCopy[mode].label} · ${accessScope.detail}`}
-                aria-label={`Mode ${modeCopy[mode].label}, tool scope ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
+                aria-haspopup={managedMode ? undefined : "listbox"}
+                aria-expanded={managedMode ? undefined : modeMenuOpen}
+                aria-controls={managedMode ? undefined : modeMenuOpen ? "composer-mode-menu" : undefined}
+                title={managedMode ? "Managed hosted mode fixes Build · Worktree write." : `${modeCopy[mode].label} · ${accessScope.detail}`}
+                aria-label={managedMode
+                  ? "Managed hosted mode: Build, Worktree write"
+                  : `Mode ${modeCopy[mode].label}, tool scope ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  if (managedMode) return;
                   if (!canPickMode) return;
                   openModeMenu();
                 }}
@@ -2768,7 +2811,7 @@ export function Conversation({
                   {modeCopy[mode].label}
                   <span className="mode-chip-scope"> · {accessScope.label}</span>
                 </span>
-                <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
               </button>
               {modeMenuOpen && canPickMode && (
                 <div
@@ -2939,7 +2982,7 @@ export function Conversation({
         />
       )}
       </div>
-      {forkOpen && threadId && (
+      {forkOpen && threadId && !managedMode && (
         <ForkConversationDialog
           sourceThreadId={threadId}
           sourceProvider={provider}

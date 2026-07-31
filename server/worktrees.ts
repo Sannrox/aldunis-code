@@ -421,6 +421,18 @@ export class WorktreeManager {
     });
   }
 
+  creationPlan(id: string): WorktreeCreationPlan {
+    const plan = this.#plans.get(id);
+    if (!plan || plan.action !== "create") {
+      throw new RepositoryError("The worktree approval is missing or already used.", 409);
+    }
+    if (Date.parse(plan.expiresAt) <= Date.now()) {
+      this.#plans.delete(id);
+      throw new RepositoryError("The worktree approval expired. Preview it again.", 409);
+    }
+    return { ...plan };
+  }
+
   async previewRemove(repositoryInput: string, pathInput: string): Promise<WorktreeRemovalPlan> {
     const repository = await canonicalizeRepositoryRoot(repositoryInput);
     const path = await realpath(pathInput).catch(() => {

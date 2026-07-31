@@ -27,6 +27,14 @@ local Aldunis Code host
 optional product clients (projections only)
     |-- Sekai / Chisei: knowledge + governance APIs
     `-- Tenkai: delivery APIs
+
+enterprise-managed hosted mode (explicit operator configuration)
+    gateway-issued EdDSA assertion
+        |
+    private Aldunis Code host for one tenant
+        |-- fixed Shikigami Build / plane model / Chisei governance
+        |-- configured canonical repository catalogue
+        `-- same conversation, approval, checkpoint, and diff surfaces
 ```
 
 The browser never receives provider credentials or unrestricted filesystem
@@ -45,6 +53,14 @@ HTTPS listener with explicitly supplied key material or loopback behind Tailscal
 Serve. Proof-key-bound revocable device sessions supply application authority. Direct public HTTP, ambient
 private-network trust, and a public workbench listener are not approved.
 
+Enterprise-managed hosted mode is a separate, explicitly selected startup
+profile. The gateway supplies a short-lived, audience- and tenant-bound
+`x-aldunis-code-assertion`; Code verifies its EdDSA signature, lifetime, scope,
+single-use identity, and any supplied request bindings before serving an API
+mutation. This mode is single-tenant alpha only and does not reuse paired
+device sessions or silently fall back to loopback. See the accepted
+[managed hosted workbench decision](decisions/managed-hosted-workbench.md).
+
 ## Ownership
 
 | Concern | Authority |
@@ -59,6 +75,19 @@ through a versioned authenticated contract.
 ## Security invariants
 
 - Loopback is the default and no network bind is implicit.
+- Managed hosted mode fails startup without trusted assertion configuration,
+  tenant/instance identity, a non-empty canonical repository catalogue, and a
+  complete managed Shikigami profile. It resolves runs only to Shikigami Build,
+  `model.adapter = "plane"`, and fail-closed `sekai-chisei` governance.
+- Managed hosted requests cannot select providers, profiles, models, modes,
+  executables, adapters, endpoints, credentials, arbitrary roots, or arbitrary
+  worktrees. The browser receives a bounded catalogue rather than filesystem
+  enumeration.
+- A non-loopback managed listener requires explicit TLS certificate and key
+  material; private addressing is not treated as transport security.
+- Managed Shikigami receives a deterministic allowlisted environment and a
+  dedicated state root; provider, platform, source-control, proxy, and ambient
+  host credentials are excluded. This is not an operating-system sandbox.
 - Provider and product credentials remain server-side or in the provider's
   supported local credential store.
 - Named provider profiles may store sensitive environment values in Aldunis

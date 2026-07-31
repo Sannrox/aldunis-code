@@ -22,6 +22,7 @@ export interface SavedProject {
   memberRoots?: Record<string, string>;
   chiseiBindings?: Record<string, string | null>;
   chiseiNamespace?: string | null;
+  managedRepositoryId?: string;
 }
 
 type ProjectPickerRowKind = "project" | "parent" | "directory" | "open-path";
@@ -73,6 +74,7 @@ export function RepositoryDialog({
   error,
   projects,
   currentRoot,
+  managedRepositories,
   onClose,
   onSubmit,
 }: {
@@ -81,6 +83,7 @@ export function RepositoryDialog({
   error: string | null;
   projects: SavedProject[];
   currentRoot: string | null;
+  managedRepositories?: Array<{ id: string; name: string }>;
   onClose: () => void;
   onSubmit: (path: string) => void;
 }) {
@@ -145,7 +148,7 @@ export function RepositoryDialog({
   }, [open]);
 
   useEffect(() => {
-    if (!open || !browsing) {
+    if (managedRepositories || !open || !browsing) {
       setListing(null);
       return;
     }
@@ -237,6 +240,44 @@ export function RepositoryDialog({
   }, [preferTypedPath, query, rows]);
 
   if (!open) return null;
+
+  if (managedRepositories) {
+    return (
+      <ModalSurface
+        open={open}
+        onClose={onClose}
+        dismissible={!busy}
+        className="repository-dialog project-switcher-dialog"
+        ariaLabelledBy="repository-dialog-title"
+      >
+        <p className="eyebrow">Managed workspace</p>
+        <h2 id="repository-dialog-title">Choose a repository</h2>
+        <p>Only repositories configured for this single-tenant hosted workbench are available.</p>
+        <div className="project-switcher-results" role="listbox" aria-label="Managed repositories">
+          {managedRepositories.length === 0 && (
+            <p className="project-switcher-empty">No managed repositories are available.</p>
+          )}
+          {managedRepositories.map((repository) => (
+            <button
+              type="button"
+              role="option"
+              aria-selected={false}
+              key={repository.id}
+              className="project-switcher-row"
+              onClick={() => onSubmit(repository.id)}
+              disabled={busy}
+            >
+              <span className="project-switcher-icon" aria-hidden="true">◫</span>
+              <span className="project-switcher-text">
+                <strong>{repository.name}</strong>
+                <small>Configured managed repository</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </ModalSurface>
+    );
+  }
 
   const activate = (row: Row) => {
     setPreferTypedPath(false);

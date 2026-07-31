@@ -84,6 +84,43 @@ conversation. The answer is never copied into the parent provider context.
   is inspection metadata, not evidence of Action admission or effect claim.
 - Design record: [decisions/shikigami-provider.md](decisions/shikigami-provider.md).
 
+### Enterprise-managed hosted Shikigami
+
+The explicit managed hosted profile is separate from local Shikigami
+configuration. It requires Shikigami **1.0.5+** and is selected by the Code
+host only after the gateway assertion and operator configuration pass
+validation. The browser receives no provider, profile, model, mode, adapter,
+executable, endpoint, credential, or arbitrary repository controls.
+
+Every managed run is Build with:
+
+```toml
+[profile]
+name = "aldunis-code-managed"
+
+[model]
+adapter = "plane"
+model = "<operator-approved logical model>"
+
+[governance]
+adapter = "sekai-chisei"
+fail_closed = true
+endpoint = "<operator-controlled Chisei endpoint>"
+principal = "<managed Shikigami service principal>"
+namespace = "<operator namespace>"
+token_env = "SEKAI_TOKEN"
+```
+
+The managed subprocess receives only a deterministic runtime environment,
+the configured Chisei token, and dedicated run directories. It does not
+inherit provider, platform, source-control, proxy, or unrelated host-home
+credentials. Its Build allowlist retains read/report/file-mutation tools but
+excludes shell and background-shell tools so the governance token cannot be
+read by an agent-controlled command. The hosted alpha preserves the existing
+streamed Shikigami status/tool/approval/cancel/checkpoint/diff flow, but it is
+not an OS sandbox.
+See [the managed hosted workbench decision](decisions/managed-hosted-workbench.md).
+
 ## Reviewed declarative ACP adapters
 
 Version 1 adapters are **code-free manifests** pinned by SHA-256 digest.

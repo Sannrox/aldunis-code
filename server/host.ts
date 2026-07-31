@@ -9,7 +9,7 @@ import {
 } from "node:http";
 import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { extname, join, normalize } from "node:path";
+import { basename, dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ClaudeCodeAdapter,
@@ -76,6 +76,7 @@ import {
   projectDelegatedConversationOutcomes,
   projectThreadStatus,
   projectThreadStatuses,
+  type StateProjection,
   type ThreadStatus,
 } from "./state.ts";
 import {
@@ -107,6 +108,7 @@ import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
+import { ManagedHost, ManagedHostError } from "./managed-host.ts";
 import {
   ChiseiClientError,
   ChiseiProjectionClient,
@@ -148,6 +150,58 @@ function checkpointWorktreeKey(projectId: string, worktree: string): string {
 function projectHasActiveCheckpoint(projectId: string): boolean {
   const prefix = `[${JSON.stringify(projectId)},`;
   return [...activeCheckpointWorktrees].some((key) => key.startsWith(prefix));
+}
+
+function filterManagedProjection(
+  projection: StateProjection,
+  managedHost: ManagedHost,
+): StateProjection {
+  const projects = projection.projects.filter((project) => {
+    try {
+      managedHost.repositoryForRoot(project.root);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const projectIds = new Set(projects.map((project) => project.id));
+  const threads = projection.threads.filter((thread) => projectIds.has(thread.projectId));
+  const threadIds = new Set(threads.map((thread) => thread.id));
+  const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
+  const turnIds = new Set(turns.map((turn) => turn.id));
+  return {
+    ...projection,
+    projects,
+    threads,
+    turns,
+    messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
+    activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
+    plans: projection.plans.filter((plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId)),
+    contextReceipts: projection.contextReceipts.filter(
+      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
+    ),
+    governanceCorrelations: projection.governanceCorrelations.filter(
+      (receipt) => threadIds.has(receipt.threadId),
+    ),
+    providerSessions: projection.providerSessions.filter((session) => threadIds.has(session.threadId)),
+    checkpoints: projection.checkpoints.filter(
+      (checkpoint) => threadIds.has(checkpoint.threadId) && turnIds.has(checkpoint.turnId),
+    ),
+    annotations: projection.annotations.filter((annotation) => threadIds.has(annotation.threadId)),
+    fileReviews: projection.fileReviews.filter((review) => threadIds.has(review.threadId)),
+    conversationDeletions: projection.conversationDeletions.filter((deletion) => threadIds.has(deletion.threadId)),
+    forks: projection.forks.filter(
+      (fork) => threadIds.has(fork.sourceThreadId) && threadIds.has(fork.destinationThreadId),
+    ),
+    delegatedRelationships: projection.delegatedRelationships.filter(
+      (relationship) => threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
+    ),
+    inputRequests: projection.inputRequests.filter((request) => threadIds.has(request.threadId)),
+    inputReceipts: projection.inputReceipts.filter(
+      (receipt) => threadIds.has(receipt.childThreadId)
+        && (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
+    ),
+  };
 }
 
 export function assertLoopbackHost(host: string): void {
@@ -239,7 +293,7 @@ function isAllowedOrigin(request: IncomingMessage, remote: boolean): boolean {
   }
 }
 
-async function selectedWorktree(
+async function selectWorktreeForRepository(
   rootInput: string,
   worktreeInput: string,
 ): Promise<{ root: string; worktree: string }> {
@@ -257,6 +311,23 @@ async function selectedWorktree(
     throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
   }
   return { root, worktree: selected };
+}
+
+async function managedWorktreePath(root: string, branch: string): Promise<string> {
+  const parent = dirname(root);
+  const [rootDetails, parentDetails] = await Promise.all([stat(root), stat(parent)]);
+  if (rootDetails.dev !== parentDetails.dev) {
+    throw new RepositoryError(
+      "Managed worktree creation requires the repository parent to share its filesystem.",
+      403,
+    );
+  }
+  const safeBranch = branch.trim()
+    .replaceAll("/", "-")
+    .replace(/[^A-Za-z0-9._-]/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 120) || "worktree";
+  return join(parent, ".aldunis-worktrees", basename(root), safeBranch);
 }
 
 async function selectedReleaseProject(
@@ -376,6 +447,7 @@ async function handleApi(
   internalRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
+  managedHost?: ManagedHost,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -386,7 +458,28 @@ async function handleApi(
     response.end();
     return true;
   }
-  if (!isAllowedOrigin(request, Boolean(remoteAuth))) {
+  const selectedWorktree = managedHost
+    ? (root: string, worktree: string) => managedHost.selectWorktree(root, worktree)
+    : selectWorktreeForRepository;
+  const assertManagedProject = (
+    projection: StateProjection,
+    projectId: string,
+  ) => {
+    const project = projection.projects.find((candidate) => candidate.id === projectId);
+    if (!project) throw new LocalStateError("The selected project is not available.", 404);
+    if (managedHost) managedHost.repositoryForRoot(project.root);
+    return project;
+  };
+  const assertManagedThread = (
+    projection: StateProjection,
+    threadId: string,
+  ) => {
+    const thread = projection.threads.find((candidate) => candidate.id === threadId);
+    if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
+    const project = assertManagedProject(projection, thread.projectId);
+    return { thread, project };
+  };
+  if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
   }
@@ -402,7 +495,16 @@ async function handleApi(
       response.write(": connected\n\n");
       const unsubscribe = wake.subscribe((event) => {
         if (response.writableEnded) return;
-        response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+        if (!managedHost) {
+          response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+          return;
+        }
+        void state.load().then((projection) => {
+          if (response.writableEnded) return;
+          const visible = filterManagedProjection(projection, managedHost);
+          if (!visible.threads.some((thread) => thread.id === event.threadId)) return;
+          response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+        }).catch(() => undefined);
       });
       const heartbeat = setInterval(() => {
         if (response.writableEnded) return;
@@ -416,7 +518,44 @@ async function handleApi(
       response.on("close", cleanup);
       return true;
     }
+    if (route === "/api/host/capabilities") {
+      sendJson(response, 200, managedHost
+        ? managedHost.capabilities()
+        : {
+            mode: remoteAuth ? "remote" : "local",
+            managed: false,
+            tenantScoped: false,
+            capabilities: {
+              providerSelection: true,
+              profileAdministration: !remoteRequest,
+              adapterAdministration: !remoteRequest,
+              modelSelection: true,
+              modeSelection: true,
+              arbitraryRepositorySelection: !remoteRequest,
+              directoryBrowsing: !remoteAuth,
+            },
+          });
+      return true;
+    }
     if (route === "/api/providers/discover") {
+      if (managedHost) {
+        sendJson(response, 200, {
+          providers: [{
+            id: "shikigami",
+            installed: true,
+            authenticated: true,
+            version: "1.0.5+",
+            name: "Shikigami",
+            detail: null,
+            models: [{
+              id: managedHost.shikigami.model,
+              displayName: managedHost.shikigami.model,
+              isDefault: true,
+            }],
+          }],
+        });
+        return true;
+      }
       const codexReadiness = await codex.readiness().catch(() => ({
         id: "codex-cli" as const,
         installed: false,
@@ -502,6 +641,10 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/adapters/list") {
+      if (managedHost) {
+        sendJson(response, 200, { adapters: [], administrationAvailable: false });
+        return true;
+      }
       const installed = await adapters.list();
       sendJson(response, 200, {
         adapters: remoteRequest
@@ -512,6 +655,10 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/adapters/catalog") {
+      if (managedHost) {
+        sendJson(response, 200, { adapters: [], administrationAvailable: false });
+        return true;
+      }
       const catalog = await listReviewedAdapters(adapters);
       sendJson(response, 200, {
         adapters: remoteRequest
@@ -527,13 +674,14 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/adapters/catalog/prepare") {
-      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
+      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
       const body = await readJson(request) as { slug?: unknown };
       const prepared = await prepareReviewedAdapter(adapters, body.slug);
       sendJson(response, 200, prepared);
       return true;
     }
     if (route === "/api/provider/adapters/inspect") {
+      if (managedHost) throw new ProviderAdapterError("Provider adapter administration is unavailable in managed hosted mode.", 403);
       const body = await readJson(request) as {
         source?: unknown;
         digest?: unknown;
@@ -543,7 +691,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/adapters/install" || route === "/api/provider/adapters/update") {
-      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
+      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
       const body = await readJson(request) as {
         source?: unknown;
         digest?: unknown;
@@ -563,7 +711,7 @@ async function handleApi(
       /^\/api\/provider\/adapters\/([a-z0-9.-]+)\/(enable|disable|rollback|uninstall)$/,
     );
     if (adapterAction) {
-      if (remoteRequest) throw new ProviderAdapterError("Remote clients cannot administer host adapters.", 403);
+      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
       const body = await readJson(request) as { approved?: unknown };
       if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
       const [, id, action] = adapterAction;
@@ -578,6 +726,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/remote/pair") {
+      if (managedHost) throw new RemoteAuthError("Remote pairing is unavailable in managed hosted mode.", 404);
       if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
       const body = await readJson(request) as {
         credential?: unknown;
@@ -590,6 +739,10 @@ async function handleApi(
     if (route === "/api/remote/descriptor") {
       // Loopback hosts answer 200 with remoteEnabled:false so the shell does not
       // log a console 404 on every local boot (local-first default).
+      if (managedHost) {
+        sendJson(response, 200, { remoteEnabled: false, hostedMode: true });
+        return true;
+      }
       if (!remoteAuth) {
         sendJson(response, 200, { remoteEnabled: false });
         return true;
@@ -598,11 +751,24 @@ async function handleApi(
       return true;
     }
     if (route === "/api/repositories/open") {
-      const body = await readJson(request) as { path?: unknown };
-      if (typeof body.path !== "string") {
-        throw new RepositoryError("A repository path is required.");
-      }
-      const repository = await openRepository(body.path);
+      const body = await readJson(request) as { path?: unknown; repositoryId?: unknown };
+      let managedRepositoryId: string | undefined;
+      let repository = managedHost
+        ? await (async () => {
+            if (typeof body.repositoryId !== "string" || body.path !== undefined) {
+              throw new RepositoryError("Select a repository from the managed catalogue.", 403);
+            }
+            const managedRepository = managedHost.repository(body.repositoryId);
+            await managedHost.verifyRepository(managedRepository);
+            managedRepositoryId = managedRepository.id;
+            return openRepository(managedRepository.root);
+          })()
+        : await (async () => {
+            if (typeof body.path !== "string") {
+              throw new RepositoryError("A repository path is required.");
+            }
+            return openRepository(body.path);
+          })();
       repository.worktrees = await worktrees.list(repository.root);
       const projection = await state.load();
       // One project record per git repository (common dir), not per worktree path.
@@ -634,21 +800,41 @@ async function handleApi(
         // Keep original registration time when reopening an existing project.
         ...(existing ? { openedAt: existing.openedAt } : {}),
       });
-      sendJson(response, 200, { ...repository, projectId: project.id });
+      sendJson(response, 200, {
+        ...repository,
+        projectId: project.id,
+        ...(managedRepositoryId ? { managedRepositoryId } : {}),
+      });
       return true;
     }
     if (route === "/api/projects/list") {
       const projection = await state.load();
+      const projects = await collapseProjectsByRepository(projection.projects);
+      const visibleProjects = managedHost
+        ? projects.filter((project) => {
+            try {
+              managedHost.repositoryForRoot(project.root);
+              return true;
+            } catch {
+              return false;
+            }
+          })
+        : projects;
       sendJson(response, 200, {
-        projects: await collapseProjectsByRepository(projection.projects),
-        chiseiBindingAdministrationAvailable: !remoteRequest,
+        projects: visibleProjects.map((project) => ({
+          ...project,
+          ...(managedHost
+            ? { managedRepositoryId: managedHost.repositoryForRoot(project.root).id }
+            : {}),
+        })),
+        chiseiBindingAdministrationAvailable: !remoteRequest && !managedHost,
       });
       return true;
     }
     if (route === "/api/integrations/chisei/bind") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new LocalStateError(
-          "Remote clients cannot administer Chisei project bindings.",
+          "This host cannot administer Chisei project bindings in the active mode.",
           403,
         );
       }
@@ -750,7 +936,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/directories/browse") {
-      if (remoteAuth) {
+      if (remoteAuth || managedHost) {
         throw new RepositoryError(
           "Remote clients cannot browse the host filesystem without a directory grant.",
           403,
@@ -790,11 +976,21 @@ async function handleApi(
       ) {
         throw new RepositoryError("A repository, base revision, and new branch are required.");
       }
+      const managedRoot = managedHost
+        ? (await managedHost.selectWorktree(body.root, body.root)).root
+        : body.root;
+      if (managedHost && body.path !== undefined) {
+        throw new RepositoryError("Managed hosted mode does not accept arbitrary worktree paths.", 403);
+      }
+      const managedPath = managedHost
+        ? await managedWorktreePath(managedRoot, body.branch)
+        : undefined;
       const { preferences: currentPreferences } = await preferences.load();
       sendJson(response, 200, await worktrees.previewCreate({
-        repository: body.root,
+        repository: managedRoot,
         base: body.base,
         branch: body.branch,
+        ...(managedPath ? { path: managedPath } : {}),
         ...(typeof body.path === "string" ? { path: body.path } : {}),
         limit: currentPreferences.managedWorktreeLimit,
       }));
@@ -805,16 +1001,21 @@ async function handleApi(
       if (typeof body.planId !== "string" || body.confirm !== true) {
         throw new RepositoryError("A complete scoped worktree approval is required.");
       }
+      if (managedHost) await managedHost.verifyRepositoryRoot(worktrees.creationPlan(body.planId).repository);
       const { preferences: currentPreferences } = await preferences.load();
       const created = await worktrees.create(body.planId, currentPreferences.managedWorktreeLimit);
       const repository = await openRepository(created.repository);
       repository.worktrees = await worktrees.list(created.repository);
       const projection = await state.load();
       const project = projection.projects.find((candidate) => candidate.root === created.repository);
+      const managedRepositoryId = managedHost
+        ? managedHost.repositoryForRoot(created.repository).id
+        : undefined;
       sendJson(response, 200, {
         ...repository,
         projectId: project?.id,
         selectedWorktree: created.path,
+        ...(managedRepositoryId ? { managedRepositoryId } : {}),
       });
       return true;
     }
@@ -840,6 +1041,7 @@ async function handleApi(
         throw new RepositoryError("A complete scoped worktree removal approval is required.");
       }
       const plan = worktrees.removalPlan(body.planId);
+      if (managedHost) await managedHost.verifyRepositoryRoot(plan.repository);
       const projection = await state.load();
       const project = projection.projects.find((candidate) => candidate.root === plan.repository);
       let projectLockAcquired = false;
@@ -868,26 +1070,43 @@ async function handleApi(
     }
     if (route === "/api/state/load") {
       const projection = await state.load();
+      const visibleProjection = managedHost
+        ? filterManagedProjection(projection, managedHost)
+        : projection;
       const { preferences: currentPreferences } = await preferences.load();
       sendJson(response, 200, {
-        ...projection,
+        ...visibleProjection,
         delegatedRelationships: currentPreferences.orchestrationThreadsBeta
-          ? projection.delegatedRelationships
+          ? visibleProjection.delegatedRelationships
           : [],
         delegatedOutcomes: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedConversationOutcomes(projection)
+          ? projectDelegatedConversationOutcomes(visibleProjection)
           : [],
         delegatedApprovals: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedApprovals(projection, permissions.approvals())
+          ? projectDelegatedApprovals(
+            visibleProjection,
+            permissions.approvals().filter((approval) => {
+              if (!managedHost) return true;
+              try {
+                managedHost.repositoryForRoot(approval.repository);
+                return visibleProjection.threads.some((thread) => thread.id === approval.conversationId);
+              } catch {
+                return false;
+              }
+            }),
+          )
           : [],
         delegatedInputs: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedInputs(projection)
+          ? projectDelegatedInputs(visibleProjection)
           : [],
-        threadStatuses: projectThreadStatuses(projection),
+        threadStatuses: projectThreadStatuses(visibleProjection),
       });
       return true;
     }
     if (route === "/api/forks/preview") {
+      if (managedHost) {
+        throw new LocalStateError("Conversation forks are unavailable in managed hosted mode.", 403);
+      }
       const body = await readJson(request) as { sourceThreadId?: unknown };
       if (typeof body.sourceThreadId !== "string") {
         throw new LocalStateError("A source conversation is required.", 400);
@@ -920,6 +1139,9 @@ async function handleApi(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
           400,
         );
+      }
+      if (managedHost) {
+        throw new LocalStateError("Conversation forks are unavailable in managed hosted mode.", 403);
       }
       const projection = await state.load();
       const source = projection.threads.find((thread) => thread.id === body.sourceThreadId);
@@ -973,8 +1195,11 @@ async function handleApi(
       const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
       const archived = body.archived ?? "exclude";
       const projection = await state.load();
-      const projects = new Map(projection.projects.map((project) => [project.id, project]));
-      const threads = projection.threads
+      const visibleProjection = managedHost
+        ? filterManagedProjection(projection, managedHost)
+        : projection;
+      const projects = new Map(visibleProjection.projects.map((project) => [project.id, project]));
+      const threads = visibleProjection.threads
         .filter((thread) => {
           if (archived === "exclude" && thread.archivedAt) return false;
           if (archived === "only" && !thread.archivedAt) return false;
@@ -1004,6 +1229,7 @@ async function handleApi(
       if (typeof body.threadId !== "string" || typeof body.title !== "string") {
         throw new LocalStateError("A conversation and title are required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.renameConversation(body.threadId, body.title));
       return true;
     }
@@ -1012,6 +1238,7 @@ async function handleApi(
       if (typeof body.threadId !== "string" || typeof body.pinned !== "boolean") {
         throw new LocalStateError("A conversation and pin state are required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.setConversationPinned(body.threadId, body.pinned));
       return true;
     }
@@ -1020,6 +1247,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.archiveConversation(body.threadId));
       return true;
     }
@@ -1028,6 +1256,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.restoreConversation(body.threadId));
       return true;
     }
@@ -1036,6 +1265,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.settleConversation(body.threadId));
       return true;
     }
@@ -1044,6 +1274,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.unsettleConversation(body.threadId));
       return true;
     }
@@ -1052,6 +1283,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.markConversationVisited(body.threadId));
       return true;
     }
@@ -1063,6 +1295,12 @@ async function handleApi(
       const projection = await state.load();
       const thread = projection.threads.find((item) => item.id === body.threadId);
       if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
+      const project = projection.projects.find((item) => item.id === thread.projectId);
+      if (managedHost) {
+        assertManagedThread(projection, thread.id);
+        if (!project) throw new LocalStateError("The selected conversation is not available.", 404);
+        await managedHost.selectWorktree(project.root, thread.worktree);
+      }
       const blocking = projection.turns.find((turn) => (
         turn.threadId === thread.id
         && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
@@ -1088,6 +1326,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, {
         threadId: body.threadId,
         affectedRecords: await state.previewConversationDeletion(body.threadId),
@@ -1103,7 +1342,10 @@ async function handleApi(
       sendJson(
         response,
         200,
-        await withDelegatedControlLock(() => state.deleteConversation(body.threadId as string)),
+        await withDelegatedControlLock(async () => {
+          if (managedHost) assertManagedThread(await state.load(), body.threadId as string);
+          return state.deleteConversation(body.threadId as string);
+        }),
       );
       return true;
     }
@@ -1123,6 +1365,11 @@ async function handleApi(
           if (!currentPreferences.orchestrationThreadsBeta) {
             throw new LocalStateError("Orchestration threads beta is disabled.", 403);
           }
+          if (managedHost) {
+            const projection = await state.load();
+            assertManagedThread(projection, body.parentThreadId!);
+            assertManagedThread(projection, body.childThreadId!);
+          }
           return state.linkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
         }),
       );
@@ -1140,6 +1387,11 @@ async function handleApi(
         const { preferences: currentPreferences } = await preferences.load();
         if (!currentPreferences.orchestrationThreadsBeta) {
           throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+        }
+        if (managedHost) {
+          const projection = await state.load();
+          assertManagedThread(projection, body.parentThreadId!);
+          assertManagedThread(projection, body.childThreadId!);
         }
         await state.unlinkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
       });
@@ -1164,12 +1416,16 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/list") {
+      if (managedHost) {
+        sendJson(response, 200, { automations: [] });
+        return true;
+      }
       sendJson(response, 200, { automations: await automations.list() });
       return true;
     }
     if (route === "/api/automations/create") {
       // Mutating automations can start provider runs; keep them loopback-local like adapter admin.
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot create automations.", 403);
       }
       const body = await readJson(request) as {
@@ -1204,7 +1460,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/update") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot update automations.", 403);
       }
       const body = await readJson(request) as {
@@ -1226,7 +1482,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/delete") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot delete automations.", 403);
       }
       const body = await readJson(request) as { id?: unknown };
@@ -1236,7 +1492,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/automations/run-now") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot run automations.", 403);
       }
       const body = await readJson(request) as { id?: unknown };
@@ -1251,6 +1507,9 @@ async function handleApi(
       }
       await withDelegatedControlLock(async () => {
         const projection = await state.load();
+        if (managedHost) {
+          assertManagedProject(projection, body.projectId as string);
+        }
         if (activeCheckpointProjects.has(body.projectId as string) || projectHasActiveCheckpoint(body.projectId as string)) {
           throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
         }
@@ -1281,6 +1540,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/retention") {
+      if (managedHost) {
+        throw new LocalStateError("Retention administration is unavailable in managed hosted mode.", 403);
+      }
       const body = await readJson(request) as { olderThan?: unknown };
       if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
         throw new RepositoryError("A valid retention cutoff is required.");
@@ -1464,10 +1726,21 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/capabilities") {
+      if (managedHost) {
+        sendJson(response, 200, {
+          provider: "shikigami",
+          commands: [],
+          attachments: provider.capabilities().attachments,
+        });
+        return true;
+      }
       sendJson(response, 200, provider.capabilities());
       return true;
     }
     if (route === "/api/provider/skills") {
+      if (managedHost) {
+        throw new LocalStateError("Codex skills are unavailable in managed hosted mode.", 403);
+      }
       const body = await readJson(request) as {
         provider?: unknown;
         root?: unknown;
@@ -1582,7 +1855,7 @@ async function handleApi(
       }
       const context = await selectedWorktree(body.root, body.worktree);
       const assembled = await assembleContextPackage(context.worktree, pins, {
-        includeProviderInstructions: !remoteRequest,
+        includeProviderInstructions: !remoteRequest && !managedHost,
       });
       sendJson(response, 200, {
         package: {
@@ -1596,6 +1869,10 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/list") {
+      if (managedHost) {
+        sendJson(response, 200, { profiles: [], administrationAvailable: false });
+        return true;
+      }
       const installedAdapters = await adapters.list();
       sendJson(response, 200, {
         profiles: await profiles.list({
@@ -1605,7 +1882,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/save") {
-      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
+      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
       const body = await readJson(request) as {
         id?: unknown;
         provider?: unknown;
@@ -1654,7 +1931,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/delete") {
-      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
+      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
       const body = await readJson(request) as { id?: unknown };
       if (typeof body.id !== "string") throw new ProfileError("A provider profile is required.");
       await profiles.delete(body.id);
@@ -1662,7 +1939,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/refresh") {
-      if (remoteRequest) throw new ProfileError("Remote clients cannot administer provider profiles.", 403);
+      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
       const body = await readJson(request) as { id?: unknown; kind?: unknown };
       const kinds: ProfileProbeKind[] = ["availability", "version", "authentication", "models"];
       if (
@@ -1694,6 +1971,46 @@ async function handleApi(
         reasoningEffort?: unknown;
         inputRequestId?: unknown;
       };
+      if (managedHost) {
+        const forbiddenManagedOverrides = [
+          "adapter",
+          "adapterId",
+          "baseUrl",
+          "credential",
+          "endpoint",
+          "executable",
+          "governanceAdapter",
+          "modelAdapter",
+          "modelId",
+          "providerId",
+          "providerProfile",
+          "rootPath",
+          "tokenEnv",
+          "worktreePath",
+        ];
+        if (forbiddenManagedOverrides.some((key) => Object.hasOwn(body, key))) {
+          throw new RepositoryError("Managed runs cannot override provider, model, executable, endpoint, credential, or path configuration.", 403);
+        }
+        if (body.provider !== undefined && body.provider !== "shikigami") {
+          throw new RepositoryError("Managed hosted mode runs only Shikigami.", 403);
+        }
+        if (body.mode !== undefined && body.mode !== "build") {
+          throw new RepositoryError("Managed hosted mode runs only Build mode.", 403);
+        }
+        if (body.model !== undefined && body.model !== managedHost.shikigami.model) {
+          throw new RepositoryError("The managed model is selected by the host configuration.", 403);
+        }
+        if (body.profileId !== undefined && body.profileId !== null) {
+          throw new RepositoryError("Managed hosted mode does not accept provider profiles.", 403);
+        }
+        if (body.reasoningEffort !== undefined) {
+          throw new RepositoryError("Managed hosted mode does not accept model tuning overrides.", 403);
+        }
+        body.provider = "shikigami";
+        body.mode = "build";
+        body.model = managedHost.shikigami.model;
+        body.profileId = null;
+      }
       const providerId = (body.provider ?? "claude-code") as ProviderId;
       const isDeclarativeAdapter = typeof providerId === "string" && providerId.startsWith("adapter:");
       const reasoningEfforts = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
@@ -1759,7 +2076,7 @@ async function handleApi(
       const assembledContext = await assembleContextPackage(
         context.worktree,
         contextPins,
-        { includeProviderInstructions: !remoteRequest },
+        { includeProviderInstructions: !remoteRequest && !managedHost },
       );
       const providerPrompt = composePrompt(
         body.prompt.trim(),
@@ -1960,7 +2277,12 @@ async function handleApi(
             mode,
             resumeSessionId: body.resumeSessionId,
             model: body.model === "default" ? undefined : body.model,
-          })
+          }, process.env, managedHost
+            ? {
+                ...managedHost.shikigami,
+                stateRoot: join(state.directory, "managed-shikigami"),
+              }
+            : undefined)
           : installedAdapter
           ? await (async () => {
               const executable = await adapters.resolveExecutable(installedAdapter);
@@ -2335,8 +2657,13 @@ async function handleApi(
           if (!currentPreferences.orchestrationThreadsBeta) {
             throw new LocalStateError("Parent-routed input requires beta orchestration.", 403);
           }
+          const inputProjection = await state.load();
+          if (managedHost) {
+            assertManagedThread(inputProjection, body.parentThreadId);
+            assertManagedThread(inputProjection, body.childThreadId as string);
+          }
           selectedRequest = assertParentRoutedInput(
-            await state.load(),
+            inputProjection,
             body.parentThreadId,
             body.childThreadId as string,
             inputResponseMatch[1],
@@ -2345,7 +2672,9 @@ async function handleApi(
             throw new LocalStateError("The input request has already been resolved.", 409);
           }
         } else {
-          const requestProjection = (await state.load()).inputRequests.find((item) => (
+          const inputProjection = await state.load();
+          if (managedHost) assertManagedThread(inputProjection, body.childThreadId as string);
+          const requestProjection = inputProjection.inputRequests.find((item) => (
             item.id === inputResponseMatch[1]
             && item.threadId === body.childThreadId
             && item.state === "pending"
@@ -2460,6 +2789,7 @@ async function handleApi(
           400,
         );
       }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
       sendJson(response, 200, await state.setFileReview({
         threadId: body.threadId,
         path: body.path,
@@ -2671,7 +3001,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/release-delivery/inspect") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
       }
       const body = await readJson(request) as {
@@ -2696,7 +3026,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/release-delivery/plans") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
       }
       const body = await readJson(request) as {
@@ -2746,7 +3076,7 @@ async function handleApi(
       /^\/api\/release-delivery\/plans\/([0-9a-f-]+)\/execute$/,
     );
     if (releaseDeliveryMatch) {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
       }
       const body = await readJson(request) as {
@@ -2783,7 +3113,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/release-delivery/receipt") {
-      if (remoteRequest) {
+      if (remoteRequest || managedHost) {
         throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
       }
       const body = await readJson(request) as {
@@ -2815,6 +3145,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/delivery/plans") {
+      if (managedHost) {
+        throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
+      }
       const body = await readJson(request) as {
         root?: unknown;
         worktree?: unknown;
@@ -2844,6 +3177,9 @@ async function handleApi(
     }
     const deliveryMatch = route.match(/^\/api\/delivery\/plans\/([0-9a-f-]+)\/execute$/);
     if (deliveryMatch) {
+      if (managedHost) {
+        throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
+      }
       const body = await readJson(request) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new RepositoryError("A repository and worktree are required.");
@@ -2942,6 +3278,7 @@ async function handleApi(
       || error instanceof ProviderAdapterError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
+      || error instanceof ManagedHostError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -2955,6 +3292,7 @@ async function handleApi(
       || error instanceof ProviderAdapterError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
+      || error instanceof ManagedHostError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -2995,15 +3333,16 @@ export function createLocalHost(
   permissions = new PermissionBroker(),
   childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
   chisei = new ChiseiProjectionClient(),
+  managedHost?: ManagedHost,
 ) {
-  const internalPermissionCallback = remoteAuth
+  const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
     : undefined;
   const delivery = new DeliveryBroker();
   const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
-  const shikigami = new ShikigamiAdapter("shikigami", permissions);
+  const shikigami = new ShikigamiAdapter(managedHost?.shikigami.executable ?? "shikigami", permissions);
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const automations = new AutomationStore(state.directory);
@@ -3198,6 +3537,20 @@ export function createLocalHost(
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
     if (
+      managedHost
+      && !internalRequest
+      && route.startsWith("/api/")
+      && route !== "/api/remote/descriptor"
+    ) {
+      try {
+        await managedHost.verify(request, await bufferRequest(request));
+      } catch (error) {
+        const status = error instanceof ManagedHostError ? error.status : 500;
+        const message = error instanceof ManagedHostError ? error.message : "Managed authentication failed.";
+        sendJson(response, status, { error: message });
+        return;
+      }
+    } else if (
       remoteAuth
       && !internalRequest
       && route.startsWith("/api/")
@@ -3241,13 +3594,14 @@ export function createLocalHost(
         internalRequest,
         remoteAuth,
         internalPermissionCallback?.url,
+        managedHost,
       )
     ) return;
     await serveStatic(request, response, dist);
   };
   const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
   serverRef = server;
-  automationScheduler.start();
+  if (!managedHost) automationScheduler.start();
   server.once("close", () => {
     unsubscribePermissionChanges();
     automationScheduler.stop();
