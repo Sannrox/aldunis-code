@@ -785,6 +785,74 @@ test("delegated conversation relationships persist, enforce one parent, and deta
   assert.equal(rebuilt.threads.some((thread) => thread.id === child.id), true);
 });
 
+test("delegated conversation relationships remain an acyclic forest", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const createConversation = async (name: string) => (await store.startTurn({
+    projectId: "project-1",
+    worktree: `/fixture/${name}`,
+    prompt: name,
+    mode: "ask",
+    provider: "codex-cli",
+  })).thread;
+  const parent = await createConversation("parent");
+  const child = await createConversation("child");
+  const grandchild = await createConversation("grandchild");
+  const sibling = await createConversation("sibling");
+
+  await store.linkDelegatedConversation(parent.id, child.id);
+  await store.linkDelegatedConversation(child.id, grandchild.id);
+  await store.linkDelegatedConversation(parent.id, sibling.id);
+  await assert.rejects(
+    () => store.linkDelegatedConversation(child.id, parent.id),
+    /would create a cycle/,
+  );
+  await assert.rejects(
+    () => store.linkDelegatedConversation(grandchild.id, parent.id),
+    /would create a cycle/,
+  );
+
+  const projection = await store.load();
+  assert.deepEqual(
+    projection.delegatedRelationships.map((relationship) => [
+      relationship.parentThreadId,
+      relationship.childThreadId,
+    ]),
+    [
+      [parent.id, child.id],
+      [child.id, grandchild.id],
+      [parent.id, sibling.id],
+    ],
+  );
+});
+
+test("concurrent inverse delegated links cannot race into a cycle", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const first = (await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/first",
+    prompt: "first",
+    mode: "ask",
+    provider: "codex-cli",
+  })).thread;
+  const second = (await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/second",
+    prompt: "second",
+    mode: "ask",
+    provider: "codex-cli",
+  })).thread;
+
+  const results = await Promise.allSettled([
+    store.linkDelegatedConversation(first.id, second.id),
+    store.linkDelegatedConversation(second.id, first.id),
+  ]);
+
+  assert.deepEqual(results.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+  assert.equal((await store.load()).delegatedRelationships.length, 1);
+});
+
 test("delegated completion outcomes project only the latest bounded child result", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

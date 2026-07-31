@@ -21,7 +21,7 @@
     },
     {
       "name": "DelegatedConversationRelationship",
-      "description": "A local, metadata-only association from one parent conversation to one existing child conversation. It never transfers messages, provider context, tool state, or approvals."
+      "description": "A local, metadata-only association from one parent conversation to one existing child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
     {
       "name": "ManagedWorktreeRemovalApproval",
@@ -119,6 +119,12 @@
       "subject": "DelegatedConversationRelationship",
       "source": "GitHub Issue Sannrox/aldunis-code#410",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/410",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedConversationRelationship",
+      "source": "GitHub Issue Sannrox/aldunis-code#439",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/439",
       "confidence": 1.0
     },
     {

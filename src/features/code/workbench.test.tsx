@@ -104,6 +104,42 @@ test("a projected approval overrides a running child status in parent attention"
   assert.doesNotMatch(html, />1 working</);
 });
 
+test("delegated child candidates exclude every ancestor of the focused parent", () => {
+  const ancestor = {
+    ...parent,
+    id: "ancestor",
+    title: "Ancestor conversation",
+  };
+  const focusedParent = {
+    ...parent,
+    id: "focused-parent",
+    title: "Focused parent",
+  };
+  const available = {
+    ...child,
+    id: "available",
+    title: "Available conversation",
+    status: "idle" as const,
+  };
+  const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
+    parent: focusedParent,
+    conversations: [ancestor, focusedParent, available],
+    relationships: [{
+      id: "ancestor-link",
+      parentThreadId: ancestor.id,
+      childThreadId: focusedParent.id,
+      createdAt: "2026-07-30T10:00:00.000Z",
+    }],
+    outcomes: [],
+    approvals: [],
+    onOpen: () => undefined,
+    onChanged: async () => undefined,
+  }));
+
+  assert.doesNotMatch(html, /Ancestor conversation/);
+  assert.match(html, /Available conversation/);
+});
+
 test("delegated child input identifies its recipient, choices, and recommendation", () => {
   const input: DelegatedInputProjection = {
     parentThreadId: parent.id,
