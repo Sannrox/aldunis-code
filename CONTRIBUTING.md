@@ -46,6 +46,7 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 | --- | --- |
 | `npm run host` | Local API / provider host |
 | `npm run dev` | Vite UI on 127.0.0.1:4174 |
+| `npm run wlan` | Authenticated private-WLAN host with HTTPS pairing |
 | `npm test` | Deterministic unit tests |
 | `npm run check` | TypeScript project build check |
 | `npm run build` | Web + desktop main bundles |
