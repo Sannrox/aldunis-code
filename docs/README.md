@@ -11,6 +11,7 @@ want to change it.
 | [getting-started.md](getting-started.md) | Install, run, first conversation, remote, desktop |
 | [providers.md](providers.md) | Claude, Codex, Shikigami, reviewed ACP adapters |
 | [automations.md](automations.md) | Timer-only scheduled prompts |
+| [local-delivery.md](local-delivery.md) | Clean candidate → Chisei evidence → Tenkai local release |
 | [local-data.md](local-data.md) | State directory, history, preferences, secrets |
 | [remote-workbench.md](remote-workbench.md) | Authenticated remote access (Tailscale / LAN) |
 | [workspace-checkpoints.md](workspace-checkpoints.md) | Checkpoint capture and rewind safeguards |

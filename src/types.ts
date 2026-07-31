@@ -329,6 +329,76 @@ export interface DeliveryPlan {
   details: string[];
   expiresAt: string;
 }
+
+export type ReleaseWorkflowAction =
+  | "prepare"
+  | "evaluate"
+  | "publish"
+  | "promote"
+  | "plan"
+  | "apply"
+  | "reconcile"
+  | "rollback";
+
+export interface ReleaseDeliveryPlan {
+  id: string;
+  action: ReleaseWorkflowAction;
+  sessionId: string | null;
+  summary: string;
+  details: string[];
+  expiresAt: string;
+}
+
+export interface ReleaseDeliverySession {
+  schemaVersion: 1;
+  id: string;
+  projectId: string;
+  candidate: {
+    identity: string;
+    product: string;
+    version: string;
+    release: string;
+    manifestPath: string;
+    document: {
+      commit: { oid: string };
+      source_tree_digest: string;
+      manifest: { digest: string };
+      artifacts: Array<{ digest: string }>;
+      build_definition_digest: string;
+    };
+  };
+  state: string;
+  completeness: "complete" | "partial" | "stale" | "unknown";
+  buildEvidence: {
+    digest: string;
+    commands: Array<{ id: "install" | "build" | "test"; status: "passed" }>;
+    observedAt: string;
+  };
+  evaluation: {
+    decision: "allow" | "deny" | "unavailable" | "unknown";
+    operationId: string;
+    receiptSchema: string;
+    receiptDigest: string;
+    fresh: boolean;
+    observedAt: string;
+  } | null;
+  tenkai: {
+    releaseId: string | null;
+    provenanceDigest: string | null;
+    channelId: string | null;
+    planId: string | null;
+    environmentId: string | null;
+    planState: string | null;
+    deployedVersion: string | null;
+    health: string | null;
+    rollbackPlanId: string | null;
+    provenanceExpiresAt: string | null;
+    observedAt: string | null;
+  };
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 export type PreviewState = "approval_pending" | "starting" | "running" | "stopping" | "stopped" | "failed";
 export interface PreviewSnapshot {
   id: string;

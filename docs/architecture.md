@@ -90,6 +90,12 @@ through a versioned authenticated contract.
   is a beta-gated control surface while approval and input authority remain
   single-use and bound to the originating child.
 - Unknown provider events and incompatible contract versions fail closed.
+- Local candidate-to-release delivery follows the accepted capability-linked
+  handoff: Code owns only the content-bound candidate and correlation ledger;
+  Chisei owns evaluation and signed provenance; Tenkai owns release, plan,
+  apply, health, rollback, and recovery truth. Every mutation has a single-use
+  preview and every foreign identifier is reconciled before the workflow
+  advances.
 - No integrated general-purpose terminal is exposed.
 - Repository selection follows the split accepted for
   [Issue #35](https://github.com/Sannrox/aldunis-code/issues/35): a path-only

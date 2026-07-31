@@ -50,6 +50,26 @@
     {
       "name": "GovernedDirectRunCorrelation",
       "description": "A metadata-only receipt linking a provider-confirmed Shikigami direct run to the equal Chisei operation identity. It does not imply Action admission or effect claim."
+    },
+    {
+      "name": "CapabilityLinkedDeliverySession",
+      "description": "A durable Aldunis Code coordination ledger for one clean committed candidate. It advances only through previewed Chisei and Tenkai handoffs and never becomes governance or delivery authority."
+    },
+    {
+      "name": "LocalDeliveryCandidate",
+      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition."
+    },
+    {
+      "name": "ChiseiGovernedEvaluationReference",
+      "description": "A bounded local reference to a Chisei-owned governed-subject operation and receipt. The referenced authority is never copied into Aldunis Code."
+    },
+    {
+      "name": "TenkaiDeliveryReference",
+      "description": "A bounded local reference to a Tenkai-owned release, channel, plan, environment, deployment, health, or rollback record."
+    },
+    {
+      "name": "DeliveryCorrelationReceipt",
+      "description": "An aldunis.delivery-receipt/v1 correlation export containing stable identities, digests, freshness, and completeness without signed assertions, credentials, source, command output, or approval material."
     }
   ],
   "relations": [
@@ -106,6 +126,38 @@
       "description": "Associates a local Shikigami conversation with a bounded direct-run correlation receipt.",
       "domain": "LocalConversation",
       "range": "GovernedDirectRunCorrelation"
+    },
+    {
+      "name": "binds_local_delivery_candidate",
+      "description": "Binds one capability-linked session to the exact immutable candidate it coordinates.",
+      "domain": "CapabilityLinkedDeliverySession",
+      "range": "LocalDeliveryCandidate",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "references_chisei_evaluation",
+      "description": "Records a bounded Chisei evaluation reference without transferring governance authority.",
+      "domain": "CapabilityLinkedDeliverySession",
+      "range": "ChiseiGovernedEvaluationReference",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "references_tenkai_delivery",
+      "description": "Records bounded reconciled Tenkai identifiers without transferring delivery or recovery authority.",
+      "domain": "CapabilityLinkedDeliverySession",
+      "range": "TenkaiDeliveryReference"
+    },
+    {
+      "name": "exports_delivery_correlation",
+      "description": "Exports one integrity-bounded correlation envelope from the current local session projection.",
+      "domain": "CapabilityLinkedDeliverySession",
+      "range": "DeliveryCorrelationReceipt"
     }
   ],
   "provenance": [
@@ -209,6 +261,60 @@
       "subject": "records_governed_direct_run",
       "source": "Accepted Shikigami provider decision",
       "locator": "docs/decisions/shikigami-provider.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CapabilityLinkedDeliverySession",
+      "source": "GitHub Issue Sannrox/aldunis-code#332",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalDeliveryCandidate",
+      "source": "Accepted capability-linked developer delivery decision",
+      "locator": "server/release-candidate.ts#AldunisDeliveryCandidate",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChiseiGovernedEvaluationReference",
+      "source": "Accepted authenticated governed-subject provenance decision",
+      "locator": "https://github.com/Sannrox/sekai-chisei/discussions/472",
+      "confidence": 1.0
+    },
+    {
+      "subject": "TenkaiDeliveryReference",
+      "source": "Tenkai command-result and inspection contracts",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DeliveryCorrelationReceipt",
+      "source": "GitHub Issue Sannrox/aldunis-code#332",
+      "locator": "server/release-delivery-workflow.ts#receipt",
+      "confidence": 1.0
+    },
+    {
+      "subject": "binds_local_delivery_candidate",
+      "source": "Aldunis Code local release-delivery contract",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "references_chisei_evaluation",
+      "source": "Aldunis Code local release-delivery contract",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "references_tenkai_delivery",
+      "source": "Aldunis Code local release-delivery contract",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exports_delivery_correlation",
+      "source": "Aldunis Code local release-delivery contract",
+      "locator": "server/release-delivery-workflow.ts#receipt",
       "confidence": 1.0
     }
   ]

@@ -39,6 +39,11 @@ import {
 } from "./annotations.ts";
 import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery.ts";
 import {
+  ReleaseDeliveryBroker,
+  ReleaseDeliveryStore,
+  type ReleaseWorkflowAction,
+} from "./release-delivery-workflow.ts";
+import {
   PermissionBroker,
   PermissionError,
   type ApprovalSnapshot,
@@ -254,6 +259,41 @@ async function selectedWorktree(
   return { root, worktree: selected };
 }
 
+async function selectedReleaseProject(
+  state: LocalStateStore,
+  projectId: string,
+  context: { root: string; worktree: string },
+) {
+  const projection = await state.load();
+  const project = projection.projects.find((item) => item.id === projectId);
+  if (
+    !project
+    || await repositoryCommonDir(project.root) !== await repositoryCommonDir(context.root)
+  ) {
+    throw new RepositoryError("The selected release project is unavailable.", 404);
+  }
+  const exactWorktreeProjects: string[] = [];
+  for (const candidate of projection.projects) {
+    try {
+      if (
+        await repositoryCommonDir(candidate.root) === await repositoryCommonDir(context.root)
+        && await realpath(candidate.root) === context.worktree
+      ) {
+        exactWorktreeProjects.push(candidate.id);
+      }
+    } catch {
+      // Missing project records cannot authorize a local release.
+    }
+  }
+  if (exactWorktreeProjects.length > 0 && !exactWorktreeProjects.includes(project.id)) {
+    throw new RepositoryError("The selected release project does not own this worktree.", 404);
+  }
+  if (exactWorktreeProjects.length === 0 && await realpath(project.root) !== context.root) {
+    throw new RepositoryError("The selected release project does not own this worktree.", 404);
+  }
+  return project;
+}
+
 function createInternalPermissionCallback(permissions: PermissionBroker): {
   server: ReturnType<typeof createHttpServer>;
   url: Promise<string>;
@@ -317,6 +357,7 @@ async function handleApi(
   shikigami: ShikigamiAdapter,
   permissions: PermissionBroker,
   delivery: DeliveryBroker,
+  releaseDelivery: ReleaseDeliveryBroker,
   state: LocalStateStore,
   profiles: ClaudeProfileStore,
   previews: PreviewManager,
@@ -2629,6 +2670,150 @@ async function handleApi(
       sendJson(response, 200, await inspectDelivery(context.root, context.worktree));
       return true;
     }
+    if (route === "/api/release-delivery/inspect") {
+      if (remoteRequest) {
+        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+      }
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        projectId?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.projectId !== "string"
+      ) {
+        throw new RepositoryError("A project, repository, and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const project = await selectedReleaseProject(state, body.projectId, context);
+      sendJson(
+        response,
+        200,
+        await releaseDelivery.inspect(project.id, context.root, context.worktree),
+      );
+      return true;
+    }
+    if (route === "/api/release-delivery/plans") {
+      if (remoteRequest) {
+        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+      }
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        projectId?: unknown;
+        action?: unknown;
+        input?: unknown;
+      };
+      const actions = new Set<ReleaseWorkflowAction>([
+        "prepare",
+        "evaluate",
+        "publish",
+        "promote",
+        "plan",
+        "apply",
+        "reconcile",
+        "rollback",
+      ]);
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.projectId !== "string"
+        || typeof body.action !== "string"
+        || !actions.has(body.action as ReleaseWorkflowAction)
+        || !isRecord(body.input)
+      ) {
+        throw new RepositoryError("A complete release-delivery action is required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const project = await selectedReleaseProject(state, body.projectId, context);
+      sendJson(
+        response,
+        200,
+        await releaseDelivery.plan(
+          project.id,
+          context.root,
+          context.worktree,
+          project.chiseiNamespace ?? "",
+          body.action as ReleaseWorkflowAction,
+          body.input,
+        ),
+      );
+      return true;
+    }
+    const releaseDeliveryMatch = route.match(
+      /^\/api\/release-delivery\/plans\/([0-9a-f-]+)\/execute$/,
+    );
+    if (releaseDeliveryMatch) {
+      if (remoteRequest) {
+        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+      }
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        projectId?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.projectId !== "string"
+      ) {
+        throw new RepositoryError("A project, repository, and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const project = await selectedReleaseProject(state, body.projectId, context);
+      const controller = new AbortController();
+      request.once("aborted", () => controller.abort());
+      response.once("close", () => {
+        if (!response.writableEnded) controller.abort();
+      });
+      sendJson(
+        response,
+        200,
+        await releaseDelivery.execute(
+          releaseDeliveryMatch[1],
+          project.id,
+          context.root,
+          context.worktree,
+          project.chiseiNamespace ?? "",
+          controller.signal,
+        ),
+      );
+      return true;
+    }
+    if (route === "/api/release-delivery/receipt") {
+      if (remoteRequest) {
+        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+      }
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        projectId?: unknown;
+        sessionId?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.projectId !== "string"
+        || typeof body.sessionId !== "string"
+      ) {
+        throw new RepositoryError("A complete release receipt request is required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const project = await selectedReleaseProject(state, body.projectId, context);
+      sendJson(
+        response,
+        200,
+        await releaseDelivery.receipt(
+          body.sessionId,
+          project.id,
+          context.root,
+          context.worktree,
+        ),
+      );
+      return true;
+    }
     if (route === "/api/delivery/plans") {
       const body = await readJson(request) as {
         root?: unknown;
@@ -2815,6 +3000,7 @@ export function createLocalHost(
     ? createInternalPermissionCallback(permissions)
     : undefined;
   const delivery = new DeliveryBroker();
+  const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
   const shikigami = new ShikigamiAdapter("shikigami", permissions);
@@ -3036,6 +3222,7 @@ export function createLocalHost(
         shikigami,
         permissions,
         delivery,
+        releaseDelivery,
         state,
         profiles,
         previews,
