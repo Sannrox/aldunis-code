@@ -1,8 +1,9 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { Product, IconName } from "../../types";
+import type { Product, IconName, RepositoryMetadata } from "../../types";
 import { Icon } from "../../components/icon";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { Button, Input } from "../../components/ui";
+import { TenkaiDeliveryPanel } from "./tenkai-delivery";
 
 const productPages = {
   sekai: {
@@ -375,6 +376,7 @@ export function DomainPage({
   onProjectsChanged,
   chiseiBindingAdministrationAvailable = true,
   chiseiCorrelationId = null,
+  repository = null,
 }: {
   product: Exclude<Product, "code">;
   projects?: SavedProject[];
@@ -382,8 +384,31 @@ export function DomainPage({
   onProjectsChanged?: () => Promise<void>;
   chiseiBindingAdministrationAvailable?: boolean;
   chiseiCorrelationId?: string | null;
+  repository?: RepositoryMetadata | null;
 }) {
   const page = productPages[product];
+  const selectedProject = projects.find((project) => (
+    project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? "")
+  )) ?? null;
+  const worktreeProjectId = repository && selectedProject
+    ? Object.entries(selectedProject.memberRoots ?? {}).find(
+      ([, root]) => root === repository.selectedWorktree,
+    )?.[0] ?? null
+    : null;
+  const activeProjectId = worktreeProjectId
+    ?? (
+      selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
+        ? selectedProjectId
+        : selectedProject?.id ?? null
+    );
+  const chiseiBound = Boolean(
+    activeProjectId
+    && (
+      Object.hasOwn(selectedProject?.chiseiBindings ?? {}, activeProjectId)
+        ? selectedProject?.chiseiBindings?.[activeProjectId]
+        : selectedProject?.chiseiNamespace
+    ),
+  );
   return (
     <main className={`domain-page ${product}`}>
       <div className="domain-orbit"><Icon name={page.icon} /></div>
@@ -415,10 +440,17 @@ export function DomainPage({
       {product === "chisei" && (
         <ChiseiActionsPanel
           projects={projects}
-          selectedProjectId={selectedProjectId}
+          selectedProjectId={activeProjectId ?? selectedProjectId}
           onProjectsChanged={onProjectsChanged}
           bindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
           correlationId={chiseiCorrelationId}
+        />
+      )}
+      {product === "tenkai" && (
+        <TenkaiDeliveryPanel
+          repository={repository}
+          projectId={activeProjectId}
+          chiseiBound={chiseiBound}
         />
       )}
     </main>

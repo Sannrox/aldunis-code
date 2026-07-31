@@ -526,6 +526,8 @@ export interface CollapsedProject {
   openedAt: string;
   /** All local project record ids that share this git repository (main + worktrees). */
   memberIds: string[];
+  /** Exact saved root for each local project record in this repository group. */
+  memberRoots: Record<string, string>;
   /** Per-record bindings retained when repository worktrees collapse into one chip. */
   chiseiBindings: Record<string, string | null>;
   chiseiNamespace?: string | null;
@@ -603,6 +605,11 @@ export async function collapseProjectsByRepository(
       root,
       openedAt: group.winner.openedAt,
       memberIds: [...new Set(group.memberIds)],
+      memberRoots: Object.fromEntries(
+        projects
+          .filter((project) => group.memberIds.includes(project.id))
+          .map((project) => [project.id, project.root]),
+      ),
       chiseiBindings: Object.fromEntries(
         projects
           .filter((project) => group.memberIds.includes(project.id))

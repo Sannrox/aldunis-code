@@ -18,6 +18,8 @@ export interface SavedProject {
   openedAt: string;
   /** All project record ids that collapse into this chip (main + worktrees). */
   memberIds?: string[];
+  /** Saved worktree root keyed by the project record that owns it. */
+  memberRoots?: Record<string, string>;
   chiseiBindings?: Record<string, string | null>;
   chiseiNamespace?: string | null;
 }
