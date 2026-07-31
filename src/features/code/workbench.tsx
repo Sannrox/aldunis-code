@@ -36,6 +36,7 @@ import {
 } from "../dialogs/delete-conversation-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import { delegatedConversationLabels } from "./delegated-conversation-labels";
+import { delegatedConversationAncestorIds } from "../../lib/delegated-conversation-graph";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -98,10 +99,12 @@ export function DelegatedChildrenPanel({
     child.status === "running" && !approvalChildIds.has(child.id)
   )).length;
   const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
+  const ancestorIds = delegatedConversationAncestorIds(relationships, parent.id);
   const candidates = conversations.filter((item) => (
     item.id !== parent.id
     && !item.archivedAt
     && !unavailableChildIds.has(item.id)
+    && !ancestorIds.has(item.id)
   ));
   const candidateLabels = delegatedConversationLabels(candidates);
   const mutate = async (route: string, childThreadId: string) => {

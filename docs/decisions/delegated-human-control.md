@@ -23,6 +23,9 @@ turn.
 ## Decision
 
 The parent is a beta-gated human control surface, not an authority principal.
+Explicit delegated relationships form an acyclic forest: each child has at
+most one parent, the host rejects links that would make an ancestor a child,
+and the candidate selector omits those ancestors.
 
 For tool approvals, the parent projects only pending approvals belonging to an
 explicitly linked child. A parent-routed decision must revalidate the current

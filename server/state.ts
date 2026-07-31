@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { lock } from "proper-lockfile";
 import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
+import { wouldCreateDelegatedConversationCycle } from "../src/lib/delegated-conversation-graph.ts";
 import {
   type InteractionMode,
   persistedProviderFailureMessage,
@@ -1419,28 +1420,40 @@ export class LocalStateStore {
     parentThreadId: string,
     childThreadId: string,
   ): Promise<DelegatedConversationRelationship> {
-    const projection = await this.load();
-    this.#requireThread(projection, parentThreadId);
-    this.#requireThread(projection, childThreadId);
-    if (parentThreadId === childThreadId) {
-      throw new LocalStateError("A conversation cannot be delegated to itself.", 400);
-    }
-    const existing = projection.delegatedRelationships.find(
-      (item) => item.childThreadId === childThreadId,
-    );
-    if (existing?.parentThreadId === parentThreadId) return existing;
-    if (existing) {
-      throw new LocalStateError("This conversation already has a delegated parent.", 409);
-    }
-    const relationship: DelegatedConversationRelationship = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: randomUUID(),
-      parentThreadId,
-      childThreadId,
-      createdAt: new Date().toISOString(),
-    };
-    await this.#append({ type: "delegated_relationship_saved", delegatedRelationship: relationship });
-    return relationship;
+    return this.#appendComputed((projection) => {
+      this.#requireThread(projection, parentThreadId);
+      this.#requireThread(projection, childThreadId);
+      if (parentThreadId === childThreadId) {
+        throw new LocalStateError("A conversation cannot be delegated to itself.", 400);
+      }
+      const existing = projection.delegatedRelationships.find(
+        (item) => item.childThreadId === childThreadId,
+      );
+      if (existing?.parentThreadId === parentThreadId) {
+        return { event: null, value: existing };
+      }
+      if (existing) {
+        throw new LocalStateError("This conversation already has a delegated parent.", 409);
+      }
+      if (wouldCreateDelegatedConversationCycle(
+        projection.delegatedRelationships,
+        parentThreadId,
+        childThreadId,
+      )) {
+        throw new LocalStateError("This delegated relationship would create a cycle.", 409);
+      }
+      const relationship: DelegatedConversationRelationship = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        parentThreadId,
+        childThreadId,
+        createdAt: new Date().toISOString(),
+      };
+      return {
+        event: { type: "delegated_relationship_saved", delegatedRelationship: relationship },
+        value: relationship,
+      };
+    });
   }
 
   async unlinkDelegatedConversation(parentThreadId: string, childThreadId: string): Promise<void> {
