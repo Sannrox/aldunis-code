@@ -33,6 +33,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     prompt: "Inspect the change",
     mode: "plan",
     provider: "claude-code",
+    model: "claude-sonnet-5",
   });
   await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "session_started",
@@ -63,6 +64,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.threads[0].settledAt, null);
   assert.equal(rebuilt.threads[0].wokeAt, null);
   assert.equal(rebuilt.threads[0].lastVisitedAt, null);
+  assert.equal(rebuilt.threads[0].model, "claude-sonnet-5");
   assert.equal(rebuilt.turns[0].status, "completed");
   assert.equal(rebuilt.turns[0].mode, "plan");
   assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);

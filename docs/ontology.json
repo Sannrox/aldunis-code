@@ -20,6 +20,10 @@
       ]
     },
     {
+      "name": "ProviderModelValidationBoundary",
+      "description": "The Aldunis Code server boundary that resolves requested provider models against current provider capability before state, checkpoint, fork, automation, continuation, or process launch; it persists the effective model and fails closed on stale or unverifiable selections."
+    },
+    {
       "name": "DelegatedConversationRelationship",
       "description": "A local, metadata-only association from one parent conversation to one independently created child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
@@ -134,6 +138,16 @@
       }
     },
     {
+      "name": "enforces_provider_model_selection",
+      "description": "The model validation boundary protects each local conversation run and fork from stale, unknown, or unverifiable provider model selections.",
+      "domain": "ProviderModelValidationBoundary",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 1,
+        "max": null
+      }
+    },
+    {
       "name": "has_delegated_relationship",
       "description": "Associates a parent conversation with a durable delegated-conversation relationship.",
       "domain": "LocalConversation",
@@ -225,6 +239,18 @@
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",
       "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderModelValidationBoundary",
+      "source": "Aldunis Code provider run boundary",
+      "locator": "server/provider-models.ts#validateProviderModel",
+      "confidence": 1.0
+    },
+    {
+      "subject": "enforces_provider_model_selection",
+      "source": "GitHub Issue Sannrox/aldunis-code#449",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/449",
       "confidence": 1.0
     },
     {

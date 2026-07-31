@@ -164,6 +164,21 @@ Continuing work on another provider requires an **explicit conversation fork**
 with a reviewed allowlisted context transfer—not silent session rebinding.
 See [decisions/cross-provider-conversation-forks.md](decisions/cross-provider-conversation-forks.md).
 
+## Model selection boundary
+
+The browser model menu is presentation only. Before creating a turn, fork,
+checkpoint, or provider process, the host rechecks the requested model against
+the provider's current capability: Claude aliases normalize to the supported
+canonical model list, Codex and Shikigami use their live readiness models, and
+reviewed ACP adapters are probed for their current `session/new` model list.
+`default` follows the provider-owned default path (Claude keeps its implicit
+default; other providers use their advertised default) and the effective model
+selection is stored on the conversation before launch. A stale selection or
+unavailable capability returns a bounded refreshable conflict; the host never
+silently falls back to a different model. Automation and provider continuation
+use the same run boundary, so a persisted selection cannot bypass a later
+capability change.
+
 ## Credentials and secrets
 
 | Data | Where it lives |

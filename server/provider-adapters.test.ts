@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   acpAllowOnceOption,
+  assertAcpSelectedModel,
   acpLoadedSessionId,
   acpNotificationEvents,
   acpPromptRequest,
@@ -363,6 +364,20 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
       params: { update: { sessionUpdate: "host_extension" } },
     }),
     /Unsupported ACP session update/,
+  );
+});
+
+test("ACP selected models are session-advertised before set_model", () => {
+  const result = {
+    models: {
+      currentModelId: "model-a",
+      availableModels: [{ modelId: "model-a", name: "Model A" }],
+    },
+  };
+  assert.doesNotThrow(() => assertAcpSelectedModel(result, "model-a"));
+  assert.throws(
+    () => assertAcpSelectedModel(result, "model-b"),
+    /did not advertise the selected model/,
   );
 });
 

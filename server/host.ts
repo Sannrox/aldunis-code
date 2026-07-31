@@ -25,6 +25,12 @@ import { beginProviderEventStream } from "./provider-stream.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import { probeAcpModels } from "./acp-models.ts";
 import {
+  claudeModelCatalog,
+  isAdapterProviderId,
+  ProviderModelError,
+  validateProviderModel,
+} from "./provider-models.ts";
+import {
   adapterReference,
   ProviderAdapterError,
   ProviderAdapterStore,
@@ -81,7 +87,6 @@ import {
 } from "./state.ts";
 import {
   ClaudeProfileStore,
-  isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
   type ProfileProbeKind,
@@ -632,7 +637,7 @@ async function handleApi(
       }));
       sendJson(response, 200, {
         providers: [
-          { id: "claude-code", installed: true },
+          { id: "claude-code", installed: true, models: claudeModelCatalog() },
           codexReadiness,
           shikigamiReadiness,
           ...declarativeProviders,
@@ -1126,14 +1131,19 @@ async function handleApi(
         model?: unknown;
         expectedDigest?: unknown;
       };
+      const providerValue = typeof body.provider === "string" ? body.provider : null;
+      const supportedProvider = providerValue === "claude-code"
+        || providerValue === "codex-cli"
+        || providerValue === "shikigami"
+        || (providerValue !== null && isAdapterProviderId(providerValue));
       if (
         typeof body.sourceThreadId !== "string"
-        || (body.provider !== "claude-code" && body.provider !== "codex-cli" && body.provider !== "shikigami")
+        || !supportedProvider
         || typeof body.model !== "string"
         || !body.model
         || typeof body.expectedDigest !== "string"
-        || (body.provider === "claude-code" && typeof body.profileId !== "string")
-        || ((body.provider === "codex-cli" || body.provider === "shikigami") && body.profileId !== null)
+        || (providerValue === "claude-code" && typeof body.profileId !== "string")
+        || (providerValue !== "claude-code" && body.profileId !== null)
       ) {
         throw new LocalStateError(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
@@ -1150,36 +1160,21 @@ async function handleApi(
         : undefined;
       if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
       await selectedWorktree(project.root, source.worktree);
-      if (body.provider === "claude-code") {
-        if (!isAllowedClaudeModel(body.model)) {
-          throw new ProfileError("The selected Claude model is unavailable.", 409);
-        }
+      const provider = providerValue as ProviderId;
+      const effectiveModel = await validateProviderModel(
+        provider,
+        body.model,
+        { codex, shikigami, adapters },
+        source.worktree,
+      );
+      if (provider === "claude-code") {
         await profiles.runtime(body.profileId as string);
-      } else if (body.provider === "shikigami") {
-        const readiness = await shikigami.readiness();
-        if (!readiness.installed || !readiness.authenticated) {
-          throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
-        }
-        if (
-          body.model !== "default"
-          && !readiness.models.some((model) => model.id === body.model)
-        ) {
-          throw new ProviderProtocolError("The selected Shikigami model is unavailable.");
-        }
-      } else {
-        const readiness = await codex.readiness();
-        if (!readiness.installed || !readiness.authenticated) {
-          throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
-        }
-        if (body.model !== "default" && !readiness.models.some((model) => model.id === body.model)) {
-          throw new ProviderProtocolError("The selected Codex model is unavailable.");
-        }
       }
       const created = await state.createFork({
         sourceThreadId: source.id,
-        provider: body.provider,
+        provider,
         profileId: body.profileId as string | null,
-        model: body.model,
+        model: effectiveModel,
         worktree: source.worktree,
         expectedDigest: body.expectedDigest,
       });
@@ -2049,7 +2044,6 @@ async function handleApi(
         || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
         || typeof body.model !== "string"
-        || (providerId === "claude-code" && !isAllowedClaudeModel(body.model))
         || (body.reasoningEffort !== undefined
           && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
         || (body.elementReferences !== undefined && (
@@ -2069,6 +2063,14 @@ async function handleApi(
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
+      const effectiveModel = managedHost
+        ? managedHost.shikigami.model
+        : await validateProviderModel(
+          providerId,
+          body.model,
+          { codex, shikigami, adapters },
+          context.worktree,
+        );
       const contextPins = body.contextPins !== undefined
         ? body.contextPins as ContextPin[]
         : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
@@ -2176,7 +2178,7 @@ async function handleApi(
         pendingFork
         && (
           pendingFork.provider !== providerId
-          || pendingFork.model !== body.model
+          || pendingFork.model !== effectiveModel
           || pendingFork.profileId !== (providerId === "claude-code" ? body.profileId : null)
           || pendingFork.worktree !== context.worktree
         )
@@ -2239,6 +2241,7 @@ async function handleApi(
         prompt: body.prompt.trim(),
         mode,
         provider: providerId,
+        model: effectiveModel,
         reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
         contextPins: assembledContext.pins,
@@ -2327,7 +2330,7 @@ async function handleApi(
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
-            model: body.model === "default" ? undefined : body.model,
+            model: effectiveModel,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
           })
           : providerId === "shikigami"
@@ -2339,7 +2342,7 @@ async function handleApi(
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
-            model: body.model === "default" ? undefined : body.model,
+            model: effectiveModel,
           }, process.env, managedHost
             ? {
                 ...managedHost.shikigami,
@@ -2358,7 +2361,7 @@ async function handleApi(
                 approvalUrl: await approvalUrl,
                 mode,
                 resumeSessionId: body.resumeSessionId,
-                model: body.model === "default" ? undefined : body.model,
+                model: effectiveModel,
                 reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
               });
               activeAcp.set(started.id, adapter);
@@ -2375,7 +2378,7 @@ async function handleApi(
             {
               executable: profile!.executable,
               environment: profile!.environment,
-              model: body.model,
+              model: effectiveModel,
             },
           );
       } catch (error) {
@@ -3339,6 +3342,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ProviderModelError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
@@ -3353,6 +3357,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ProviderModelError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
