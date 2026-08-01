@@ -1958,6 +1958,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .conversation-empty.sparse h2 { font-weight: 500 !important; font-size: 16px !important; }
 .conversation-empty.sparse > span { letter-spacing: .08em; }
 
+/* The fixed mobile composer leaves a short thread viewport. Keep the sparse
+   empty state above it instead of letting its explanatory copy sit beneath
+   the composer surface. */
+@media (max-width: 680px) {
+  .conversation-empty.sparse {
+    margin-top: clamp(16px, 4vh, 32px) !important;
+  }
+}
+
 /* Sidebar fills height like mock */
 .sb { height: 100% !important; }
 .code-nav { flex: 1 1 auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; }
