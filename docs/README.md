@@ -14,6 +14,7 @@ want to change it.
 | [local-delivery.md](local-delivery.md) | Clean candidate → Chisei evidence → Tenkai local release |
 | [local-data.md](local-data.md) | State directory, history, preferences, secrets |
 | [remote-workbench.md](remote-workbench.md) | Authenticated remote access (Tailscale / LAN) |
+| [managed-image-compatibility.md](managed-image-compatibility.md) | Managed hosted image requirements and current blockers |
 | [workspace-checkpoints.md](workspace-checkpoints.md) | Checkpoint capture and rewind safeguards |
 | [web-preview.md](web-preview.md) | In-workbench web preview |
 | [desktop-distribution.md](desktop-distribution.md) | Packaging, signing, update posture |
