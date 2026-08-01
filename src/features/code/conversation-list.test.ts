@@ -36,6 +36,29 @@ test("one state projection supplies conversation metadata and status atomically"
   assert.equal(conversations[0].statusSince, "2026-01-02T00:00:00.000Z");
 });
 
+test("conversation metadata retains the provider session profile and model", () => {
+  const conversations = conversationListFromProjection({
+    threads: [{
+      id: "parent",
+      projectId: "project",
+      title: "Parent",
+      worktree: "/repo",
+      provider: "claude-code",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      pinnedAt: null,
+      archivedAt: null,
+    }],
+    providerSessions: [{
+      threadId: "parent",
+      provider: "claude-code",
+      model: "claude-sonnet-4-6",
+      profileId: "work:claude",
+    }],
+  });
+  assert.equal(conversations[0].profileId, "work:claude");
+  assert.equal(conversations[0].model, "claude-sonnet-4-6");
+});
+
 test("unread is lastVisitedAt < wokeAt and never stored", () => {
   assert.equal(isUnread({ wokeAt: "2026-01-02T00:00:00.000Z", lastVisitedAt: null } as never), true);
   assert.equal(

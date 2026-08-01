@@ -1961,6 +1961,7 @@ async function handleApi(
         resumeSessionId?: unknown;
         projectId?: unknown;
         threadId?: unknown;
+        parentThreadId?: unknown;
         mode?: unknown;
         attachments?: unknown;
         contextPins?: unknown;
@@ -2024,6 +2025,10 @@ async function handleApi(
         || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
         || (body.projectId !== undefined && typeof body.projectId !== "string")
         || (body.threadId !== undefined && typeof body.threadId !== "string")
+        || (body.parentThreadId !== undefined && (
+          typeof body.parentThreadId !== "string"
+          || !body.parentThreadId
+        ))
         || (body.inputRequestId !== undefined && typeof body.inputRequestId !== "string")
         || !["ask", "plan", "build"].includes(body.mode as string)
         || (body.attachments !== undefined && (
@@ -2094,6 +2099,58 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const delegatedParentThreadId = typeof body.parentThreadId === "string"
+        ? body.parentThreadId
+        : null;
+      if (delegatedParentThreadId) {
+        if (body.threadId !== undefined) {
+          throw new LocalStateError(
+            "A delegated child must start as a new conversation.",
+            400,
+          );
+        }
+        const { preferences: currentPreferences } = await preferences.load();
+        if (!currentPreferences.orchestrationThreadsBeta) {
+          throw new LocalStateError("Orchestration threads beta is disabled.", 403);
+        }
+        const parent = projection.threads.find((item) => item.id === delegatedParentThreadId);
+        if (!parent || parent.projectId !== project.id) {
+          throw new LocalStateError("The parent conversation is unavailable for delegation.", 404);
+        }
+        if (providerId !== parent.provider) {
+          throw new LocalStateError(
+            "A delegated child must use the parent conversation's provider.",
+            409,
+          );
+        }
+        if (mode === "build") {
+          if (parent.worktree === context.worktree) {
+            throw new LocalStateError(
+              "A Build child requires an isolated worktree. Start it from a managed child worktree or use Ask/Plan for the parent worktree.",
+              409,
+            );
+          }
+          const selectedChildWorktree = (await worktrees.list(context.root)).find(
+            (worktree) => worktree.path === context.worktree,
+          );
+          if (
+            !selectedChildWorktree
+            || selectedChildWorktree.ownership !== "aldunis"
+            || selectedChildWorktree.recovery !== "available"
+          ) {
+            throw new LocalStateError(
+              "A Build child requires an available Aldunis-managed worktree. Create one through the worktree approval flow.",
+              409,
+            );
+          }
+          if (projection.threads.some((thread) => thread.worktree === context.worktree)) {
+            throw new LocalStateError(
+              "The selected Build child worktree is already bound to another conversation.",
+              409,
+            );
+          }
+        }
+      }
       const resumedInput = typeof body.inputRequestId === "string"
         ? projection.inputRequests.find((item) => (
           item.id === body.inputRequestId
@@ -2195,6 +2252,12 @@ async function handleApi(
         estimatedTokens: assembledContext.estimatedTokens,
         digest: assembledContext.digest,
       });
+      if (delegatedParentThreadId) {
+        await withDelegatedControlLock(() => state.linkDelegatedConversation(
+          delegatedParentThreadId,
+          persisted.thread.id,
+        ));
+      }
       const forkPrompt = await state.pendingForkPrompt(persisted.thread.id);
       const effectiveProviderPrompt = forkPrompt
         ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`

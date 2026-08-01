@@ -17,6 +17,13 @@ Conversations use **Ask**, **Plan**, or **Build**:
 Approvals are allow-once, bound to conversation, repository, worktree, and tool
 call. There is no integrated general-purpose terminal.
 
+From a beta-enabled parent conversation, a human can start an independent
+child with a focused prompt. The child uses the selected provider adapter and
+its own provider session. A new managed worktree is the default and is
+required for Build; Ask and Plan may explicitly share the parent worktree.
+This is a host/UI operation, not an autonomous provider capability, and no
+parent transcript or provider state is transferred.
+
 ## First-class providers
 
 ### Provider profiles

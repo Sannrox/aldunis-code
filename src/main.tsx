@@ -344,6 +344,10 @@ function App() {
         }}
         onSettings={() => setPreferencesOpen(true)}
         onProjectsChanged={loadSavedProjects}
+        onRepositoryChanged={(next) => {
+          setRepository(next);
+          void loadThreads();
+        }}
         chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
         managedMode={hostCapabilities.managed}

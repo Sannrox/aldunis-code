@@ -1,5 +1,6 @@
 import type {
   ConversationSummary,
+  ProviderId,
   RepositoryMetadata,
   ThreadStatusProjection,
 } from "../../types";
@@ -12,6 +13,12 @@ export interface ConversationListProjection {
   threads: ConversationSummary[];
   projects?: Array<{ id: string; name: string }>;
   threadStatuses?: ThreadStatusProjection[];
+  providerSessions?: Array<{
+    threadId: string;
+    provider: ProviderId;
+    model: string | null;
+    profileId?: string;
+  }>;
 }
 
 export function conversationListFromProjection(
@@ -24,12 +31,25 @@ export function conversationListFromProjection(
   const projectNames = new Map(
     (projection.projects ?? []).map((project) => [project.id, project.name]),
   );
+  const providerSessions = new Map(
+    (projection.providerSessions ?? []).map((session) => [
+      `${session.threadId}:${session.provider}`,
+      session,
+    ]),
+  );
   return projection.threads
     .filter((thread) => !projectId || thread.projectId === projectId)
     .map((thread) => {
       const status = statusById.get(thread.id);
+      const session = providerSessions.get(`${thread.id}:${thread.provider}`);
       return {
         ...thread,
+        ...(thread.profileId == null && session?.profileId
+          ? { profileId: session.profileId }
+          : {}),
+        ...(thread.model == null && session?.model
+          ? { model: session.model }
+          : {}),
         projectName: projectNames.get(thread.projectId)
           ?? thread.projectName
           ?? "project",

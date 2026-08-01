@@ -535,6 +535,34 @@ html, body { height: 100%; }
   border-radius: 10px;
   background: var(--card);
 }
+.delegated-start-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.delegated-start-dialog label {
+  color: var(--muted-foreground);
+  font: 10.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.delegated-start-dialog textarea,
+.delegated-start-dialog select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 13px var(--font-sans);
+}
+.delegated-start-dialog textarea { min-height: 112px; padding: 9px 10px; resize: vertical; }
+.delegated-start-dialog select { min-height: 34px; padding: 6px 8px; }
+.delegated-start-help,
+.delegated-start-note { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.delegated-start-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .delegated-children-header,
 .delegated-link-control,
 .delegated-list > li,

@@ -88,6 +88,19 @@ test("delegated child approval card exposes its complete scoped context", () => 
   }
 });
 
+test("delegated parent exposes a human-started child action", () => {
+  const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
+    parent,
+    conversations: [parent, child],
+    relationships: [relationship],
+    outcomes: [],
+    approvals: [],
+    onOpen: () => undefined,
+    onChanged: async () => undefined,
+  }));
+  assert.match(html, />Start child</);
+});
+
 test("a projected approval overrides a running child status in parent attention", () => {
   const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
     parent,
