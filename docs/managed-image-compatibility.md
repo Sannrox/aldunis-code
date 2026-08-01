@@ -1,22 +1,23 @@
 # Managed image compatibility report
 
-- Status: Code-only image build/publish prepared; final managed composition remains blocked
+- Status: Code-only image published; final managed composition remains blocked
 - Scope: image portion of [Platform #141](https://github.com/Sannrox/aldunis-platform/issues/141)
-- Code source revision assessed: `e0fea82f1baf9c907d7c5308459aa69787f64cd4`
+- Published image source revision: `f2ebc0eaf906443dff4e37c825099eebc59c40b9`
+- Managed Code contract revision assessed: `e0fea82f1baf9c907d7c5308459aa69787f64cd4`
 - Assessment date: 2026-08-01
 
 This report records the smallest safe Code-image outcome without claiming a
-live managed deployment. The repository now contains a digest-pinned,
-linux/amd64 build definition and a GitHub Actions publisher for
-`ghcr.io/sannrox/aldunis-code`. Shikigami is intentionally not bundled: its
-independent OCI image is tracked by [Shikigami #156](https://github.com/Sannrox/shikigami/issues/156),
-and [Platform #142](https://github.com/Sannrox/aldunis-platform/issues/142)
-must select how that image is consumed. This report preserves the accepted
+live managed deployment. A digest-pinned, linux/amd64 Code-only image was
+published to `ghcr.io/sannrox/aldunis-code`. Shikigami is intentionally not
+bundled: its independent OCI image is tracked by
+[Shikigami #156](https://github.com/Sannrox/shikigami/issues/156), and
+[Platform #142](https://github.com/Sannrox/aldunis-platform/issues/142) must
+select how that image is consumed. This report preserves the accepted
 local-subprocess provider boundary and does not invent a network service.
 
 ## Contract evidence
 
-The assessed Code revision is the merged implementation of [Code #438](https://github.com/Sannrox/aldunis-code/issues/438).
+The managed Code contract revision is the merged implementation of [Code #438](https://github.com/Sannrox/aldunis-code/issues/438).
 The managed Code contract is recorded in
 [`docs/decisions/managed-hosted-workbench.md`](decisions/managed-hosted-workbench.md)
 and [`docs/providers.md`](providers.md):
@@ -62,7 +63,7 @@ The service therefore needs these runtime properties:
 | Writes | No application writes to the image root; state under `/var/lib/aldunis-code`, `/tmp`, and mounted repositories | Platform Compose; `server/state.ts`; `server/shikigami-provider.ts` |
 | Mounts | Must function with public-key/TLS secret mounts, one writable repository-parent mount, and one writable state volume | Platform Compose |
 | Containment | Must not require host root, host home, Docker socket, or platform database credentials; Compose applies read-only root, dropped capabilities, `no-new-privileges`, CPU/memory/PID limits | Platform Compose and runbook |
-| Provenance | Image label `org.opencontainers.image.revision` must equal `e0fea82f1baf9c907d7c5308459aa69787f64cd4` for the current staging contract | Platform `deploy.sh` and `deployment.env.example` |
+| Provenance | Published image label `org.opencontainers.image.revision` is `f2ebc0eaf906443dff4e37c825099eebc59c40b9`; Platform must update its older expected revision | Publisher run; Platform `deploy.sh` and `deployment.env.example` |
 
 ## Blockers
 
@@ -100,16 +101,22 @@ decision; this report does not assume one.
 
 ### 2. Platform must consume the published Code digest and matching revision
 
-The build workflow now targets the repository-owned GHCR name
-`ghcr.io/sannrox/aldunis-code`. It emits a digest and provenance attestation;
-the workflow does not put credentials in the repository. The deployment
-placeholder `ghcr.io/example/aldunis-code@sha256:...` remains intentionally
-unusable until Platform records the real digest.
+The publisher run [30700466482](https://github.com/Sannrox/aldunis-code/actions/runs/30700466482)
+successfully pushed and attested the Code-only image:
+
+```text
+ghcr.io/sannrox/aldunis-code@sha256:c430acc6b0a25ed351c06a65d58b96a55856257e7267b6c96a81a87a7321b4c2
+```
+
+It is also tagged `managed-latest` and `sha-f2ebc0e`. The workflow does not
+put credentials in the repository. The deployment placeholder
+`ghcr.io/example/aldunis-code@sha256:...` remains intentionally unusable until
+Platform records the real digest.
 
 **Dependency remaining:** Platform must authorize GHCR pull access on the
-Hetzner host, replace the placeholder with the emitted immutable digest, and
-update `ALDUNIS_CODE_REVISION` to the image’s `org.opencontainers.image.revision`
-(the workflow’s source commit). The current Platform value
+Hetzner host, replace the placeholder with the exact immutable digest above,
+and update `ALDUNIS_CODE_REVISION` to
+`f2ebc0eaf906443dff4e37c825099eebc59c40b9`. The current Platform value
 `e0fea82f1baf9c907d7c5308459aa69787f64cd4` predates this image packaging
 change.
 
@@ -146,7 +153,9 @@ implement the Code-only image with:
    image manifest digest for Platform to validate with its Compose config and
    managed health/smoke checks using operator-supplied mounts and secrets.
 
-The workflow does not bundle or download Shikigami. The image digest is not
-recorded here until the publisher runs successfully; its summary is the
-provenance handoff to Platform. A published Code-only image is not, by itself,
-evidence that the managed provider path or Hetzner deployment is ready.
+The workflow does not bundle or download Shikigami. The published digest and
+source revision above are the provenance handoff to Platform. The publisher’s
+attestation is recorded at
+[GitHub attestation 38327428](https://github.com/Sannrox/aldunis-code/attestations/38327428).
+A published Code-only image is not, by itself, evidence that the managed
+provider path or Hetzner deployment is ready.
