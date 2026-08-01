@@ -423,6 +423,15 @@ test("composer grows within its established desktop height bounds", () => {
   );
 });
 
+test("sparse mobile empty state stays above the fixed composer", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.conversation-empty\.sparse\s*\{[^}]*margin-top:\s*clamp\(16px,\s*4vh,\s*32px\)\s*!important/s,
+  );
+});
+
 test("diff source lines scroll horizontally instead of wrapping", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
