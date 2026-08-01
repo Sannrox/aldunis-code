@@ -1,8 +1,11 @@
 # syntax=docker/dockerfile:1.7
 
-# The managed Code image is deliberately separate from the Shikigami runtime
-# image. The platform must provide the approved Shikigami executable through
-# its own image/wiring before enabling managed provider runs.
+# The managed Code image consumes Shikigami as a pinned build input. The final
+# runtime still invokes the copied CLI as Code's local subprocess provider; it
+# does not start a Shikigami service or define a network protocol.
+ARG SHIKIGAMI_IMAGE=ghcr.io/sannrox/shikigami@sha256:91c9ea4f3ef0c59b91cf57a1cc7b3a849c80ea02d984c6a8db71c9736e966a95
+FROM --platform=linux/amd64 ${SHIKIGAMI_IMAGE} AS shikigami
+
 FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46 AS build
 
 WORKDIR /app
@@ -18,6 +21,8 @@ FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c
 ARG VCS_REF
 ARG BUILD_DATE
 ARG SOURCE_URL=https://github.com/Sannrox/aldunis-code
+ARG SHIKIGAMI_IMAGE
+ARG SHIKIGAMI_REVISION=8de00f0d715b1e73573a58f84ccdc157d1f98ca2
 
 RUN test -n "$VCS_REF" \
   && apt-get update \
@@ -29,7 +34,9 @@ LABEL org.opencontainers.image.title="Aldunis Code" \
   org.opencontainers.image.description="Aldunis Code managed workbench runtime" \
   org.opencontainers.image.source="$SOURCE_URL" \
   org.opencontainers.image.revision="$VCS_REF" \
-  org.opencontainers.image.created="$BUILD_DATE"
+  org.opencontainers.image.created="$BUILD_DATE" \
+  com.sannrox.aldunis.shikigami.image="$SHIKIGAMI_IMAGE" \
+  com.sannrox.aldunis.shikigami.revision="$SHIKIGAMI_REVISION"
 
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -48,5 +55,6 @@ COPY --from=build /app/server ./server
 COPY --from=build /app/src ./src
 COPY --from=build /app/contracts ./contracts
 COPY --from=build /app/provider-adapters ./provider-adapters
+COPY --from=shikigami /usr/local/bin/shikigami /usr/local/bin/shikigami
 
 CMD ["npm", "run", "host"]
