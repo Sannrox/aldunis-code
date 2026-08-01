@@ -27,6 +27,13 @@ Explicit delegated relationships form an acyclic forest: each child has at
 most one parent, the host rejects links that would make an ancestor a child,
 and the candidate selector omits those ancestors.
 
+A human may start a child from the parent surface. The host creates it as a
+normal independent conversation, persists the parent relationship before
+provider startup, and reuses the selected provider adapter without copying
+parent messages or provider state. The default is a new managed worktree;
+Build children require that isolation, while Ask and Plan children may
+explicitly use the parent worktree.
+
 For tool approvals, the parent projects only pending approvals belonging to an
 explicitly linked child. A parent-routed decision must revalidate the current
 relationship and the original approval ID, run, child conversation,
@@ -59,5 +66,6 @@ path.
 
 - Durable, batch, or automatic approvals.
 - Agent-to-agent approval or decision delegation.
+- Autonomous provider-created child conversations.
 - Copying parent transcripts, tool state, or credentials into a child.
 - Treating a displayed projection as domain authority.

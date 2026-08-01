@@ -21,7 +21,7 @@
     },
     {
       "name": "DelegatedConversationRelationship",
-      "description": "A local, metadata-only association from one parent conversation to one existing child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
+      "description": "A local, metadata-only association from one parent conversation to one independently created child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
     {
       "name": "ManagedWorktreeRemovalApproval",
@@ -141,7 +141,7 @@
     },
     {
       "name": "projects_delegated_child",
-      "description": "Identifies the one existing child conversation projected by a delegated-conversation relationship.",
+      "description": "Identifies the one independently created child conversation projected by a delegated-conversation relationship.",
       "domain": "DelegatedConversationRelationship",
       "range": "LocalConversation",
       "cardinality": {

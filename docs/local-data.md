@@ -54,6 +54,12 @@ seconds as an explicitly stale fallback.
   provider, and status from the independent child conversation. Messages,
   tool activity, approvals, and provider sessions never enter the parent
   provider context.
+- A human-started child is first persisted as a normal new thread and then
+  linked to its parent before provider startup. The default child checkout is
+  a new managed worktree; Build cannot use the parent worktree, while Ask and
+  Plan may do so when explicitly selected. A failed provider startup leaves
+  the independent child history visible without creating a second parent
+  message or copying parent context.
 - While an orchestration parent is focused, its child statuses remain a quiet
   projection: running and blocking counts are aggregated, completed outcomes
   stay collapsed in relationship order, and ordinary child completion does not

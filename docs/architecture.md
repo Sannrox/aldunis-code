@@ -115,9 +115,12 @@ through a versioned authenticated contract.
   explicitly creates a durable rule.
 - Delegated parent controls follow the
   [delegated human control decision](decisions/delegated-human-control.md):
-  explicit parent-to-child relationships form an acyclic forest, and the parent
-  is a beta-gated control surface while approval and input authority remain
-  single-use and bound to the originating child.
+  a human may start an independent child from the parent surface through the
+  normal provider-run path, explicit parent-to-child relationships form an
+  acyclic forest, and the parent is a beta-gated control surface while approval
+  and input authority remain single-use and bound to the originating child.
+  Build children use an isolated managed worktree; Ask/Plan children may use
+  the parent worktree.
 - Unknown provider events and incompatible contract versions fail closed.
 - Local candidate-to-release delivery follows the accepted capability-linked
   handoff: Code owns only the content-bound candidate and correlation ledger;

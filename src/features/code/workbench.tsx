@@ -30,6 +30,7 @@ import { providerListLabel } from "../../lib/provider-readiness";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
+import { StartDelegatedConversationDialog } from "../dialogs/start-delegated-conversation-dialog";
 import {
   DeleteConversationDialog,
   type ConversationDeletionPreview,
@@ -54,6 +55,9 @@ const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
 export function DelegatedChildrenPanel({
   parent,
+  repository = null,
+  profiles = [],
+  onRepositoryChanged,
   conversations,
   relationships,
   outcomes,
@@ -63,6 +67,9 @@ export function DelegatedChildrenPanel({
   onChanged,
 }: {
   parent: ConversationSummary;
+  repository?: RepositoryMetadata | null;
+  profiles?: ClaudeProfile[];
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   conversations: ConversationSummary[];
   relationships: DelegatedConversationRelationship[];
   outcomes: DelegatedConversationOutcomeProjection[];
@@ -72,6 +79,7 @@ export function DelegatedChildrenPanel({
   onChanged: () => Promise<void>;
 }) {
   const [selectedChildId, setSelectedChildId] = useState("");
+  const [startOpen, setStartOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
   const [inputBusyId, setInputBusyId] = useState<string | null>(null);
@@ -191,7 +199,8 @@ export function DelegatedChildrenPanel({
     }
   };
   return (
-    <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
+    <>
+      <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
       <div className="delegated-children-header">
         <div>
           <h3 id={`delegated-title-${parent.id}`}>Delegated conversations</h3>
@@ -207,6 +216,15 @@ export function DelegatedChildrenPanel({
           )}
         </div>
         <div className="delegated-link-control">
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            onClick={() => setStartOpen(true)}
+            aria-label={`Start a child conversation from ${parent.title}`}
+          >
+            Start child
+          </Button>
           <label className="sr-only" htmlFor={`delegated-child-${parent.id}`}>
             Existing conversation to link
           </label>
@@ -431,7 +449,22 @@ export function DelegatedChildrenPanel({
           })}
         </ul>
       )}
-    </section>
+      </section>
+      {startOpen && (
+        <StartDelegatedConversationDialog
+          parent={parent}
+          repository={repository}
+          profiles={profiles}
+          onRepositoryChanged={onRepositoryChanged}
+          onClose={() => setStartOpen(false)}
+          onCreated={(threadId) => {
+            setStartOpen(false);
+            onOpen(threadId);
+            void onChanged();
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -451,6 +484,7 @@ export function CodeWorkbench({
   onManageWorktrees,
   onSettings,
   onProjectsChanged,
+  onRepositoryChanged,
   chiseiBindingAdministrationAvailable = true,
   orchestrationThreadsBeta = false,
   managedMode = false,
@@ -474,6 +508,7 @@ export function CodeWorkbench({
   onManageWorktrees: (path?: string) => void;
   onSettings: () => void;
   onProjectsChanged?: () => Promise<void>;
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
   managedMode?: boolean;
@@ -896,6 +931,16 @@ export function CodeWorkbench({
       name: conversation.projectName ?? repository.name,
     };
   };
+  const repositoryForDelegatedStart = (conversation: ConversationSummary | null) => {
+    if (!repository || !conversation) return null;
+    const activeProjectIds = new Set([
+      repository.projectId,
+      ...(projects.find((project) => project.id === repository.projectId)?.memberIds ?? []),
+    ]);
+    if (!activeProjectIds.has(conversation.projectId)) return null;
+    if (!repository.worktrees.some((worktree) => worktree.path === conversation.worktree)) return null;
+    return repositoryFor(conversation);
+  };
   const openBeside = (id?: string) => {
     // Prefer an explicit id (thread-row Beside). Topbar Open beside should stay in the
     // active project — not open a random foreign-worktree thread that cannot send.
@@ -1154,6 +1199,9 @@ export function CodeWorkbench({
                 {orchestrationThreadsBeta && primary && (
                   <DelegatedChildrenPanel
                     parent={primary}
+                    repository={repositoryForDelegatedStart(primary)}
+                    profiles={profiles}
+                    onRepositoryChanged={onRepositoryChanged}
                     conversations={conversations}
                     relationships={delegatedRelationships}
                     outcomes={delegatedOutcomes}
@@ -1197,6 +1245,9 @@ export function CodeWorkbench({
                     {orchestrationThreadsBeta && secondary && (
                       <DelegatedChildrenPanel
                         parent={secondary}
+                        repository={repositoryForDelegatedStart(secondary)}
+                        profiles={profiles}
+                        onRepositoryChanged={onRepositoryChanged}
                         conversations={conversations}
                         relationships={delegatedRelationships}
                         outcomes={delegatedOutcomes}
