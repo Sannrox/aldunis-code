@@ -254,7 +254,7 @@ export interface RepositoryFilePreview extends RepositoryFileResult {
 }
 export interface ProviderCapabilities {
   provider: "claude-code";
-  commands: Array<{ name: string; description: string }>;
+  commands: ProviderCommand[];
   attachments: {
     maxCount: number;
     textMaxBytes: number;
@@ -262,6 +262,10 @@ export interface ProviderCapabilities {
     imageTypes: string[];
   };
   workspace: WorkspaceCapabilities;
+}
+export interface ProviderCommand {
+  name: string;
+  description: string;
 }
 export interface ProviderSkill {
   name: string;

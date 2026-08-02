@@ -37,6 +37,18 @@ manifest (values remain empty until you set them).
 
 Sensitive environment values live in the host secret store (write-only in the UI).
 
+### Composer commands, skills, and files
+
+The composer keeps these entry types distinct, matching the selected provider:
+
+- "/" lists Aldunis built-in commands and commands in the selected provider capability projection, grouped as **Built-in** and **Provider**. Claude Code currently advertises provider commands; other providers show built-ins until their adapter exposes normalized command metadata.
+- "$" lists enabled provider skills.
+- "@" searches bounded repository files that can be attached as conversation context.
+
+Selecting an entry only inserts the typed prompt token or adds a local context
+pin. It never executes a general-purpose terminal command; provider tools remain
+inside the normal inspectable approval flow.
+
 Provider-emitted thinking is normalized at the adapter boundary but hidden by
 default. Settings → General can enable its live display for the current
 in-memory timeline; thinking is not persisted, restored, or transferred across
