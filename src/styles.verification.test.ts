@@ -238,6 +238,10 @@ test("touch thread rows keep the overflow menu trigger visible", () => {
     shell,
     /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-more\s*\{\s*min-width:\s*44px;\s*opacity:\s*1;/s,
   );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-main\s*\{\s*min-height:\s*72px;\s*padding:\s*12px 120px 12px 12px;/s,
+  );
 });
 
 test("command palette search field has a usable min-height", () => {
