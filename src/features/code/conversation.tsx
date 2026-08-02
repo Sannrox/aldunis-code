@@ -4,6 +4,7 @@ import React, {
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
+  ProviderBrowserObservation,
   ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
   ContextPin, ContextReceipt, WorkspaceMode,
 } from "../../types";
@@ -107,6 +108,22 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
+}
+
+export function appendProviderEvent(current: ProviderEvent[], next: ProviderEvent): ProviderEvent[] {
+  if (next.kind !== "browser_observation") return [...current, next];
+  let replaced = false;
+  const result: ProviderEvent[] = [];
+  for (const event of current) {
+    if (event.kind !== "browser_observation") {
+      result.push(event);
+    } else if (!replaced) {
+      result.push(next);
+      replaced = true;
+    }
+  }
+  if (!replaced) result.push(next);
+  return result;
 }
 
 export function GovernanceCorrelationSummary({
@@ -229,6 +246,7 @@ export function Conversation({
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
   const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
+  const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -907,10 +925,15 @@ export function Conversation({
     shikigamiProvider,
   ]);
   const [previewMounted, setPreviewMounted] = useState(false);
+  const [previewFloating, setPreviewFloating] = useState(false);
   const [previewStatus, setPreviewStatus] = useState<PreviewPanelStatus>({
     state: "inactive",
     error: null,
   });
+  useEffect(() => {
+    setPreviewFloating(false);
+    setAgentBrowserViewOpen(false);
+  }, [repository?.root, repository?.selectedWorktree]);
   const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
@@ -935,6 +958,7 @@ export function Conversation({
     ));
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
+    if (destination === "preview") setPreviewFloating(false);
     setWorkspacePanelFocus(destination);
     const next = toggleWorkspacePanel(activePanel, destination);
     if (next === "preview") setPreviewMounted(true);
@@ -950,6 +974,21 @@ export function Conversation({
     if (restoreFocus) {
       window.requestAnimationFrame(() => workspacePanelTrigger(destination)?.focus());
     }
+  };
+  const closePreview = () => {
+    setPreviewFloating(false);
+    setAgentBrowserViewOpen(false);
+    closeWorkspacePanel("preview");
+  };
+  const togglePreviewFloating = () => {
+    if (previewFloating) {
+      setPreviewFloating(false);
+      onPanelChange("preview");
+      return;
+    }
+    setPreviewMounted(true);
+    setPreviewFloating(true);
+    if (activePanel === "preview") onPanelChange("none");
   };
   const moveWorkspacePanel = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -1657,7 +1696,9 @@ export function Conversation({
         ...current,
         {
           message: previousMessage,
-          events: providerEvents,
+          // Provider screenshots are stream-only UI state and must not remain
+          // attached to an archived in-memory turn either.
+          events: providerEvents.filter((event) => event.kind !== "browser_observation"),
           assistantAt: assistantTurnAt ?? undefined,
           state: providerState === "cancelled" ? "cancelled" : providerState,
           contextReceipt: currentContextReceipt ?? undefined,
@@ -1760,7 +1801,7 @@ export function Conversation({
               newline = buffer.indexOf("\n");
               continue;
             }
-            setProviderEvents((current) => [...current, event]);
+            setProviderEvents((current) => appendProviderEvent(current, event));
             if (event.kind === "input_requested") setProviderState("waiting_for_input");
             if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
             if (event.kind === "turn_completed") {
@@ -1961,6 +2002,26 @@ export function Conversation({
     }
   };
   const assistantTimeline = presentAssistantTimeline(providerEvents, "running", { showThinking });
+  const latestAgentBrowserObservation = useMemo<ProviderBrowserObservation | null>(() => (
+    providerEvents
+      .filter((event): event is Extract<ProviderEvent, { kind: "browser_observation" }> => (
+        event.kind === "browser_observation"
+      ))
+      .at(-1) ?? null
+  ), [providerEvents]);
+  const agentBrowserObservationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!latestAgentBrowserObservation) {
+      agentBrowserObservationIdRef.current = null;
+      setAgentBrowserViewOpen(false);
+      return;
+    }
+    if (agentBrowserObservationIdRef.current === latestAgentBrowserObservation.observationId) return;
+    agentBrowserObservationIdRef.current = latestAgentBrowserObservation.observationId;
+    setAgentBrowserViewOpen(true);
+    setPreviewMounted(true);
+    setPreviewFloating(true);
+  }, [latestAgentBrowserObservation]);
   const latestPlan = useMemo(() => latestPlanFromEvents([
     ...archivedTurns.map((turn) => turn.events),
     providerEvents,
@@ -3540,13 +3601,17 @@ export function Conversation({
       </div>
       {/* File browser and preview stay inside .conv; the selector guarantees
           only one workspace destination is visible at a time. */}
-      {repository && (previewMounted || activePanel === "preview") && (
+      {repository && (previewMounted || activePanel === "preview" || previewFloating || agentBrowserViewOpen) && (
         <PreviewPanel
           key={`${repository.root}:${repository.selectedWorktree}`}
           repository={repository}
           pane={pane}
-          active={activePanel === "preview"}
-          onClose={() => closeWorkspacePanel("preview")}
+          active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
+          floating={previewFloating}
+          conversationId={conversation?.id ?? threadId}
+          agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+          onClose={closePreview}
+          onToggleFloating={togglePreviewFloating}
           onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
           onStatusChange={updatePreviewStatus}
         />

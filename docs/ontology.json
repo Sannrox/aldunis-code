@@ -20,6 +20,30 @@
       ]
     },
     {
+      "name": "ConstrainedWebPreview",
+      "description": "A loopback-only Aldunis Code preview session that starts one selected worktree's declared development command after scoped approval and renders it in a sandboxed iframe with browser permissions denied."
+    },
+    {
+      "name": "FloatingWebPreview",
+      "description": "A transient presentation of a running ConstrainedWebPreview in a fixed in-workbench window so the operator can keep the local application visible while continuing the conversation; it adds no provider-browser, navigation, credential, or persistence authority."
+    },
+    {
+      "name": "EphemeralBrowserObservation",
+      "description": "A bounded JPEG, PNG, or WebP frame supplied inline by a reviewed provider adapter for read-only operator observation; it is stream-only, never reads a provider filesystem path, and is not persisted as conversation or activity state."
+    },
+    {
+      "name": "SharedBrowserSession",
+      "description": "A desktop-only Aldunis-owned Electron browser session bound to one local conversation and loopback preview origin, using a conversation-scoped persistent partition and transient page state shared by the operator and an authorized provider."
+    },
+    {
+      "name": "BrowserAutomationBroker",
+      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, authenticates one conversation-scoped provider token, and rejects actions when agent control is disabled or human input has advanced the control epoch."
+    },
+    {
+      "name": "PictureInPictureBrowserMirror",
+      "description": "A transient always-on-top desktop mirror of a SharedBrowserSession captured from the same Electron page; it adds presentation only and no independent navigation or control authority."
+    },
+    {
       "name": "DelegatedConversationRelationship",
       "description": "A local, metadata-only association from one parent conversation to one independently created child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
@@ -148,6 +172,56 @@
       }
     },
     {
+      "name": "floats_constrained_preview",
+      "description": "Presents a running loopback-only preview in a transient fixed window without changing the preview's origin, sandbox, denied permissions, or approval boundary.",
+      "domain": "ConstrainedWebPreview",
+      "range": "FloatingWebPreview",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "renders_ephemeral_browser_observation",
+      "description": "Shows at most the latest bounded provider browser frame in a transient floating view without granting page controls, provider credentials, navigation, or persistence authority.",
+      "domain": "FloatingWebPreview",
+      "range": "EphemeralBrowserObservation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "has_shared_browser_session",
+      "description": "Binds at most one desktop shared browser session to a local conversation without adding browser page state to conversation history.",
+      "domain": "LocalConversation",
+      "range": "SharedBrowserSession",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "brokers_shared_browser_control",
+      "description": "Routes bounded provider browser operations through the host-owned broker and its explicit session control rule.",
+      "domain": "BrowserAutomationBroker",
+      "range": "SharedBrowserSession",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "mirrors_shared_browser",
+      "description": "Presents the same shared Electron page in a transient picture-in-picture window without creating a second browser session.",
+      "domain": "SharedBrowserSession",
+      "range": "PictureInPictureBrowserMirror",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
       "name": "has_delegated_relationship",
       "description": "Associates a parent conversation with a durable delegated-conversation relationship.",
       "domain": "LocalConversation",
@@ -239,6 +313,72 @@
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",
       "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConstrainedWebPreview",
+      "source": "Aldunis Code constrained web preview contract",
+      "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "FloatingWebPreview",
+      "source": "Aldunis Code floating live view",
+      "locator": "docs/web-preview.md#floating-live-view; src/features/preview/preview-panel.tsx; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "floats_constrained_preview",
+      "source": "Aldunis Code floating live view",
+      "locator": "src/features/code/conversation.tsx#togglePreviewFloating; src/styles.css;.preview-panel--floating",
+      "confidence": 1.0
+    },
+    {
+      "subject": "EphemeralBrowserObservation",
+      "source": "Aldunis Code provider observation contract",
+      "locator": "docs/web-preview.md#provider-browser-observations; server/browser-observation.ts; server/provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "renders_ephemeral_browser_observation",
+      "source": "Aldunis Code provider observation presentation",
+      "locator": "src/features/code/conversation.tsx; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SharedBrowserSession",
+      "source": "Accepted Aldunis Code shared-browser ownership decision",
+      "locator": "docs/decisions/shared-browser-ownership.md; server/browser.ts; desktop/shared-browser.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BrowserAutomationBroker",
+      "source": "Aldunis Code shared-browser broker contract",
+      "locator": "server/browser.ts; server/browser-mcp.mjs; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PictureInPictureBrowserMirror",
+      "source": "Aldunis Code shared-browser desktop mirror",
+      "locator": "desktop/shared-browser.ts; desktop/channels.ts; desktop/preload.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "has_shared_browser_session",
+      "source": "Aldunis Code shared-browser ownership decision",
+      "locator": "docs/decisions/shared-browser-ownership.md; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "brokers_shared_browser_control",
+      "source": "Aldunis Code shared-browser MCP and control contract",
+      "locator": "server/browser.ts; server/browser-mcp.mjs; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "mirrors_shared_browser",
+      "source": "Aldunis Code shared-browser picture-in-picture implementation",
+      "locator": "desktop/shared-browser.ts#setPictureInPicture; src/features/preview/preview-panel.tsx",
       "confidence": 1.0
     },
     {

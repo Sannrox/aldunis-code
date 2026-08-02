@@ -46,6 +46,17 @@ export interface ProviderPlanArtifact {
   updatedAt?: string;
 }
 
+export type ProviderBrowserObservationMediaType = "image/jpeg" | "image/png" | "image/webp";
+export interface ProviderBrowserObservation {
+  provider: ProviderId;
+  observationId: string;
+  imageData: string;
+  mediaType: ProviderBrowserObservationMediaType;
+  toolCallId?: string;
+  title?: string;
+  url?: string;
+}
+
 export interface ProviderInputRequest {
   id: string;
   question: string;
@@ -79,6 +90,7 @@ export type ProviderEvent =
   | ({ kind: "input_requested" } & ProviderInputRequest)
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
+  | ({ kind: "browser_observation" } & ProviderBrowserObservation)
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
@@ -119,6 +131,18 @@ export class ProviderProtocolError extends Error {}
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/**
+ * A host-owned MCP server injected for one provider run. Environment values
+ * are intentionally explicit so provider adapters never inherit unrelated
+ * host credentials.
+ */
+export interface ProviderBrowserMcpConfiguration {
+  name: string;
+  command: string;
+  args: string[];
+  environment: Record<string, string>;
+}
+
 export interface ProviderStartOptions {
   repository: string;
   worktree: string;
@@ -129,6 +153,7 @@ export interface ProviderStartOptions {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   mode: InteractionMode;
+  browserMcp?: ProviderBrowserMcpConfiguration;
 }
 
 export function modeArguments(mode: InteractionMode, help: string): string[] {

@@ -1906,6 +1906,14 @@ export class LocalStateStore {
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
     const now = new Date().toISOString();
+    if (event.kind === "browser_observation") {
+      if (event.provider !== provider) {
+        throw new LocalStateError("The browser observation provider does not match the active provider.", 502);
+      }
+      // Screenshots are sensitive provider output. They are stream-only UI
+      // state: never append them to local history, activity, or checkpoints.
+      return;
+    }
     if (event.kind === "input_requested") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn || !turn.providerRunId) {

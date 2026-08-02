@@ -125,6 +125,18 @@ through a versioned authenticated contract.
   Build children use an isolated managed worktree; Ask/Plan children may use
   the parent worktree.
 - Unknown provider events and incompatible contract versions fail closed.
+- Provider browser observations are a separate, explicitly declared adapter
+  capability. Only bounded inline JPEG/PNG/WebP frames may reach the transient
+  UI; provider filesystem paths, arbitrary Chrome/CDP attachment, page
+  controls, credentials, and durable history remain outside the observation
+  boundary. The accepted [shared-browser ownership decision](decisions/shared-browser-ownership.md)
+  adds a separate desktop-only path: Aldunis owns one persistent Electron
+  partition per conversation, exposes only brokered loopback browser tools,
+  renders the same webview in the workspace and picture-in-picture, and keeps
+  agent control disabled until the operator enables the session rule. Human
+  input advances a control epoch so stale provider actions fail closed. This
+  path does not attach to arbitrary Chrome, expose page evaluation or browser
+  credentials, or operate in remote/managed hosts.
 - Local candidate-to-release delivery follows the accepted capability-linked
   handoff: Code owns only the content-bound candidate and correlation ledger;
   Chisei owns evaluation and signed provenance; Tenkai owns release, plan,
@@ -173,9 +185,12 @@ user's authority and is not an operating-system sandbox; installation approval
 therefore names this unrestricted process boundary explicitly. Users must trust
 the selected provider executable, not only its adapter manifest.
 Declared capabilities are descriptive inputs to the runtime and cannot grant
-filesystem, terminal, network, credential, MCP, or tool authority. Disabling,
-rollback, and uninstall modify only Aldunis-owned adapter metadata and never
-provider-owned binaries, credentials, configuration, or conversation history.
+filesystem, terminal, network, credential, or mutation authority. The reviewed
+`browserAutomation` flag is only an allowlist gate for the Aldunis-owned
+shared-browser MCP integration; it does not bypass the operator's
+session-scoped control rule. Disabling, rollback, and uninstall modify only
+Aldunis-owned adapter metadata and never provider-owned binaries, credentials,
+configuration, or conversation history.
 Adapter administration is disabled for the entire host while remote mode is
 active. The user returns to the default loopback-only mode to install, update,
 enable, disable, roll back, or uninstall adapters.

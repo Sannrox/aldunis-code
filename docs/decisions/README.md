@@ -16,6 +16,7 @@ new file over rewriting history: amend only for factual corrections.
 | [shikigami-provider.md](shikigami-provider.md) | First-class shikigami harness provider + PermissionBroker pre-exec |
 | [managed-hosted-workbench.md](managed-hosted-workbench.md) | Gateway-issued single-tenant hosted mode with fixed Shikigami Build |
 | [opencode-declarative-adapter.md](opencode-declarative-adapter.md) | Reviewed OpenCode ACP package (`opencode acp`) |
+| [shared-browser-ownership.md](shared-browser-ownership.md) | Aldunis-owned loopback browser shared by provider and operator |
 
 ## When to add one
 

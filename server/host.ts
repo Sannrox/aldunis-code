@@ -115,6 +115,11 @@ import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import {
+  BrowserError,
+  SharedBrowserBroker,
+  type BrowserHost,
+} from "./browser.ts";
+import {
   ChiseiClientError,
   ChiseiProjectionClient,
 } from "./chisei-client.ts";
@@ -476,6 +481,8 @@ async function handleApi(
   internalApprovalUrl?: Promise<string>,
   managedHost?: ManagedHost,
   managedIdentity?: ManagedIdentity,
+  browser?: SharedBrowserBroker | null,
+  browserMcpPath?: string,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -507,12 +514,125 @@ async function handleApi(
     const project = assertManagedProject(projection, thread.projectId);
     return { thread, project };
   };
-  if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
+  const assertBrowserContext = async (body: Record<string, unknown>) => {
+    if (
+      typeof body.root !== "string"
+      || typeof body.worktree !== "string"
+      || typeof body.conversationId !== "string"
+      || !body.conversationId
+    ) {
+      throw new BrowserError("A repository, worktree, and conversation are required.");
+    }
+    const context = await selectedWorktree(body.root, body.worktree);
+    const projection = await state.load();
+    const thread = projection.threads.find((candidate) => candidate.id === body.conversationId);
+    const project = thread ? projection.projects.find((candidate) => candidate.id === thread.projectId) : undefined;
+    if (!thread || !project || project.root !== context.root || thread.worktree !== context.worktree) {
+      throw new BrowserError("The selected conversation is not bound to this repository and worktree.", 403);
+    }
+    return { context, conversationId: body.conversationId };
+  };
+    if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
-  }
+    }
 
   try {
+    if (route === "/api/browser/tools") {
+      if (!browser || remoteRequest || managedHost) {
+        throw new BrowserError("Shared browser tools are available in the local desktop host only.", 403);
+      }
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
+        throw new BrowserError("Browser tool authorization is required.", 403, "browser_authorization_denied");
+      }
+      const body = await readJson(request) as { conversationId?: unknown; operation?: unknown };
+      if (typeof body.conversationId !== "string") {
+        throw new BrowserError("A browser conversation is required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.executeProvider(body.conversationId, authorization.slice("Bearer ".length), body.operation),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/open") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.origin !== "string") throw new BrowserError("A loopback browser origin is required.");
+      sendJson(response, 200, browser.open(conversationId, body.origin));
+      return true;
+    }
+    if (route === "/api/browser/sessions/status") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
+        throw new BrowserError("A browser session and loopback origin are required.");
+      }
+      const snapshot = await browser.snapshot(body.sessionId);
+      if (snapshot.conversationId !== conversationId || snapshot.origin !== body.origin) {
+        throw new BrowserError("The browser session is bound to a different conversation or origin.", 403);
+      }
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+    if (route === "/api/browser/sessions/control") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (
+        typeof body.sessionId !== "string"
+        || typeof body.origin !== "string"
+        || typeof body.enabled !== "boolean"
+      ) {
+        throw new BrowserError("A browser session, loopback origin, and control state are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.setAgentControl(body.sessionId, { conversationId, origin: body.origin }, body.enabled),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/close") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
+        throw new BrowserError("A browser session and loopback origin are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.close(body.sessionId, { conversationId, origin: body.origin }),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/picture-in-picture") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (
+        typeof body.sessionId !== "string"
+        || typeof body.origin !== "string"
+        || typeof body.open !== "boolean"
+      ) {
+        throw new BrowserError("A browser session, loopback origin, and picture-in-picture state are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.setPictureInPicture(
+          body.sessionId,
+          { conversationId, origin: body.origin },
+          body.open,
+        ),
+      );
+      return true;
+    }
     if (isWakeStream) {
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
@@ -2531,6 +2651,19 @@ async function handleApi(
           ? Promise.resolve(`http://127.0.0.1:${port}/api/provider/permissions/request`)
           : Promise.reject(new RepositoryError("The local permission broker is unavailable.", 503))
       );
+      const browserAutomationAllowed = providerId === "codex-cli"
+        || (installedAdapter?.manifest.capabilities.browserAutomation === true);
+      const browserMcp = browserAutomationAllowed && browser && browserMcpPath && port
+        ? browser.providerMcpConfiguration({
+            conversationId: persisted.thread.id,
+            endpoint: `http://127.0.0.1:${port}/api/browser/tools`,
+            command: process.execPath,
+            script: browserMcpPath,
+          })
+        : undefined;
+      const effectiveProviderPromptWithBrowser = browserMcp
+        ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
+        : effectiveProviderPrompt;
       let run;
       try {
         run = providerId === "codex-cli"
@@ -2538,12 +2671,13 @@ async function handleApi(
             repository: context.root,
             worktree: context.worktree,
             conversationId: persisted.thread.id,
-            prompt: effectiveProviderPrompt,
+            prompt: effectiveProviderPromptWithBrowser,
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
             model: body.model === "default" ? undefined : body.model,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+            browserMcp,
           })
           : providerId === "shikigami"
           ? await shikigami.start({
@@ -2576,12 +2710,13 @@ async function handleApi(
                 repository: context.root,
                 worktree: context.worktree,
                 conversationId: persisted.thread.id,
-                prompt: providerPrompt,
+            prompt: effectiveProviderPromptWithBrowser,
                 approvalUrl: await approvalUrl,
                 mode,
                 resumeSessionId: body.resumeSessionId,
                 model: body.model === "default" ? undefined : body.model,
                 reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+                browserMcp,
               });
               activeAcp.set(started.id, adapter);
               return started;
@@ -3564,6 +3699,7 @@ async function handleApi(
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
+      || error instanceof BrowserError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -3578,6 +3714,7 @@ async function handleApi(
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
+      || error instanceof BrowserError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -3619,6 +3756,8 @@ export function createLocalHost(
   childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
   chisei = new ChiseiProjectionClient(),
   managedHost?: ManagedHost,
+  browserHost?: BrowserHost,
+  browserMcpPath?: string,
 ) {
   const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
@@ -3635,6 +3774,7 @@ export function createLocalHost(
   const directories = new DirectoryBrowser();
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
+  const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const wake = new WakeBroker();
   const internalRequestToken = randomUUID();
   let delegatedControlTail = Promise.resolve();
@@ -3884,6 +4024,8 @@ export function createLocalHost(
         internalPermissionCallback?.url,
         managedHost,
         managedIdentity,
+        browser,
+        browserMcpPath,
       )
     ) return;
     await serveStatic(request, response, dist);

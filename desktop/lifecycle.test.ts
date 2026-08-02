@@ -66,6 +66,27 @@ test("desktop build emits the Shikigami permission hook beside the main bundle",
   assert.match(command, /--outfile=dist-electron\/shikigami-permission-hook\.mjs/);
 });
 
+test("desktop build emits the host-owned browser MCP bridge beside the main bundle", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    scripts?: { "build:desktop-main"?: string };
+  };
+  const command = packageJson.scripts?.["build:desktop-main"] ?? "";
+
+  assert.match(command, /esbuild server\/browser-mcp\.mjs/);
+  assert.match(command, /--format=esm/);
+  assert.match(command, /--outfile=dist-electron\/browser-mcp\.mjs/);
+});
+
+test("shared browser validates webview attachment parameters before guest creation", async () => {
+  const source = await readFile(new URL("./shared-browser.ts", import.meta.url), "utf8");
+  assert.match(source, /will-attach-webview/);
+  assert.match(source, /about:blank/);
+  assert.match(source, /aldunis-browser-\[0-9a-f\]\{32\}/);
+  assert.match(source, /deleteProperty\(webPreferences, "preload"\)/);
+  assert.match(source, /pendingAgentInputs/);
+  assert.doesNotMatch(source, /agentInputUntil/);
+});
+
 test("desktop release evidence is bound to the package version", () => {
   assert.doesNotThrow(() => validateDesktopReleaseTag("v0.1.0", "0.1.0"));
   assert.throws(
