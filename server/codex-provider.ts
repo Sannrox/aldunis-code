@@ -13,11 +13,14 @@ import {
   CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE,
   type ProviderEvent,
   type ProviderRun,
+  type ProviderBrowserMcpConfiguration,
   type ProviderStartOptions,
   ProviderProtocolError,
   type ReasoningEffort,
   UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
 } from "./provider.ts";
+import { normalizeBrowserObservation } from "./browser-observation.ts";
+import { BROWSER_MCP_NAME } from "./browser.ts";
 
 const execFileAsync = promisify(execFile);
 /** Major line of the app-server protocol we speak. */
@@ -29,6 +32,16 @@ const SUPPORTED_CODEX_MAJOR = 0;
  */
 const MIN_CODEX_MINOR = 80;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
+const APPROVED_BROWSER_TOOLS = new Set([
+  "browser_status",
+  "browser_snapshot",
+  "browser_navigate",
+  "browser_click",
+  "browser_type",
+  "browser_press",
+  "browser_scroll",
+  "browser_wait",
+]);
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = string | number;
@@ -102,7 +115,22 @@ export function isRecoverableCodexResumeError(value: unknown): boolean {
  * 0.144+ accepts --stdio / --strict-config / feature disables; 0.80–0.143
  * speaks the same JSON-RPC over stdio without those flags (0.92 rejects them).
  */
-export function codexAppServerArguments(version: string): string[] {
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlInlineTable(value: Record<string, string>): string {
+  return `{${Object.entries(value).map(([key, entry]) => `${key}=${tomlString(entry)}`).join(",")}}`;
+}
+
+function codexMcpOverride(configuration: ProviderBrowserMcpConfiguration): string {
+  return `mcp_servers.${configuration.name}={command=${tomlString(configuration.command)},args=[${configuration.args.map(tomlString).join(",")}],env=${tomlInlineTable(configuration.environment)}}`;
+}
+
+export function codexAppServerArguments(
+  version: string,
+  browserMcp?: ProviderBrowserMcpConfiguration,
+): string[] {
   const minor = Number(version.split(".")[1] ?? 0);
   const args = ["app-server"];
   if (minor >= 144) {
@@ -111,14 +139,9 @@ export function codexAppServerArguments(version: string): string[] {
       "--strict-config",
     );
   }
-  args.push(
-    "-c",
-    "mcp_servers={}",
-    "-c",
-    "apps._default.enabled=false",
-    "-c",
-    'web_search="disabled"',
-  );
+  args.push("-c", "mcp_servers={}");
+  if (browserMcp) args.push("-c", codexMcpOverride(browserMcp));
+  args.push("-c", "apps._default.enabled=false", "-c", 'web_search="disabled"');
   return args;
 }
 
@@ -245,12 +268,40 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
       ? [{ kind: "tool_finished", toolCallId: id, failed: item.status !== "completed" }]
       : [{ kind: "tool_started", toolCallId: id, name: `Subagent ${String(item.tool)}` }];
   }
+  if (item.type === "imageView") {
+    // The current Codex schema exposes imageView.path, which is a provider
+    // filesystem path. Aldunis deliberately does not read arbitrary provider
+    // paths. A future adapter may provide bounded inline image bytes instead.
+    const observation = normalizeBrowserObservation({
+      provider: "codex-cli",
+      observationId: id,
+      imageData: item.imageData ?? item.data,
+      mediaType: item.mediaType ?? item.mimeType,
+      title: item.title,
+      url: item.url,
+    });
+    return observation ? [observation] : [];
+  }
   if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
-    return [{
-      kind: "failed",
-      code: "unsupported_external_tool",
-      message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
-    }];
+    const tool = typeof item.tool === "string" && item.tool
+      ? item.tool
+      : typeof item.name === "string" && item.name
+      ? item.name
+      : "browser tool";
+    const approved = item.type === "mcpToolCall"
+      && item.server === BROWSER_MCP_NAME
+      && APPROVED_BROWSER_TOOLS.has(tool);
+    if (!approved) {
+      return [{
+        kind: "failed",
+        code: "unsupported_external_tool",
+        message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
+      }];
+    }
+    const failed = item.status === "failed" || item.status === "error";
+    return completed
+      ? [{ kind: "tool_finished", toolCallId: id, failed }]
+      : [{ kind: "tool_started", toolCallId: id, name: `MCP ${tool.slice(0, 160)}` }];
   }
   const informationalItemTypes = new Set([
     "userMessage",
@@ -412,8 +463,8 @@ export class CodexCliAdapter {
     private readonly permissions = new PermissionBroker(),
   ) {}
 
-  #appServerArguments(version: string): string[] {
-    return codexAppServerArguments(version);
+  #appServerArguments(version: string, browserMcp?: ProviderBrowserMcpConfiguration): string[] {
+    return codexAppServerArguments(version, browserMcp);
   }
 
   async readiness(): Promise<CodexReadiness> {
@@ -666,8 +717,11 @@ export class CodexCliAdapter {
       throw new ProviderProtocolError("Codex CLI is not installed or could not be started.");
     }
     const id = randomUUID();
-    const child = spawn(this.executable, this.#appServerArguments(version), {
+    const child = spawn(this.executable, this.#appServerArguments(version, options.browserMcp), {
       cwd: options.worktree,
+      env: options.browserMcp
+        ? { ...process.env, ...options.browserMcp.environment }
+        : undefined,
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.on("error", () => {});

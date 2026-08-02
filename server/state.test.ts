@@ -95,6 +95,29 @@ test("provider thinking stays live-only and is excluded from local history", asy
   assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /private reasoning sentinel/);
 });
 
+test("browser observations never enter local history or activity projections", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Observe the provider view",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "browser_observation",
+    provider: "codex-cli",
+    observationId: "frame-1",
+    imageData: "data:image/png;base64,AAAA",
+    mediaType: "image/png",
+  });
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.activities.length, 0);
+  assert.equal(JSON.stringify(projection).includes("data:image"), false);
+  assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("browser_observation"), false);
+});
+
 test("project Chisei namespace bindings persist locally and validate their bounded identity", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

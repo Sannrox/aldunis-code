@@ -305,9 +305,33 @@ export interface ProviderAdapterManifest {
   aldunis: { minimumVersion: string; maximumVersion: string };
   protocol: { kind: "acp"; minimumVersion: 1; maximumVersion: 1 };
   executable: { names: string[]; arguments: string[] };
-  capabilities: { tools: boolean; images: boolean; sessionResume: boolean };
+  capabilities: {
+    tools: boolean;
+    images: boolean;
+    browserObservation?: boolean;
+    browserAutomation?: boolean;
+    sessionResume: boolean;
+  };
   environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
   presentation: { name: string; description: string; website?: string };
+}
+
+export type BrowserSessionState = "awaiting_view" | "ready" | "closed" | "failed";
+export type BrowserController = "none" | "human" | "agent";
+export interface BrowserSessionSnapshot {
+  schemaVersion: 1;
+  id: string;
+  conversationId: string;
+  origin: string;
+  partition: string;
+  state: BrowserSessionState;
+  agentControl: boolean;
+  controller: BrowserController;
+  url: string | null;
+  title: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface InstalledProviderAdapter {
   schemaVersion: 1;
@@ -498,6 +522,16 @@ export interface ProviderPlanArtifact {
   steps?: ProviderPlanStep[];
   updatedAt?: string;
 }
+export type ProviderBrowserObservationMediaType = "image/jpeg" | "image/png" | "image/webp";
+export interface ProviderBrowserObservation {
+  provider: ProviderId;
+  observationId: string;
+  imageData: string;
+  mediaType: ProviderBrowserObservationMediaType;
+  toolCallId?: string;
+  title?: string;
+  url?: string;
+}
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | {
@@ -533,6 +567,7 @@ export type ProviderEvent =
   | ({ kind: "input_requested" } & ChildInputRequest)
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
+  | ({ kind: "browser_observation" } & ProviderBrowserObservation)
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {

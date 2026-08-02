@@ -31,7 +31,7 @@ function manifest(overrides: Partial<ProviderAdapterManifest> = {}): ProviderAda
     aldunis: { minimumVersion: "0.1.0", maximumVersion: "0.1.0" },
     protocol: { kind: "acp", minimumVersion: 1, maximumVersion: 1 },
     executable: { names: ["example-agent"], arguments: ["--acp"] },
-    capabilities: { tools: true, images: false, sessionResume: true },
+    capabilities: { tools: true, images: false, browserObservation: false, sessionResume: true },
     environment: [{ name: "EXAMPLE_TOKEN", required: false, sensitive: true }],
     presentation: {
       name: "Example Agent",
@@ -101,13 +101,13 @@ test("adapter manifests reject unknown fields, traversal, interpreters, and inco
   );
   assert.throws(
     () => parseProviderAdapterManifest(manifest({
-      capabilities: { tools: true, images: false, sessionResume: false },
+      capabilities: { tools: true, images: false, browserObservation: false, sessionResume: false },
     })),
     /resumable multi-turn sessions/,
   );
   assert.throws(
     () => parseProviderAdapterManifest(manifest({
-      capabilities: { tools: true, images: true, sessionResume: true },
+      capabilities: { tools: true, images: true, browserObservation: false, sessionResume: true },
     })),
     /do not support normalized image content/,
   );
@@ -115,6 +115,14 @@ test("adapter manifests reject unknown fields, traversal, interpreters, and inco
     () => parseProviderAdapterManifest(manifest({ version: "1.0.0-beta.01" })),
     /semantic version/,
   );
+});
+
+test("schema-v1 adapter manifests without browser observation remain disabled and digest-stable", () => {
+  const legacy = manifest();
+  delete legacy.capabilities.browserObservation;
+  const parsed = parseProviderAdapterManifest(legacy);
+  assert.equal(parsed.capabilities.browserObservation, undefined);
+  assert.equal(adapterDigest(parsed), adapterDigest(legacy));
 });
 
 test("adapter digest is canonical and changes with reviewed authority inputs", () => {
@@ -375,6 +383,94 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
   );
 });
 
+test("ACP inline image content becomes an ephemeral browser observation", () => {
+  const data = Buffer.from("acp browser frame", "utf8").toString("base64");
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "image",
+          data,
+          mimeType: "image/jpeg",
+          title: "Agent page",
+          url: "http://localhost:3000/page?secret=removed",
+        },
+      },
+    },
+  }, "adapter:dev.fixture@1.2.3", true), [{
+    kind: "browser_observation",
+    provider: "adapter:dev.fixture@1.2.3",
+    observationId: "agent-message:0",
+    imageData: `data:image/jpeg;base64,${data}`,
+    mediaType: "image/jpeg",
+    title: "Agent page",
+    url: "http://localhost:3000/page",
+  }]);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "image",
+          data,
+          mimeType: "image/jpeg",
+        },
+      },
+    },
+  }, "adapter:dev.fixture@1.2.3", true, "run-1:8"), [{
+    kind: "browser_observation",
+    provider: "adapter:dev.fixture@1.2.3",
+    observationId: "agent-message:run-1:8:0",
+    imageData: `data:image/jpeg;base64,${data}`,
+    mediaType: "image/jpeg",
+  }]);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: [
+          { type: "text", text: "The page says " },
+          { type: "image", data, mimeType: "image/jpeg" },
+        ],
+      },
+    },
+  }, "adapter:dev.fixture@1.2.3", true), [
+    { kind: "assistant_text", text: "The page says " },
+    {
+      kind: "browser_observation",
+      provider: "adapter:dev.fixture@1.2.3",
+      observationId: "agent-message:1",
+      imageData: `data:image/jpeg;base64,${data}`,
+      mediaType: "image/jpeg",
+    },
+  ]);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "browser-1",
+        status: "completed",
+        content: [{ type: "content", content: { type: "image", data, mimeType: "image/png" } }],
+      },
+    },
+  }, "adapter:dev.fixture@1.2.3", true), [
+    {
+      kind: "browser_observation",
+      provider: "adapter:dev.fixture@1.2.3",
+      observationId: "tool:browser-1:0",
+      imageData: `data:image/png;base64,${data}`,
+      mediaType: "image/png",
+      toolCallId: "browser-1",
+    },
+    { kind: "tool_finished", toolCallId: "browser-1", failed: false },
+  ]);
+});
+
 test("ACP plans preserve adapter provenance and map only reported statuses", () => {
   assert.deepEqual(normalizeAcpNotification({
     method: "session/update",
@@ -431,6 +527,7 @@ test("the shipped Kiro adapter is declarative, direct-only, and schema-valid", a
     { name: "XDG_RUNTIME_DIR", required: false, sensitive: true },
   ]);
   assert.equal(parsed.capabilities.tools, true);
+  assert.equal(parsed.capabilities.browserObservation, false);
   assert.equal(parsed.capabilities.sessionResume, true);
   assert.equal(adapterDigest(parsed), reviewedDigest);
   assert.equal(raw.includes("--trust-all-tools"), false);
@@ -453,6 +550,7 @@ test("the shipped OpenCode adapter is declarative, direct-only, and schema-valid
     arguments: ["acp"],
   });
   assert.equal(parsed.capabilities.tools, true);
+  assert.equal(parsed.capabilities.browserObservation, false);
   assert.equal(parsed.capabilities.sessionResume, true);
   assert.equal(adapterDigest(parsed), reviewedDigest);
   assert.equal(raw.includes("--trust-all-tools"), false);
@@ -504,6 +602,8 @@ test("the shipped Grok Build adapter is declarative, direct-only, and schema-val
   ]);
   assert.equal(parsed.capabilities.tools, true);
   assert.equal(parsed.capabilities.images, false);
+  assert.equal(parsed.capabilities.browserObservation, false);
+  assert.equal(parsed.capabilities.browserAutomation, true);
   assert.equal(parsed.capabilities.sessionResume, true);
   assert.equal(adapterDigest(parsed), reviewedDigest);
   assert.equal(raw.includes("--always-approve"), false);
@@ -675,6 +775,23 @@ test("ACP echoes opaque allow-once IDs and resumes only when both sides support 
   assert.equal(acpSessionRequest("session-1", true, true, "/worktree").method, "session/load");
   assert.equal(acpSessionRequest("session-1", false, true, "/worktree"), null);
   assert.equal(acpSessionRequest("session-1", true, false, "/worktree"), null);
+  assert.deepEqual(acpSessionRequest(undefined, false, false, "/worktree", {
+    name: "aldunis_browser",
+    command: "/usr/bin/node",
+    args: ["/app/browser-mcp.mjs"],
+    environment: { ALDUNIS_BROWSER_TOKEN: "token" },
+  }), {
+    method: "session/new",
+    params: {
+      cwd: "/worktree",
+      mcpServers: [{
+        name: "aldunis_browser",
+        command: "/usr/bin/node",
+        args: ["/app/browser-mcp.mjs"],
+        env: [{ name: "ALDUNIS_BROWSER_TOKEN", value: "token" }],
+      }],
+    },
+  });
   assert.deepEqual(acpSessionRequest(undefined, false, false, "/worktree"), {
     method: "session/new",
     params: { cwd: "/worktree", mcpServers: [] },

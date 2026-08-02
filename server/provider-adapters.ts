@@ -24,6 +24,10 @@ export interface ProviderAdapterManifest {
   capabilities: {
     tools: boolean;
     images: boolean;
+    /** Optional for schema-v1 installs created before this capability existed. */
+    browserObservation?: boolean;
+    /** Optional until an ACP adapter has an explicitly reviewed MCP contract. */
+    browserAutomation?: boolean;
     sessionResume: boolean;
   };
   environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
@@ -221,7 +225,7 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
     return argument;
   });
   const capabilities = record(manifest.capabilities, "Capabilities");
-  exact(capabilities, ["tools", "images", "sessionResume"], "Capabilities");
+  exact(capabilities, ["tools", "images", "browserObservation", "browserAutomation", "sessionResume"], "Capabilities");
   if (capabilities.sessionResume !== true) {
     throw new ProviderAdapterError("Version 1 adapters must support resumable multi-turn sessions.");
   }
@@ -274,6 +278,12 @@ export function parseProviderAdapterManifest(value: unknown): ProviderAdapterMan
     capabilities: {
       tools: boolean(capabilities.tools, "Tools capability"),
       images: boolean(capabilities.images, "Images capability"),
+      ...(capabilities.browserObservation === undefined
+        ? {}
+        : { browserObservation: boolean(capabilities.browserObservation, "Browser observation capability") }),
+      ...(capabilities.browserAutomation === undefined
+        ? {}
+        : { browserAutomation: boolean(capabilities.browserAutomation, "Browser automation capability") }),
       sessionResume: boolean(capabilities.sessionResume, "Session resume capability"),
     },
     environment,

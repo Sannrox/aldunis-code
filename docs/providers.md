@@ -68,6 +68,10 @@ provider forks.
   through the original app-server JSON-RPC request. Multi-question and secret
   requests fail closed until the normalized UI can preserve their distinct
   answer semantics.
+- In the desktop application, Codex can use the Aldunis shared loopback
+  browser. The MCP server is injected into the Codex app-server process only
+  for that conversation; the operator must open the shared browser and enable
+  **Allow agent control** before mutations are accepted.
 
 ### Shikigami
 
@@ -150,7 +154,7 @@ rewrite provider-owned config.
 | Package | Launch | Notes |
 | --- | --- | --- |
 | `kiro-cli` | `kiro-cli acp` | Direct-only ACP |
-| `grok-build-cli` | `grok agent stdio` | Direct-only ACP |
+| `grok-build-cli` | `grok agent stdio` | Direct-only ACP; reviewed shared-browser MCP capability |
 | `opencode-cli` | `opencode acp` | Direct-only ACP |
 
 Rules shared by reviewed ACP adapters:
@@ -164,6 +168,10 @@ Rules shared by reviewed ACP adapters:
   (and `configOptions` with `category: "model"`). The composer model menu lists
   those options; the selected model is applied with `session/set_model` before
   the first prompt.
+- The reviewed Grok package can receive the same Aldunis shared loopback
+  browser MCP server as Codex. Aldunis supplies it through the ACP session
+  `mcpServers` list; other reviewed adapters retain their provider-owned MCP
+  configuration and do not receive browser control.
 
 Design notes:
 

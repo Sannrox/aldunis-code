@@ -7,10 +7,12 @@ import { PermissionBroker } from "./permission.ts";
 import {
   type ProviderEvent,
   type ProviderId,
+  type ProviderBrowserMcpConfiguration,
   type ProviderRun,
   type ProviderStartOptions,
   ProviderProtocolError,
 } from "./provider.ts";
+import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 import { acpSetModelRequest } from "./acp-models.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
@@ -39,9 +41,87 @@ function textContent(value: unknown): string {
   return requiredString(content.text, "message text");
 }
 
+function observationBase(value: string, sequence?: string | number): string {
+  return sequence === undefined ? value : `${value}:${sequence}`;
+}
+
+function acpBrowserObservation(
+  value: unknown,
+  provider: ProviderId,
+  observationId: string,
+  toolCallId: string | undefined,
+  enabled: boolean,
+): ProviderEvent[] {
+  if (!enabled) return [];
+  const outer = record(value);
+  const image = outer?.type === "content" ? record(outer.content) : outer;
+  if (!image || image.type !== "image") return [];
+  const observation = normalizeBrowserObservation({
+    provider,
+    observationId,
+    toolCallId,
+    imageData: image.data ?? image.imageData,
+    mediaType: image.mimeType ?? image.mediaType,
+    title: image.title,
+    url: image.url,
+  });
+  return observation ? [observation] : [];
+}
+
+function acpBrowserObservations(
+  value: unknown,
+  provider: ProviderId,
+  observationId: string,
+  toolCallId?: string,
+  enabled = false,
+  observationSequence?: string | number,
+): ProviderEvent[] {
+  if (!enabled) return [];
+  const entries = Array.isArray(value) ? value : [value];
+  const scopedObservationId = observationBase(observationId, observationSequence);
+  return entries.flatMap((entry, index) => acpBrowserObservation(
+    entry,
+    provider,
+    `${scopedObservationId}:${index}`,
+    toolCallId,
+    enabled,
+  ));
+}
+
+function acpMessageEvents(
+  value: unknown,
+  provider: ProviderId,
+  observationId: string,
+  browserObservationEnabled: boolean,
+  observationSequence?: string | number,
+): ProviderEvent[] {
+  const entries = Array.isArray(value) ? value : [value];
+  const scopedObservationId = observationBase(observationId, observationSequence);
+  return entries.flatMap((entry, index) => {
+    const outer = record(entry);
+    const content = outer?.type === "content" ? record(outer.content) : outer;
+    if (content?.type === "text") {
+      return [{ kind: "assistant_text", text: requiredString(content.text, "message text") }];
+    }
+    if (content?.type === "image") {
+      const observations = acpBrowserObservation(
+        entry,
+        provider,
+        `${scopedObservationId}:${index}`,
+        undefined,
+        browserObservationEnabled,
+      );
+      if (observations.length > 0) return observations;
+    }
+    throw new ProviderProtocolError("ACP emitted unsupported message content.");
+  });
+}
+
 export function normalizeAcpNotification(
   value: unknown,
   provider: ProviderId = "adapter:test@1.0.0",
+  browserObservationEnabled = false,
+  observationSequence?: string | number,
 ): ProviderEvent[] {
   const message = record(value);
   if (
@@ -66,7 +146,13 @@ export function normalizeAcpNotification(
     throw new ProviderProtocolError("ACP emitted a malformed session update.");
   }
   if (updateType === "agent_message_chunk") {
-    return [{ kind: "assistant_text", text: textContent(update.content) }];
+    return acpMessageEvents(
+      update.content,
+      provider,
+      "agent-message",
+      browserObservationEnabled,
+      observationSequence,
+    );
   }
   if (updateType === "agent_thought_chunk") {
     return [{ kind: "thinking", text: textContent(update.content) }];
@@ -83,20 +169,38 @@ export function normalizeAcpNotification(
   if (updateType === "tool_call_update") {
     // Agents (notably Grok Build) emit metadata-only tool_call_update frames with
     // no status — title/locations/kind enrichment. Those are progress, not terminal.
+    const toolCallId = requiredString(update.toolCallId, "tool call ID");
+    const observations = acpBrowserObservations(
+      update.content ?? update.output,
+      provider,
+      `tool:${toolCallId}`,
+      toolCallId,
+      browserObservationEnabled,
+      observationSequence,
+    );
     const rawStatus = update.status;
+    if (observations.length > 0) {
+      if (rawStatus === "completed" || rawStatus === "success") {
+        return [...observations, { kind: "tool_finished", toolCallId, failed: false }];
+      }
+      if (rawStatus === "failed" || rawStatus === "error") {
+        return [...observations, { kind: "tool_finished", toolCallId, failed: true }];
+      }
+      return observations;
+    }
     if (rawStatus === undefined || rawStatus === null || rawStatus === "") return [];
     const status = String(rawStatus).toLowerCase();
     if (status === "completed" || status === "success") {
       return [{
         kind: "tool_finished",
-        toolCallId: requiredString(update.toolCallId, "tool call ID"),
+        toolCallId,
         failed: false,
       }];
     }
     if (status === "failed" || status === "error") {
       return [{
         kind: "tool_finished",
-        toolCallId: requiredString(update.toolCallId, "tool call ID"),
+        toolCallId,
         failed: true,
       }];
     }
@@ -163,8 +267,10 @@ export function acpNotificationEvents(
   value: unknown,
   loadingSession: boolean,
   provider: ProviderId = "adapter:test@1.0.0",
+  browserObservationEnabled = false,
+  observationSequence?: string | number,
 ): ProviderEvent[] {
-  const events = normalizeAcpNotification(value, provider);
+  const events = normalizeAcpNotification(value, provider, browserObservationEnabled, observationSequence);
   // session/load may replay the provider's native history before replying.
   // Aldunis already owns that timeline, so validate the replay but do not
   // append it as fresh content to the resumed turn.
@@ -205,6 +311,7 @@ export function acpSessionRequest(
   manifestSupportsResume: boolean,
   agentSupportsResume: boolean,
   worktree: string,
+  browserMcp?: ProviderBrowserMcpConfiguration,
 ): { method: "session/load" | "session/new"; params: JsonRecord } | null {
   if (resumeSessionId && (!manifestSupportsResume || !agentSupportsResume)) return null;
   const resume = Boolean(resumeSessionId);
@@ -213,7 +320,14 @@ export function acpSessionRequest(
     params: {
       ...(resume ? { sessionId: resumeSessionId } : {}),
       cwd: worktree,
-      mcpServers: [],
+      mcpServers: browserMcp
+        ? [{
+            name: browserMcp.name,
+            command: browserMcp.command,
+            args: browserMcp.args,
+            env: Object.entries(browserMcp.environment).map(([name, value]) => ({ name, value })),
+          }]
+        : [],
     },
   };
 }
@@ -331,6 +445,9 @@ export class AcpProviderAdapter {
       const value = this.inheritedEnvironment[name];
       if (value !== undefined && environment[name] === undefined) environment[name] = value;
     }
+    if (options.browserMcp) {
+      Object.assign(environment, options.browserMcp.environment);
+    }
     const id = randomUUID();
     const child = spawn(this.executable, this.adapter.manifest.executable.arguments, {
       cwd: options.worktree,
@@ -424,6 +541,7 @@ export class AcpProviderAdapter {
     const token = this.permissions.createRunToken(id);
     let terminal = false;
     let protocolFailed = false;
+    let notificationSequence = 0;
     const approvalTasks = new Set<Promise<void>>();
     let phaseTimer = setTimeout(() => {
       active.timedOut = true;
@@ -465,6 +583,9 @@ export class AcpProviderAdapter {
             this.adapter.manifest.capabilities.sessionResume,
             active.loadSession,
             options.worktree,
+            this.adapter.manifest.capabilities.browserAutomation === true
+              ? options.browserMcp
+              : undefined,
           );
           if (!sessionRequest) {
             throw new ProviderProtocolError(
@@ -657,6 +778,8 @@ export class AcpProviderAdapter {
             message,
             Boolean(options.resumeSessionId && active.sessionId === null),
             `adapter:${this.adapter.manifest.id}@${this.adapter.manifest.version}`,
+            this.adapter.manifest.capabilities.browserObservation,
+            `${id}:${notificationSequence++}`,
           );
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           for (const event of events) yield event;

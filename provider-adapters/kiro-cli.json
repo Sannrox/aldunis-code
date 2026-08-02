@@ -26,6 +26,8 @@
   "capabilities": {
     "tools": true,
     "images": false,
+    "browserObservation": false,
+    "browserAutomation": false,
     "sessionResume": true
   },
   "environment": [

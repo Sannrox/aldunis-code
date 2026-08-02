@@ -82,6 +82,33 @@ test("conversation overlays are contained by .conv (not review dock)", () => {
   );
 });
 
+test("floating preview escapes the conversation overlay without losing bounds", () => {
+  assert.match(
+    css,
+    /\.preview-panel\.preview-panel--floating\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*50[^}]*width:\s*min\(540px/s,
+  );
+  assert.match(
+    shellCss,
+    /\.preview-panel\.preview-panel--floating\s*\{[^}]*position:\s*fixed\s*!important[^}]*inset:\s*auto 18px 18px auto\s*!important/s,
+  );
+  assert.match(
+    shellCss,
+    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.preview-panel\.preview-panel--floating\s*\{[^}]*inset:\s*auto 10px 10px 10px\s*!important/s,
+  );
+});
+
+test("provider browser observations stay read-only inside the floating view", () => {
+  assert.match(css, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex[^}]*background:\s*#111/s);
+  assert.match(css, /\.browser-observation-workspace img\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(shellCss, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex\s*!important/s);
+});
+
+test("shared browser controls have a bounded workspace surface", () => {
+  assert.match(css, /\.shared-browser-workspace\s*\{[\s\S]*?flex:\s*1 1 auto/);
+  assert.match(css, /\.shared-browser-workspace webview\s*\{[\s\S]*?border:\s*0/);
+  assert.match(shellCss, /\.shared-browser-workspace webview\s*\{[\s\S]*?border:\s*0\s*!important/);
+});
+
 test("review dock shrinks so dual-pane conversation stays usable", () => {
   // Fixed 430px review inside a ~500px dual-pane primary left ~70px for the
   // thread. Dock must be allowed to shrink (flex-shrink + percentage cap).

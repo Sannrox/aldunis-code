@@ -1972,7 +1972,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     grid-template-columns: 1fr !important;
     grid-template-rows: 42px minmax(240px, 1fr) auto !important;
   }
-  .preview-workspace iframe {
+.preview-workspace iframe {
     grid-column: 1 !important;
     grid-row: 2 !important;
   }
@@ -1983,6 +1983,91 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     border-top: 1px solid var(--border) !important;
   }
 }
+.browser-observation-workspace {
+  display: flex !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  flex-direction: column !important;
+  background: #111 !important;
+}
+.browser-observation-workspace figure {
+  display: flex !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 12px !important;
+  overflow: auto !important;
+}
+.browser-observation-workspace img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  object-fit: contain !important;
+}
+.browser-observation-workspace > p {
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  padding: 8px 12px !important;
+  border-top: 1px solid rgba(255, 255, 255, .16) !important;
+  color: rgba(255, 255, 255, .72) !important;
+  font-size: 11px !important;
+}
+.shared-browser-workspace {
+  display: flex !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  flex-direction: column !important;
+  background: #111 !important;
+}
+.shared-browser-toolbar { flex-wrap: wrap !important; }
+.shared-browser-toolbar > .browser-control-badge {
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+}
+.browser-control-badge {
+  padding: 3px 7px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  color: var(--muted-foreground) !important;
+  font: 10px var(--font-mono) !important;
+  text-transform: uppercase !important;
+  letter-spacing: .04em !important;
+}
+.browser-control-badge.agent { color: var(--success, #6bcf7f) !important; border-color: color-mix(in srgb, var(--success, #6bcf7f) 55%, var(--border)) !important; }
+.browser-control-badge.human { color: var(--amber) !important; border-color: color-mix(in srgb, var(--amber) 55%, var(--border)) !important; }
+.shared-browser-workspace webview {
+  display: flex !important;
+  width: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  border: 0 !important;
+  background: #fff !important;
+}
+.shared-browser-workspace > p {
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  padding: 8px 12px !important;
+  border-top: 1px solid rgba(255, 255, 255, .16) !important;
+  color: rgba(255, 255, 255, .72) !important;
+  font-size: 11px !important;
+}
+.shared-browser-unavailable {
+  display: grid !important;
+  flex: 1 1 auto !important;
+  min-height: 220px !important;
+  place-content: center !important;
+  gap: 8px !important;
+  padding: 24px !important;
+  color: var(--muted-foreground) !important;
+  text-align: center !important;
+}
+.shared-browser-unavailable strong { color: var(--foreground) !important; }
+.shared-browser-unavailable p { max-width: 52ch !important; margin: 0 !important; font-size: 13px !important; line-height: 1.5 !important; }
 
 
 /* ── Flex chain: match mock main column geometry exactly ─────────── */
@@ -2195,4 +2280,29 @@ html[data-theme="dark"], html[data-theme="dark"] body {
     border-top: 1px solid var(--border);
   }
   .split.with-review > .conv { min-height: 100px !important; }
+}
+
+/* Floating live preview — keep the constrained iframe visible while the
+   conversation continues underneath it. The explicit fixed position is the
+   intentional exception to the in-pane overlay rule above. */
+.preview-panel.preview-panel--floating {
+  position: fixed !important;
+  z-index: 50 !important;
+  inset: auto 18px 18px auto !important;
+  width: min(540px, calc(100vw - 36px)) !important;
+  height: min(460px, calc(100vh - 36px)) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .2), 0 4px 14px rgba(0, 0, 0, .12) !important;
+  overflow: hidden !important;
+}
+.preview-panel.preview-panel--floating .preview-policy {
+  padding-block: 8px !important;
+}
+@media (max-width: 640px) {
+  .preview-panel.preview-panel--floating {
+    inset: auto 10px 10px 10px !important;
+    width: auto !important;
+    height: min(62vh, 440px) !important;
+  }
 }
