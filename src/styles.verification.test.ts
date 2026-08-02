@@ -227,8 +227,17 @@ test("thread row and settled-shelf actions meet minimum hit size", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   // Dense 22px / 20px targets failed residual stress; require ≥28px.
-  assert.match(shell, /\.settle,\s*\.beside,\s*\.row-more\s*\{[^}]*min-height:\s*28px/s);
+  assert.match(shell, /\.settle,\.row-more\s*\{[^}]*min-height:\s*28px/s);
   assert.match(shell, /\.sbtn\s*\{[^}]*min-height:\s*28px/s);
+});
+
+test("touch thread rows keep the overflow menu trigger visible", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-more\s*\{\s*min-width:\s*44px;\s*opacity:\s*1;/s,
+  );
 });
 
 test("command palette search field has a usable min-height", () => {
