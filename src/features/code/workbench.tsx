@@ -53,6 +53,18 @@ function paneConversationLabel(
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 
+export function isThreadStatusEvent(value: unknown): value is {
+  threadId: string;
+  status: string;
+  at: string;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const event = value as Record<string, unknown>;
+  return typeof event.threadId === "string"
+    && typeof event.status === "string"
+    && typeof event.at === "string";
+}
+
 export function DelegatedChildrenPanel({
   parent,
   repository = null,
@@ -588,7 +600,7 @@ export function CodeWorkbench({
   const secondaryIdReference = useRef<string | null>(null);
   const primaryPaneReference = useRef<HTMLDivElement>(null);
   const secondaryPaneReference = useRef<HTMLDivElement>(null);
-  const delegatedProjectionRequestReference = useRef(0);
+  const stateProjectionRequestReference = useRef(0);
   useEffect(() => {
     try {
       window.localStorage.setItem(PROJECT_FILTER_KEY, projectFilter);
@@ -606,7 +618,7 @@ export function CodeWorkbench({
       const available = await loadConversationList(null);
       if (!active) return;
       setConversations(available);
-      const requestSequence = ++delegatedProjectionRequestReference.current;
+      const requestSequence = ++stateProjectionRequestReference.current;
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
       const lifecycleProjection = await lifecycleResponse.json() as {
         conversationDeletions?: Array<{ threadId: string; status: string }>;
@@ -615,7 +627,7 @@ export function CodeWorkbench({
         delegatedInputs?: DelegatedInputProjection[];
         delegatedRelationships?: DelegatedConversationRelationship[];
       };
-      if (requestSequence === delegatedProjectionRequestReference.current) {
+      if (requestSequence === stateProjectionRequestReference.current) {
         setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
         setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
         setDelegatedApprovals(lifecycleProjection.delegatedApprovals ?? []);
@@ -722,7 +734,7 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const loadDelegatedProjection = async () => {
+  const loadStateProjection = async () => {
     const response = await fetch("/api/state/load", { method: "POST" });
     const body = await response.json() as ConversationListProjection & {
       delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
@@ -731,10 +743,10 @@ export function CodeWorkbench({
       delegatedRelationships?: DelegatedConversationRelationship[];
       error?: string;
     };
-    if (!response.ok) throw new Error(body.error ?? "Delegated conversations could not be loaded.");
+    if (!response.ok) throw new Error(body.error ?? "Local conversation state could not be loaded.");
     return body;
   };
-  const applyDelegatedProjection = (body: Awaited<ReturnType<typeof loadDelegatedProjection>>) => {
+  const applyStateProjection = (body: Awaited<ReturnType<typeof loadStateProjection>>) => {
     const projected = conversationListFromProjection(body);
     setConversations((current) => {
       const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
@@ -750,23 +762,22 @@ export function CodeWorkbench({
     setDelegatedApprovals(body.delegatedApprovals ?? []);
     setDelegatedInputs(body.delegatedInputs ?? []);
   };
-  const refreshDelegatedRelationships = async () => {
-    const requestSequence = ++delegatedProjectionRequestReference.current;
-    const body = await loadDelegatedProjection();
-    if (requestSequence !== delegatedProjectionRequestReference.current) return;
-    applyDelegatedProjection(body);
+  const refreshStateProjection = async () => {
+    const requestSequence = ++stateProjectionRequestReference.current;
+    const body = await loadStateProjection();
+    if (requestSequence !== stateProjectionRequestReference.current) return;
+    applyStateProjection(body);
   };
   useEffect(() => {
-    if (!orchestrationThreadsBeta) return;
     let active = true;
     const synchronize = () => {
-      const requestSequence = ++delegatedProjectionRequestReference.current;
-      void loadDelegatedProjection().then((delegated) => {
+      const requestSequence = ++stateProjectionRequestReference.current;
+      void loadStateProjection().then((projection) => {
         if (
           !active
-          || requestSequence !== delegatedProjectionRequestReference.current
+          || requestSequence !== stateProjectionRequestReference.current
         ) return;
-        applyDelegatedProjection(delegated);
+        applyStateProjection(projection);
       }).catch(() => undefined);
     };
     synchronize();
@@ -774,16 +785,8 @@ export function CodeWorkbench({
     events.addEventListener("open", synchronize);
     events.addEventListener("thread_status", (event) => {
       try {
-        const update = JSON.parse((event as MessageEvent<string>).data) as {
-          threadId?: unknown;
-          status?: unknown;
-          at?: unknown;
-        };
-        if (
-          typeof update.threadId !== "string"
-          || typeof update.status !== "string"
-          || typeof update.at !== "string"
-        ) return;
+        const update = JSON.parse((event as MessageEvent<string>).data) as unknown;
+        if (!isThreadStatusEvent(update)) return;
         synchronize();
       } catch {
         /* malformed status events do not replace the last valid projection */
@@ -793,7 +796,7 @@ export function CodeWorkbench({
       active = false;
       events.close();
     };
-    // The host hides relationships while disabled, so enable performs a fresh load.
+    // The host hides delegated relationships while disabled, so enable performs a fresh load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orchestrationThreadsBeta]);
   const listedConversations = useMemo(() => {
@@ -818,7 +821,7 @@ export function CodeWorkbench({
     });
     const result = await response.json() as { error?: string };
     if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    await refreshDelegatedRelationships();
+    await refreshStateProjection();
     return result;
   };
   const manageConversation = async (
@@ -1208,7 +1211,7 @@ export function CodeWorkbench({
                     approvals={delegatedApprovals}
                     inputs={delegatedInputs}
                     onOpen={openConversation}
-                    onChanged={refreshDelegatedRelationships}
+                    onChanged={refreshStateProjection}
                   />
                 )}
                 <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
@@ -1216,7 +1219,7 @@ export function CodeWorkbench({
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
                   }
-                  void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
+                  void refreshStateProjection().catch(() => {});
                 }} />
               </>}
           </div>
@@ -1254,7 +1257,7 @@ export function CodeWorkbench({
                         approvals={delegatedApprovals}
                         inputs={delegatedInputs}
                         onOpen={openConversation}
-                        onChanged={refreshDelegatedRelationships}
+                        onChanged={refreshStateProjection}
                       />
                     )}
                     <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
@@ -1265,7 +1268,7 @@ export function CodeWorkbench({
                       if (secondaryIdReference.current !== secondaryId) return;
                       secondaryIdReference.current = id;
                       setSecondaryId(id);
-                      void loadConversationList(null, { fresh: true }).then(setConversations).catch(() => {});
+                      void refreshStateProjection().catch(() => {});
                     }} />
                   </>}
               </div>
@@ -1317,7 +1320,7 @@ export function CodeWorkbench({
             if (primaryId === conversation.id) setPrimaryId(null);
             if (secondaryId === conversation.id) setSecondaryId(null);
             setConversations((current) => current.filter((item) => item.id !== conversation.id));
-            void refreshDelegatedRelationships()
+            void refreshStateProjection()
               .catch(() => setLifecycleError(
                 "Conversation deleted, but the conversation list could not be refreshed.",
               ));
