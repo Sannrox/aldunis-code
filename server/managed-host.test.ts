@@ -64,6 +64,7 @@ function configuration(
     tenantId: "tenant-test",
     instanceId: "code-instance-test",
     publicKey,
+    logoutUrl: "https://aldunis.test/logout",
     repositories: [{
       id: "code",
       name: "Aldunis Code",
@@ -120,6 +121,38 @@ test("managed assertions fail closed for missing, altered, wrong-audience, and r
     ),
     /signature/,
   );
+});
+
+test("managed verification returns a bounded account projection from signed claims", async () => {
+  const keys = generateKeyPairSync("ed25519");
+  const root = await realpath(process.cwd());
+  const managed = new ManagedHost(configuration(keys.publicKey, root));
+  const sessionExp = Math.floor(Date.now() / 1000) + 3_600;
+  const identity = await managed.verify(
+    request(
+      "/api/host/capabilities",
+      "POST",
+      assertion(keys.privateKey, {
+        name: "Ada Lovelace",
+        roles: ["developer", "reviewer"],
+        session_exp: sessionExp,
+      }),
+    ),
+    Buffer.from("{}", "utf8"),
+  );
+
+  assert.equal(identity.displayName, "Ada Lovelace");
+  assert.equal(identity.tenantId, "tenant-test");
+  assert.deepEqual(identity.roles, ["developer", "reviewer"]);
+  assert.deepEqual(identity.scopes, ["code:workbench"]);
+  assert.equal(identity.sessionExpiresAt, new Date(sessionExp * 1000).toISOString());
+  assert.equal(identity.logoutUrl, "https://aldunis.test/logout");
+
+  const account = (managed.capabilities(identity) as {
+    account?: Record<string, unknown> | null;
+  }).account;
+  assert.equal(account?.displayName, "Ada Lovelace");
+  assert.equal("subject" in (account ?? {}), false);
 });
 
 test("managed startup configuration is required and Shikigami runtime excludes ambient credentials", async () => {
@@ -201,9 +234,20 @@ test("managed HTTP routes require gateway assertions and reject local control ov
 
     const capabilities = await post("/api/host/capabilities", {});
     assert.equal(capabilities.status, 200);
-    const capabilityBody = await capabilities.json() as { mode: string; managed: boolean };
+    const capabilityBody = await capabilities.json() as {
+      mode: string;
+      managed: boolean;
+      account?: {
+        displayName: string;
+        tenantId: string;
+        logoutUrl: string | null;
+      } | null;
+    };
     assert.equal(capabilityBody.mode, "managed");
     assert.equal(capabilityBody.managed, true);
+    assert.equal(capabilityBody.account?.displayName, "Enterprise user");
+    assert.equal(capabilityBody.account?.tenantId, "tenant-test");
+    assert.equal(capabilityBody.account?.logoutUrl, "https://aldunis.test/logout");
 
     const arbitraryPath = await post("/api/repositories/open", { path: root });
     assert.equal(arbitraryPath.status, 403);

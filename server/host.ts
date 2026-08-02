@@ -108,7 +108,7 @@ import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
-import { ManagedHost, ManagedHostError } from "./managed-host.ts";
+import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import {
   ChiseiClientError,
   ChiseiProjectionClient,
@@ -448,6 +448,7 @@ async function handleApi(
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
   managedHost?: ManagedHost,
+  managedIdentity?: ManagedIdentity,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -520,7 +521,7 @@ async function handleApi(
     }
     if (route === "/api/host/capabilities") {
       sendJson(response, 200, managedHost
-        ? managedHost.capabilities()
+        ? managedHost.capabilities(managedIdentity)
         : {
             mode: remoteAuth ? "remote" : "local",
             managed: false,
@@ -3599,6 +3600,7 @@ export function createLocalHost(
         )
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost
       && !internalRequest
@@ -3606,7 +3608,7 @@ export function createLocalHost(
       && route !== "/api/remote/descriptor"
     ) {
       try {
-        await managedHost.verify(request, await bufferRequest(request));
+        managedIdentity = await managedHost.verify(request, await bufferRequest(request));
       } catch (error) {
         const status = error instanceof ManagedHostError ? error.status : 500;
         const message = error instanceof ManagedHostError ? error.message : "Managed authentication failed.";
@@ -3658,6 +3660,7 @@ export function createLocalHost(
         remoteAuth,
         internalPermissionCallback?.url,
         managedHost,
+        managedIdentity,
       )
     ) return;
     await serveStatic(request, response, dist);
