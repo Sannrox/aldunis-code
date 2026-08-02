@@ -269,6 +269,21 @@ export interface ProviderSkill {
 }
 export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export interface ProviderModelDiscovery {
+  id: string;
+  displayName: string;
+  isDefault: boolean;
+  reasoningEfforts?: ReasoningEffort[];
+  defaultReasoningEffort?: ReasoningEffort;
+}
+export interface ProviderProfileDiscovery {
+  profileId: string;
+  installed: boolean;
+  authenticated?: boolean;
+  version?: string | null;
+  detail?: string | null;
+  models?: ProviderModelDiscovery[];
+}
 export interface ProviderDiscovery {
   id: ProviderId;
   installed: boolean;
@@ -278,13 +293,9 @@ export interface ProviderDiscovery {
   enabled?: boolean;
   /** Operator-facing reason when the provider is not run-ready. */
   detail?: string | null;
-  models?: Array<{
-    id: string;
-    displayName: string;
-    isDefault: boolean;
-    reasoningEfforts?: ReasoningEffort[];
-    defaultReasoningEffort?: ReasoningEffort;
-  }>;
+  models?: ProviderModelDiscovery[];
+  /** Profile-specific readiness, currently populated for Shikigami. */
+  profileDiscoveries?: ProviderProfileDiscovery[];
 }
 export interface ProviderAdapterManifest {
   schemaVersion: 1;
@@ -350,6 +361,7 @@ export interface ClaudeProfile {
   name: string;
   binaryPath: string;
   homePath: string;
+  configPath: string;
   environment: Array<{
     name: string;
     sensitive: boolean;

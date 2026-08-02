@@ -171,6 +171,27 @@ export function providerDisplayName(
   return "Provider adapter";
 }
 
+/** Resolve a provider's host readiness projection for the selected profile. */
+export function providerDiscoveryForProfile(
+  provider: ProviderId,
+  discovery: ProviderDiscovery | undefined,
+  profileId: string | null | undefined,
+): ProviderDiscovery | undefined {
+  if (provider !== "shikigami" || !profileId || !discovery?.profileDiscoveries) {
+    return discovery;
+  }
+  const profile = discovery.profileDiscoveries.find((item) => item.profileId === profileId);
+  if (!profile) return discovery;
+  return {
+    ...discovery,
+    installed: profile.installed,
+    authenticated: profile.authenticated,
+    version: profile.version,
+    detail: profile.detail,
+    models: profile.models ?? [],
+  };
+}
+
 /**
  * Compact list/search/pane label (Claude / Codex / Kiro CLI / …).
  * Prefer this over raw package ids in inbox and switcher chrome.

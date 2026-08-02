@@ -12,12 +12,13 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
+import TOML from "@iarna/toml";
 import {
   isMutatingTool,
   PermissionBroker,
@@ -53,6 +54,19 @@ const PERMISSION_HOOK_PATH = fileURLToPath(
 );
 
 type JsonRecord = Record<string, unknown>;
+type ShikigamiModelAdapter = "scripted" | "http" | "plane";
+
+export interface ShikigamiProfileRuntime {
+  executable: string;
+  environment: NodeJS.ProcessEnv;
+  /** Empty means Shikigami's native config search order. */
+  configPath: string;
+}
+
+export interface ShikigamiConfigSource {
+  path: string | null;
+  values: JsonRecord;
+}
 
 export interface ShikigamiModel {
   id: string;
@@ -281,22 +295,122 @@ export function parseToolArgsJson(argsJson: unknown): Record<string, unknown> {
   }
 }
 
-function escapeTomlString(value: string): string {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll('"', '\\"')
-    .replaceAll("\n", "\\n");
+function table(value: unknown): JsonRecord {
+  return record(value) ?? {};
+}
+
+function stringSetting(section: unknown, key: string): string | undefined {
+  const value = table(section)[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function booleanSetting(section: unknown, key: string): boolean | undefined {
+  const value = table(section)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function configPathForCwd(input: string, cwd: string): string {
+  const expanded = input === "~"
+    ? homedir()
+    : input.startsWith("~/")
+    ? join(homedir(), input.slice(2))
+    : input;
+  return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
+}
+
+/** Read native settings without modifying the operator's config file. */
+export async function loadShikigamiConfig(options: {
+  environment?: NodeJS.ProcessEnv;
+  cwd?: string;
+  explicitPath?: string;
+} = {}): Promise<ShikigamiConfigSource> {
+  const environment = options.environment ?? process.env;
+  const cwd = resolve(options.cwd ?? process.cwd());
+  const explicit = options.explicitPath?.trim() || environment.SHIKIGAMI_CONFIG?.trim() || "";
+  const candidates = explicit
+    ? [configPathForCwd(explicit, cwd)]
+    : [
+      configPathForCwd(environment.SHIKIGAMI_STATE?.trim() || ".shikigami-state", cwd),
+      join(cwd, "shikigami.toml"),
+    ].map((candidate) => candidate.endsWith(".toml") ? candidate : join(candidate, "shikigami.toml"));
+
+  for (const path of candidates) {
+    try {
+      const source = await readFile(path, "utf8");
+      let parsed: unknown;
+      try {
+        parsed = TOML.parse(source);
+      } catch {
+        throw new ProviderProtocolError("The selected Shikigami config could not be parsed.");
+      }
+      const values = record(parsed);
+      if (!values) throw new ProviderProtocolError("The selected Shikigami config is not a TOML table.");
+      return { path, values };
+    } catch (error) {
+      if (error instanceof ProviderProtocolError) throw error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !explicit) continue;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new ProviderProtocolError("The selected Shikigami config file was not found.");
+      }
+      throw new ProviderProtocolError("The selected Shikigami config could not be read.");
+    }
+  }
+  return { path: null, values: {} };
+}
+
+function nativeConfigHasGovernedProfile(config: JsonRecord): boolean {
+  return stringSetting(config.profile, "name")?.toLowerCase() === "governed"
+    && Object.keys(table(config.model)).length === 0;
+}
+
+export function resolveModelAdapter(
+  environment: NodeJS.ProcessEnv,
+  baseConfig: JsonRecord = {},
+): {
+  adapter: ShikigamiModelAdapter;
+  authenticated: boolean;
+  modelId: string;
+  baseUrl: string;
+  apiKeyEnv: string;
+} {
+  const model = table(baseConfig.model);
+  const configuredAdapter = stringSetting(model, "adapter")
+    ?? (stringSetting(baseConfig.profile, "name")?.toLowerCase() === "governed" ? "plane" : undefined);
+  const forced = environment.SHIKIGAMI_MODEL_ADAPTER?.trim().toLowerCase();
+  const apiKeyEnv = environment.SHIKIGAMI_API_KEY_ENV?.trim()
+    || stringSetting(model, "api_key_env")
+    || "OPENAI_API_KEY";
+  const adapterName = forced || configuredAdapter || (environment[apiKeyEnv]?.trim() ? "http" : "scripted");
+  if (adapterName !== "scripted" && adapterName !== "http" && adapterName !== "plane") {
+    throw new ProviderProtocolError(`Unsupported Shikigami model adapter: ${adapterName}.`);
+  }
+  const modelId = environment.SHIKIGAMI_MODEL?.trim()
+    || stringSetting(model, "model")
+    || (adapterName === "scripted" ? "scripted" : "gpt-4.1-mini");
+  return {
+    adapter: adapterName,
+    authenticated: adapterName !== "http" || Boolean(environment[apiKeyEnv]?.trim()),
+    modelId,
+    baseUrl: environment.SHIKIGAMI_BASE_URL?.trim()
+      || stringSetting(model, "base_url")
+      || "https://api.openai.com/v1",
+    apiKeyEnv,
+  };
 }
 
 export function buildShikigamiConfig(options: {
   worktree: string;
   mode: InteractionMode;
-  modelAdapter: "scripted" | "http";
+  modelAdapter: ShikigamiModelAdapter;
   modelId: string;
   baseUrl?: string;
   apiKeyEnv?: string;
   governanceAdapter?: string;
   failClosed?: boolean;
+  /** Native TOML values used as the non-Code-owned baseline. */
+  baseConfig?: JsonRecord;
+  /** Keep Shikigami's governed profile expansion when no model table exists. */
+  preserveNativeModel?: boolean;
   /** Absolute path to node binary for the pre_tool permission hook. */
   nodeExecutable?: string;
   /** Absolute path to shikigami-permission-hook.mjs. */
@@ -306,91 +420,83 @@ export function buildShikigamiConfig(options: {
   /** Fixed operator-owned managed profile; no caller-selected model or governance. */
   managed?: ManagedShikigamiRuntime;
 }): string {
-  const tools = (options.managed ? managedToolsForMode(options.mode) : toolsForMode(options.mode))
-    .map((name) => `"${name}"`)
-    .join(", ");
-  const modelBlock = options.managed
-    ? `
-[model]
-adapter = "plane"
-model = "${escapeTomlString(options.managed.model)}"
-`
-    : options.modelAdapter === "http"
-    ? `
-[model]
-adapter = "http"
-model = "${escapeTomlString(options.modelId)}"
-base_url = "${escapeTomlString(options.baseUrl ?? "https://api.openai.com/v1")}"
-api_key_env = "${escapeTomlString(options.apiKeyEnv ?? "OPENAI_API_KEY")}"
-`
-    : `
-[model]
-adapter = "scripted"
-`;
-  const governanceBlock = options.managed
-    ? `
-[governance]
-adapter = "sekai-chisei"
-endpoint = "${escapeTomlString(options.managed.governanceEndpoint)}"
-principal = "${escapeTomlString(options.managed.principal)}"
-namespace = "${escapeTomlString(options.managed.namespace)}"
-fail_closed = true
-token_env = "${escapeTomlString(options.managed.tokenEnv)}"
-`
-    : `
-[governance]
-adapter = "${escapeTomlString(options.governanceAdapter ?? "local")}"
-fail_closed = ${options.failClosed ?? false}
-`;
-  const hookBlock = options.nodeExecutable
+  const config = structuredClone(options.baseConfig ?? {}) as JsonRecord;
+  const tools = options.managed ? managedToolsForMode(options.mode) : toolsForMode(options.mode);
+  const baseProfile = table(config.profile);
+  config.version = 1;
+  config.profile = {
+    ...baseProfile,
+    name: options.managed ? "aldunis-code-managed" : baseProfile.name ?? "aldunis-code",
+  };
+  // Workspace, tools, events, and the Code approval hook are host-owned.
+  config.workspace = { adapter: "inplace", root: options.worktree };
+  const baseTools = table(config.tools);
+  config.tools = {
+    mode: "custom",
+    enabled: tools,
+    bash_timeout_secs: 60,
+    ...(typeof baseTools.respect_ignore === "boolean" ? { respect_ignore: baseTools.respect_ignore } : {}),
+    // Native MCP definitions are not implicitly imported into Code runs.
+    mcp_servers: [],
+  };
+  config.run = { ...table(config.run), max_turns: 40 };
+  config.events = { ...table(config.events), adapter: "stderr" };
+
+  if (options.managed) {
+    config.governance = {
+      adapter: "sekai-chisei",
+      endpoint: options.managed.governanceEndpoint,
+      principal: options.managed.principal,
+      namespace: options.managed.namespace,
+      fail_closed: true,
+      token_env: options.managed.tokenEnv,
+    };
+    config.model = { adapter: "plane", model: options.managed.model };
+  } else {
+    const governance = table(config.governance);
+    if (options.governanceAdapter !== undefined) governance.adapter = options.governanceAdapter;
+    if (options.failClosed !== undefined) governance.fail_closed = options.failClosed;
+    if (!options.baseConfig && options.governanceAdapter === undefined) {
+      governance.adapter = "local";
+      governance.fail_closed = options.failClosed ?? false;
+    }
+    if (Object.keys(governance).length > 0) config.governance = governance;
+    else delete config.governance;
+
+    const model = table(config.model);
+    if (!(options.preserveNativeModel && Object.keys(model).length === 0)) {
+      model.adapter = options.modelAdapter;
+      if (options.modelAdapter === "http") {
+        model.model = options.modelId;
+        model.base_url = options.baseUrl ?? "https://api.openai.com/v1";
+        model.api_key_env = options.apiKeyEnv ?? "OPENAI_API_KEY";
+      } else if (options.modelAdapter === "plane") {
+        model.model = options.modelId;
+      }
+      config.model = model;
+    } else {
+      delete config.model;
+    }
+  }
+
+  const hooks = Array.isArray(config.hooks)
+    ? config.hooks.filter((hook): hook is JsonRecord => record(hook) !== null)
+    : [];
+  const permissionHook = options.nodeExecutable
     && options.permissionHookPath
     && options.permissionConfigPath
-    ? `
-[[hooks]]
-event = "pre_tool"
-command = "${escapeTomlString(options.nodeExecutable)}"
-args = ["${escapeTomlString(options.permissionHookPath)}", "${escapeTomlString(options.permissionConfigPath)}"]
-timeout_ms = ${PRE_TOOL_HOOK_TIMEOUT_MS}
-fail_closed = true
-`
-    : "";
-  return `# Generated by Aldunis Code — do not commit.
-version = 1
-
-[profile]
-name = "${options.managed ? "aldunis-code-managed" : "aldunis-code"}"
-
-[workspace]
-# inplace: use the selected Code worktree as the harness workspace (requires shikigami >= 1.0.1).
-adapter = "inplace"
-root = "${escapeTomlString(options.worktree)}"
-
-[tools]
-enabled = [${tools}]
-bash_timeout_secs = 60
-
-[run]
-max_turns = 40
-
-[events]
-adapter = "stderr"
-${governanceBlock}${modelBlock}${hookBlock}
-`;
-}
-
-function resolveModelAdapter(env: NodeJS.ProcessEnv): {
-  adapter: "scripted" | "http";
-  authenticated: boolean;
-} {
-  const forced = env.SHIKIGAMI_MODEL_ADAPTER;
-  if (forced === "scripted") return { adapter: "scripted", authenticated: true };
-  if (forced === "http") {
-    const keyEnv = env.SHIKIGAMI_API_KEY_ENV ?? "OPENAI_API_KEY";
-    return { adapter: "http", authenticated: Boolean(env[keyEnv]?.trim()) };
-  }
-  const keyEnv = env.SHIKIGAMI_API_KEY_ENV ?? "OPENAI_API_KEY";
-  if (env[keyEnv]?.trim()) return { adapter: "http", authenticated: true };
-  return { adapter: "scripted", authenticated: true };
+    ? {
+      event: "pre_tool",
+      command: options.nodeExecutable,
+      args: [options.permissionHookPath, options.permissionConfigPath],
+      timeout_ms: PRE_TOOL_HOOK_TIMEOUT_MS,
+      fail_closed: true,
+    }
+    : null;
+  if (permissionHook) config.hooks = [...hooks, permissionHook];
+  else if (hooks.length > 0) config.hooks = hooks;
+  else delete config.hooks;
+  return `# Generated by Aldunis Code — private per-run overlay; source config is not modified.\n${TOML.stringify(config as never)}`;
 }
 
 /**
@@ -440,10 +546,14 @@ export class ShikigamiAdapter {
     private readonly permissions = new PermissionBroker(),
   ) {}
 
-  async readiness(env: NodeJS.ProcessEnv = process.env): Promise<ShikigamiReadiness> {
+  async readiness(
+    env: NodeJS.ProcessEnv = process.env,
+    options: { executable?: string; configPath?: string; cwd?: string } = {},
+  ): Promise<ShikigamiReadiness> {
+    const executable = options.executable ?? this.executable;
     let version: string;
     try {
-      const result = await execFileAsync(this.executable, ["version"], {
+      const result = await execFileAsync(executable, ["version"], {
         encoding: "utf8",
         timeout: 5_000,
         env,
@@ -475,18 +585,52 @@ export class ShikigamiAdapter {
         detail: "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
       };
     }
-    const { adapter, authenticated } = resolveModelAdapter(env);
+    let config: ShikigamiConfigSource;
+    try {
+      config = await loadShikigamiConfig({
+        environment: env,
+        cwd: options.cwd,
+        explicitPath: options.configPath,
+      });
+    } catch (error) {
+      return {
+        id: this.id,
+        installed: true,
+        authenticated: false,
+        version,
+        models: [],
+        name: "Shikigami",
+        detail: error instanceof ProviderProtocolError
+          ? error.message
+          : "The selected Shikigami config could not be loaded.",
+      };
+    }
+    let resolved: ReturnType<typeof resolveModelAdapter>;
+    try {
+      resolved = resolveModelAdapter(env, config.values);
+    } catch (error) {
+      return {
+        id: this.id,
+        installed: true,
+        authenticated: false,
+        version,
+        models: [],
+        name: "Shikigami",
+        detail: error instanceof ProviderProtocolError
+          ? error.message
+          : "The selected Shikigami model configuration is invalid.",
+      };
+    }
+    const { adapter, authenticated, modelId, apiKeyEnv } = resolved;
     const models: ShikigamiModel[] = adapter === "scripted"
       ? [{ id: "scripted", displayName: "Scripted (offline)", isDefault: true }]
-      : [
-        {
-          id: env.SHIKIGAMI_MODEL ?? "gpt-4.1-mini",
-          displayName: env.SHIKIGAMI_MODEL ?? "HTTP model",
-          isDefault: true,
-        },
-      ];
+      : [{
+        id: modelId,
+        displayName: adapter === "plane" ? modelId : modelId || "HTTP model",
+        isDefault: true,
+      }];
     const detail = !authenticated && adapter === "http"
-      ? "Set OPENAI_API_KEY (or the env named by SHIKIGAMI_API_KEY_ENV), or force SHIKIGAMI_MODEL_ADAPTER=scripted."
+      ? `Set ${apiKeyEnv}, or force SHIKIGAMI_MODEL_ADAPTER=scripted.`
       : null;
     return {
       id: this.id,
@@ -503,6 +647,7 @@ export class ShikigamiAdapter {
     options: ProviderStartOptions,
     env: NodeJS.ProcessEnv = process.env,
     managed?: ManagedShikigamiRuntime,
+    profile?: ShikigamiProfileRuntime,
   ): Promise<ProviderRun> {
     // Conversation-scoped state outside the worktree so inplace tools cannot
     // read/write harness checkpoints (requires shikigami inplace safety).
@@ -524,10 +669,18 @@ export class ShikigamiAdapter {
     await mkdir(stateDir, { recursive: true, mode: 0o700 });
     await mkdir(join(workDir, "tmp"), { recursive: true, mode: 0o700 });
 
-    const executable = managed?.executable ?? this.executable;
+    const sourceEnvironment = profile?.environment ?? env;
+    const executable = managed?.executable ?? profile?.executable ?? this.executable;
     const childEnvironment = managed
       ? managedShikigamiEnvironment(managed, workDir)
-      : permissionHookRuntimeEnvironment(env);
+      : permissionHookRuntimeEnvironment(sourceEnvironment);
+    const nativeConfig = managed
+      ? { path: null, values: {} as JsonRecord }
+      : await loadShikigamiConfig({
+        environment: sourceEnvironment,
+        cwd: options.worktree,
+        explicitPath: profile?.configPath,
+      });
     let version: string;
     try {
       const result = await execFileAsync(executable, ["version"], {
@@ -544,12 +697,19 @@ export class ShikigamiAdapter {
     }
     void version;
 
-    const { adapter: modelAdapter, authenticated } = managed
-      ? { adapter: "scripted" as const, authenticated: true }
-      : resolveModelAdapter(env);
+    const resolvedModel = managed
+      ? {
+        adapter: "plane" as const,
+        authenticated: true,
+        modelId: managed.model,
+        baseUrl: "",
+        apiKeyEnv: "",
+      }
+      : resolveModelAdapter(sourceEnvironment, nativeConfig.values);
+    const { adapter: modelAdapter, authenticated } = resolvedModel;
     if (!managed && modelAdapter === "http" && !authenticated) {
       throw new ProviderProtocolError(
-        "Shikigami HTTP model requires an API key (OPENAI_API_KEY or SHIKIGAMI_API_KEY_ENV).",
+        `Shikigami HTTP model requires an API key (${resolvedModel.apiKeyEnv}).`,
       );
     }
 
@@ -557,9 +717,20 @@ export class ShikigamiAdapter {
       ? managed.model
       : options.model && options.model !== "default"
       ? options.model
-      : modelAdapter === "scripted"
-      ? "scripted"
-      : (env.SHIKIGAMI_MODEL ?? "gpt-4.1-mini");
+      : resolvedModel.modelId;
+    const baseGovernance = table(nativeConfig.values.governance);
+    const governanceAdapter = managed
+      ? undefined
+      : sourceEnvironment.SHIKIGAMI_GOVERNANCE_ADAPTER?.trim()
+      || stringSetting(baseGovernance, "adapter")
+      || (nativeConfig.path ? undefined : "local");
+    const failClosed = managed
+      ? undefined
+      : sourceEnvironment.SHIKIGAMI_FAIL_CLOSED !== undefined
+      ? sourceEnvironment.SHIKIGAMI_FAIL_CLOSED === "1"
+        || sourceEnvironment.SHIKIGAMI_FAIL_CLOSED.toLowerCase() === "true"
+      : booleanSetting(baseGovernance, "fail_closed")
+      ?? (nativeConfig.path ? undefined : false);
 
     const id = randomUUID();
     const permissionToken = this.permissions.createRunToken(id);
@@ -580,10 +751,12 @@ export class ShikigamiAdapter {
         mode: options.mode,
         modelAdapter,
         modelId,
-        baseUrl: env.SHIKIGAMI_BASE_URL,
-        apiKeyEnv: env.SHIKIGAMI_API_KEY_ENV ?? "OPENAI_API_KEY",
-        governanceAdapter: env.SHIKIGAMI_GOVERNANCE_ADAPTER ?? "local",
-        failClosed: env.SHIKIGAMI_FAIL_CLOSED === "1" || env.SHIKIGAMI_FAIL_CLOSED === "true",
+        baseUrl: resolvedModel.baseUrl,
+        apiKeyEnv: resolvedModel.apiKeyEnv,
+        governanceAdapter,
+        failClosed,
+        baseConfig: nativeConfig.path !== null ? nativeConfig.values : undefined,
+        preserveNativeModel: nativeConfig.path !== null && nativeConfigHasGovernedProfile(nativeConfig.values),
         nodeExecutable: process.execPath,
         permissionHookPath: PERMISSION_HOOK_PATH,
         permissionConfigPath,
@@ -632,7 +805,12 @@ export class ShikigamiAdapter {
       // Code starts a fresh harness run for every message. The prior provider
       // session is historical context, not an identity for this invocation.
       runId: null,
-      governed: managed || env.SHIKIGAMI_GOVERNANCE_ADAPTER === "sekai-chisei",
+      governed: Boolean(
+        managed
+        || governanceAdapter === "sekai-chisei"
+        || sourceEnvironment.SHIKIGAMI_PROFILE?.trim().toLowerCase() === "governed"
+        || stringSetting(nativeConfig.values.profile, "name")?.toLowerCase() === "governed",
+      ),
       permissionToken,
     };
     child.once("error", () => {

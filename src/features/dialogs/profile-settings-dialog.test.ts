@@ -16,6 +16,7 @@ function profile(id: string, provider: string): ClaudeProfile {
     provider,
     binaryPath: provider,
     homePath: "",
+    configPath: "",
     environment: [],
     createdAt: "2026-07-29T00:00:00.000Z",
     updatedAt: "2026-07-29T00:00:00.000Z",

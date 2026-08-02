@@ -54,10 +54,18 @@ export function StartDelegatedConversationDialog({
     ?? profiles.find((profile) => profile.id === "default:claude-code")?.id
     ?? profiles.find((profile) => profile.provider === "claude-code" || !profile.provider)?.id
     ?? "";
+  const shikigamiProfileId = parent.profileId
+    ?? profiles.find((profile) => profile.id === "default:shikigami")?.id
+    ?? profiles.find((profile) => profile.provider === "shikigami")?.id
+    ?? "";
   const claudeProfileMissing = parent.provider === "claude-code"
     && (!claudeProfileId || !profiles.some((profile) => (
       profile.id === claudeProfileId
       && (profile.provider === "claude-code" || !profile.provider)
+    )));
+  const shikigamiProfileMissing = parent.provider === "shikigami"
+    && (!shikigamiProfileId || !profiles.some((profile) => (
+      profile.id === shikigamiProfileId && profile.provider === "shikigami"
     )));
   const providerLabel = providerListLabel(parent.provider);
   const isolated = worktreePolicy === "isolated";
@@ -140,6 +148,14 @@ export function StartDelegatedConversationDialog({
       );
       return;
     }
+    if (parent.provider === "shikigami" && shikigamiProfileMissing) {
+      setError(
+        parent.profileId
+          ? "The parent Shikigami profile is unavailable. Restore it before starting a child."
+          : "Configure a Shikigami profile before starting a child.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     let childThreadId: string | null = null;
@@ -158,7 +174,11 @@ export function StartDelegatedConversationDialog({
           provider: parent.provider,
           workspaceMode: isolated ? "aldunis-managed" : "shared",
           model: parent.model ?? "default",
-          profileId: parent.provider === "claude-code" ? claudeProfileId : null,
+          profileId: parent.provider === "claude-code"
+            ? claudeProfileId
+            : parent.provider === "shikigami"
+            ? shikigamiProfileId
+            : null,
           reasoningEffort: parent.reasoningEffort,
           contextPins: [],
         }),
@@ -265,10 +285,10 @@ export function StartDelegatedConversationDialog({
               <option value="parent">Parent worktree · Ask/Plan only</option>
             </select>
             <p className="delegated-start-note">
-              {claudeProfileMissing
+              {claudeProfileMissing || shikigamiProfileMissing
                 ? parent.profileId
-                  ? "The parent’s Claude Code profile is unavailable; restore it before starting a child."
-                  : "Configure a Claude Code profile before starting a child."
+                  ? `The parent’s ${providerLabel} profile is unavailable; restore it before starting a child.`
+                  : `Configure a ${providerLabel} profile before starting a child.`
                 : isolated
                 ? `The child will branch from ${base} and use a new managed checkout.`
                 : "Shared worktrees are limited to read-only and planning children."}
@@ -278,7 +298,7 @@ export function StartDelegatedConversationDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !prompt.trim() || claudeProfileMissing}
+                disabled={busy || !prompt.trim() || claudeProfileMissing || shikigamiProfileMissing}
               >
                 {busy ? "Starting…" : isolated ? "Preview isolated child" : "Start child"}
               </Button>

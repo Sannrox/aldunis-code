@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -21,7 +21,11 @@ test("profile store seeds default profiles for every first-class provider", asyn
   assert.equal(profiles[0].binaryPath, "claude");
   assert.deepEqual(profiles[0].environment, []);
   assert.ok(profiles.some((profile) => profile.id === DEFAULT_CODEX_PROFILE_ID && profile.provider === "codex-cli"));
-  assert.ok(profiles.some((profile) => profile.id === DEFAULT_SHIKIGAMI_PROFILE_ID && profile.provider === "shikigami"));
+  assert.ok(profiles.some((profile) => (
+    profile.id === DEFAULT_SHIKIGAMI_PROFILE_ID
+    && profile.provider === "shikigami"
+    && profile.configPath === ""
+  )));
   // Second list is idempotent and does not duplicate defaults.
   assert.equal((await store.list()).length, 3);
   const runtime = await store.runtime(DEFAULT_CLAUDE_PROFILE_ID);
@@ -56,7 +60,23 @@ test("legacy profiles without provider migrate to claude-code on read", async ()
   const profiles = await store.list();
   const legacy = profiles.find((profile) => profile.id === "legacy-1");
   assert.equal(legacy?.provider, "claude-code");
+  assert.equal(legacy?.configPath, "");
   assert.equal(profiles.length, 4); // legacy + 3 builtins
+});
+
+test("Shikigami profile config paths persist without altering native files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-profiles-shikigami-"));
+  const store = new ClaudeProfileStore(directory);
+  const saved = await store.save({
+    name: "Local Shikigami",
+    provider: "shikigami",
+    binaryPath: "shikigami",
+    configPath: "~/native-shikigami.toml",
+  });
+  assert.equal(saved.configPath, "~/native-shikigami.toml");
+  const runtime = await store.runtime(saved.id);
+  assert.equal(runtime.configPath, join(homedir(), "native-shikigami.toml"));
+  assert.equal(runtime.profile.configPath, "~/native-shikigami.toml");
 });
 
 test("adapter install seed creates a stable empty-capable default profile", async () => {

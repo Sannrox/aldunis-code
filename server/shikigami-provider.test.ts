@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import TOML from "@iarna/toml";
 import { loadManagedHostConfiguration } from "./managed-host.ts";
 import { isMutatingTool, PermissionBroker } from "./permission.ts";
 import {
@@ -15,6 +16,8 @@ import {
   parseShikigamiStderrLine,
   permissionHookRuntimeEnvironment,
   managedShikigamiEnvironment,
+  loadShikigamiConfig,
+  resolveModelAdapter,
   ShikigamiAdapter,
   ShikigamiToolIdTracker,
   toolsForMode,
@@ -155,6 +158,71 @@ test("buildShikigamiConfig encodes mode tool allow-lists and pre_tool gate", () 
   assert.match(build, /event = "pre_tool"/);
   assert.match(build, /fail_closed = true/);
   assert.match(build, /hook\.mjs/);
+});
+
+test("native Shikigami settings survive the Code safety overlay", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-config-"));
+  const stateDirectory = join(directory, "state");
+  const nativePath = join(stateDirectory, "shikigami.toml");
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(nativePath, `version = 1
+
+[profile]
+name = "local"
+
+[model]
+adapter = "http"
+model = "local-model"
+base_url = "http://127.0.0.1:11434/v1"
+api_key_env = "LOCAL_KEY"
+
+[governance]
+adapter = "local"
+fail_closed = true
+
+[run]
+tool_concurrency = 1
+
+[network]
+allowlist = ["127.0.0.1"]
+`, "utf8");
+  const loaded = await loadShikigamiConfig({
+    environment: { SHIKIGAMI_STATE: stateDirectory },
+    cwd: directory,
+  });
+  assert.equal(loaded.path, nativePath);
+  const resolved = resolveModelAdapter({ LOCAL_KEY: "local" }, loaded.values);
+  assert.equal(resolved.adapter, "http");
+  assert.equal(resolved.modelId, "local-model");
+  assert.equal(resolved.apiKeyEnv, "LOCAL_KEY");
+
+  const overlay = TOML.parse(buildShikigamiConfig({
+    worktree: directory,
+    mode: "ask",
+    modelAdapter: resolved.adapter,
+    modelId: resolved.modelId,
+    baseUrl: resolved.baseUrl,
+    apiKeyEnv: resolved.apiKeyEnv,
+    baseConfig: loaded.values,
+    governanceAdapter: "local",
+    failClosed: true,
+  })) as Record<string, unknown>;
+  assert.equal((overlay.model as Record<string, unknown>).base_url, "http://127.0.0.1:11434/v1");
+  assert.equal((overlay.governance as Record<string, unknown>).fail_closed, true);
+  assert.equal((overlay.run as Record<string, unknown>).tool_concurrency, 1);
+  assert.deepEqual((overlay.network as Record<string, unknown>).allowlist, ["127.0.0.1"]);
+  assert.equal((overlay.workspace as Record<string, unknown>).adapter, "inplace");
+  assert.equal((overlay.workspace as Record<string, unknown>).root, directory);
+  assert.equal((overlay.tools as Record<string, unknown>).mode, "custom");
+  assert.deepEqual((overlay.tools as Record<string, unknown>).enabled, toolsForMode("ask"));
+  assert.equal((overlay.tools as Record<string, unknown>).mcp_servers instanceof Array, true);
+});
+
+test("explicit Shikigami config paths fail visibly when missing", async () => {
+  await assert.rejects(
+    () => loadShikigamiConfig({ explicitPath: "/nonexistent/aldunis-shikigami.toml" }),
+    /config file was not found/,
+  );
 });
 
 test("Electron-hosted hooks run the embedded runtime as Node", () => {
