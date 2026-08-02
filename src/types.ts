@@ -2,6 +2,16 @@
 export type Product = "code" | "sekai" | "chisei" | "tenkai";
 export type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 export type WorktreeRecovery = "available" | "moved" | "missing" | "inaccessible";
+/** How a conversation owns or shares the workspace it is bound to. */
+export type WorkspaceMode = "shared" | "aldunis-managed" | "provider-native";
+
+export interface WorkspaceCapabilities {
+  shared: boolean;
+  aldunisManaged: boolean;
+  providerNative: boolean;
+  providerNativeDetail: string | null;
+}
+
 export interface RepositoryMetadata {
   projectId: string;
   name: string;
@@ -92,6 +102,7 @@ export interface ThreadMetadata {
   projectId: string;
   title: string;
   worktree: string;
+  workspaceMode?: WorkspaceMode;
   updatedAt: string;
   projectName: string;
   /** Provider id when present so search hits for the same title can be told apart. */
@@ -118,6 +129,7 @@ export interface ConversationSummary {
   projectId: string;
   title: string;
   worktree: string;
+  workspaceMode?: WorkspaceMode;
   provider: ProviderId;
   parentThreadId?: string;
   profileId?: string | null;
@@ -148,6 +160,7 @@ export interface DelegatedConversationOutcomeProjection {
 export interface ForkPreview {
   sourceThreadId: string;
   sourceProvider: ProviderId;
+  workspaceMode: WorkspaceMode;
   worktree: string;
   messages: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string }>;
   annotations: Array<{ id: string; path: string; text: string; capturedContext: string }>;
@@ -248,6 +261,7 @@ export interface ProviderCapabilities {
     imageMaxBytes: number;
     imageTypes: string[];
   };
+  workspace: WorkspaceCapabilities;
 }
 export interface ProviderSkill {
   name: string;

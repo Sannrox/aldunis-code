@@ -63,6 +63,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.threads[0].settledAt, null);
   assert.equal(rebuilt.threads[0].wokeAt, null);
   assert.equal(rebuilt.threads[0].lastVisitedAt, null);
+  assert.equal(rebuilt.threads[0].workspaceMode, "shared");
   assert.equal(rebuilt.turns[0].status, "completed");
   assert.equal(rebuilt.turns[0].mode, "plan");
   assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);
@@ -544,6 +545,65 @@ test("existing conversations cannot silently change their bound worktree", async
   assert.equal((await store.load()).threads[0].worktree, "/repo/worktree-a");
 });
 
+test("workspace mode persists and cannot be changed on an existing conversation", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "Fixture", root: "/repo" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Build in isolation",
+    mode: "build",
+    provider: "codex-cli",
+    workspaceMode: "aldunis-managed",
+  });
+  assert.equal(first.thread.workspaceMode, "aldunis-managed");
+  const continued = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Continue in isolation",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+    workspaceMode: "aldunis-managed",
+  });
+  assert.equal(continued.thread.workspaceMode, "aldunis-managed");
+  await assert.rejects(() => store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Switch to shared",
+    mode: "ask",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+    workspaceMode: "shared",
+  }), /different workspace mode/);
+});
+
+test("concurrent managed conversation starts claim one worktree", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "Fixture", root: "/repo" });
+  const results = await Promise.allSettled([
+    store.startTurn({
+      projectId: "project-1",
+      worktree: "/repo/managed",
+      prompt: "First concurrent build",
+      mode: "build",
+      provider: "codex-cli",
+      workspaceMode: "aldunis-managed",
+    }),
+    store.startTurn({
+      projectId: "project-1",
+      worktree: "/repo/managed",
+      prompt: "Second concurrent build",
+      mode: "build",
+      provider: "codex-cli",
+      workspaceMode: "aldunis-managed",
+    }),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal((await store.load()).threads.length, 1);
+});
+
 test("corruption and incompatible schemas fail visibly without discarding history", async () => {
   const corrupt = await fixtureStore();
   await writeFile(join(corrupt.directory, "events.v1.jsonl"), "{\"schemaVersion\":1", "utf8");
@@ -663,6 +723,7 @@ test("version-one history loads with null thread lifecycle timestamps", async ()
   assert.equal(projection.threads[0].settledAt, null);
   assert.equal(projection.threads[0].wokeAt, null);
   assert.equal(projection.threads[0].lastVisitedAt, null);
+  assert.equal(projection.threads[0].workspaceMode, "shared");
   assert.equal(projection.threads[0].archivedAt, null);
   assert.equal(projection.threads[0].reasoningEffort, undefined);
 });
@@ -1502,6 +1563,72 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   const afterDeletion = await store.load();
   assert.equal(afterDeletion.forks.length, 0);
   assert.equal(afterDeletion.threads.length, 1);
+});
+
+test("managed conversation forks require a distinct managed worktree", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/managed/source",
+    prompt: "Prepare an isolated fork",
+    mode: "build",
+    provider: "claude-code",
+    workspaceMode: "aldunis-managed",
+  });
+  const preview = await store.previewFork(thread.id);
+  assert.equal(preview.workspaceMode, "aldunis-managed");
+
+  const concurrentForks = await Promise.allSettled([
+    store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      destinationWorktree: "/managed/concurrent",
+      workspaceMode: "aldunis-managed",
+      expectedDigest: preview.digest,
+    }),
+    store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      destinationWorktree: "/managed/concurrent",
+      workspaceMode: "aldunis-managed",
+      expectedDigest: preview.digest,
+    }),
+  ]);
+  assert.equal(concurrentForks.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(concurrentForks.filter((result) => result.status === "rejected").length, 1);
+
+  await assert.rejects(
+    () => store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      expectedDigest: preview.digest,
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
+
+  const created = await store.createFork({
+    sourceThreadId: thread.id,
+    provider: "codex-cli",
+    profileId: null,
+    model: "default",
+    worktree: "/managed/source",
+    destinationWorktree: "/managed/destination",
+    workspaceMode: "aldunis-managed",
+    expectedDigest: preview.digest,
+  });
+  assert.equal(created.thread.workspaceMode, "aldunis-managed");
+  assert.equal(created.thread.worktree, "/managed/destination");
+  assert.equal(created.fork.worktree, "/managed/destination");
 });
 
 test("settle and unsettle are idempotent and never archive the conversation", async () => {

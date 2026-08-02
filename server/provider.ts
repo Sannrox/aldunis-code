@@ -311,6 +311,12 @@ export interface ProviderCapabilities {
     imageMaxBytes: number;
     imageTypes: string[];
   };
+  workspace: {
+    shared: true;
+    aldunisManaged: true;
+    providerNative: false;
+    providerNativeDetail: string;
+  };
 }
 
 interface ActiveRun {
@@ -349,6 +355,12 @@ export class ClaudeCodeAdapter {
         textMaxBytes: 64 * 1024,
         imageMaxBytes: 2 * 1024 * 1024,
         imageTypes: ["image/gif", "image/jpeg", "image/png", "image/webp"],
+      },
+      workspace: {
+        shared: true,
+        aldunisManaged: true,
+        providerNative: false,
+        providerNativeDetail: "This adapter receives a canonical worktree from Aldunis Code and does not expose native worktree creation yet.",
       },
     };
   }

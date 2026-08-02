@@ -16,6 +16,7 @@ export function PaneConversation({
   showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
+  onRepositoryChanged,
   showChangesSignal,
   showFilesSignal,
   onManageWorktrees,
@@ -35,6 +36,7 @@ export function PaneConversation({
   showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   showChangesSignal: number;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
@@ -98,6 +100,7 @@ export function PaneConversation({
       showOpenBeside={showOpenBeside}
       onClosePane={onClosePane}
       onConversationAvailable={onConversationAvailable}
+      onRepositoryChanged={onRepositoryChanged}
       onOpenRepository={onOpenRepository}
       onManageWorktrees={() => onManageWorktrees()}
       changes={changes}
