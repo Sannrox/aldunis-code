@@ -38,6 +38,7 @@ test("preferences response migrates version-one beta and worktree defaults", () 
   const {
     managedWorktreeLimit: _managedWorktreeLimit,
     orchestrationThreadsBeta: _orchestrationThreadsBeta,
+    showThinking: _showThinking,
     ...legacy
   } = DEFAULT_PREFERENCES;
   const migrated = readPreferencesResponse({
@@ -46,4 +47,5 @@ test("preferences response migrates version-one beta and worktree defaults", () 
   })?.preferences;
   assert.equal(migrated?.managedWorktreeLimit, 10);
   assert.equal(migrated?.orchestrationThreadsBeta, false);
+  assert.equal(migrated?.showThinking, false);
 });

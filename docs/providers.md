@@ -37,6 +37,11 @@ manifest (values remain empty until you set them).
 
 Sensitive environment values live in the host secret store (write-only in the UI).
 
+Provider-emitted thinking is normalized at the adapter boundary but hidden by
+default. Settings → General can enable its live display for the current
+in-memory timeline; thinking is not persisted, restored, or transferred across
+provider forks.
+
 ### Claude Code
 
 - Uses named profiles for binary, optional `CLAUDE_CONFIG_DIR`, and env.

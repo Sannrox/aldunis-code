@@ -319,6 +319,15 @@ test("ACP normalization accepts known updates and rejects unknown protocol messa
     method: "session/update",
     params: {
       update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "private thought" },
+      },
+    },
+  }), [{ kind: "thinking", text: "private thought" }]);
+  assert.deepEqual(normalizeAcpNotification({
+    method: "session/update",
+    params: {
+      update: {
         sessionUpdate: "tool_call_update",
         toolCallId: "tool-1",
         status: "failed",

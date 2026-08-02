@@ -472,6 +472,7 @@ export type ProviderEvent =
     correlationId?: string;
   }
   | { kind: "assistant_text"; text: string }
+  | { kind: "thinking"; text: string }
   | {
     kind: "plan_updated";
     artifact: ProviderPlanArtifact;

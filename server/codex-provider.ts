@@ -213,6 +213,11 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   if (item.type === "agentMessage") {
     return completed ? [{ kind: "assistant_text", text: string(item.text, "agent text") }] : [];
   }
+  if (item.type === "reasoning") {
+    return completed && typeof item.text === "string" && item.text
+      ? [{ kind: "thinking", text: item.text }]
+      : [];
+  }
   if (item.type === "plan") {
     return completed
       ? [{
@@ -250,7 +255,6 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   const informationalItemTypes = new Set([
     "userMessage",
     "hookPrompt",
-    "reasoning",
     "imageView",
     "sleep",
     "imageGeneration",
@@ -293,6 +297,19 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   if (!params) throw new ProviderProtocolError("Codex emitted malformed notification parameters.");
   if (method === "item/started") return itemEvents(params.item, false);
   if (method === "item/completed") return itemEvents(params.item, true);
+  if (
+    method === "item/reasoning/textDelta"
+    || method === "item/reasoning/summaryTextDelta"
+    || method === "item/reasoning/summaryPartAdded"
+  ) {
+    const part = record(params.part);
+    const delta = typeof params.delta === "string"
+      ? params.delta
+      : typeof params.text === "string"
+        ? params.text
+        : typeof part?.text === "string" ? part.text : "";
+    return delta ? [{ kind: "thinking", text: delta }] : [];
+  }
   if (method === "turn/plan/updated") {
     const turnId = string(params.turnId, "turn id");
     if (!Array.isArray(params.plan)) {
@@ -361,9 +378,6 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
     "thread/tokenUsage/updated",
     "skills/changed",
     "item/agentMessage/delta",
-    "item/reasoning/summaryTextDelta",
-    "item/reasoning/summaryPartAdded",
-    "item/reasoning/textDelta",
     "item/commandExecution/outputDelta",
     "item/commandExecution/terminalInteraction",
     "item/fileChange/outputDelta",

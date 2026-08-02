@@ -22,6 +22,7 @@ export function PaneConversation({
   managedMode = false,
   managedModel,
   quietDelegatedChild = false,
+  showThinking = false,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -40,6 +41,7 @@ export function PaneConversation({
   managedMode?: boolean;
   managedModel?: string;
   quietDelegatedChild?: boolean;
+  showThinking?: boolean;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -91,6 +93,7 @@ export function PaneConversation({
       pane={pane}
       active={active}
       quietDelegatedChild={quietDelegatedChild}
+      showThinking={showThinking}
       onOpenBeside={onOpenBeside}
       showOpenBeside={showOpenBeside}
       onClosePane={onClosePane}

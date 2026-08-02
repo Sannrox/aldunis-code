@@ -74,6 +74,26 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
+test("provider thinking stays live-only and is excluded from local history", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Inspect the change",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "thinking",
+    text: "private reasoning sentinel",
+  });
+
+  const projection = await store.load();
+  assert.equal(projection.messages.some((message) => message.text.includes("private reasoning sentinel")), false);
+  assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /private reasoning sentinel/);
+});
+
 test("project Chisei namespace bindings persist locally and validate their bounded identity", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

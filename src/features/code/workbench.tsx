@@ -499,6 +499,7 @@ export function CodeWorkbench({
   onRepositoryChanged,
   chiseiBindingAdministrationAvailable = true,
   orchestrationThreadsBeta = false,
+  showThinking = false,
   managedMode = false,
   managedModel,
 }: {
@@ -523,6 +524,7 @@ export function CodeWorkbench({
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
+  showThinking?: boolean;
   managedMode?: boolean;
   managedModel?: string;
 }) {
@@ -1214,7 +1216,7 @@ export function CodeWorkbench({
                     onChanged={refreshStateProjection}
                   />
                 )}
-                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);
@@ -1260,7 +1262,7 @@ export function CodeWorkbench({
                         onChanged={refreshStateProjection}
                       />
                     )}
-                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
+                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
                       secondaryIdReference.current = null;
                       setSecondaryId(null);
                       setActivePane("primary");

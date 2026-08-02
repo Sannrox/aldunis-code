@@ -1876,6 +1876,23 @@ select.ui-input {
 }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
+.thinking-block {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--muted-foreground);
+  background: color-mix(in srgb, var(--muted) 62%, transparent);
+  color: var(--muted-foreground);
+}
+.thinking-label {
+  margin-bottom: 6px;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.thinking-body { color: var(--muted-foreground); }
+.thinking-body .md-p { margin-bottom: 0.55em; }
 /* Assistant markdown (react-markdown + GFM). Headings, lists, fences, tables. */
 .md-body {
   overflow-wrap: anywhere;

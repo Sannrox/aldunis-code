@@ -68,6 +68,9 @@ export function normalizeAcpNotification(
   if (updateType === "agent_message_chunk") {
     return [{ kind: "assistant_text", text: textContent(update.content) }];
   }
+  if (updateType === "agent_thought_chunk") {
+    return [{ kind: "thinking", text: textContent(update.content) }];
+  }
   if (updateType === "tool_call") {
     return [{
       kind: "tool_started",
@@ -144,7 +147,6 @@ export function normalizeAcpNotification(
     }];
   }
   const informational = new Set([
-    "agent_thought_chunk",
     "user_message_chunk",
     "available_commands_update",
     "current_mode_update",
