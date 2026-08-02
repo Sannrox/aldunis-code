@@ -24,13 +24,19 @@ export const WORKSPACE_MODE_COPY: Record<WorkspaceMode, WorkspaceModeCopy> = {
   },
 };
 
-/** New Build chats default to an Aldunis-owned checkout; read-only modes stay shared. */
+/** The two workspace strategies exposed when creating a conversation. */
+export const NEW_CONVERSATION_WORKSPACE_MODES: WorkspaceMode[] = [
+  "aldunis-managed",
+  "provider-native",
+];
+
+/** New conversations default to an Aldunis-owned checkout; native is explicit. */
 export function defaultWorkspaceMode(
-  mode: InteractionMode,
+  _mode: InteractionMode,
   existing: WorkspaceMode | null | undefined,
 ): WorkspaceMode {
   if (existing) return existing;
-  return mode === "build" ? "aldunis-managed" : "shared";
+  return "aldunis-managed";
 }
 
 export function workspaceModeLabel(mode: WorkspaceMode | null | undefined): string {

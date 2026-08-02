@@ -1,6 +1,7 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import type { WorkspacePanel } from "../../lib/workspace-panel";
+import type { SavedProject } from "../dialogs/repository-dialog";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
 
@@ -11,12 +12,16 @@ export function PaneConversation({
   active,
   profiles,
   onOpenRepository,
+  projects,
+  onAddProject,
+  onSelectProject,
   onOpenProfiles,
   onOpenBeside,
   showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
   onRepositoryChanged,
+  onSelectWorktree,
   showChangesSignal,
   showFilesSignal,
   onManageWorktrees,
@@ -31,12 +36,16 @@ export function PaneConversation({
   active: boolean;
   profiles: ClaudeProfile[];
   onOpenRepository: () => void;
+  projects?: SavedProject[];
+  onAddProject: () => void;
+  onSelectProject: (projectId: string) => void;
   onOpenProfiles: (provider?: ProviderId) => void;
   onOpenBeside: () => void;
   showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
+  onSelectWorktree: (path: string) => void;
   showChangesSignal: number;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
@@ -101,7 +110,11 @@ export function PaneConversation({
       onClosePane={onClosePane}
       onConversationAvailable={onConversationAvailable}
       onRepositoryChanged={onRepositoryChanged}
+      onSelectWorktree={onSelectWorktree}
       onOpenRepository={onOpenRepository}
+      projects={projects}
+      onAddProject={onAddProject}
+      onSelectProject={onSelectProject}
       onManageWorktrees={() => onManageWorktrees()}
       changes={changes}
       changesLoading={changesLoading}
