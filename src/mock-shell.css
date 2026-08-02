@@ -105,17 +105,17 @@ code{font-family:var(--font-mono)}
 @keyframes sp{to{transform:rotate(360deg)}}
 .row-actions{position:absolute;right:7px;top:7px;display:flex;gap:4px;align-items:flex-start}
 /* Was height:22px — below 24px AA target size for pointer. */
-.settle,.beside,.row-more{
+.settle,.row-more{
   min-height:28px;height:28px;padding:0 9px;border-radius:6px;background:var(--card);border:1px solid var(--border);
   font-size:11.5px;font-weight:500;color:var(--muted-foreground);opacity:0;transition:opacity .1s;
   display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
 }
 .row-more{min-width:28px;padding:0 6px;line-height:1}
-.row:hover .settle,.row:hover .beside,.row:hover .row-more,
-.settle:focus-visible,.beside:focus-visible,.row-more:focus-visible,
-.row:focus-within .settle,.row:focus-within .beside,.row:focus-within .row-more,
+.row:hover .settle,.row:hover .row-more,
+.settle:focus-visible,.row-more:focus-visible,
+.row:focus-within .settle,.row:focus-within .row-more,
 .row-menu:focus-within .row-more{opacity:1}
-.settle:hover,.beside:hover,.row-more:hover{color:var(--foreground);background:var(--accent)}
+.settle:hover,.row-more:hover{color:var(--foreground);background:var(--accent)}
 .row-menu{position:relative}
 .row-menu-pop{
   position:absolute;right:0;top:calc(100% + 4px);z-index:30;display:flex;flex-direction:column;gap:2px;
@@ -700,9 +700,9 @@ html, body { height: 100%; }
 }
 .row:hover { background: var(--sidebar-row-hover); }
 .row.active { background: var(--sidebar-row-selected); }
-.row:hover .settle, .row:hover .beside, .row:hover .row-more,
-.settle:focus-visible, .beside:focus-visible, .row-more:focus-visible,
-.row:focus-within .settle, .row:focus-within .beside, .row:focus-within .row-more,
+.row:hover .settle, .row:hover .row-more,
+.settle:focus-visible, .row-more:focus-visible,
+.row:focus-within .settle, .row:focus-within .row-more,
 .row-menu:focus-within .row-more { opacity: 1; }
 
 .srow { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 9px; border-radius: 8px; margin-bottom: 1px; }
@@ -2060,14 +2060,13 @@ html[data-theme="dark"], html[data-theme="dark"] body {
   .row .tm { font-size: 12px; }
   .row-actions { right: 10px; top: 10px; }
   .settle,
-  .beside,
   .row-more,
   .sbtn {
     min-height: 44px;
     height: 44px;
     font-size: 13px;
   }
-  .row-more { min-width: 44px; }
+  .row-more { min-width: 44px; opacity: 1; }
   .sb-ft { gap: 10px; padding: 12px 14px; }
   .sb-ft .btn { min-height: 44px; height: 44px; font-size: 13px; }
 
