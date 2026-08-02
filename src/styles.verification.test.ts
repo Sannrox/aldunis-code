@@ -231,16 +231,28 @@ test("thread row and settled-shelf actions meet minimum hit size", () => {
   assert.match(shell, /\.sbtn\s*\{[^}]*min-height:\s*28px/s);
 });
 
-test("touch thread rows keep the overflow menu trigger visible", () => {
+test("touch thread rows keep a compact, discoverable overflow affordance", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   assert.match(
     shell,
-    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-more\s*\{\s*min-width:\s*44px;\s*opacity:\s*1;/s,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-more\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?background:\s*transparent;[\s\S]*?border-color:\s*transparent;[\s\S]*?opacity:\s*\.55;/s,
   );
   assert.match(
     shell,
-    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-main\s*\{\s*min-height:\s*72px;\s*padding:\s*12px 120px 12px 12px;/s,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-main\s*\{\s*min-height:\s*72px;\s*padding:\s*12px 60px 12px 12px;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row:focus-within\s+\.row-main\s*\{\s*padding-right:\s*120px;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-actions\s*\{\s*pointer-events:\s*none;\s*\}[\s\S]*?\.row-menu\s*\{\s*pointer-events:\s*auto;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row:focus-within\s+\.row-more,[\s\S]*?\.row-menu:focus-within\s+\.row-more\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?background:\s*var\(--accent\);/s,
   );
 });
 
