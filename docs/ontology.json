@@ -2,6 +2,38 @@
   "schema_version": 1,
   "classes": [
     {
+      "name": "AldunisCodeCli",
+      "description": "The local Aldunis Code executable boundary that parses structured host and remote-auth commands before startup while preserving loopback defaults and legacy flag compatibility."
+    },
+    {
+      "name": "HostCommand",
+      "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
+    },
+    {
+      "name": "RemoteAuthCommand",
+      "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
+    },
+    {
+      "name": "ConversationComposer",
+      "description": "The desktop conversation input surface that selects a provider, model, interaction mode, and explicit tool scope."
+    },
+    {
+      "name": "ConversationLifecycleControl",
+      "description": "The local workbench UI and host boundary for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations."
+    },
+    {
+      "name": "ProviderDiscovery",
+      "description": "Aldunis Code host-owned readiness projection for locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery."
+    },
+    {
+      "name": "ProviderProfileDiscovery",
+      "description": "A profile-keyed provider readiness projection that keeps executable, configuration, authentication, and model discovery aligned with the selected Shikigami profile."
+    },
+    {
+      "name": "ThreadSearch",
+      "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
+    },
+    {
       "name": "LocalConversation",
       "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
       "properties": [
@@ -131,6 +163,36 @@
     }
   ],
   "relations": [
+    {
+      "name": "exposes_host_commands",
+      "description": "The CLI exposes typed start and serve commands that route into the local host lifecycle without adding provider or terminal authority.",
+      "domain": "AldunisCodeCli",
+      "range": "HostCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 2
+      }
+    },
+    {
+      "name": "exposes_remote_auth_commands",
+      "description": "The CLI exposes nested remote pairing commands for creating, listing, and revoking sessions before host startup.",
+      "domain": "AldunisCodeCli",
+      "range": "RemoteAuthCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "gates",
+      "description": "Provider discovery gates provider-dependent composer controls until readiness is known or a bounded fallback is selected.",
+      "domain": "ProviderDiscovery",
+      "range": "ConversationComposer",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
     {
       "name": "authenticates_managed_host",
       "description": "The managed hosted workbench accepts API authority only from a verified gateway assertion.",
@@ -309,6 +371,72 @@
     }
   ],
   "provenance": [
+    {
+      "subject": "AldunisCodeCli",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts; server/main.ts; docs/cli.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "HostCommand",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#parseCliArgs; server/main.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteAuthCommand",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#parseAuth; server/main.ts#RemoteAuth",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_host_commands",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#HostCommand",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_remote_auth_commands",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#RemoteAuthCommand",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationComposer",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationLifecycleControl",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/workbench.tsx:manageConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderDiscovery",
+      "source": "Sannrox/aldunis-code",
+      "locator": "server/host.ts:/api/providers/discover",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderProfileDiscovery",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/types.ts:ProviderProfileDiscovery",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ThreadSearch",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/dialogs/thread-search-dialog.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "gates",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/provider-discovery-cache.ts",
+      "confidence": 1.0
+    },
     {
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",

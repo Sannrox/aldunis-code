@@ -10,7 +10,7 @@ lsof -nP -iTCP:4175 -sTCP:LISTEN
 Stop the conflicting process or choose another port:
 
 ```sh
-npm run host -- --port 4176
+npm run cli -- serve --port 4176
 ```
 
 ## “Refusing non-loopback bind”

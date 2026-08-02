@@ -8,6 +8,7 @@ want to change it.
 
 | Document | Description |
 | --- | --- |
+| [cli.md](cli.md) | Host startup, remote auth, and CLI compatibility reference |
 | [getting-started.md](getting-started.md) | Install, run, first conversation, remote, desktop |
 | [providers.md](providers.md) | Claude, Codex, Shikigami, reviewed ACP adapters |
 | [automations.md](automations.md) | Timer-only scheduled prompts |
