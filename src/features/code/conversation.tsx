@@ -50,6 +50,11 @@ import {
 } from "../../lib/composer-prompt-history";
 import { syncComposerHeight } from "../../lib/composer-height";
 import {
+  nextThreadFollowEnabled,
+  readThreadScrollMetrics,
+  scrollThreadToBottom,
+} from "../../lib/thread-auto-follow";
+import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
@@ -173,6 +178,11 @@ export function Conversation({
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  /** Scroll container for the transcript; auto-follows when the operator holds the tail. */
+  const threadRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
+  const ignoreThreadScrollRef = useRef(false);
+  const [following, setFollowing] = useState(true);
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
   const [archivedTurns, setArchivedTurns] = useState<Array<{
     message: { text: string; mode: InteractionMode; createdAt?: string };
@@ -217,6 +227,29 @@ export function Conversation({
     observer.observe(composer);
     return () => observer.disconnect();
   }, []);
+  const setThreadFollowing = useCallback((value: boolean) => {
+    followingRef.current = value;
+    setFollowing(value);
+  }, []);
+  const pinThreadToBottom = useCallback(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    ignoreThreadScrollRef.current = true;
+    scrollThreadToBottom(thread);
+    queueMicrotask(() => {
+      ignoreThreadScrollRef.current = false;
+    });
+  }, []);
+  const onThreadScroll = useCallback(() => {
+    if (ignoreThreadScrollRef.current) return;
+    const thread = threadRef.current;
+    if (!thread) return;
+    setThreadFollowing(nextThreadFollowEnabled(readThreadScrollMetrics(thread)));
+  }, [setThreadFollowing]);
+  const resumeThreadFollow = useCallback(() => {
+    setThreadFollowing(true);
+    pinThreadToBottom();
+  }, [pinThreadToBottom, setThreadFollowing]);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
   const contextPins = useMemo<ContextPin[]>(() => [
@@ -763,6 +796,8 @@ export function Conversation({
     setContextOpen(false);
     setProviderState("idle");
     setRunId(null);
+    followingRef.current = true;
+    setFollowing(true);
   }, [conversation?.id, conversation?.provider, managedMode, repository?.projectId, repository?.selectedWorktree, provider]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
@@ -1366,6 +1401,9 @@ export function Conversation({
       ]);
     }
     setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
+    // Sending always re-engages follow so the operator sees their prompt and the reply.
+    followingRef.current = true;
+    setFollowing(true);
     if (promptOverride === undefined) setDraft("");
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
@@ -1690,6 +1728,37 @@ export function Conversation({
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
+  // Content signature: when this changes while following, pin the viewport to the tail.
+  const threadFollowContentKey = [
+    conversation?.id ?? "new",
+    historyRestored ? "ready" : "restoring",
+    archivedTurns.length,
+    messages.length,
+    providerEvents.length,
+    assistantText.length,
+    providerState,
+    approvals.length,
+    inputs.length,
+    completionDismissed ? "done-dismissed" : "done-open",
+    checkpoint?.state ?? "no-checkpoint",
+    failure ? "failed" : "ok",
+  ].join(":");
+  useLayoutEffect(() => {
+    if (!followingRef.current) return;
+    pinThreadToBottom();
+  }, [threadFollowContentKey, pinThreadToBottom]);
+  useEffect(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    const content = thread.querySelector(".wrap");
+    if (!(content instanceof HTMLElement)) return;
+    const observer = new ResizeObserver(() => {
+      if (!followingRef.current) return;
+      pinThreadToBottom();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [pinThreadToBottom, conversation?.id, historyRestored]);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const failureNeedsConfiguration = failure
     ? providerFailureNeedsConfiguration(failure.message)
@@ -2029,7 +2098,13 @@ export function Conversation({
       </div>
       <div className={`split ${activePanel === "changes" ? "with-review" : ""}`}>
       <div className="conv">
-      <div className="thread">
+      <div className="thread-shell">
+      <div
+        className="thread"
+        ref={threadRef}
+        onScroll={onThreadScroll}
+        data-following={following ? "true" : "false"}
+      >
         <div className="wrap">
         {conversationEmpty
           ? (
@@ -2383,6 +2458,17 @@ export function Conversation({
           </div>
         )}
         </div>
+      </div>
+      {!following && !conversationEmpty && (
+        <button
+          type="button"
+          className="thread-follow-jump"
+          onClick={resumeThreadFollow}
+          aria-label={`Jump to latest messages, ${pane} pane`}
+        >
+          Jump to latest
+        </button>
+      )}
       </div>
       <div className="cwrap">
         <div className="cbox">

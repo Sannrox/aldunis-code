@@ -171,7 +171,15 @@ code{font-family:var(--font-mono)}
 .workspace-panel-status,.workspace-panel-count{overflow:hidden;max-width:72px;color:var(--muted-foreground);font:10px var(--font-mono);text-overflow:ellipsis;white-space:nowrap}
 .workspace-panel-count{display:inline-flex;min-width:18px;justify-content:center;padding:1px 4px;border-radius:999px;background:var(--background)}
 .workspace-panel-status.error,.workspace-panel-count.error{color:var(--destructive-foreground)}
-.thread{flex:1;overflow-y:auto;padding:22px 0}
+.thread-shell{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.thread{flex:1;min-height:0;overflow-y:auto;padding:22px 0}
+.thread-follow-jump{
+  position:absolute;left:50%;bottom:14px;z-index:4;transform:translateX(-50%);
+  display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;
+  border:1px solid var(--border);border-radius:999px;background:var(--popover);
+  color:var(--foreground);font-size:12.5px;box-shadow:var(--shadow-popover);cursor:pointer
+}
+.thread-follow-jump:hover,.thread-follow-jump:focus-visible{background:var(--accent);outline:none}
 .wrap{max-width:700px;margin:0 auto;padding:0 24px}
 .turn{margin-bottom:24px}
 .role{display:flex;align-items:center;gap:8px;margin-bottom:7px}
@@ -835,7 +843,38 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
 .ic-lg { width: 15px !important; height: 15px !important; flex: 0 0 15px !important; }
 
 /* turns / empty */
+.thread-shell {
+  position: relative !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
 .thread { flex: 1 !important; min-height: 0 !important; overflow-y: auto !important; padding: 22px 0 !important; background: transparent !important; }
+.thread-follow-jump {
+  position: absolute !important;
+  left: 50% !important;
+  bottom: 14px !important;
+  z-index: 4 !important;
+  transform: translateX(-50%) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: 30px !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 999px !important;
+  background: var(--popover) !important;
+  color: var(--foreground) !important;
+  font-size: 12.5px !important;
+  box-shadow: var(--shadow-popover) !important;
+  cursor: pointer !important;
+}
+.thread-follow-jump:hover,
+.thread-follow-jump:focus-visible {
+  background: var(--accent) !important;
+  outline: none !important;
+}
 .wrap { max-width: 700px !important; margin: 0 auto !important; padding: 0 24px !important; }
 .turn p { font-size: 14.5px !important; line-height: 1.65 !important; color: var(--foreground) !important; margin: 0; overflow-wrap: anywhere; }
 .turn.user p { color: var(--muted-foreground) !important; }
