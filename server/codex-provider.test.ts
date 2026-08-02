@@ -57,6 +57,10 @@ test("Codex version and native lifecycle events normalize without provider paylo
     params: { item: { id: "item-2", type: "agentMessage", text: "Done." } },
   }), [{ kind: "assistant_text", text: "Done." }]);
   assert.deepEqual(normalizeCodexNotification({
+    method: "item/reasoning/textDelta",
+    params: { itemId: "reasoning-1", delta: "private reasoning" },
+  }), [{ kind: "thinking", text: "private reasoning" }]);
+  assert.deepEqual(normalizeCodexNotification({
     method: "item/completed",
     params: { item: { id: "item-1", type: "commandExecution", status: "failed", aggregatedOutput: "secret" } },
   }), [{ kind: "tool_finished", toolCallId: "item-1", failed: true }]);

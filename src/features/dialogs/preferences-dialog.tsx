@@ -28,6 +28,7 @@ export function preferencesHaveUnsavedChanges(
     || draft.zoom !== saved.zoom
     || draft.reducedMotion !== saved.reducedMotion
     || draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta
+    || draft.showThinking !== saved.showThinking
     || draft.commandPaletteShortcut !== saved.commandPaletteShortcut
     || draft.managedWorktreeLimit !== saved.managedWorktreeLimit;
 }
@@ -342,6 +343,25 @@ export function PreferencesDialog({
                       <option value="reduce">Reduce</option>
                       <option value="no-preference">Allow motion</option>
                     </select>
+                  </div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <label className="fn" htmlFor="preferences-show-thinking">
+                      Show provider thinking
+                    </label>
+                    <div className="fd">
+                      Display provider-emitted reasoning in the live timeline. Thinking is never saved to local history.
+                    </div>
+                  </div>
+                  <div className="fc">
+                    <input
+                      id="preferences-show-thinking"
+                      name="preferences-show-thinking"
+                      type="checkbox"
+                      checked={draft.showThinking}
+                      onChange={(event) => update("showThinking", event.target.checked)}
+                    />
                   </div>
                 </div>
                 <div className="field">

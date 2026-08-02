@@ -1931,6 +1931,11 @@ export class LocalStateStore {
       });
       return;
     }
+    if (event.kind === "thinking") {
+      // Provider reasoning is a live-only projection. It must not enter the
+      // durable transcript, fork context, delegated outcome, or local journal.
+      return;
+    }
     if (event.kind === "plan_updated") {
       const projection = await this.load();
       const turn = projection.turns.find(

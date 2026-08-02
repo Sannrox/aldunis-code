@@ -151,6 +151,7 @@ export function Conversation({
   managedMode = false,
   managedModel,
   quietDelegatedChild = false,
+  showThinking = false,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -173,6 +174,7 @@ export function Conversation({
   onOpenProfiles: (provider?: ProviderId) => void;
   managedMode?: boolean;
   managedModel?: string;
+  showThinking?: boolean;
   /** Suppress ordinary child completion notifications while its linked parent is focused. */
   quietDelegatedChild?: boolean;
 }) {
@@ -1683,27 +1685,27 @@ export function Conversation({
       setInputBusyId(null);
     }
   };
-  const assistantTimeline = presentAssistantTimeline(providerEvents);
+  const assistantTimeline = presentAssistantTimeline(providerEvents, "running", { showThinking });
   const latestPlan = useMemo(() => latestPlanFromEvents([
     ...archivedTurns.map((turn) => turn.events),
     providerEvents,
   ]), [archivedTurns, providerEvents]);
   const planEntries = useMemo(() => [
     ...archivedTurns.flatMap((turn, index) => (
-      presentAssistantTimeline(turn.events)
+      presentAssistantTimeline(turn.events, "running", { showThinking })
         .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
         .map((block) => ({
           key: `archived-${index}-plan-${block.artifact.provider}-${block.artifact.id}`,
           artifact: block.artifact,
         }))
     )),
-    ...presentAssistantTimeline(providerEvents)
+    ...presentAssistantTimeline(providerEvents, "running", { showThinking })
       .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
       .map((block) => ({
         key: `current-plan-${block.artifact.provider}-${block.artifact.id}`,
         artifact: block.artifact,
       })),
-  ], [archivedTurns, providerEvents]);
+  ], [archivedTurns, providerEvents, showThinking]);
   const panelPlan = selectedPlanKey
     ? planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan
     : latestPlan;
@@ -1713,6 +1715,11 @@ export function Conversation({
   const assistantText = joinAssistantTextChunks(
     providerEvents
       .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
+      .map((event) => event.text),
+  );
+  const thinkingText = joinAssistantTextChunks(
+    providerEvents
+      .filter((event): event is Extract<ProviderEvent, { kind: "thinking" }> => event.kind === "thinking")
       .map((event) => event.text),
   );
   const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
@@ -1736,6 +1743,7 @@ export function Conversation({
     messages.length,
     providerEvents.length,
     assistantText.length,
+    showThinking ? thinkingText.length : 0,
     providerState,
     approvals.length,
     inputs.length,
@@ -1776,6 +1784,7 @@ export function Conversation({
     configurationVerifiedAfterFailure,
   );
   const hasAssistantContent = Boolean(assistantText.trim())
+    || (showThinking && Boolean(thinkingText.trim()))
     || latestPlan != null
     || toolEvents.length > 0
     || approvals.length > 0
@@ -1872,9 +1881,21 @@ export function Conversation({
     keyPrefix: string,
     unfinishedStatus: "running" | "cancelled" = "running",
   ) => (
-    presentAssistantTimeline(events, unfinishedStatus).map((block, blockIndex) => {
+    presentAssistantTimeline(events, unfinishedStatus, { showThinking }).map((block, blockIndex) => {
       if (block.kind === "text") {
         return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
+      }
+      if (block.kind === "thinking") {
+        return (
+          <section
+            className="thinking-block"
+            aria-label={`${providerLabel} thinking`}
+            key={`${keyPrefix}-thinking-${blockIndex}`}
+          >
+            <div className="thinking-label">Thinking</div>
+            <MarkdownBody text={block.text} className="thinking-body" />
+          </section>
+        );
       }
       if (block.kind === "plan") {
         const planKey = `${keyPrefix}-plan-${block.artifact.provider}-${block.artifact.id}`;

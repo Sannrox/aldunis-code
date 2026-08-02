@@ -17,6 +17,7 @@ test("preferences are versioned, persisted atomically, and survive restart", asy
     assert.equal(saved.theme, "light");
     assert.equal(saved.managedWorktreeLimit, 10);
     assert.equal(saved.orchestrationThreadsBeta, false);
+    assert.equal(saved.showThinking, false);
     const restarted = await new PreferencesStore(directory).load();
     assert.deepEqual(restarted, { preferences: saved, recovered: false });
     assert.equal((await readFile(join(directory, "preferences.v1.json"), "utf8")).includes("\"schemaVersion\": 1"), true);
@@ -52,12 +53,14 @@ test("legacy version-one preferences gain safe beta and managed-worktree default
     const {
       managedWorktreeLimit: _managedWorktreeLimit,
       orchestrationThreadsBeta: _orchestrationThreadsBeta,
+      showThinking: _showThinking,
       ...legacy
     } = DEFAULT_PREFERENCES;
     await writeFile(join(directory, "preferences.v1.json"), JSON.stringify(legacy));
     const loaded = (await new PreferencesStore(directory).load()).preferences;
     assert.equal(loaded.managedWorktreeLimit, 10);
     assert.equal(loaded.orchestrationThreadsBeta, false);
+    assert.equal(loaded.showThinking, false);
   } finally {
     await rm(directory, { recursive: true });
   }

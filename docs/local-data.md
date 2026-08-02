@@ -17,7 +17,7 @@ Typical contents (names may evolve; do not commit these files):
 | File / area | Purpose |
 | --- | --- |
 | `events.v1.jsonl` | Append-only conversation history log |
-| `preferences.v1.json` | Theme, density, worktree limit, shortcuts |
+| `preferences.v1.json` | Theme, density, worktree limit, shortcuts, display flags |
 | `automations.v1.json` | Scheduled automations |
 | `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references |
 | Profile / secret store | Provider profile metadata (all providers + adapters) + env secrets |
@@ -90,11 +90,14 @@ seconds as an explicitly stale fallback.
 
 ## Preferences
 
-Appearance and keyboard preferences load/save via
+Appearance, keyboard, and live-thinking display preferences load/save via
 `/api/preferences/load` and `/api/preferences/save`. Invalid files recover to
 safe defaults with a visible recovered flag. Experimental orchestration
 threads are disabled by default; disabling the beta hides projections without
-deleting stored relationships.
+deleting stored relationships. The optional show-thinking flag is disabled by
+default and only reveals provider-emitted reasoning in the active in-memory
+timeline; thinking is never written to local history or included in fork
+context.
 
 ## Secrets
 

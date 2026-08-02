@@ -350,6 +350,7 @@ function App() {
         }}
         chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
+        showThinking={preferences.showThinking}
         managedMode={hostCapabilities.managed}
         managedModel={hostCapabilities.provider?.model}
       />
