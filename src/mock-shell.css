@@ -2075,8 +2075,8 @@ html[data-theme="dark"], html[data-theme="dark"] body {
   .proj .p { font-size: 12.5px; }
   .list { padding: 0 12px 8px; }
   .glabel { padding: 12px 8px 8px; font-size: 13px; }
-  /* Keep the always-available touch actions out of the title's text box. */
-  .row-main { min-height: 72px; padding: 12px 120px 12px 12px; }
+  /* Keep the touch affordance quiet while preserving a compact menu hit area. */
+  .row-main { min-height: 72px; padding: 12px 60px 12px 12px; }
   .row .rp .pn { font-size: 13px; }
   .row .rt { font-size: 15px; }
   .row .rb .br,
@@ -2090,7 +2090,28 @@ html[data-theme="dark"], html[data-theme="dark"] body {
     height: 44px;
     font-size: 13px;
   }
-  .row-more { min-width: 44px; opacity: 1; }
+  .row-more {
+    min-width: 44px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted-foreground);
+    opacity: .55;
+  }
+  .row:hover .settle { opacity: 0; }
+  .row:hover .row-more { opacity: .55; }
+  .row-actions { pointer-events: none; }
+  .row-menu { pointer-events: auto; }
+  .row:focus-within .row-main { padding-right: 120px; }
+  .row:focus-within .row-actions { pointer-events: auto; }
+  .row:focus-within .settle,
+  .row:focus-within .row-more,
+  .row-more:focus-visible,
+  .row-menu:focus-within .row-more {
+    opacity: 1;
+    background: var(--accent);
+    border-color: var(--border);
+    color: var(--foreground);
+  }
   .sb-ft { gap: 10px; padding: 12px 14px; }
   .sb-ft .btn { min-height: 44px; height: 44px; font-size: 13px; }
   .managed-account__summary { min-height: 44px; }
