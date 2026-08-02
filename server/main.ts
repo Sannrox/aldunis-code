@@ -2,26 +2,60 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
+import packageJson from "../package.json" with { type: "json" };
 import { createLocalHost, assertLoopbackHost } from "./host.ts";
+import {
+  CliUsageError,
+  formatCliHelp,
+  parseCliArgs,
+  type CliInvocation,
+} from "./cli.ts";
 import { loadManagedHostConfiguration, ManagedHost } from "./managed-host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
 
 const execFileAsync = promisify(execFile);
 
-function argument(name: string): string | undefined {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? undefined : process.argv[index + 1];
+let cliInvocation: CliInvocation;
+try {
+  cliInvocation = parseCliArgs(process.argv.slice(2));
+} catch (error) {
+  const message = error instanceof CliUsageError
+    ? error.message
+    : error instanceof Error ? error.message : String(error);
+  console.error(`Error: ${message}`);
+  console.error(formatCliHelp());
+  process.exit(1);
 }
 
-const host = argument("--host") ?? "127.0.0.1";
-const portValue = argument("--port") ?? "4174";
+if (cliInvocation.kind === "help") {
+  console.log(formatCliHelp(cliInvocation.scope));
+  process.exit(0);
+}
+if (cliInvocation.kind === "version") {
+  console.log(packageJson.version);
+  process.exit(0);
+}
+if (cliInvocation.kind === "auth") {
+  const auth = new RemoteAuth(defaultStateDirectory());
+  if (cliInvocation.action === "create") {
+    console.log(JSON.stringify(await auth.issuePairing(), null, 2));
+  } else if (cliInvocation.action === "list") {
+    console.log(JSON.stringify(await auth.listSessions(), null, 2));
+  } else {
+    console.log(JSON.stringify({ revoked: await auth.revoke(cliInvocation.session!) }));
+  }
+  process.exit(0);
+}
+
+const { options } = cliInvocation;
+const host = options.host ?? "127.0.0.1";
+const portValue = options.port ?? "4174";
 const port = Number(portValue);
-const remoteMode = argument("--remote");
-const authAction = argument("--remote-auth");
-const publicUrlInput = argument("--public-url");
-const tlsCertificatePath = argument("--tls-cert");
-const tlsKeyPath = argument("--tls-key");
+const remoteMode = options.remote;
+const publicUrlInput = options.publicUrl;
+const tlsCertificatePath = options.tlsCert;
+const tlsKeyPath = options.tlsKey;
 const configuredHostMode = process.env.ALDUNIS_HOST_MODE;
 const managedMode = configuredHostMode === "managed";
 
@@ -30,22 +64,6 @@ if (configuredHostMode && configuredHostMode !== "local" && configuredHostMode !
 }
 if (managedMode && remoteMode) {
   throw new Error("Managed hosted mode cannot be combined with paired remote mode.");
-}
-
-if (authAction) {
-  const auth = new RemoteAuth(defaultStateDirectory());
-  if (authAction === "pair") {
-    console.log(JSON.stringify(await auth.issuePairing(), null, 2));
-  } else if (authAction === "list") {
-    console.log(JSON.stringify(await auth.listSessions(), null, 2));
-  } else if (authAction === "revoke") {
-    const sessionId = argument("--session");
-    if (!sessionId) throw new Error("Remote session revocation requires --session <id>.");
-    console.log(JSON.stringify({ revoked: await auth.revoke(sessionId) }));
-  } else {
-    throw new Error("Remote auth action must be 'pair', 'list', or 'revoke'.");
-  }
-  process.exit(0);
 }
 
 function isPrivateAddress(value: string): boolean {

@@ -21,7 +21,8 @@ Open [http://127.0.0.1:4174](http://127.0.0.1:4174).
 The host binds **loopback only** by default and refuses non-loopback addresses
 unless you enable remote mode (below).
 
-`npm start` builds the web and desktop entry points, then starts the local host.
+`npm start` builds the web, desktop, and CLI entry points, then starts the local host.
+The structured host command surface is documented in [CLI reference](cli.md).
 
 ### Development (UI + API split)
 
@@ -29,7 +30,7 @@ Keep both commands running in separate terminals:
 
 ```sh
 # Terminal 1 — host
-npm run host -- --port 4175
+npm run cli -- serve --port 4175
 
 # Terminal 2 — Vite
 npm run dev
@@ -124,13 +125,13 @@ profile and recovery behavior.
 Remote access is **off by default**. Recommended path: Tailscale Serve.
 
 ```sh
-npm run host -- --remote tailscale
+npm run cli -- serve --remote tailscale
 ```
 
 LAN mode requires a private bind address, public HTTPS origin, and TLS material:
 
 ```sh
-npm run host -- --remote lan --host 192.168.1.20 \
+npm run cli -- serve --remote lan --host 192.168.1.20 \
   --public-url https://aldunis.home.example:4174 \
   --tls-cert /path/to/cert.pem \
   --tls-key /path/to/key.pem
@@ -162,10 +163,13 @@ pairing URL to open on the WLAN device.
 The host prints a short-lived pairing URL. Manage sessions:
 
 ```sh
-npm run host -- --remote-auth list
-npm run host -- --remote-auth pair
-npm run host -- --remote-auth revoke --session <session-id>
+npm run cli -- auth pairing list
+npm run cli -- auth pairing create
+npm run cli -- auth pairing revoke --session <session-id>
 ```
+
+The older `npm run host -- --remote-auth ...` forms remain available for
+existing scripts.
 
 Details: [remote-workbench.md](remote-workbench.md).
 

@@ -31,7 +31,7 @@ Run the stack locally:
 
 ```sh
 # Terminal 1 — API host (loopback only by default)
-npm run host -- --port 4175
+npm run cli -- serve --port 4175
 
 # Terminal 2 — Vite UI
 npm run dev
@@ -45,6 +45,7 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 | Script | Purpose |
 | --- | --- |
 | `npm run host` | Local API / provider host |
+| `npm run cli -- --help` | Inspect the structured host CLI |
 | `npm run dev` | Vite UI on 127.0.0.1:4174 |
 | `npm run wlan` | Authenticated private-WLAN host with HTTPS pairing |
 | `npm test` | Deterministic unit tests |

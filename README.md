@@ -53,7 +53,7 @@ For development, run the API host and Vite in separate terminals:
 
 ```sh
 # Terminal 1
-npm run host -- --port 4175
+npm run cli -- serve --port 4175
 
 # Terminal 2
 npm run dev
@@ -72,6 +72,9 @@ npm run build
 
 Full install, providers, remote access, and desktop packaging:
 **[docs/getting-started.md](docs/getting-started.md)**
+
+The host command reference, including structured startup and remote-auth
+commands, is in **[docs/cli.md](docs/cli.md)**.
 
 ## Contributing
 
