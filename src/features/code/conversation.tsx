@@ -53,6 +53,16 @@ import {
 } from "../../lib/composer-prompt-history";
 import { syncComposerHeight } from "../../lib/composer-height";
 import {
+  buildComposerCommandItems,
+  buildComposerPathItems,
+  buildComposerSkillItems,
+  getComposerTrigger,
+  groupComposerCommandItems,
+  replaceComposerTrigger,
+  type ComposerCommandItem,
+  type ComposerSuggestionMode,
+} from "../../lib/composer-commands";
+import {
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
   scrollThreadToBottom,
@@ -302,8 +312,8 @@ export function Conversation({
     ...attachments.map((path) => ({ path, kind: "file" as const })),
     ...folderPins.map((path) => ({ path, kind: "folder" as const })),
   ], [attachments, folderPins]);
-  const [suggestions, setSuggestions] = useState<Array<{ value: string; detail: string }>>([]);
-  const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
+  const [suggestions, setSuggestions] = useState<ComposerCommandItem[]>([]);
+  const [suggestionMode, setSuggestionMode] = useState<ComposerSuggestionMode | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [contextError, setContextError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(
@@ -1603,58 +1613,56 @@ export function Conversation({
     build: { label: "Build", authority: "Mutations require approval" },
   };
   useEffect(() => {
-    const token = draft.slice(0, draft.length).match(/(?:^|\s)([@/])([^\s]*)$/);
-    if (!token || !worktree || !repository) {
+    const trigger = getComposerTrigger(draft);
+    if (!trigger || !worktree || !repository) {
       setSuggestionMode(null);
       setSuggestions([]);
       return;
     }
-    const [, prefix, query] = token;
     setSuggestionIndex(0);
-    if (prefix === "/") {
-      setSuggestionMode("commands");
-      const normalizedQuery = query.toLocaleLowerCase();
-      setSuggestions([
-        ...("context".includes(normalizedQuery)
-          ? [{ value: "/context", detail: "Inspect the Aldunis-owned draft context package" }]
-          : []),
-        ...(capabilities?.commands ?? [])
-          .filter((command) => command.name.slice(1).includes(normalizedQuery))
-          .map((command) => ({ value: command.name, detail: command.description })),
-        ...providerSkills
-          .filter((skill) => skill.name.toLocaleLowerCase().includes(normalizedQuery))
-          .map((skill) => ({ value: `$${skill.name}`, detail: skill.description })),
-      ]);
+    if (trigger.mode === "slash-command") {
+      setSuggestionMode(trigger.mode);
+      setSuggestions(buildComposerCommandItems({
+        provider,
+        capabilities,
+        query: trigger.query,
+      }));
       return;
     }
-    setSuggestionMode("files");
+    if (trigger.mode === "skill") {
+      setSuggestionMode(trigger.mode);
+      setSuggestions(buildComposerSkillItems(provider, providerSkills, trigger.query));
+      return;
+    }
+    setSuggestionMode(trigger.mode);
+    setSuggestions([]);
     const controller = new AbortController();
     void fetch("/api/context/files", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query }),
+      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query: trigger.query }),
       signal: controller.signal,
     }).then(async (response) => {
       const body = await response.json() as { files?: string[]; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Repository files could not be searched.");
-      setSuggestions((body.files ?? []).map((path) => ({ value: path, detail: "Local repository file" })));
+      setSuggestions(buildComposerPathItems(body.files ?? []));
     }).catch((error) => {
       if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
     });
     return () => controller.abort();
-  }, [capabilities, draft, providerSkills, repository, worktree]);
-  const selectSuggestion = (value: string) => {
-    if (suggestionMode === "files") {
-      if (!attachments.includes(value)) {
+  }, [capabilities, draft, provider, providerSkills, repository, worktree]);
+  const selectSuggestion = (suggestion: ComposerCommandItem) => {
+    if (suggestion.type === "path") {
+      if (!attachments.includes(suggestion.path)) {
         if (contextPins.length >= 100) {
           setContextError("Pin at most 100 file or folder paths.");
           return;
         }
-        setAttachments((current) => [...current, value]);
+        setAttachments((current) => [...current, suggestion.path]);
       }
-      setDraft((current) => current.replace(/(?:^|\s)@[^\s]*$/, (match) => match.startsWith(" ") ? " " : ""));
+      setDraft((current) => replaceComposerTrigger(current, ""));
     } else {
-      setDraft((current) => current.replace(/(?:^|\s)\/[^\s]*$/, (match) => `${match.startsWith(" ") ? " " : ""}${value} `));
+      setDraft((current) => replaceComposerTrigger(current, suggestion.label + " "));
     }
     setContextError(null);
     setSuggestionMode(null);
@@ -2308,6 +2316,10 @@ export function Conversation({
     );
   };
   const latestMessage = messages.at(-1);
+  const suggestionGroups = suggestionMode
+    ? groupComposerCommandItems(suggestions, suggestionMode)
+    : [];
+  const orderedSuggestions = suggestionGroups.flatMap((group) => group.items);
 
   return (
     <div
@@ -3053,24 +3065,45 @@ export function Conversation({
             <div
               className="composer-suggestions"
               role="listbox"
-              aria-label={suggestionMode === "files" ? "File suggestions" : "Command suggestions"}
+              aria-label={suggestionMode === "path"
+                ? "File suggestions"
+                : suggestionMode === "skill" ? "Skill suggestions" : "Command suggestions"}
             >
-              {suggestions.map((suggestion, index) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === suggestionIndex}
-                  aria-label={`${suggestion.value}: ${suggestion.detail}`}
-                  title={`${suggestion.value} — ${suggestion.detail}`}
-                  className={index === suggestionIndex ? "active" : ""}
-                  key={suggestion.value}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectSuggestion(suggestion.value)}
-                >
-                  <strong title={suggestion.value}>{suggestion.value}</strong>
-                  <small title={suggestion.detail}>{suggestion.detail}</small>
-                </button>
+              {suggestionGroups.map((group) => (
+                <section className="composer-suggestions-group" key={group.id}>
+                  <div className="composer-suggestions-group-label">{group.label}</div>
+                  {group.items.map((suggestion) => {
+                    const index = orderedSuggestions.indexOf(suggestion);
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === suggestionIndex}
+                        aria-label={suggestion.label + ": " + suggestion.description}
+                        title={suggestion.label + " — " + suggestion.description}
+                        className={index === suggestionIndex ? "active" : ""}
+                        key={suggestion.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setSuggestionIndex(index)}
+                        onClick={() => selectSuggestion(suggestion)}
+                      >
+                        {suggestion.type === "path" && (
+                          <span className="composer-suggestion-kind" aria-hidden="true">@</span>
+                        )}
+                        <strong title={suggestion.label}>{suggestion.label}</strong>
+                        <small title={suggestion.description}>{suggestion.description}</small>
+                      </button>
+                    );
+                  })}
+                </section>
               ))}
+              {suggestions.length === 0 && (
+                <p className="composer-suggestions-empty">
+                  {suggestionMode === "path"
+                    ? "No matching files or folders."
+                    : suggestionMode === "skill" ? "No matching skills." : "No matching commands."}
+                </p>
+              )}
             </div>
           )}
           <textarea
@@ -3090,18 +3123,18 @@ export function Conversation({
             }}
             onPaste={() => setContextError(null)}
             onKeyDown={(event) => {
-              if (suggestionMode && suggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                 event.preventDefault();
                 setSuggestionIndex((current) => (
                   event.key === "ArrowDown"
-                    ? (current + 1) % suggestions.length
-                    : (current - 1 + suggestions.length) % suggestions.length
+                    ? (current + 1) % orderedSuggestions.length
+                    : (current - 1 + orderedSuggestions.length) % orderedSuggestions.length
                 ));
                 return;
               }
-              if (suggestionMode && suggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
+              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
                 event.preventDefault();
-                selectSuggestion(suggestions[suggestionIndex].value);
+                selectSuggestion(orderedSuggestions[suggestionIndex]);
                 return;
               }
               if (event.key === "Escape" && suggestionMode) {
