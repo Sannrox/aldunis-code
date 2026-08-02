@@ -572,7 +572,9 @@ export interface CheckpointFile {
 }
 export type IconName =
   | "code"
+  | "computer"
   | "branch"
+  | "folder"
   | "message"
   | "diff"
   | "spark"

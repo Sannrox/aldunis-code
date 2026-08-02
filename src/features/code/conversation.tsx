@@ -99,8 +99,10 @@ import {
 } from "./context-package";
 import {
   defaultWorkspaceMode,
+  NEW_CONVERSATION_WORKSPACE_MODES,
   WORKSPACE_MODE_COPY,
 } from "../../lib/workspace-mode";
+import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
@@ -144,7 +146,11 @@ export function Conversation({
   onClosePane,
   onConversationAvailable,
   onRepositoryChanged,
+  onSelectWorktree,
   onOpenRepository,
+  projects = [],
+  onAddProject,
+  onSelectProject,
   onManageWorktrees,
   changes,
   changesLoading,
@@ -169,7 +175,11 @@ export function Conversation({
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
+  onSelectWorktree: (path: string) => void;
   onOpenRepository: () => void;
+  projects?: SavedProject[];
+  onAddProject: () => void;
+  onSelectProject: (projectId: string) => void;
   onManageWorktrees: () => void;
   changes: ChangedFile[];
   changesLoading: boolean;
@@ -214,9 +224,6 @@ export function Conversation({
       ? "shared"
       : defaultWorkspaceMode("ask", conversation?.workspaceMode)
   ));
-  const [workspaceModeManuallySelected, setWorkspaceModeManuallySelected] = useState(
-    () => conversation !== null,
-  );
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
   const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
@@ -359,15 +366,18 @@ export function Conversation({
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   /** Ignore option activation that rides the same gesture that opened the menu. */
   const providerMenuOpenedAtRef = useRef(0);
   const modelMenuOpenedAtRef = useRef(0);
   const modeMenuOpenedAtRef = useRef(0);
+  const projectMenuOpenedAtRef = useRef(0);
   const workspaceMenuOpenedAtRef = useRef(0);
   const INTERACTION_MODES: InteractionMode[] = ["ask", "plan", "build"];
   /**
@@ -512,20 +522,19 @@ export function Conversation({
       return;
     }
     if (nextMode !== mode) setMode(nextMode);
-    if (!workspaceModeManuallySelected && canPickWorkspace) {
-      setWorkspaceMode(defaultWorkspaceMode(nextMode, undefined));
-    }
     setModeMenuOpen(false);
   };
   const closeComposerMenus = () => {
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
     setModeMenuOpen(false);
+    setProjectMenuOpen(false);
     setWorkspaceMenuOpen(false);
   };
   const openModeMenu = () => {
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
+    setProjectMenuOpen(false);
     setModeMenuOpen((open) => {
       if (open) return false;
       modeMenuOpenedAtRef.current = performance.now() + 200;
@@ -543,16 +552,35 @@ export function Conversation({
     }
     if (nextMode === "provider-native" && !providerNativeWorkspaceAvailable) return;
     setWorkspaceMode(nextMode);
-    setWorkspaceModeManuallySelected(true);
     setWorkspaceMenuOpen(false);
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
     setModeMenuOpen(false);
   };
+  const selectProject = (
+    projectId: string,
+    source: "menu" | "keyboard" = "menu",
+  ) => {
+    if (source === "menu" && performance.now() < projectMenuOpenedAtRef.current) return;
+    setProjectMenuOpen(false);
+    onSelectProject(projectId);
+  };
+  const openProjectMenu = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+    setWorkspaceMenuOpen(false);
+    setProjectMenuOpen((open) => {
+      if (open) return false;
+      projectMenuOpenedAtRef.current = performance.now() + 200;
+      return true;
+    });
+  };
   const openWorkspaceMenu = () => {
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
     setModeMenuOpen(false);
+    setProjectMenuOpen(false);
     setWorkspaceMenuOpen((open) => {
       if (open) return false;
       workspaceMenuOpenedAtRef.current = performance.now() + 200;
@@ -763,6 +791,62 @@ export function Conversation({
     };
   }, [workspaceMenuOpen, providerNativeWorkspaceAvailable, canPickWorkspace]);
   useEffect(() => {
+    if (!projectMenuOpen) return;
+    const optionButtons = () => Array.from(
+      projectMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-project-option]") ?? [],
+    );
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && projectMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setProjectMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setProjectMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        options[0]?.focus();
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        options[options.length - 1]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const projectId = options[index]?.dataset.projectId;
+        if (projectId) selectProject(projectId, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [projectMenuOpen, onSelectProject]);
+  useEffect(() => {
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
   useEffect(() => {
@@ -886,7 +970,6 @@ export function Conversation({
         ? "shared"
         : defaultWorkspaceMode("ask", conversation?.workspaceMode),
     );
-    setWorkspaceModeManuallySelected(conversation !== null);
     setPreparedWorkspaceRepository(null);
     setWorkspaceApprovalPending(false);
     setWorkspaceDialogOpen(false);
@@ -2009,6 +2092,12 @@ export function Conversation({
     detail: modeCopy[mode].authority,
   };
   const workspaceCopy = WORKSPACE_MODE_COPY[workspaceMode];
+  const hostLabel = typeof window !== "undefined" && window.location.hostname
+    ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
+    : "Local Aldunis host";
+  const selectableWorktrees = repository?.worktrees.filter((item) => (
+    item.state === "available" || item.state === "detached"
+  )) ?? [];
   const renderTimeline = (
     events: ProviderEvent[],
     keyPrefix: string,
@@ -2627,91 +2716,184 @@ export function Conversation({
       )}
       </div>
       <div className="cwrap">
+        {canPickWorkspace && (
+          <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
+            <span className="new-chat-context-eyebrow">Work on</span>
+            <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
+            <div className="new-chat-context-rows">
+              <div className="new-chat-context-row" aria-label={`${hostLabel}, current Aldunis host`}>
+                <Icon name="computer" />
+                <span className="new-chat-context-copy">
+                  <strong>{hostLabel}</strong>
+                  <small>Current Aldunis host</small>
+                </span>
+              </div>
+              <div className="new-chat-context-control" ref={projectMenuRef}>
+                <button
+                  type="button"
+                  className="new-chat-context-row new-chat-context-row--button"
+                  onClick={openProjectMenu}
+                  title={repository?.root ?? "Choose a project"}
+                  aria-haspopup="listbox"
+                  aria-expanded={projectMenuOpen}
+                  aria-controls={projectMenuOpen ? "new-chat-project-menu" : undefined}
+                  aria-label={repository ? `Project ${repository.name}. Open project selector.` : "Choose a project."}
+                >
+                  <Icon name="folder" />
+                  <span className="new-chat-context-copy">
+                    <strong>{repository?.name ?? "Choose a project"}</strong>
+                    <small title={repository?.root}>{repository?.root ?? "Open a repository before sending"}</small>
+                  </span>
+                  <Icon name="chevron" />
+                </button>
+                {projectMenuOpen && (
+                  <div
+                    id="new-chat-project-menu"
+                    className="new-chat-context-menu composer-provider-menu"
+                    role="listbox"
+                    aria-label="Choose project"
+                  >
+                    {projects.map((project) => {
+                      const selected = project.id === repository?.projectId
+                        || project.memberIds?.includes(repository?.projectId ?? "")
+                        || project.root === repository?.root;
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          aria-label={`${project.name}: ${project.root}${selected ? ", selected" : ""}`}
+                          data-project-option=""
+                          data-project-id={project.id}
+                          key={project.id}
+                          className={`composer-provider-option ${selected ? "active" : ""}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectProject(project.id);
+                          }}
+                        >
+                          <span className="n">{project.name}{selected ? " · selected" : ""}</span>
+                          <span className="p">{project.root}</span>
+                        </button>
+                      );
+                    })}
+                    {projects.length === 0 && (
+                      <p className="new-chat-context-note" role="note">No registered projects yet.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="composer-provider-option add"
+                      aria-label="Add project: Register a local repository once"
+                      onClick={() => {
+                        setProjectMenuOpen(false);
+                        onAddProject();
+                      }}
+                    >
+                      <span className="n">Add project…</span>
+                      <span className="p">Register a local repository once</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="new-chat-context-control" ref={workspaceMenuRef}>
+                <button
+                  type="button"
+                  className="new-chat-context-row new-chat-context-row--button"
+                  aria-haspopup="listbox"
+                  aria-expanded={workspaceMenuOpen}
+                  aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
+                  title={workspaceMode === "provider-native"
+                    ? WORKSPACE_MODE_COPY["provider-native"].detail
+                    : WORKSPACE_MODE_COPY["aldunis-managed"].detail}
+                  aria-label={`Workspace strategy: ${workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}. Open workspace strategy menu.`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openWorkspaceMenu();
+                  }}
+                >
+                  <Icon name="code" />
+                  <span className="new-chat-context-copy">
+                    <strong>{workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}</strong>
+                    <small>{workspaceMode === "provider-native"
+                      ? "Provider-owned workspace"
+                      : "One Aldunis worktree for this chat"}</small>
+                  </span>
+                  <Icon name="chevron" />
+                </button>
+                {workspaceMenuOpen && (
+                  <div
+                    id="new-chat-workspace-menu"
+                    className="new-chat-context-menu composer-provider-menu"
+                    role="listbox"
+                    aria-label="Choose workspace strategy"
+                  >
+                    {NEW_CONVERSATION_WORKSPACE_MODES.map((item) => {
+                      const selected = item === workspaceMode;
+                      const native = item === "provider-native";
+                      const available = !native || providerNativeWorkspaceAvailable;
+                      const detail = native && !available
+                        ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native workspace creation yet."
+                        : WORKSPACE_MODE_COPY[item].detail;
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          aria-disabled={!available}
+                          disabled={!available}
+                          aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                          key={item}
+                          data-workspace-option=""
+                          data-workspace-mode={item}
+                          className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectWorkspaceMode(item, "menu");
+                          }}
+                        >
+                          <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
+                          <span className="p">{detail}</span>
+                        </button>
+                      );
+                    })}
+                    {!providerNativeWorkspaceAvailable && (
+                      <p className="new-chat-context-note" role="note">
+                        Native is shown for the second design, but the selected adapter does not expose it yet.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <label className="new-chat-context-row new-chat-context-row--select">
+                <Icon name="branch" />
+                <span className="new-chat-context-copy">
+                  <strong>{worktree?.branch ?? (worktree ? "Detached HEAD" : "Choose a worktree")}</strong>
+                  <small title={worktree?.path}>{worktree?.path ?? "Select an available branch"}</small>
+                </span>
+                <Icon name="chevron" />
+                <select
+                  aria-label="Choose the conversation worktree"
+                  value={repository?.selectedWorktree ?? ""}
+                  disabled={selectableWorktrees.length === 0}
+                  onChange={(event) => {
+                    if (event.target.value) onSelectWorktree(event.target.value);
+                  }}
+                >
+                  {selectableWorktrees.length === 0 && <option value="">No available worktree</option>}
+                  {selectableWorktrees.map((item) => (
+                    <option value={item.path} key={item.path}>
+                      {item.branch ?? "Detached HEAD"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+        )}
         <div className="cbox">
-          {canPickWorkspace && (
-            <section className="new-chat-setup" aria-labelledby={`${pane}-new-chat-setup-title`}>
-              <header className="new-chat-setup-header">
-                <div>
-                  <span className="new-chat-setup-kicker">New conversation</span>
-                  <strong id={`${pane}-new-chat-setup-title`}>Choose the work boundary before you send</strong>
-                </div>
-                <span className="new-chat-setup-summary">
-                  {modeCopy[mode].label} · {workspaceCopy.shortLabel}
-                </span>
-              </header>
-              <div className="new-chat-target" aria-label="New conversation target">
-                <span className="new-chat-setup-label">Target</span>
-                <span className="new-chat-target-value" title={repository?.root ?? undefined}>
-                  {repository?.name ?? "Open a repository"}
-                </span>
-                <code title={worktree?.path ?? undefined}>
-                  {worktree?.branch ?? (worktree ? "Detached HEAD" : "No worktree selected")}
-                </code>
-                <span className="new-chat-target-provider">{providerListLabel(provider)}</span>
-              </div>
-              <div className="new-chat-setup-row">
-                <span className="new-chat-setup-label">Intent</span>
-                <div className="new-chat-setup-options" role="group" aria-label="Choose interaction mode">
-                  {INTERACTION_MODES.map((item) => {
-                    const selected = item === mode;
-                    const scopeLabel = item === "ask"
-                      ? "Read-only"
-                      : item === "plan"
-                      ? "Plan only"
-                      : "Approval-gated writes";
-                    return (
-                      <button
-                        type="button"
-                        className={`new-chat-option ${selected ? "active" : ""}`}
-                        aria-pressed={selected}
-                        data-new-chat-mode={item}
-                        key={item}
-                        title={`${modeCopy[item].authority}. ${selected ? "Selected." : "Select this interaction mode."}`}
-                        onClick={() => selectMode(item, "keyboard")}
-                      >
-                        <span>{modeCopy[item].label}</span>
-                        <small>{scopeLabel}</small>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="new-chat-setup-row">
-                <span className="new-chat-setup-label">Workspace</span>
-                <div className="new-chat-setup-options" role="group" aria-label="Choose conversation workspace">
-                  {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
-                    const selected = item === workspaceMode;
-                    const native = item === "provider-native";
-                    const available = !native || providerNativeWorkspaceAvailable;
-                    const detail = native && !available
-                      ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native worktree creation yet."
-                      : WORKSPACE_MODE_COPY[item].detail;
-                    return (
-                      <button
-                        type="button"
-                        className={`new-chat-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
-                        aria-pressed={selected}
-                        aria-disabled={!available}
-                        disabled={!available}
-                        data-new-chat-workspace={item}
-                        key={item}
-                        title={detail}
-                        onClick={() => selectWorkspaceMode(item, "keyboard")}
-                      >
-                        <span>{WORKSPACE_MODE_COPY[item].shortLabel}</span>
-                        <small>{available ? WORKSPACE_MODE_COPY[item].label : "Unavailable"}</small>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {!providerNativeWorkspaceAvailable && (
-                <p className="new-chat-setup-note" role="note">
-                  Provider-native is unavailable: {capabilities?.workspace?.providerNativeDetail ?? "the selected adapter does not expose native worktree creation yet."}
-                </p>
-              )}
-            </section>
-          )}
           {elementReferences.length > 0 && (
             <div className="composer-context" aria-label="Attached element context">
               {elementReferences.map((reference, index) => (
@@ -3107,7 +3289,7 @@ export function Conversation({
               )}
             </div>
             <span className="cdiv" />
-            {!canPickWorkspace && <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+            {!managedMode && <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
               {/* Single control: mode + tool scope. Dual Access/Mode chips both
                   opened the same menu and "Access Read-only" read like privacy. */}
               <button

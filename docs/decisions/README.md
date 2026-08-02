@@ -7,7 +7,7 @@ new file over rewriting history: amend only for factual corrections.
 
 | Decision | Summary |
 | --- | --- |
-| [conversation-workspace-modes.md](conversation-workspace-modes.md) | Explicit shared, Aldunis-managed, and capability-gated provider-native workspace modes |
+| [conversation-workspace-modes.md](conversation-workspace-modes.md) | Two new-chat workspace strategies with persisted shared compatibility mode |
 | [managed-conversation-worktrees.md](managed-conversation-worktrees.md) | Host-owned worktree create/remove; providers cannot rebind silently |
 | [cross-provider-conversation-forks.md](cross-provider-conversation-forks.md) | Explicit fork + allowlisted context transfer across providers |
 | [conversation-automations.md](conversation-automations.md) | Timer-only automations into existing threads |
