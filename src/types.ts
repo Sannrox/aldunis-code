@@ -18,11 +18,21 @@ export interface RepositoryMetadata {
     originalPath: string | null;
   }>;
 }
+export interface ManagedAccount {
+  displayName: string;
+  tenantId: string;
+  roles: string[];
+  scopes: string[];
+  assertionExpiresAt: string;
+  sessionExpiresAt: string | null;
+  logoutUrl: string | null;
+}
 export interface HostCapabilities {
   mode: "local" | "remote" | "managed";
   managed: boolean;
   tenantScoped: boolean;
   singleTenantAlpha?: boolean;
+  account?: ManagedAccount | null;
   provider?: {
     id: ProviderId;
     name: string;

@@ -9,6 +9,7 @@ import type {
   DelegatedInputProjection,
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
+  ManagedAccount,
 } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
@@ -502,6 +503,7 @@ export function CodeWorkbench({
   showThinking = false,
   managedMode = false,
   managedModel,
+  managedAccount,
 }: {
   product: import("../../types").Product;
   onProductChange: (product: import("../../types").Product) => void;
@@ -527,6 +529,7 @@ export function CodeWorkbench({
   showThinking?: boolean;
   managedMode?: boolean;
   managedModel?: string;
+  managedAccount?: ManagedAccount | null;
 }) {
   const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
   useEffect(() => {
@@ -1102,6 +1105,7 @@ export function CodeWorkbench({
         }}
         worktreeLimit={worktreeLimit}
         managedWorktreeCount={managedWorktreeCount}
+        managedAccount={managedAccount}
         onSettings={onSettings}
       />
       <main className="main">

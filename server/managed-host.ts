@@ -18,6 +18,7 @@ const REQUIRED_SCOPE = "code:workbench";
 const MAX_ASSERTION_TTL_SECONDS = 300;
 const CLOCK_SKEW_SECONDS = 60;
 const MAX_REPLAY_ENTRIES = 10_000;
+const DEFAULT_MANAGED_DISPLAY_NAME = "Enterprise user";
 const RESERVED_MANAGED_RUNTIME_ENVIRONMENT_KEYS = new Set([
   "PATH",
   "HOME",
@@ -58,8 +59,20 @@ export interface ManagedHostConfiguration {
   tenantId: string;
   instanceId: string;
   publicKey: KeyObject;
+  logoutUrl?: string | null;
   repositories: ManagedRepository[];
   shikigami: ManagedShikigamiRuntime;
+}
+
+export interface ManagedIdentity {
+  subject: string;
+  displayName: string;
+  tenantId: string;
+  roles: string[];
+  scopes: string[];
+  assertionExpiresAt: string;
+  sessionExpiresAt: string | null;
+  logoutUrl: string | null;
 }
 
 interface ManagedAssertionHeader {
@@ -78,8 +91,15 @@ interface ManagedAssertionClaims {
   jti?: unknown;
   tenant_id?: unknown;
   instance_id?: unknown;
+  name?: unknown;
+  display_name?: unknown;
+  preferred_username?: unknown;
+  email?: unknown;
+  role?: unknown;
+  roles?: unknown;
   scope?: unknown;
   scopes?: unknown;
+  session_exp?: unknown;
   code_mode?: unknown;
   managed_profile?: unknown;
   method?: unknown;
@@ -136,13 +156,64 @@ function numericClaim(value: unknown, name: string): number {
   return value;
 }
 
+function optionalClaimString(value: unknown, name: string, maxLength = 200): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const result = stringClaim(value, name).trim();
+  if (result.length > maxLength) {
+    throw new ManagedHostError(`Managed assertion ${name} is too long.`);
+  }
+  return result;
+}
+
+function claimList(
+  value: unknown,
+  name: string,
+  splitString = true,
+  maxItems = 20,
+): string[] {
+  if (value === undefined || value === null) return [];
+  const values = typeof value === "string"
+    ? (splitString ? value.split(/[\s,]+/) : [value])
+    : Array.isArray(value) && value.every((item) => typeof item === "string")
+      ? value as string[]
+      : null;
+  if (!values) throw new ManagedHostError(`Managed assertion ${name} is malformed.`);
+  const result = [...new Set(values.map((item) => item.trim()).filter(Boolean))];
+  if (result.length > maxItems || result.some((item) => item.length > 100)) {
+    throw new ManagedHostError(`Managed assertion ${name} is too long.`);
+  }
+  return result;
+}
+
 function assertionScopes(claims: ManagedAssertionClaims): string[] {
   const value = claims.scope ?? claims.scopes;
-  if (typeof value === "string") return value.split(/[\s,]+/).filter(Boolean);
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return value as string[];
+  return claimList(value, "scope");
+}
+
+function assertionRoles(claims: ManagedAssertionClaims): string[] {
+  return claimList(claims.roles ?? claims.role, "roles");
+}
+
+function managedLogoutUrl(value: unknown): string | null {
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+    return null;
   }
-  return [];
+  if (typeof value !== "string") {
+    throw new ManagedHostError("ALDUNIS_MANAGED_LOGOUT_URL must be an HTTPS URL.", 500);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new ManagedHostError("ALDUNIS_MANAGED_LOGOUT_URL must be an HTTPS URL.", 500);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) {
+    throw new ManagedHostError(
+      "ALDUNIS_MANAGED_LOGOUT_URL must be an HTTPS URL without credentials or a fragment.",
+      500,
+    );
+  }
+  return parsed.toString();
 }
 
 function bodyDigest(body: Buffer): string {
@@ -233,6 +304,7 @@ export async function loadManagedHostConfiguration(
   const audience = nonEmpty(env.ALDUNIS_MANAGED_ASSERTION_AUDIENCE, "ALDUNIS_MANAGED_ASSERTION_AUDIENCE");
   const tenantId = nonEmpty(env.ALDUNIS_MANAGED_TENANT_ID, "ALDUNIS_MANAGED_TENANT_ID");
   const instanceId = nonEmpty(env.ALDUNIS_MANAGED_INSTANCE_ID, "ALDUNIS_MANAGED_INSTANCE_ID");
+  const logoutUrl = managedLogoutUrl(env.ALDUNIS_MANAGED_LOGOUT_URL);
   const repositoriesJson = nonEmpty(
     env.ALDUNIS_MANAGED_REPOSITORIES_JSON,
     "ALDUNIS_MANAGED_REPOSITORIES_JSON",
@@ -278,6 +350,7 @@ export async function loadManagedHostConfiguration(
     tenantId,
     instanceId,
     publicKey: await readPublicKey(env),
+    logoutUrl,
     repositories: await canonicalRepositories(repositoriesJson),
     shikigami: {
       executable,
@@ -311,12 +384,23 @@ export class ManagedHost {
     return this.configuration.shikigami;
   }
 
-  capabilities(): Record<string, unknown> {
+  capabilities(identity?: ManagedIdentity): Record<string, unknown> {
     return {
       mode: "managed",
       managed: true,
       tenantScoped: true,
       singleTenantAlpha: true,
+      account: identity
+        ? {
+            displayName: identity.displayName,
+            tenantId: identity.tenantId,
+            roles: identity.roles,
+            scopes: identity.scopes,
+            assertionExpiresAt: identity.assertionExpiresAt,
+            sessionExpiresAt: identity.sessionExpiresAt,
+            logoutUrl: identity.logoutUrl,
+          }
+        : null,
       provider: {
         id: "shikigami",
         name: "Shikigami",
@@ -406,7 +490,7 @@ export class ManagedHost {
     }
   }
 
-  async verify(request: IncomingMessage, body: Buffer): Promise<void> {
+  async verify(request: IncomingMessage, body: Buffer): Promise<ManagedIdentity> {
     const raw = request.headers[ASSERTION_HEADER];
     if (typeof raw !== "string" || !raw.trim()) {
       throw new ManagedHostError("A gateway-issued managed assertion is required.");
@@ -431,14 +515,16 @@ export class ManagedHost {
     if (claims.tenant_id !== this.configuration.tenantId || claims.instance_id !== this.configuration.instanceId) {
       throw new ManagedHostError("Managed assertion tenant or instance is not trusted.");
     }
-    stringClaim(claims.sub, "sub");
     if (claims.code_mode !== "managed" || claims.managed_profile !== "aldunis-code-managed") {
       throw new ManagedHostError("Managed assertion does not authorize the hosted workbench.");
     }
-    if (!assertionScopes(claims).includes(REQUIRED_SCOPE)) {
+    const scopes = assertionScopes(claims);
+    if (!scopes.includes(REQUIRED_SCOPE)) {
       throw new ManagedHostError("Managed assertion does not include the Code workbench scope.");
     }
     const now = Math.floor(this.#now() / 1000);
+    const subject = stringClaim(claims.sub, "sub");
+    const roles = assertionRoles(claims);
     const exp = numericClaim(claims.exp, "exp");
     const iat = numericClaim(claims.iat, "iat");
     if (exp <= now - CLOCK_SKEW_SECONDS || iat > now + CLOCK_SKEW_SECONDS) {
@@ -446,6 +532,15 @@ export class ManagedHost {
     }
     if (exp <= iat || exp - iat > MAX_ASSERTION_TTL_SECONDS) {
       throw new ManagedHostError("Managed assertion lifetime is not allowed.");
+    }
+    const sessionExp = claims.session_exp === undefined
+      ? null
+      : numericClaim(claims.session_exp, "session_exp");
+    if (sessionExp !== null && sessionExp <= now - CLOCK_SKEW_SECONDS) {
+      throw new ManagedHostError("Managed account session is expired.");
+    }
+    if (sessionExp !== null && sessionExp < iat) {
+      throw new ManagedHostError("Managed account session expiry is invalid.");
     }
     if (claims.nbf !== undefined && numericClaim(claims.nbf, "nbf") > now + CLOCK_SKEW_SECONDS) {
       throw new ManagedHostError("Managed assertion is not yet valid.");
@@ -472,6 +567,21 @@ export class ManagedHost {
       throw new ManagedHostError("Managed assertion body binding does not match the request.");
     }
     this.#replayed.set(jti, exp + CLOCK_SKEW_SECONDS);
+    const displayName = optionalClaimString(claims.name, "name")
+      ?? optionalClaimString(claims.display_name, "display_name")
+      ?? optionalClaimString(claims.preferred_username, "preferred_username")
+      ?? optionalClaimString(claims.email, "email")
+      ?? DEFAULT_MANAGED_DISPLAY_NAME;
+    return {
+      subject,
+      displayName,
+      tenantId: this.configuration.tenantId,
+      roles,
+      scopes,
+      assertionExpiresAt: new Date(exp * 1000).toISOString(),
+      sessionExpiresAt: sessionExp === null ? null : new Date(sessionExp * 1000).toISOString(),
+      logoutUrl: this.configuration.logoutUrl ?? null,
+    };
   }
 }
 

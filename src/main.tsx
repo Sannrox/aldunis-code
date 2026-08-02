@@ -353,6 +353,7 @@ function App() {
         showThinking={preferences.showThinking}
         managedMode={hostCapabilities.managed}
         managedModel={hostCapabilities.provider?.model}
+        managedAccount={hostCapabilities.account}
       />
       <RepositoryDialog
         open={repositoryDialog}

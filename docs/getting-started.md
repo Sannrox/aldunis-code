@@ -62,6 +62,10 @@ public release evidence.
 Provider credentials stay in each CLI’s own credential store. They are never
 returned to the browser. See [providers.md](providers.md).
 
+Local Code has no Aldunis account login. The local OS user, the loopback host,
+and each provider's own credential store form the local boundary. An account
+panel appears only when the host is running in enterprise-managed mode.
+
 ## Verify the tree
 
 ```sh
@@ -164,6 +168,25 @@ npm run host -- --remote-auth revoke --session <session-id>
 ```
 
 Details: [remote-workbench.md](remote-workbench.md).
+
+## Enterprise-managed mode (operator deployment)
+
+Enterprise mode is started explicitly with `ALDUNIS_HOST_MODE=managed` behind
+the configured gateway. The gateway authenticates the browser through the
+enterprise identity provider and forwards short-lived signed Code assertions;
+Code verifies those assertions and shows the resulting account, tenant,
+roles/scopes, and expiry in the managed sidebar. Code does not receive a
+password or provider credential and does not allow the browser to choose a
+tenant.
+
+Set `ALDUNIS_MANAGED_LOGOUT_URL` to the gateway's HTTPS sign-out URL if the
+managed account panel should include a direct **Sign out** link. The value is
+optional and is rejected if it contains credentials or a URL fragment.
+
+The enterprise gateway must provide the managed assertion configuration and
+repository/provider settings described in the [managed hosted workbench
+decision](decisions/managed-hosted-workbench.md). Managed mode is single-tenant
+and does not fall back to local or paired-remote authentication.
 
 ## Repository and worktree notes
 

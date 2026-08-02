@@ -1,5 +1,11 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
-import type { Product, RepositoryMetadata, ChangedFile, ConversationSummary } from "../../types";
+import type {
+  Product,
+  RepositoryMetadata,
+  ChangedFile,
+  ConversationSummary,
+  ManagedAccount,
+} from "../../types";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
 import { branchFromWorktree, groupSidebarConversations } from "./conversation-list";
@@ -10,6 +16,7 @@ import {
   type ProductAvailability,
 } from "../../lib/product-availability";
 import { AldunisBrandMark } from "../../components/brand-mark";
+import { ManagedAccountPanel } from "./managed-account-panel";
 
 export type ProjectFilter = "all" | string;
 
@@ -54,6 +61,7 @@ export function CodeSidebar({
   onReleaseWorktree,
   worktreeLimit,
   managedWorktreeCount,
+  managedAccount,
   onSettings,
 }: {
   product: Product;
@@ -94,6 +102,7 @@ export function CodeSidebar({
   onReleaseWorktree: (conversation: ConversationSummary) => void;
   worktreeLimit: number;
   managedWorktreeCount: number;
+  managedAccount?: ManagedAccount | null;
   onSettings: () => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
@@ -578,6 +587,7 @@ export function CodeSidebar({
       )}
 
       <div className="sb-ft">
+        {managedAccount && <ManagedAccountPanel account={managedAccount} />}
         <button
           type="button"
           className="btn btn-ghost btn-xs"

@@ -50,6 +50,10 @@
       "description": "A short-lived EdDSA gateway assertion bound to the configured issuer, audience, tenant, instance, Code workbench scope, managed profile, and single-use identity; altered, expired, replayed, or cross-context assertions are denied."
     },
     {
+      "name": "ManagedAccountProjection",
+      "description": "A bounded, read-only browser projection of the gateway-verified enterprise identity for one managed Code request, containing display name, fixed tenant, roles, scopes, and expiry without the assertion, credentials, or raw subject identifier."
+    },
+    {
       "name": "ManagedRepositoryCatalogue",
       "description": "The operator-owned allowlist of canonical Git repositories and discovered worktrees available to one managed hosted Code instance; symlink, URL, arbitrary path, and filesystem-mount escapes are rejected."
     },
@@ -110,6 +114,16 @@
       "range": "ManagedHostedAssertion",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "projects_managed_account",
+      "description": "The managed hosted workbench projects the current gateway-verified account into a bounded browser capability response without creating account or tenant authority in Code.",
+      "domain": "ManagedHostedWorkbench",
+      "range": "ManagedAccountProjection",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     },
@@ -270,6 +284,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "ManagedAccountProjection",
+      "source": "Accepted Aldunis Code managed account projection contract",
+      "locator": "docs/decisions/managed-hosted-workbench.md#account-projection; server/managed-host.ts#ManagedHost.capabilities",
+      "confidence": 1.0
+    },
+    {
       "subject": "ManagedRepositoryCatalogue",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#loadManagedHostConfiguration",
@@ -285,6 +305,12 @@
       "subject": "authenticates_managed_host",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "server/managed-host.ts#ManagedHost.verify",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_managed_account",
+      "source": "Accepted Aldunis Code managed account projection contract",
+      "locator": "server/host.ts#/api/host/capabilities; src/features/code/managed-account-panel.tsx",
       "confidence": 1.0
     },
     {
