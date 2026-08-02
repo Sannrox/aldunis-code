@@ -8,7 +8,7 @@ import type {
   DelegatedConversationRelationship,
   DelegatedInputProjection,
 } from "../../types";
-import { DelegatedChildrenPanel } from "./workbench";
+import { DelegatedChildrenPanel, isThreadStatusEvent } from "./workbench";
 
 const parent: ConversationSummary = {
   id: "parent",
@@ -55,6 +55,19 @@ const delegatedApproval: DelegatedApprovalProjection = {
     expiresAt: "2026-07-30T10:05:00.000Z",
   },
 };
+
+test("accepts completion status events for sidebar synchronization", () => {
+  assert.equal(isThreadStatusEvent({
+    threadId: "thread-1",
+    status: "completed",
+    at: "2026-08-02T12:00:00.000Z",
+  }), true);
+  assert.equal(isThreadStatusEvent({
+    threadId: "thread-1",
+    status: "completed",
+  }), false);
+  assert.equal(isThreadStatusEvent(null), false);
+});
 
 test("delegated child approval card exposes its complete scoped context", () => {
   const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
