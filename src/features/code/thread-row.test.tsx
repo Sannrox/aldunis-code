@@ -61,6 +61,7 @@ test("beside is available from the thread-row menu and invokes its action", asyn
     assert.equal(container.querySelector(".beside"), null);
     const trigger = container.querySelector<HTMLButtonElement>(".row-more");
     assert.ok(trigger);
+    assert.equal(trigger.textContent?.trim(), "⋮");
 
     await act(async () => {
       trigger.click();

@@ -181,7 +181,7 @@ export function ThreadRow({
                 setMenuOpen((open) => !open);
               }}
             >
-              ⋯
+              ⋮
             </button>
             {menuOpen && (
               <div
