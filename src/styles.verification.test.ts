@@ -113,6 +113,13 @@ test("narrow review dock must not use fixed 42vh basis that crushes .conv", () =
   );
 });
 
+test("conversation thread shell supports auto-follow jump control", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.thread-shell\s*\{[^}]*position:\s*relative/s);
+  assert.match(shell, /\.thread-follow-jump\s*\{[^}]*position:\s*absolute/s);
+});
+
 test("review dock contains overflow; short docks use one scroll stream", () => {
   // Stacked dual-pane left .rv-files ~8px and .review-workspace ~14px when both
   // competed for a ~60px body. Desktop: workspace scrolls; mobile: body scrolls.
