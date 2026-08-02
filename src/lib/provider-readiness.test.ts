@@ -14,6 +14,7 @@ import {
   prettifyModelId,
   providerAvatarInitials,
   providerChipName,
+  providerDiscoveryForProfile,
   providerDisplayName,
   providerModelLabel,
   providerModelOptions,
@@ -125,6 +126,30 @@ test("providerNotReadyMessage prefers host detail", () => {
     }),
     "Unsupported shikigami version. Aldunis Code requires 1.0.2+.",
   );
+});
+
+test("providerDiscoveryForProfile selects Shikigami readiness and models", () => {
+  const discovery: ProviderDiscovery = {
+    id: "shikigami",
+    installed: true,
+    authenticated: true,
+    models: [{ id: "scripted", displayName: "Scripted", isDefault: true }],
+    profileDiscoveries: [
+      {
+        profileId: "custom:shikigami",
+        installed: true,
+        authenticated: false,
+        detail: "Set CUSTOM_API_KEY.",
+        models: [{ id: "local-model", displayName: "local-model", isDefault: true }],
+      },
+    ],
+  };
+  const selected = providerDiscoveryForProfile("shikigami", discovery, "custom:shikigami");
+  assert.equal(selected?.installed, true);
+  assert.equal(selected?.authenticated, false);
+  assert.equal(selected?.detail, "Set CUSTOM_API_KEY.");
+  assert.equal(selected?.models?.[0]?.id, "local-model");
+  assert.equal(providerDiscoveryForProfile("codex-cli", discovery, "custom:shikigami"), discovery);
 });
 
 test("providerNotReadyMessage covers Claude, Codex, Shikigami, and adapters", () => {

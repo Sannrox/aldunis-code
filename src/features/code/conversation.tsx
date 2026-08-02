@@ -25,6 +25,7 @@ import {
   parseProviderFailure,
   providerAvatarInitials,
   providerChipName as formatProviderChipName,
+  providerDiscoveryForProfile,
   providerDisplayName,
   providerListLabel,
   providerModelLabel,
@@ -299,6 +300,13 @@ export function Conversation({
   const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
     ?? claudeProfiles[0]?.id
     ?? "";
+  const shikigamiProfiles = useMemo(
+    () => profiles.filter((profile) => profile.provider === "shikigami"),
+    [profiles],
+  );
+  const defaultShikigamiProfileId = shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id
+    ?? shikigamiProfiles[0]?.id
+    ?? "";
   const [model, setModel] = useState(managedMode ? (managedModel ?? "default") : "default");
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
@@ -314,12 +322,17 @@ export function Conversation({
   const [provider, setProvider] = useState<ProviderId>(
     () => managedMode ? "shikigami" : conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
   );
+  const providerDiscoveryContext = useMemo(() => (
+    repository?.root && repository.selectedWorktree
+      ? { root: repository.root, worktree: repository.selectedWorktree }
+      : {}
+  ), [repository?.root, repository?.selectedWorktree]);
   const [providers, setProviders] = useState<ProviderDiscovery[]>(
-    () => peekProviderDiscoveryCache() ?? [],
+    () => peekProviderDiscoveryCache(providerDiscoveryContext) ?? [],
   );
   /** False until first /api/providers/discover settles — avoids “Install CLI” flash. */
   const [providersLoaded, setProvidersLoaded] = useState(
-    () => peekProviderDiscoveryCache() !== null,
+    () => peekProviderDiscoveryCache(providerDiscoveryContext) !== null,
   );
   const [forkOpen, setForkOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -339,14 +352,14 @@ export function Conversation({
     if (showPending) {
       setProvidersLoaded(false);
     }
-    void loadProviderDiscovery()
+    void loadProviderDiscovery(providerDiscoveryContext)
       .then((list) => setProviders(list))
       .finally(() => setProvidersLoaded(true));
-  }, []);
+  }, [providerDiscoveryContext]);
   useEffect(() => {
-    loadProviders(false);
+    loadProviders(false, true);
     const onAdaptersChanged = () => loadProviders(true);
-    const onProviderRetry = () => loadProviders(false, true);
+    const onProviderRetry = () => loadProviders(true, true);
     window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
     window.addEventListener("aldunis:providers-retry", onProviderRetry);
     return () => {
@@ -356,8 +369,12 @@ export function Conversation({
   }, [loadProviders]);
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
-  const selectedProvider = providers.find((item) => item.id === provider);
-  const discoveryTimedOut = providerDiscoveryTimedOut();
+  const selectedProvider = providerDiscoveryForProfile(
+    provider,
+    providers.find((item) => item.id === provider),
+    profileId,
+  );
+  const discoveryTimedOut = providerDiscoveryTimedOut(providerDiscoveryContext);
   const providerName = providerDisplayName(provider, selectedProvider);
   /** Short role label in the transcript (Claude / Codex / Grok Build / …). */
   const providerLabel = providerListLabel(provider);
@@ -391,13 +408,17 @@ export function Conversation({
    */
   const availableProviders = useMemo(() => {
     if (managedMode) return shikigamiProvider?.installed === false ? [] : ["shikigami" as ProviderId];
+    const shikigamiInstalled = Boolean(
+      shikigamiProvider?.installed
+      || shikigamiProvider?.profileDiscoveries?.some((profile) => profile.installed),
+    );
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
     for (const id of BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER) {
       if (id === "codex-cli" && codex?.installed) list.push(id);
       // Keep Claude selectable when installed; empty profiles disable send, not the choice.
       if (id === "claude-code" && (!claude || claude.installed !== false)) list.push(id);
-      if (id === "shikigami" && shikigamiProvider?.installed) list.push(id);
+      if (id === "shikigami" && shikigamiInstalled) list.push(id);
     }
     for (const item of providers) {
       if (
@@ -410,7 +431,7 @@ export function Conversation({
       }
     }
     return list;
-  }, [codex?.installed, managedMode, shikigamiProvider?.installed, providers]);
+  }, [codex?.installed, managedMode, shikigamiProvider, providers]);
   /**
    * New conversations only, before a thread/run is created. Once threadId or
    * runId exists the provider is fixed (cross-provider moves use fork).
@@ -443,7 +464,14 @@ export function Conversation({
       return;
     }
     if (next === "shikigami") {
-      const defaultModel = resolveDefaultProviderModel("shikigami", shikigamiProvider);
+      const nextProfileId = shikigamiProfiles.some((profile) => profile.id === profileId)
+        ? profileId
+        : defaultShikigamiProfileId;
+      setProfileId(nextProfileId);
+      const defaultModel = resolveDefaultProviderModel(
+        "shikigami",
+        providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+      );
       setModel(defaultModel);
       setReasoningEffort("medium");
       return;
@@ -850,10 +878,34 @@ export function Conversation({
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
   useEffect(() => {
-    if (!claudeProfiles.some((profile) => profile.id === profileId)) {
-      setProfileId(defaultClaudeProfileId);
+    if (profiles.length === 0) return;
+    if (provider === "claude-code") {
+      if (!claudeProfiles.some((profile) => profile.id === profileId)) {
+        setProfileId(defaultClaudeProfileId);
+      }
+      return;
     }
-  }, [claudeProfiles, defaultClaudeProfileId, profileId]);
+    if (provider === "shikigami") {
+      if (!shikigamiProfiles.some((profile) => profile.id === profileId)) {
+        setProfileId(defaultShikigamiProfileId);
+        setModel(resolveDefaultProviderModel(
+          "shikigami",
+          providerDiscoveryForProfile("shikigami", shikigamiProvider, defaultShikigamiProfileId),
+        ));
+      }
+      return;
+    }
+    if (profileId) setProfileId("");
+  }, [
+    claudeProfiles,
+    defaultClaudeProfileId,
+    defaultShikigamiProfileId,
+    profileId,
+    profiles.length,
+    provider,
+    shikigamiProfiles,
+    shikigamiProvider,
+  ]);
   const [previewMounted, setPreviewMounted] = useState(false);
   const [previewStatus, setPreviewStatus] = useState<PreviewPanelStatus>({
     state: "inactive",
@@ -1440,7 +1492,11 @@ export function Conversation({
     : provider === "codex-cli"
       ? Boolean(codex?.installed && codex.authenticated)
       : provider === "shikigami"
-      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
+      ? Boolean(
+          selectedProvider?.installed
+          && selectedProvider.authenticated
+          && shikigamiProfiles.some((profile) => profile.id === profileId),
+        )
       : Boolean(
         selectedProvider
         && selectedProvider.installed !== false
@@ -1639,7 +1695,11 @@ export function Conversation({
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           contextPins,
-          profileId: managedMode ? null : provider === "claude-code" ? profileId : null,
+          profileId: managedMode
+            ? null
+            : provider === "claude-code" || provider === "shikigami"
+            ? profileId
+            : null,
           model: turnModel,
           provider: turnProvider,
           workspaceMode,
@@ -3125,22 +3185,38 @@ export function Conversation({
                     const label = providerDisplayName(id, discovery);
                     const chip = formatProviderChipName(id, discovery);
                     const selected = id === provider;
+                    const shikigamiMenuDiscovery = id === "shikigami"
+                      ? providerDiscoveryForProfile(
+                          "shikigami",
+                          shikigamiProvider,
+                          shikigamiProfiles.some((profile) => profile.id === profileId)
+                            ? profileId
+                            : defaultShikigamiProfileId,
+                        )
+                      : undefined;
                     const ready = id === "claude-code"
                       ? Boolean(profileId)
                       : id === "codex-cli"
                       ? Boolean(codex?.installed && codex.authenticated)
                       : id === "shikigami"
-                      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
+                      ? Boolean(
+                          shikigamiMenuDiscovery?.installed
+                          && shikigamiMenuDiscovery.authenticated
+                          && shikigamiProfiles.length > 0,
+                        )
                       : Boolean(
                         discovery
                         && discovery.installed !== false
                         && discovery.enabled !== false
                         && discovery.authenticated !== false,
                       );
+                    const statusDiscovery = id === "shikigami"
+                      ? shikigamiMenuDiscovery
+                      : discovery;
                     const status = ready
                       ? (selected ? "selected" : "ready")
-                      : (discovery?.detail?.trim()
-                        || providerNotReadyMessage(id, discovery, {
+                      : (statusDiscovery?.detail?.trim()
+                        || providerNotReadyMessage(id, statusDiscovery, {
                           hasClaudeProfile: Boolean(profileId),
                           providerName: label,
                         }));
@@ -3165,6 +3241,28 @@ export function Conversation({
                       </button>
                     );
                   })}
+                  {provider === "shikigami" && shikigamiProfiles.length > 1 && (
+                    <div className="composer-provider-profile">
+                      <label htmlFor="composer-shikigami-profile">Shikigami profile
+                        <select
+                          id="composer-shikigami-profile"
+                          value={profileId}
+                          onChange={(event) => {
+                            const nextProfileId = event.target.value;
+                            setProfileId(nextProfileId);
+                            setModel(resolveDefaultProviderModel(
+                              "shikigami",
+                              providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                            ));
+                          }}
+                        >
+                          {shikigamiProfiles.map((profile) => (
+                            <option value={profile.id} key={profile.id}>{profile.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
                   <button
                     type="button"
                     role="option"

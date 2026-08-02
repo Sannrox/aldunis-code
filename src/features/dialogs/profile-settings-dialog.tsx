@@ -45,6 +45,11 @@ function profileDetail(profile: ClaudeProfile): string {
   if (profile.provider === "claude-code") {
     return profile.homePath ? `${providerLabel} · ${profile.homePath}` : `${providerLabel} · Default home`;
   }
+  if (profile.provider === "shikigami") {
+    return profile.configPath
+      ? `${providerLabel} · ${profile.configPath}`
+      : `${providerLabel} · Native config`;
+  }
   if (profile.binaryPath) return `${providerLabel} · ${profile.binaryPath}`;
   return `${providerLabel} · Empty default`;
 }
@@ -88,6 +93,7 @@ export function ProfileSettingsDialog({
   const [provider, setProvider] = useState("claude-code");
   const [binaryPath, setBinaryPath] = useState("claude");
   const [homePath, setHomePath] = useState("");
+  const [configPath, setConfigPath] = useState("");
   const [environment, setEnvironment] = useState("");
   const [sensitiveEnvironment, setSensitiveEnvironment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -100,6 +106,7 @@ export function ProfileSettingsDialog({
     setProvider(profile?.provider ?? "claude-code");
     setBinaryPath(profile?.binaryPath ?? "claude");
     setHomePath(profile?.homePath ?? "");
+    setConfigPath(profile?.configPath ?? "");
     setEnvironment(profile?.environment.filter((item) => !item.sensitive).map((item) => `${item.name}=${item.value ?? ""}`).join("\n") ?? "");
     setSensitiveEnvironment(profile?.environment.filter((item) => item.sensitive).map((item) => `${item.name}=`).join("\n") ?? "");
     setError(null);
@@ -219,6 +226,7 @@ export function ProfileSettingsDialog({
       name,
       binaryPath,
       homePath: (selected?.provider ?? provider) === "claude-code" ? homePath : "",
+      configPath: (selected?.provider ?? provider) === "shikigami" ? configPath : "",
       environment: [
         ...parseEnvironment(environment, false, selected?.environment ?? []),
         ...parseEnvironment(sensitiveEnvironment, true, selected?.environment ?? []),
@@ -269,6 +277,7 @@ export function ProfileSettingsDialog({
                 edit(null);
                 setProvider("claude-code");
                 setBinaryPath("claude");
+                setConfigPath("");
                 setName("");
               }}
               aria-label="New profile"
@@ -289,6 +298,7 @@ export function ProfileSettingsDialog({
                     setProvider(next);
                     const match = NEW_PROFILE_PROVIDERS.find((item) => item.id === next);
                     if (match) setBinaryPath(match.binary);
+                    if (next !== "shikigami") setConfigPath("");
                   }}
                 >
                   {NEW_PROFILE_PROVIDERS.map((item) => (
@@ -332,6 +342,17 @@ export function ProfileSettingsDialog({
                     value={homePath}
                     onChange={(event) => setHomePath(event.target.value)}
                     placeholder="~/.claude-personal"
+                  />
+                </label>
+              )}
+              {!isClaude && (selected?.provider ?? provider) === "shikigami" && (
+                <label htmlFor="profile-shikigami-config-path">Shikigami config path
+                  <input
+                    id="profile-shikigami-config-path"
+                    name="profile-shikigami-config-path"
+                    value={configPath}
+                    onChange={(event) => setConfigPath(event.target.value)}
+                    placeholder="Native config resolution"
                   />
                 </label>
               )}

@@ -80,7 +80,14 @@ Because the current adapter does not keep a parked subprocess resumable, an
 answer starts an explicitly identified follow-up turn in the same child
 conversation. The answer is never copied into the parent provider context.
 
-- Code generates a run config with the selected worktree as workspace.
+- The built-in Shikigami profile uses Shikigami's native config resolution:
+  `SHIKIGAMI_CONFIG`, `$SHIKIGAMI_STATE/shikigami.toml`, then the selected
+  worktree's `shikigami.toml`. A user-created Shikigami profile may provide an
+  explicit config path. Code never edits the source config; it creates a
+  private per-run overlay that preserves model, governance, network, context,
+  and other provider settings while enforcing the selected worktree, Code's
+  mode tool allow-list, stderr events, bounded turns, and the local approval
+  hook. Native MCP definitions are not imported implicitly.
 - Progress is streamed from stderr events (`[shikigami] {…}`).
 - Build-mode mutating tools are gated by a fail-closed `pre_tool` hook into the
   PermissionBroker (same allow-once contract as other providers).
@@ -89,7 +96,7 @@ conversation. The answer is never copied into the parent provider context.
   API key. The composer surfaces that copy instead of a generic “not ready”.
 - Parked questions remain actionable in the child conversation and, when beta
   delegation is enabled, from the exact parent-child coordination card.
-- Governance defaults to `local`; operators may point
+- With no native config, governance defaults to `local`; operators may point
   `SHIKIGAMI_GOVERNANCE_ADAPTER` at `sekai-chisei` for plane-governed runs.
 - Governed direct runs display a **Direct governed** correlation after
   Shikigami confirms its run UUID. Code enforces `operation_id = run_id`; this

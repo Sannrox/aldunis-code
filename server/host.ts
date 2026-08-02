@@ -20,7 +20,11 @@ import {
 } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
-import { ShikigamiAdapter } from "./shikigami-provider.ts";
+import {
+  ShikigamiAdapter,
+  type ShikigamiProfileRuntime,
+  type ShikigamiReadiness,
+} from "./shikigami-provider.ts";
 import { beginProviderEventStream } from "./provider-stream.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import { probeAcpModels } from "./acp-models.ts";
@@ -81,6 +85,7 @@ import {
 } from "./state.ts";
 import {
   ClaudeProfileStore,
+  DEFAULT_SHIKIGAMI_PROFILE_ID,
   isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
@@ -139,6 +144,19 @@ function adapterProfileSeed(adapter: {
       })),
   };
 }
+
+function unavailableShikigamiReadiness(detail: string): ShikigamiReadiness {
+  return {
+    id: "shikigami",
+    installed: false,
+    authenticated: false,
+    version: null,
+    models: [],
+    name: "Shikigami",
+    detail,
+  };
+}
+
 const MAX_BODY_BYTES = 128 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
@@ -261,6 +279,14 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   } catch {
     throw new RepositoryError("Request body must be valid JSON.");
   }
+}
+
+async function readOptionalJson(request: IncomingMessage): Promise<unknown> {
+  const contentLength = request.headers["content-length"];
+  if (contentLength !== undefined) {
+    return Number.parseInt(contentLength, 10) > 0 ? readJson(request) : {};
+  }
+  return request.headers["transfer-encoding"] ? readJson(request) : {};
 }
 
 async function bufferRequest(request: IncomingMessage): Promise<Buffer> {
@@ -540,6 +566,19 @@ async function handleApi(
       return true;
     }
     if (route === "/api/providers/discover") {
+      const body = await readOptionalJson(request);
+      if (!isRecord(body)) throw new RepositoryError("Provider discovery context must be an object.");
+      const hasRoot = body.root !== undefined;
+      const hasWorktree = body.worktree !== undefined;
+      if (hasRoot !== hasWorktree || (hasRoot && (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+      ))) {
+        throw new RepositoryError("Provider discovery requires both a repository root and worktree.");
+      }
+      const discoveryCwd = hasRoot
+        ? (await selectedWorktree(body.root as string, body.worktree as string)).worktree
+        : process.cwd();
       if (managedHost) {
         sendJson(response, 200, {
           providers: [{
@@ -623,20 +662,56 @@ async function handleApi(
           };
         }),
       );
-      const shikigamiReadiness = await shikigami.readiness().catch(() => ({
-        id: "shikigami" as const,
-        installed: false,
-        authenticated: false,
-        version: null,
-        models: [] as Array<{ id: string; displayName: string; isDefault: boolean }>,
-        name: "Shikigami",
-        detail: "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
-      }));
+      const shikigamiProfiles = (await profiles.list().catch(() => []))
+        .filter((profile) => profile.provider === "shikigami");
+      const shikigamiProfileDiscoveries = await Promise.all(
+        shikigamiProfiles.map(async (profile) => {
+          let readiness: ShikigamiReadiness;
+          try {
+            const runtime = await profiles.runtime(profile.id);
+            readiness = await shikigami.readiness(runtime.environment, {
+              executable: runtime.executable,
+              configPath: runtime.configPath,
+              cwd: discoveryCwd,
+            });
+          } catch (error) {
+            readiness = unavailableShikigamiReadiness(
+              error instanceof ProviderProtocolError
+                ? error.message
+                : "The selected Shikigami profile could not be checked.",
+            );
+          }
+          return {
+            profileId: profile.id,
+            installed: readiness.installed,
+            authenticated: readiness.authenticated,
+            version: readiness.version,
+            detail: readiness.detail,
+            models: readiness.models,
+          };
+        }),
+      );
+      const defaultShikigamiDiscovery = shikigamiProfileDiscoveries.find(
+        (profile) => profile.profileId === DEFAULT_SHIKIGAMI_PROFILE_ID,
+      );
+      const shikigamiReadiness = defaultShikigamiDiscovery
+        ? {
+            id: "shikigami" as const,
+            installed: defaultShikigamiDiscovery.installed,
+            authenticated: defaultShikigamiDiscovery.authenticated,
+            version: defaultShikigamiDiscovery.version,
+            models: defaultShikigamiDiscovery.models,
+            name: "Shikigami",
+            detail: defaultShikigamiDiscovery.detail,
+          }
+        : unavailableShikigamiReadiness(
+            "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
+          );
       sendJson(response, 200, {
         providers: [
           { id: "claude-code", installed: true },
           codexReadiness,
-          shikigamiReadiness,
+          { ...shikigamiReadiness, profileDiscoveries: shikigamiProfileDiscoveries },
           ...declarativeProviders,
         ],
       });
@@ -1140,7 +1215,13 @@ async function handleApi(
         || (body.workspaceMode !== undefined
           && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
         || (body.provider === "claude-code" && typeof body.profileId !== "string")
-        || ((body.provider === "codex-cli" || body.provider === "shikigami") && body.profileId !== null)
+        || (body.provider === "codex-cli" && body.profileId !== null)
+        || (
+          body.provider === "shikigami"
+          && body.profileId !== undefined
+          && body.profileId !== null
+          && typeof body.profileId !== "string"
+        )
       ) {
         throw new LocalStateError(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
@@ -1207,7 +1288,20 @@ async function handleApi(
         }
         await profiles.runtime(body.profileId as string);
       } else if (body.provider === "shikigami") {
-        const readiness = await shikigami.readiness();
+        const shikigamiProfile = typeof body.profileId === "string"
+          ? await profiles.runtime(body.profileId)
+          : null;
+        if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
+          throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
+        }
+        const readiness = await shikigami.readiness(
+          shikigamiProfile?.environment ?? process.env,
+          {
+            executable: shikigamiProfile?.executable,
+            configPath: shikigamiProfile?.configPath,
+            cwd: destinationWorktree,
+          },
+        );
         if (!readiness.installed || !readiness.authenticated) {
           throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
         }
@@ -1229,7 +1323,7 @@ async function handleApi(
       const created = await state.createFork({
         sourceThreadId: source.id,
         provider: body.provider,
-        profileId: body.profileId as string | null,
+        profileId: typeof body.profileId === "string" ? body.profileId : null,
         model: body.model,
         worktree: source.worktree,
         destinationWorktree,
@@ -1949,6 +2043,7 @@ async function handleApi(
         name?: unknown;
         binaryPath?: unknown;
         homePath?: unknown;
+        configPath?: unknown;
         environment?: unknown;
       };
       const environment = Array.isArray(body.environment)
@@ -1976,6 +2071,7 @@ async function handleApi(
         || (body.provider !== undefined && typeof body.provider !== "string")
         || (body.binaryPath !== undefined && typeof body.binaryPath !== "string")
         || (body.homePath !== undefined && typeof body.homePath !== "string")
+        || (body.configPath !== undefined && typeof body.configPath !== "string")
         || (body.environment !== undefined && !Array.isArray(body.environment))
       ) {
         throw new ProfileError("A valid provider profile is required.");
@@ -1986,6 +2082,7 @@ async function handleApi(
         name: body.name,
         ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
         ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
+        ...(typeof body.configPath === "string" ? { configPath: body.configPath } : {}),
         ...(environment ? { environment } : {}),
       }));
       return true;
@@ -2109,6 +2206,12 @@ async function handleApi(
         ))
         || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
+        || (
+          providerId === "shikigami"
+          && body.profileId !== undefined
+          && body.profileId !== null
+          && typeof body.profileId !== "string"
+        )
         || typeof body.model !== "string"
         || (providerId === "claude-code" && !isAllowedClaudeModel(body.model))
         || (body.reasoningEffort !== undefined
@@ -2279,7 +2382,11 @@ async function handleApi(
         && (
           pendingFork.provider !== providerId
           || pendingFork.model !== body.model
-          || pendingFork.profileId !== (providerId === "claude-code" ? body.profileId : null)
+          || pendingFork.profileId !== (
+            providerId === "claude-code" || providerId === "shikigami"
+              ? (body.profileId ?? null) as string | null
+              : null
+          )
           || pendingFork.worktree !== context.worktree
         )
       ) {
@@ -2288,9 +2395,14 @@ async function handleApi(
           409,
         );
       }
-      const profile = providerId === "claude-code"
+      const profile = providerId === "claude-code" || (
+        providerId === "shikigami" && typeof body.profileId === "string"
+      )
         ? await profiles.runtime(body.profileId as string)
         : null;
+      if (profile && profile.profile.provider !== providerId) {
+        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+      }
       const previousSession = typeof body.threadId === "string"
         ? projection.providerSessions.find(
           (session) => session.threadId === body.threadId && session.provider === providerId,
@@ -2313,7 +2425,7 @@ async function handleApi(
         && previousSession.continuationKey !== profile.continuationKey
       ) {
         throw new ProfileError(
-          "This thread can only continue with a Claude profile using the same Claude home.",
+          "This thread can only continue with the same provider profile.",
           409,
         );
       }
@@ -2448,7 +2560,14 @@ async function handleApi(
                 ...managedHost.shikigami,
                 stateRoot: join(state.directory, "managed-shikigami"),
               }
-            : undefined)
+            : undefined,
+            profile && providerId === "shikigami"
+              ? {
+                  executable: profile.executable,
+                  environment: profile.environment,
+                  configPath: profile.configPath,
+                } satisfies ShikigamiProfileRuntime
+              : undefined)
           : installedAdapter
           ? await (async () => {
               const executable = await adapters.resolveExecutable(installedAdapter);
@@ -3647,7 +3766,9 @@ export function createLocalHost(
     const model = thread.model
       ?? session?.model
       ?? (providerId === "claude-code" ? "default" : providerId === "shikigami" ? "scripted" : "default");
-    const profileId = thread.profileId ?? session?.profileId ?? undefined;
+    const profileId = thread.profileId
+      ?? session?.profileId
+      ?? (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
     const protocol = tls ? "https" : "http";
     const response = await fetch(`${protocol}://127.0.0.1:${address.port}/api/provider/runs`, {
       method: "POST",
@@ -3663,7 +3784,7 @@ export function createLocalHost(
         resumeSessionId: session?.sessionId,
         provider: providerId,
         model,
-        profileId: providerId === "claude-code" ? profileId : undefined,
+        profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
       }),
     });
     if (!response.ok) {

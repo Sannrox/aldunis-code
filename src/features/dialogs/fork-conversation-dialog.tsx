@@ -10,6 +10,7 @@ import type {
 import { Button } from "../../components/ui";
 import { MarkdownBody } from "../../components/markdown-body";
 import {
+  providerDiscoveryForProfile,
   providerModelOptions,
   providerNotReadyMessage,
   resolveDefaultProviderModel,
@@ -49,7 +50,13 @@ export function ForkConversationDialog({
   const claudeProfiles = profiles.filter((profile) => (
     profile.provider === "claude-code" || !profile.provider
   ));
+  const shikigamiProfiles = profiles.filter((profile) => profile.provider === "shikigami");
   const claudeReady = claudeProfiles.length > 0;
+  const shikigamiReady = shikigamiProvider?.profileDiscoveries?.length
+    ? shikigamiProvider.profileDiscoveries.some((profile) => (
+      profile.installed && profile.authenticated !== false
+    ))
+    : isReady(shikigamiProvider);
   const defaultDestination = useMemo((): ProviderId => {
     const candidates: ProviderId[] = sourceProvider === "claude-code"
       ? ["codex-cli", "shikigami"]
@@ -59,18 +66,32 @@ export function ForkConversationDialog({
     for (const id of candidates) {
       if (id === "claude-code" && claudeReady) return id;
       if (id === "codex-cli" && isReady(codex)) return id;
-      if (id === "shikigami" && isReady(shikigamiProvider)) return id;
+      if (id === "shikigami" && shikigamiReady) return id;
     }
     return candidates[0]!;
-  }, [claudeReady, codex, shikigamiProvider, sourceProvider]);
+  }, [claudeReady, codex, shikigamiReady, sourceProvider]);
+  const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
+    ?? claudeProfiles[0]?.id
+    ?? "";
+  const defaultShikigamiProfileId = shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id
+    ?? shikigamiProfiles[0]?.id
+    ?? "";
+  const defaultShikigamiDiscovery = providerDiscoveryForProfile(
+    "shikigami",
+    shikigamiProvider,
+    defaultShikigamiProfileId,
+  );
   const [destination, setDestination] = useState<ProviderId>(defaultDestination);
   const [preview, setPreview] = useState<ForkPreview | null>(null);
   const [profileId, setProfileId] = useState(
-    claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
-      ?? claudeProfiles[0]?.id
-      ?? "",
+    defaultDestination === "shikigami" ? defaultShikigamiProfileId : defaultClaudeProfileId,
   );
-  const [model, setModel] = useState(() => resolveDefaultProviderModel(defaultDestination, providers.find((p) => p.id === defaultDestination)));
+  const [model, setModel] = useState(() => resolveDefaultProviderModel(
+    defaultDestination,
+    defaultDestination === "shikigami"
+      ? defaultShikigamiDiscovery
+      : providers.find((p) => p.id === defaultDestination),
+  ));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
@@ -78,6 +99,27 @@ export function ForkConversationDialog({
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
   const [forkDestinationId] = useState(() => crypto.randomUUID());
   const requiresManagedWorkspace = (preview?.workspaceMode ?? sourceWorkspaceMode) === "aldunis-managed";
+  useEffect(() => {
+    const eligible = destination === "shikigami" ? shikigamiProfiles : claudeProfiles;
+    const fallback = destination === "shikigami" ? defaultShikigamiProfileId : defaultClaudeProfileId;
+    if (!eligible.some((profile) => profile.id === profileId)) {
+      setProfileId(fallback);
+      if (destination === "shikigami") {
+        setModel(resolveDefaultProviderModel(
+          "shikigami",
+          providerDiscoveryForProfile("shikigami", shikigamiProvider, fallback),
+        ));
+      }
+    }
+  }, [
+    claudeProfiles,
+    defaultClaudeProfileId,
+    defaultShikigamiProfileId,
+    destination,
+    profileId,
+    shikigamiProfiles,
+    shikigamiProvider,
+  ]);
   useEffect(() => {
     void fetch("/api/forks/preview", {
       method: "POST",
@@ -101,7 +143,7 @@ export function ForkConversationDialog({
         body: JSON.stringify({
           sourceThreadId,
           provider: destination,
-          profileId: destination === "claude-code" ? profileId : null,
+          profileId: destination === "claude-code" || destination === "shikigami" ? profileId : null,
           model,
           expectedDigest: preview.digest,
           worktree: preparedWorkspaceRepository?.selectedWorktree,
@@ -119,7 +161,7 @@ export function ForkConversationDialog({
   const destinationDiscovery = destination === "codex-cli"
     ? codex
     : destination === "shikigami"
-    ? shikigamiProvider
+    ? providerDiscoveryForProfile("shikigami", shikigamiProvider, profileId)
     : { id: "claude-code" as const, installed: true };
   const destinationLabel = destination === "codex-cli"
     ? "Codex CLI"
@@ -236,7 +278,18 @@ export function ForkConversationDialog({
               onChange={(event) => {
                 const next = event.target.value as ProviderId;
                 setDestination(next);
-                setModel(resolveDefaultProviderModel(next, providers.find((p) => p.id === next)));
+                if (next === "shikigami") {
+                  const nextProfileId = shikigamiProfiles.some((profile) => profile.id === profileId)
+                    ? profileId
+                    : defaultShikigamiProfileId;
+                  setProfileId(nextProfileId);
+                  setModel(resolveDefaultProviderModel(
+                    next,
+                    providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                  ));
+                } else {
+                  setModel(resolveDefaultProviderModel(next, providers.find((p) => p.id === next)));
+                }
               }}
             >
               <option value="claude-code" disabled={sourceProvider === "claude-code" || !claudeReady}>
@@ -250,9 +303,9 @@ export function ForkConversationDialog({
               </option>
               <option
                 value="shikigami"
-                disabled={sourceProvider === "shikigami" || !isReady(shikigamiProvider)}
+                disabled={sourceProvider === "shikigami" || !shikigamiReady}
               >
-                Shikigami{shikigamiProvider && !isReady(shikigamiProvider) ? " (not ready)" : !shikigamiProvider ? " (not ready)" : ""}
+                Shikigami{!shikigamiReady ? " (not ready)" : ""}
               </option>
             </select>
           </label>
@@ -295,18 +348,39 @@ export function ForkConversationDialog({
               </select>
             </label>
           ) : (
-            <label htmlFor="fork-model-shikigami">Model
-              <select
-                id="fork-model-shikigami"
-                name="fork-model"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              >
-                {providerModelOptions("shikigami", shikigamiProvider).map((item) => (
-                  <option value={item.id} key={item.id}>{item.displayName}</option>
-                ))}
-              </select>
-            </label>
+            <>
+              <label htmlFor="fork-profile-shikigami">Profile
+                <select
+                  id="fork-profile-shikigami"
+                  name="fork-profile"
+                  value={profileId}
+                  onChange={(event) => {
+                    const nextProfileId = event.target.value;
+                    setProfileId(nextProfileId);
+                    setModel(resolveDefaultProviderModel(
+                      "shikigami",
+                      providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                    ));
+                  }}
+                >
+                  {shikigamiProfiles.map((profile) => (
+                    <option value={profile.id} key={profile.id}>{profile.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label htmlFor="fork-model-shikigami">Model
+                <select
+                  id="fork-model-shikigami"
+                  name="fork-model"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  {providerModelOptions("shikigami", destinationDiscovery).map((item) => (
+                    <option value={item.id} key={item.id}>{item.displayName}</option>
+                  ))}
+                </select>
+              </label>
+            </>
           )}
           <footer>
             <Button onClick={onClose} disabled={busy} aria-label="Cancel fork">Cancel</Button>
