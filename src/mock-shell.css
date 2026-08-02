@@ -2075,7 +2075,8 @@ html[data-theme="dark"], html[data-theme="dark"] body {
   .proj .p { font-size: 12.5px; }
   .list { padding: 0 12px 8px; }
   .glabel { padding: 12px 8px 8px; font-size: 13px; }
-  .row-main { min-height: 72px; padding: 12px; }
+  /* Keep the always-available touch actions out of the title's text box. */
+  .row-main { min-height: 72px; padding: 12px 120px 12px 12px; }
   .row .rp .pn { font-size: 13px; }
   .row .rt { font-size: 15px; }
   .row .rb .br,
