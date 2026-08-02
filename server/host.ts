@@ -113,6 +113,7 @@ import {
   ChiseiClientError,
   ChiseiProjectionClient,
 } from "./chisei-client.ts";
+import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -1126,6 +1127,8 @@ async function handleApi(
         profileId?: unknown;
         model?: unknown;
         expectedDigest?: unknown;
+        worktree?: unknown;
+        workspaceMode?: unknown;
       };
       if (
         typeof body.sourceThreadId !== "string"
@@ -1133,6 +1136,9 @@ async function handleApi(
         || typeof body.model !== "string"
         || !body.model
         || typeof body.expectedDigest !== "string"
+        || (body.worktree !== undefined && typeof body.worktree !== "string")
+        || (body.workspaceMode !== undefined
+          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
         || (body.provider === "claude-code" && typeof body.profileId !== "string")
         || ((body.provider === "codex-cli" || body.provider === "shikigami") && body.profileId !== null)
       ) {
@@ -1151,6 +1157,50 @@ async function handleApi(
         : undefined;
       if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
       await selectedWorktree(project.root, source.worktree);
+      const sourceWorkspaceMode = source.workspaceMode ?? "shared";
+      const requestedWorkspaceMode = body.workspaceMode as WorkspaceMode | undefined;
+      const destinationWorkspaceMode = requestedWorkspaceMode
+        ?? (sourceWorkspaceMode === "aldunis-managed" ? "aldunis-managed" : "shared");
+      let destinationWorktree = source.worktree;
+      if (sourceWorkspaceMode === "aldunis-managed") {
+        if (destinationWorkspaceMode !== "aldunis-managed" || typeof body.worktree !== "string") {
+          throw new LocalStateError(
+            "A fork from an Aldunis-managed conversation requires a separately approved Aldunis worktree.",
+            409,
+          );
+        }
+        destinationWorktree = (await selectedWorktree(project.root, body.worktree)).worktree;
+        if (destinationWorktree === source.worktree) {
+          throw new LocalStateError(
+            "A fork from an Aldunis-managed conversation cannot reuse its source worktree.",
+            409,
+          );
+        }
+        const selected = (await worktrees.list(project.root)).find(
+          (candidate) => candidate.path === destinationWorktree,
+        );
+        if (
+          !selected
+          || selected.ownership !== "aldunis"
+          || selected.recovery !== "available"
+        ) {
+          throw new LocalStateError(
+            "The fork destination must be an available Aldunis-owned worktree.",
+            409,
+          );
+        }
+        if (projection.threads.some((thread) => thread.worktree === destinationWorktree)) {
+          throw new LocalStateError(
+            "The fork destination worktree is already bound to another conversation.",
+            409,
+          );
+        }
+      } else if (destinationWorkspaceMode !== "shared") {
+        throw new LocalStateError(
+          "Only the shared workspace mode is available for forks from this conversation.",
+          409,
+        );
+      }
       if (body.provider === "claude-code") {
         if (!isAllowedClaudeModel(body.model)) {
           throw new ProfileError("The selected Claude model is unavailable.", 409);
@@ -1182,6 +1232,8 @@ async function handleApi(
         profileId: body.profileId as string | null,
         model: body.model,
         worktree: source.worktree,
+        destinationWorktree,
+        workspaceMode: destinationWorkspaceMode,
         expectedDigest: body.expectedDigest,
       });
       sendJson(response, 201, created);
@@ -1216,6 +1268,7 @@ async function handleApi(
           projectId: thread.projectId,
           title: thread.title,
           worktree: thread.worktree,
+          workspaceMode: thread.workspaceMode ?? "shared",
           provider: thread.provider,
           updatedAt: thread.updatedAt,
           pinnedAt: thread.pinnedAt ?? null,
@@ -1732,6 +1785,12 @@ async function handleApi(
           provider: "shikigami",
           commands: [],
           attachments: provider.capabilities().attachments,
+          workspace: {
+            shared: true,
+            aldunisManaged: true,
+            providerNative: false,
+            providerNativeDetail: "Managed hosted mode supplies the workspace; provider-native worktree creation is unavailable.",
+          },
         });
         return true;
       }
@@ -1972,6 +2031,7 @@ async function handleApi(
         provider?: unknown;
         reasoningEffort?: unknown;
         inputRequestId?: unknown;
+        workspaceMode?: unknown;
       };
       if (managedHost) {
         const forbiddenManagedOverrides = [
@@ -2053,6 +2113,8 @@ async function handleApi(
         || (providerId === "claude-code" && !isAllowedClaudeModel(body.model))
         || (body.reasoningEffort !== undefined
           && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
+        || (body.workspaceMode !== undefined
+          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
         || (body.elementReferences !== undefined && (
           !Array.isArray(body.elementReferences)
           || body.elementReferences.length > 3
@@ -2100,6 +2162,45 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const existingThread = typeof body.threadId === "string"
+        ? projection.threads.find((thread) => thread.id === body.threadId)
+        : undefined;
+      const workspaceMode = (body.workspaceMode
+        ?? existingThread?.workspaceMode
+        ?? "shared") as WorkspaceMode;
+      if (managedHost && workspaceMode !== "shared") {
+        throw new LocalStateError(
+          "Managed hosted mode supplies the workspace and only supports the shared workspace mode.",
+          409,
+        );
+      }
+      if (workspaceMode === "provider-native") {
+        throw new LocalStateError(
+          "Provider-native worktrees are not supported by the selected Aldunis adapter yet. Use an Aldunis worktree or a shared checkout.",
+          409,
+        );
+      }
+      if (workspaceMode === "aldunis-managed") {
+        const selected = (await worktrees.list(context.root)).find(
+          (candidate) => candidate.path === context.worktree,
+        );
+        if (
+          !selected
+          || selected.ownership !== "aldunis"
+          || selected.recovery !== "available"
+        ) {
+          throw new LocalStateError(
+            "An Aldunis-managed conversation must use an available Aldunis-owned worktree.",
+            409,
+          );
+        }
+        if (!body.threadId && projection.threads.some((thread) => thread.worktree === context.worktree)) {
+          throw new LocalStateError(
+            "Each Aldunis-managed conversation needs its own worktree. Create a new one before starting this chat.",
+            409,
+          );
+        }
+      }
       const delegatedParentThreadId = typeof body.parentThreadId === "string"
         ? body.parentThreadId
         : null;
@@ -2243,6 +2344,7 @@ async function handleApi(
         reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
         contextPins: assembledContext.pins,
+        workspaceMode,
       });
       await state.saveContextReceipt({
         threadId: persisted.thread.id,

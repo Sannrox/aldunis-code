@@ -9,6 +9,7 @@ import {
   isUnread,
   providerLabel,
 } from "./conversation-list";
+import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
 
@@ -43,6 +44,7 @@ export function ThreadRow({
   const listLabel = providerLabel(conversation.provider);
   const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
   const branch = branchFromWorktree(conversation.worktree);
+  const workspaceLabel = WORKSPACE_MODE_COPY[conversation.workspaceMode ?? "shared"].shortLabel;
   const statusLabel =
     status === "pending_approval" ? "Approval needed"
     : status === "awaiting_input" ? "Awaiting input"
@@ -57,6 +59,7 @@ export function ThreadRow({
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
     branch,
+    workspaceLabel,
     listLabel,
     elapsed,
   ].filter(Boolean).join(", ");
@@ -146,6 +149,7 @@ export function ThreadRow({
           {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
           <span className="pv" title={listLabel} aria-hidden="true">{monogram}</span>
           <span className="pl" title={listLabel}>{listLabel}</span>
+          <span className="pl" title={`Workspace: ${workspaceLabel}`}>{workspaceLabel}</span>
           <span className="tm" title={elapsed}>{elapsed}</span>
         </div>
       </button>

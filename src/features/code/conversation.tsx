@@ -5,7 +5,7 @@ import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
   ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
-  ContextPin, ContextReceipt,
+  ContextPin, ContextReceipt, WorkspaceMode,
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
@@ -16,6 +16,7 @@ import {
   type PreviewPanelStatus,
 } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
+import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
@@ -96,6 +97,10 @@ import {
   ContextPackagePanel,
   ContextPackageSummary,
 } from "./context-package";
+import {
+  defaultWorkspaceMode,
+  WORKSPACE_MODE_COPY,
+} from "../../lib/workspace-mode";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
@@ -138,6 +143,7 @@ export function Conversation({
   showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
+  onRepositoryChanged,
   onOpenRepository,
   onManageWorktrees,
   changes,
@@ -162,6 +168,7 @@ export function Conversation({
   showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   onOpenRepository: () => void;
   onManageWorktrees: () => void;
   changes: ChangedFile[];
@@ -202,6 +209,17 @@ export function Conversation({
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
   }, [promptHistory]);
   const [mode, setMode] = useState<InteractionMode>(managedMode ? "build" : "ask");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => (
+    managedMode
+      ? "shared"
+      : defaultWorkspaceMode("ask", conversation?.workspaceMode)
+  ));
+  const [workspaceModeManuallySelected, setWorkspaceModeManuallySelected] = useState(
+    () => conversation !== null,
+  );
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
+  const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
@@ -341,13 +359,16 @@ export function Conversation({
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   /** Ignore option activation that rides the same gesture that opened the menu. */
   const providerMenuOpenedAtRef = useRef(0);
   const modelMenuOpenedAtRef = useRef(0);
   const modeMenuOpenedAtRef = useRef(0);
+  const workspaceMenuOpenedAtRef = useRef(0);
   const INTERACTION_MODES: InteractionMode[] = ["ask", "plan", "build"];
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
@@ -391,6 +412,11 @@ export function Conversation({
     && !runId
     && !managedMode
     && canSwitchNewConversationProvider(provider, availableProviders);
+  const canPickWorkspace = conversation === null
+    && !threadId
+    && !runId
+    && !managedMode;
+  const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
       setProfileId((current) => current || defaultClaudeProfileId);
@@ -486,12 +512,16 @@ export function Conversation({
       return;
     }
     if (nextMode !== mode) setMode(nextMode);
+    if (!workspaceModeManuallySelected && canPickWorkspace) {
+      setWorkspaceMode(defaultWorkspaceMode(nextMode, undefined));
+    }
     setModeMenuOpen(false);
   };
   const closeComposerMenus = () => {
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
     setModeMenuOpen(false);
+    setWorkspaceMenuOpen(false);
   };
   const openModeMenu = () => {
     setProviderMenuOpen(false);
@@ -499,6 +529,33 @@ export function Conversation({
     setModeMenuOpen((open) => {
       if (open) return false;
       modeMenuOpenedAtRef.current = performance.now() + 200;
+      return true;
+    });
+  };
+  const selectWorkspaceMode = (
+    nextMode: WorkspaceMode,
+    source: "menu" | "keyboard" = "menu",
+  ) => {
+    if (source === "menu" && performance.now() < workspaceMenuOpenedAtRef.current) return;
+    if (!canPickWorkspace) {
+      setWorkspaceMenuOpen(false);
+      return;
+    }
+    if (nextMode === "provider-native" && !providerNativeWorkspaceAvailable) return;
+    setWorkspaceMode(nextMode);
+    setWorkspaceModeManuallySelected(true);
+    setWorkspaceMenuOpen(false);
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+  };
+  const openWorkspaceMenu = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+    setWorkspaceMenuOpen((open) => {
+      if (open) return false;
+      workspaceMenuOpenedAtRef.current = performance.now() + 200;
       return true;
     });
   };
@@ -660,6 +717,52 @@ export function Conversation({
     };
   }, [modeMenuOpen, mode]);
   useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const optionButtons = () => Array.from(
+      workspaceMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-workspace-option]") ?? [],
+    ).filter((button) => !button.disabled);
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && workspaceMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setWorkspaceMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setWorkspaceMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const id = options[index]?.dataset.workspaceMode as WorkspaceMode | undefined;
+        if (id) selectWorkspaceMode(id, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceMenuOpen, providerNativeWorkspaceAvailable, canPickWorkspace]);
+  useEffect(() => {
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
   useEffect(() => {
@@ -778,6 +881,15 @@ export function Conversation({
     setHistoryRestored(conversation === null);
     setHistoryRestoreError(null);
     setThreadId(conversation?.id ?? null);
+    setWorkspaceMode(
+      managedMode
+        ? "shared"
+        : defaultWorkspaceMode("ask", conversation?.workspaceMode),
+    );
+    setWorkspaceModeManuallySelected(conversation !== null);
+    setPreparedWorkspaceRepository(null);
+    setWorkspaceApprovalPending(false);
+    setWorkspaceDialogOpen(false);
     // Prefer the summary provider immediately so crumb/empty state match the thread
     // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
     if (!managedMode && conversation?.provider && conversation.provider !== provider) {
@@ -800,7 +912,7 @@ export function Conversation({
     setRunId(null);
     followingRef.current = true;
     setFollowing(true);
-  }, [conversation?.id, conversation?.provider, managedMode, repository?.projectId, repository?.selectedWorktree, provider]);
+  }, [conversation?.id, conversation?.provider, conversation?.workspaceMode, managedMode, repository?.projectId, provider]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -1378,14 +1490,25 @@ export function Conversation({
       setContextOpen(true);
       return;
     }
+    const runRepository = workspaceMode === "aldunis-managed"
+      ? preparedWorkspaceRepository ?? repository
+      : repository;
+    const runWorktree = runRepository?.worktrees.find((item) => (
+      item.path === runRepository.selectedWorktree
+      && (item.state === "available" || item.state === "detached")
+    )) ?? null;
     if (
       !value
-      || !repository
-      || !worktree
+      || !runRepository
+      || !runWorktree
       || !providerReady
       || runActive
       || !historyRestored
     ) return;
+    if (workspaceMode === "aldunis-managed" && !threadId && !preparedWorkspaceRepository) {
+      setWorkspaceDialogOpen(true);
+      return;
+    }
     const turnMode: InteractionMode = managedMode ? "build" : mode;
     const turnProvider: ProviderId = managedMode ? "shikigami" : provider;
     const turnModel = managedMode ? (managedModel ?? effectiveModel) : effectiveModel;
@@ -1424,18 +1547,19 @@ export function Conversation({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          root: repository.root,
-          worktree: worktree.path,
+          root: runRepository.root,
+          worktree: runWorktree.path,
           prompt: value,
           mode: turnMode,
           conversationId,
-          projectId: repository.projectId,
+          projectId: runRepository.projectId,
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           contextPins,
           profileId: managedMode ? null : provider === "claude-code" ? profileId : null,
           model: turnModel,
           provider: turnProvider,
+          workspaceMode,
           reasoningEffort: (
             !managedMode
             && (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
@@ -1549,6 +1673,14 @@ export function Conversation({
       if (availableThreadId) onConversationAvailable?.(availableThreadId);
     }
   };
+  useEffect(() => {
+    if (!workspaceApprovalPending || !preparedWorkspaceRepository) return;
+    setWorkspaceApprovalPending(false);
+    void send();
+    // The pending flag is cleared before sending, so the prepared path cannot
+    // cause a second turn if a parent repository refresh races this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceApprovalPending, preparedWorkspaceRepository]);
   const previewRewind = async () => {
     if (!checkpoint || !repository || !worktree) return;
     setCheckpointBusy(true);
@@ -1876,6 +2008,7 @@ export function Conversation({
     warning: mode !== "ask",
     detail: modeCopy[mode].authority,
   };
+  const workspaceCopy = WORKSPACE_MODE_COPY[workspaceMode];
   const renderTimeline = (
     events: ProviderEvent[],
     keyPrefix: string,
@@ -1978,6 +2111,7 @@ export function Conversation({
             conversation?.title ?? "New conversation",
             worktree ? conversationBranch : null,
             repository ? providerListLabel(provider) : null,
+            repository ? workspaceCopy.shortLabel : null,
             effectiveModel !== "default" ? modelChipLabel : null,
             showReasoningEffort ? reasoningEffort : null,
           ].filter(Boolean).join(" · ")}
@@ -1985,6 +2119,7 @@ export function Conversation({
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
           {repository && <> · {providerListLabel(provider)}</>}
+          {repository && <> · {workspaceCopy.shortLabel}</>}
           {effectiveModel !== "default" && <> · {modelChipLabel}</>}
           {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
@@ -2493,6 +2628,90 @@ export function Conversation({
       </div>
       <div className="cwrap">
         <div className="cbox">
+          {canPickWorkspace && (
+            <section className="new-chat-setup" aria-labelledby={`${pane}-new-chat-setup-title`}>
+              <header className="new-chat-setup-header">
+                <div>
+                  <span className="new-chat-setup-kicker">New conversation</span>
+                  <strong id={`${pane}-new-chat-setup-title`}>Choose the work boundary before you send</strong>
+                </div>
+                <span className="new-chat-setup-summary">
+                  {modeCopy[mode].label} · {workspaceCopy.shortLabel}
+                </span>
+              </header>
+              <div className="new-chat-target" aria-label="New conversation target">
+                <span className="new-chat-setup-label">Target</span>
+                <span className="new-chat-target-value" title={repository?.root ?? undefined}>
+                  {repository?.name ?? "Open a repository"}
+                </span>
+                <code title={worktree?.path ?? undefined}>
+                  {worktree?.branch ?? (worktree ? "Detached HEAD" : "No worktree selected")}
+                </code>
+                <span className="new-chat-target-provider">{providerListLabel(provider)}</span>
+              </div>
+              <div className="new-chat-setup-row">
+                <span className="new-chat-setup-label">Intent</span>
+                <div className="new-chat-setup-options" role="group" aria-label="Choose interaction mode">
+                  {INTERACTION_MODES.map((item) => {
+                    const selected = item === mode;
+                    const scopeLabel = item === "ask"
+                      ? "Read-only"
+                      : item === "plan"
+                      ? "Plan only"
+                      : "Approval-gated writes";
+                    return (
+                      <button
+                        type="button"
+                        className={`new-chat-option ${selected ? "active" : ""}`}
+                        aria-pressed={selected}
+                        data-new-chat-mode={item}
+                        key={item}
+                        title={`${modeCopy[item].authority}. ${selected ? "Selected." : "Select this interaction mode."}`}
+                        onClick={() => selectMode(item, "keyboard")}
+                      >
+                        <span>{modeCopy[item].label}</span>
+                        <small>{scopeLabel}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="new-chat-setup-row">
+                <span className="new-chat-setup-label">Workspace</span>
+                <div className="new-chat-setup-options" role="group" aria-label="Choose conversation workspace">
+                  {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
+                    const selected = item === workspaceMode;
+                    const native = item === "provider-native";
+                    const available = !native || providerNativeWorkspaceAvailable;
+                    const detail = native && !available
+                      ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native worktree creation yet."
+                      : WORKSPACE_MODE_COPY[item].detail;
+                    return (
+                      <button
+                        type="button"
+                        className={`new-chat-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                        aria-pressed={selected}
+                        aria-disabled={!available}
+                        disabled={!available}
+                        data-new-chat-workspace={item}
+                        key={item}
+                        title={detail}
+                        onClick={() => selectWorkspaceMode(item, "keyboard")}
+                      >
+                        <span>{WORKSPACE_MODE_COPY[item].shortLabel}</span>
+                        <small>{available ? WORKSPACE_MODE_COPY[item].label : "Unavailable"}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {!providerNativeWorkspaceAvailable && (
+                <p className="new-chat-setup-note" role="note">
+                  Provider-native is unavailable: {capabilities?.workspace?.providerNativeDetail ?? "the selected adapter does not expose native worktree creation yet."}
+                </p>
+              )}
+            </section>
+          )}
           {elementReferences.length > 0 && (
             <div className="composer-context" aria-label="Attached element context">
               {elementReferences.map((reference, index) => (
@@ -2888,7 +3107,7 @@ export function Conversation({
               )}
             </div>
             <span className="cdiv" />
-            <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+            {!canPickWorkspace && <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
               {/* Single control: mode + tool scope. Dual Access/Mode chips both
                   opened the same menu and "Access Read-only" read like privacy. */}
               <button
@@ -2953,7 +3172,70 @@ export function Conversation({
                   })}
                 </div>
               )}
-            </div>
+            </div>}
+            {!canPickWorkspace && <div className="composer-provider composer-workspace-group" ref={workspaceMenuRef}>
+              <button
+                type="button"
+                className="cc workspace-mode-chip"
+                disabled={!canPickWorkspace}
+                aria-haspopup={canPickWorkspace ? "listbox" : undefined}
+                aria-expanded={canPickWorkspace ? workspaceMenuOpen : undefined}
+                aria-controls={canPickWorkspace && workspaceMenuOpen ? "composer-workspace-menu" : undefined}
+                title={conversation
+                  ? `Workspace is fixed to ${workspaceCopy.label}. Use a reviewed fork to create another conversation.`
+                  : workspaceCopy.detail}
+                aria-label={conversation
+                  ? `Workspace ${workspaceCopy.label}. Fixed for this conversation.`
+                  : `Workspace ${workspaceCopy.label}. Opens workspace mode menu.`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (canPickWorkspace) openWorkspaceMenu();
+                }}
+              >
+                {workspaceCopy.shortLabel}
+                {canPickWorkspace && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
+              </button>
+              {workspaceMenuOpen && canPickWorkspace && (
+                <div
+                  id="composer-workspace-menu"
+                  className="composer-provider-menu workspace-mode-menu"
+                  role="listbox"
+                  aria-label="Choose conversation workspace"
+                >
+                  {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
+                    const selected = item === workspaceMode;
+                    const native = item === "provider-native";
+                    const available = !native || providerNativeWorkspaceAvailable;
+                    const detail = native && !available
+                      ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native worktree creation yet."
+                      : WORKSPACE_MODE_COPY[item].detail;
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        aria-disabled={!available}
+                        disabled={!available}
+                        aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                        key={item}
+                        data-workspace-option=""
+                        data-workspace-mode={item}
+                        className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectWorkspaceMode(item, "menu");
+                        }}
+                      >
+                        <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
+                        <span className="p">{detail}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>}
             {runId
               ? (
                 <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel, ${pane} pane`}>
@@ -3088,14 +3370,30 @@ export function Conversation({
           onClose={() => setContextOpen(false)}
         />
       )}
+      {workspaceDialogOpen && !conversation && repository && (
+        <ConversationWorkspaceDialog
+          repository={repository}
+          conversationId={conversationId}
+          onClose={() => setWorkspaceDialogOpen(false)}
+          onCreated={(next) => {
+            setPreparedWorkspaceRepository(next);
+            onRepositoryChanged?.(next);
+            setWorkspaceDialogOpen(false);
+            setWorkspaceApprovalPending(true);
+          }}
+        />
+      )}
       </div>
-      {forkOpen && threadId && !managedMode && (
+      {forkOpen && threadId && !managedMode && repository && (
         <ForkConversationDialog
           sourceThreadId={threadId}
           sourceProvider={provider}
+          sourceWorkspaceMode={conversation?.workspaceMode ?? "shared"}
+          repository={repository}
           profiles={profiles}
           providers={providers}
           onClose={() => setForkOpen(false)}
+          onRepositoryChanged={onRepositoryChanged}
           onCreated={(id) => {
             setForkOpen(false);
             onConversationAvailable?.(id);

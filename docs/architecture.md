@@ -97,9 +97,12 @@ through a versioned authenticated contract.
   Aldunis-owned environment secrets but never deletes Claude-owned credentials
   or configuration directories.
 - A repository root is explicit; paths are canonicalized and constrained to it.
-- Conversation worktrees are coordinated by the local host through a
+- Conversation workspaces use explicit, persisted modes. Aldunis-managed
+  worktrees are coordinated by the local host through a
   [typed preview-and-approve boundary](decisions/managed-conversation-worktrees.md);
-  providers cannot silently create or rebind them.
+  a provider-native mode is capability-gated and must return a canonical path
+  before the host binds a new conversation. Providers cannot silently rebind
+  an existing conversation.
 - Cross-provider continuation uses an
   [explicit conversation fork](decisions/cross-provider-conversation-forks.md);
   native sessions remain provider-bound and only a reviewed allowlisted

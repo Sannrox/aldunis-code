@@ -156,6 +156,7 @@ export function StartDelegatedConversationDialog({
           projectId: parent.projectId,
           parentThreadId: parent.id,
           provider: parent.provider,
+          workspaceMode: isolated ? "aldunis-managed" : "shared",
           model: parent.model ?? "default",
           profileId: parent.provider === "claude-code" ? claudeProfileId : null,
           reasoningEffort: parent.reasoningEffort,
