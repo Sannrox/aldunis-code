@@ -13,6 +13,8 @@
     "host": "tsx server/main.ts",
     "cli": "tsx server/main.ts",
     "wlan": "bash scripts/start-wlan.sh",
+    "ontology:sync": "bash scripts/ontology.sh sync",
+    "ontology:check": "bash scripts/ontology.sh check",
     "start": "npm run build && node dist-cli/aldunis-code.js start",
     "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
