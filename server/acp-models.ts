@@ -149,6 +149,7 @@ export async function probeAcpModels(options: {
   arguments: string[];
   environment?: NodeJS.ProcessEnv;
   cwd?: string;
+  sessionCwd?: string;
   timeoutMs?: number;
 }): Promise<AcpDiscoveredModel[]> {
   const timeoutMs = options.timeoutMs ?? 8_000;
@@ -235,7 +236,7 @@ export async function probeAcpModels(options: {
             id: 1,
             method: "session/new",
             params: {
-              cwd: options.cwd ?? process.cwd(),
+              cwd: options.sessionCwd ?? options.cwd ?? process.cwd(),
               mcpServers: [],
             },
           });

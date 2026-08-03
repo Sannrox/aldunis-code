@@ -29,6 +29,12 @@ import { beginProviderEventStream } from "./provider-stream.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import { probeAcpModels } from "./acp-models.ts";
 import {
+  claudeModelCatalog,
+  isAdapterProviderId,
+  ProviderModelError,
+  validateProviderModel,
+} from "./provider-models.ts";
+import {
   adapterReference,
   ProviderAdapterError,
   ProviderAdapterStore,
@@ -829,7 +835,7 @@ async function handleApi(
           );
       sendJson(response, 200, {
         providers: [
-          { id: "claude-code", installed: true },
+          { id: "claude-code", installed: true, models: claudeModelCatalog() },
           codexReadiness,
           { ...shikigamiReadiness, profileDiscoveries: shikigamiProfileDiscoveries },
           ...declarativeProviders,
@@ -1325,19 +1331,28 @@ async function handleApi(
         worktree?: unknown;
         workspaceMode?: unknown;
       };
+      const providerValue = typeof body.provider === "string" ? body.provider : null;
+      const supportedProvider = providerValue === "claude-code"
+        || providerValue === "codex-cli"
+        || providerValue === "shikigami"
+        || (providerValue !== null && isAdapterProviderId(providerValue));
       if (
         typeof body.sourceThreadId !== "string"
-        || (body.provider !== "claude-code" && body.provider !== "codex-cli" && body.provider !== "shikigami")
+        || !supportedProvider
         || typeof body.model !== "string"
         || !body.model
         || typeof body.expectedDigest !== "string"
         || (body.worktree !== undefined && typeof body.worktree !== "string")
         || (body.workspaceMode !== undefined
           && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
-        || (body.provider === "claude-code" && typeof body.profileId !== "string")
-        || (body.provider === "codex-cli" && body.profileId !== null)
+        || (providerValue === "claude-code" && typeof body.profileId !== "string")
+        || (providerValue === "codex-cli" && body.profileId !== null)
+        || (providerValue !== "claude-code"
+          && providerValue !== "shikigami"
+          && providerValue !== "codex-cli"
+          && body.profileId !== null)
         || (
-          body.provider === "shikigami"
+          providerValue === "shikigami"
           && body.profileId !== undefined
           && body.profileId !== null
           && typeof body.profileId !== "string"
@@ -1402,18 +1417,33 @@ async function handleApi(
           409,
         );
       }
-      if (body.provider === "claude-code") {
-        if (!isAllowedClaudeModel(body.model)) {
-          throw new ProfileError("The selected Claude model is unavailable.", 409);
-        }
+      const provider = providerValue as ProviderId;
+      const shikigamiProfile = provider === "shikigami" && typeof body.profileId === "string"
+        ? await profiles.runtime(body.profileId)
+        : null;
+      if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
+        throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
+      }
+      const effectiveModel = await validateProviderModel(
+        provider,
+        body.model,
+        {
+          codex,
+          shikigami,
+          shikigamiProfile: shikigamiProfile
+            ? {
+                executable: shikigamiProfile.executable,
+                environment: shikigamiProfile.environment,
+                configPath: shikigamiProfile.configPath,
+              }
+            : undefined,
+          adapters,
+        },
+        destinationWorktree,
+      );
+      if (provider === "claude-code") {
         await profiles.runtime(body.profileId as string);
-      } else if (body.provider === "shikigami") {
-        const shikigamiProfile = typeof body.profileId === "string"
-          ? await profiles.runtime(body.profileId)
-          : null;
-        if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
-          throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
-        }
+      } else if (provider === "shikigami") {
         const readiness = await shikigami.readiness(
           shikigamiProfile?.environment ?? process.env,
           {
@@ -1425,26 +1455,17 @@ async function handleApi(
         if (!readiness.installed || !readiness.authenticated) {
           throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
         }
-        if (
-          body.model !== "default"
-          && !readiness.models.some((model) => model.id === body.model)
-        ) {
-          throw new ProviderProtocolError("The selected Shikigami model is unavailable.");
-        }
-      } else {
+      } else if (provider === "codex-cli") {
         const readiness = await codex.readiness();
         if (!readiness.installed || !readiness.authenticated) {
           throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
         }
-        if (body.model !== "default" && !readiness.models.some((model) => model.id === body.model)) {
-          throw new ProviderProtocolError("The selected Codex model is unavailable.");
-        }
       }
       const created = await state.createFork({
         sourceThreadId: source.id,
-        provider: body.provider,
+        provider,
         profileId: typeof body.profileId === "string" ? body.profileId : null,
-        model: body.model,
+        model: effectiveModel,
         worktree: source.worktree,
         destinationWorktree,
         workspaceMode: destinationWorkspaceMode,
@@ -2333,7 +2354,6 @@ async function handleApi(
           && typeof body.profileId !== "string"
         )
         || typeof body.model !== "string"
-        || (providerId === "claude-code" && !isAllowedClaudeModel(body.model))
         || (body.reasoningEffort !== undefined
           && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
         || (body.workspaceMode !== undefined
@@ -2355,6 +2375,9 @@ async function handleApi(
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
+      const delegatedParentThreadId = typeof body.parentThreadId === "string"
+        ? body.parentThreadId
+        : null;
       const contextPins = body.contextPins !== undefined
         ? body.contextPins as ContextPin[]
         : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
@@ -2388,6 +2411,12 @@ async function handleApi(
       const existingThread = typeof body.threadId === "string"
         ? projection.threads.find((thread) => thread.id === body.threadId)
         : undefined;
+      if (body.threadId !== undefined && !existingThread) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
+      }
+      if (existingThread && existingThread.projectId !== project.id) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
+      }
       const workspaceMode = (body.workspaceMode
         ?? existingThread?.workspaceMode
         ?? "shared") as WorkspaceMode;
@@ -2424,9 +2453,24 @@ async function handleApi(
           );
         }
       }
-      const delegatedParentThreadId = typeof body.parentThreadId === "string"
-        ? body.parentThreadId
-        : null;
+      if (existingThread) {
+        const providerSession = projection.providerSessions.find(
+          (session) => session.threadId === existingThread.id,
+        );
+        const existingProvider = existingThread.provider ?? providerSession?.provider ?? "claude-code";
+        if (existingProvider !== providerId) {
+          throw new LocalStateError(
+            `This conversation belongs to ${existingProvider} and cannot switch providers.`,
+            409,
+          );
+        }
+        if (existingThread.worktree !== context.worktree) {
+          throw new LocalStateError(
+            "This conversation is bound to a different canonical worktree and cannot be silently moved.",
+            409,
+          );
+        }
+      }
       if (delegatedParentThreadId) {
         if (body.threadId !== undefined) {
           throw new LocalStateError(
@@ -2476,6 +2520,31 @@ async function handleApi(
           }
         }
       }
+      const shikigamiProfile = providerId === "shikigami" && typeof body.profileId === "string"
+        ? await profiles.runtime(body.profileId)
+        : null;
+      if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
+        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+      }
+      const effectiveModel = managedHost
+        ? managedHost.shikigami.model
+        : await validateProviderModel(
+          providerId,
+          body.model,
+          {
+            codex,
+            shikigami,
+            shikigamiProfile: shikigamiProfile
+              ? {
+                  executable: shikigamiProfile.executable,
+                  environment: shikigamiProfile.environment,
+                  configPath: shikigamiProfile.configPath,
+                }
+              : undefined,
+            adapters,
+          },
+          context.worktree,
+        );
       const resumedInput = typeof body.inputRequestId === "string"
         ? projection.inputRequests.find((item) => (
           item.id === body.inputRequestId
@@ -2501,7 +2570,7 @@ async function handleApi(
         pendingFork
         && (
           pendingFork.provider !== providerId
-          || pendingFork.model !== body.model
+          || pendingFork.model !== effectiveModel
           || pendingFork.profileId !== (
             providerId === "claude-code" || providerId === "shikigami"
               ? (body.profileId ?? null) as string | null
@@ -2515,11 +2584,9 @@ async function handleApi(
           409,
         );
       }
-      const profile = providerId === "claude-code" || (
-        providerId === "shikigami" && typeof body.profileId === "string"
-      )
+      const profile = providerId === "claude-code"
         ? await profiles.runtime(body.profileId as string)
-        : null;
+        : shikigamiProfile;
       if (profile && profile.profile.provider !== providerId) {
         throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
       }
@@ -2573,6 +2640,7 @@ async function handleApi(
         prompt: body.prompt.trim(),
         mode,
         provider: providerId,
+        model: effectiveModel,
         reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
         contextPins: assembledContext.pins,
@@ -2675,7 +2743,7 @@ async function handleApi(
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
-            model: body.model === "default" ? undefined : body.model,
+            model: effectiveModel,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
             browserMcp,
           })
@@ -2688,7 +2756,7 @@ async function handleApi(
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
-            model: body.model === "default" ? undefined : body.model,
+            model: effectiveModel,
           }, process.env, managedHost
             ? {
                 ...managedHost.shikigami,
@@ -2714,7 +2782,7 @@ async function handleApi(
                 approvalUrl: await approvalUrl,
                 mode,
                 resumeSessionId: body.resumeSessionId,
-                model: body.model === "default" ? undefined : body.model,
+                model: effectiveModel,
                 reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
                 browserMcp,
               });
@@ -2732,7 +2800,7 @@ async function handleApi(
             {
               executable: profile!.executable,
               environment: profile!.environment,
-              model: body.model,
+              model: effectiveModel,
             },
           );
       } catch (error) {
@@ -3696,6 +3764,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ProviderModelError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
@@ -3711,6 +3780,7 @@ async function handleApi(
       || error instanceof AutomationError
       || error instanceof PreviewError
       || error instanceof ProviderAdapterError
+      || error instanceof ProviderModelError
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
