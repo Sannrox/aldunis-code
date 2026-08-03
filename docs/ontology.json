@@ -76,6 +76,10 @@
       "description": "A transient always-on-top desktop mirror of a SharedBrowserSession captured from the same Electron page; it adds presentation only and no independent navigation or control authority."
     },
     {
+      "name": "ProviderModelValidationBoundary",
+      "description": "The Aldunis Code server boundary that resolves requested provider models against current provider capability before state, checkpoint, fork, automation, continuation, or process launch; it persists the effective model and fails closed on stale or unverifiable selections."
+    },
+    {
       "name": "DelegatedConversationRelationship",
       "description": "A local, metadata-only association from one parent conversation to one independently created child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
@@ -281,6 +285,16 @@
       "cardinality": {
         "min": 0,
         "max": 1
+      }
+    },
+    {
+      "name": "enforces_provider_model_selection",
+      "description": "The model validation boundary protects each local conversation run and fork from stale, unknown, or unverifiable provider model selections.",
+      "domain": "ProviderModelValidationBoundary",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 1,
+        "max": null
       }
     },
     {
@@ -507,6 +521,18 @@
       "subject": "mirrors_shared_browser",
       "source": "Aldunis Code shared-browser picture-in-picture implementation",
       "locator": "desktop/shared-browser.ts#setPictureInPicture; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderModelValidationBoundary",
+      "source": "Aldunis Code provider run boundary",
+      "locator": "server/provider-models.ts#validateProviderModel",
+      "confidence": 1.0
+    },
+    {
+      "subject": "enforces_provider_model_selection",
+      "source": "GitHub Issue Sannrox/aldunis-code#449",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/449",
       "confidence": 1.0
     },
     {

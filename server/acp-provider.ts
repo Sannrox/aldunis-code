@@ -14,7 +14,7 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
-import { acpSetModelRequest } from "./acp-models.ts";
+import { acpSetModelRequest, parseAcpSessionModels } from "./acp-models.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
@@ -332,6 +332,12 @@ export function acpSessionRequest(
   };
 }
 
+export function assertAcpSelectedModel(result: unknown, selectedModel: string): void {
+  if (!parseAcpSessionModels(result).some((model) => model.id === selectedModel)) {
+    throw new ProviderProtocolError("ACP did not advertise the selected model for this session.");
+  }
+}
+
 export function acpAllowOnceOption(value: unknown): string | null {
   if (!Array.isArray(value)) return null;
   for (const entry of value) {
@@ -431,20 +437,7 @@ export class AcpProviderAdapter {
 
   async start(options: ProviderStartOptions): Promise<ProviderRun> {
     if (!this.adapter.enabled) throw new ProviderProtocolError("The selected adapter is disabled.");
-    const environment: NodeJS.ProcessEnv = {};
-    for (const reference of this.adapter.manifest.environment) {
-      const value = this.inheritedEnvironment[reference.name];
-      if (reference.required && value === undefined) {
-        throw new ProviderProtocolError(`Required environment ${reference.name} is unavailable.`);
-      }
-      if (value !== undefined) environment[reference.name] = value;
-    }
-    // A minimal process environment is required for predictable subprocess
-    // behavior; no unrelated credential-bearing values are inherited.
-    for (const name of ["PATH", "TMPDIR", "TEMP", "TMP", "SystemRoot"]) {
-      const value = this.inheritedEnvironment[name];
-      if (value !== undefined && environment[name] === undefined) environment[name] = value;
-    }
+    const environment = buildAcpEnvironment(this.adapter, this.inheritedEnvironment);
     if (options.browserMcp) {
       Object.assign(environment, options.browserMcp.environment);
     }
@@ -607,6 +600,12 @@ export class AcpProviderAdapter {
           const selectedModel = options.model?.trim() && options.model !== "default"
             ? options.model.trim()
             : null;
+          // ACP session/load is not required to repeat the session/new model
+          // catalog. A resumed session still gets a live set_model request,
+          // whose response is checked below when a concrete model is selected.
+          if (selectedModel && !options.resumeSessionId) {
+            assertAcpSelectedModel(message.result, selectedModel);
+          }
           yield {
             kind: "session_started",
             sessionId: active.sessionId,
@@ -633,7 +632,7 @@ export class AcpProviderAdapter {
           continue;
         }
         if (message.method === undefined && message.id === 3) {
-          // session/set_model — proceed even if the agent rejects (best-effort).
+          if (message.error) throw new ProviderProtocolError("ACP rejected the selected model.");
           if (!active.sessionId) throw new ProviderProtocolError("ACP completed without a session.");
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           this.#send(active.child, {
@@ -807,4 +806,29 @@ export class AcpProviderAdapter {
     }
     else if (!terminal) yield { kind: "failed", message: "ACP provider exited before completing the turn." };
   }
+}
+
+/**
+ * Reconstruct the bounded environment used by an ACP adapter process.
+ * Discovery probes and real runs must see the same reviewed inputs.
+ */
+export function buildAcpEnvironment(
+  adapter: InstalledProviderAdapter,
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const reference of adapter.manifest.environment) {
+    const value = inheritedEnvironment[reference.name];
+    if (reference.required && value === undefined) {
+      throw new ProviderProtocolError(`Required environment ${reference.name} is unavailable.`);
+    }
+    if (value !== undefined) environment[reference.name] = value;
+  }
+  // A minimal process environment is required for predictable subprocess
+  // behavior; no unrelated credential-bearing values are inherited.
+  for (const name of ["PATH", "TMPDIR", "TEMP", "TMP", "SystemRoot"]) {
+    const value = inheritedEnvironment[name];
+    if (value !== undefined && environment[name] === undefined) environment[name] = value;
+  }
+  return environment;
 }

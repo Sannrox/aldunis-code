@@ -1122,6 +1122,7 @@ export class LocalStateStore {
     prompt: string;
     mode: InteractionMode;
     provider: ProviderId;
+    model?: string | null;
     reasoningEffort?: ReasoningEffort;
     threadId?: string;
     contextPins?: ContextPin[];
@@ -1188,6 +1189,7 @@ export class LocalStateStore {
             ...existing,
             workspaceMode,
             provider: existing.provider ?? input.provider,
+            ...(input.model !== undefined ? { model: input.model } : {}),
             ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
             ...(input.contextPins ? { contextPins: input.contextPins } : {}),
             updatedAt: now,
@@ -1200,6 +1202,7 @@ export class LocalStateStore {
             worktree: input.worktree,
             workspaceMode,
             provider: input.provider,
+            ...(input.model !== undefined ? { model: input.model } : {}),
             ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
             contextPins: input.contextPins ?? [],
             createdAt: now,

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   acpAllowOnceOption,
+  assertAcpSelectedModel,
   acpLoadedSessionId,
   acpNotificationEvents,
   acpPromptRequest,
@@ -469,6 +470,20 @@ test("ACP inline image content becomes an ephemeral browser observation", () => 
     },
     { kind: "tool_finished", toolCallId: "browser-1", failed: false },
   ]);
+});
+
+test("ACP selected models are session-advertised before set_model", () => {
+  const result = {
+    models: {
+      currentModelId: "model-a",
+      availableModels: [{ modelId: "model-a", name: "Model A" }],
+    },
+  };
+  assert.doesNotThrow(() => assertAcpSelectedModel(result, "model-a"));
+  assert.throws(
+    () => assertAcpSelectedModel(result, "model-b"),
+    /did not advertise the selected model/,
+  );
 });
 
 test("ACP plans preserve adapter provenance and map only reported statuses", () => {
