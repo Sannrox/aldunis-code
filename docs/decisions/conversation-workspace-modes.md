@@ -25,6 +25,13 @@ server-owned flows, but it is not presented as a third primary choice in the
 new-chat setup. Multiple conversations may share a selected checkout only when
 that existing mode is already bound or an owning flow explicitly permits it.
 
+If a new-chat managed-worktree preview reports that the selected repository is
+not clean, the setup surface may explicitly switch that new conversation to the
+selected shared checkout as a recovery choice. This preserves local changes;
+it does not copy, stash, commit, or remove them. Managed forks do not use this
+fallback because a fork from an Aldunis-managed conversation still requires a
+separate approved destination worktree.
+
 Current built-in adapters do not expose the provider-native preparation
 contract, so the option is visible as unavailable with an explanation. The
 capability is intentionally modeled now so a future adapter can add native
