@@ -112,6 +112,8 @@ export interface ClaudeProfile {
   name: string;
   binaryPath: string;
   homePath: string;
+  /** Optional provider-native config file. Empty means native resolution. */
+  configPath: string;
   environment: ProfileEnvironmentVariable[];
   createdAt: string;
   updatedAt: string;
@@ -210,6 +212,7 @@ function normalizeProfile(raw: ClaudeProfile): ClaudeProfile {
       : "claude-code",
     binaryPath: raw.binaryPath ?? "",
     homePath: raw.homePath ?? "",
+    configPath: raw.configPath ?? "",
     environment: Array.isArray(raw.environment) ? raw.environment : [],
   };
 }
@@ -317,6 +320,7 @@ export class ClaudeProfileStore {
         name: string,
         binaryPath: string,
         homePath: string,
+        configPath: string,
         environment: ProfileEnvironmentVariable[],
         preferFront: boolean,
       ) => {
@@ -328,6 +332,7 @@ export class ClaudeProfileStore {
           name,
           binaryPath,
           homePath,
+          configPath,
           environment,
           createdAt: now,
           updatedAt: now,
@@ -345,6 +350,7 @@ export class ClaudeProfileStore {
           builtin.name,
           builtin.binaryPath,
           builtin.homePath,
+          "",
           [],
           builtin.provider === "claude-code",
         );
@@ -356,6 +362,7 @@ export class ClaudeProfileStore {
           adapter.provider,
           adapter.name,
           adapter.binaryPath,
+          "",
           "",
           adapter.environment ?? [],
           false,
@@ -392,6 +399,7 @@ export class ClaudeProfileStore {
     name: string;
     binaryPath?: string;
     homePath?: string;
+    configPath?: string;
     environment?: ProfileEnvironmentVariable[];
   }): Promise<ClaudeProfileSnapshot> {
     const name = input.name.trim();
@@ -422,6 +430,7 @@ export class ClaudeProfileStore {
           : ""
         );
       const homePath = input.homePath?.trim() ?? existing?.homePath ?? "";
+      const configPath = input.configPath?.trim() ?? existing?.configPath ?? "";
       const now = new Date().toISOString();
       const storedEnvironment = environment.map((variable) => {
         const key = `${id}:${variable.name}`;
@@ -449,6 +458,7 @@ export class ClaudeProfileStore {
         name,
         binaryPath,
         homePath,
+        configPath,
         environment: storedEnvironment,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
@@ -488,6 +498,8 @@ export class ClaudeProfileStore {
     profile: ClaudeProfile;
     executable: string;
     environment: NodeJS.ProcessEnv;
+    /** Absolute explicit config path, or empty for Shikigami native resolution. */
+    configPath: string;
     continuationKey: string;
   }> {
     const { profiles, secrets } = await this.#documents();
@@ -507,6 +519,7 @@ export class ClaudeProfileStore {
       profile: publicProfile(profile, secrets),
       executable: profile.binaryPath,
       environment,
+      configPath: profile.configPath ? resolve(expandHome(profile.configPath)) : "",
       continuationKey: profile.provider === "claude-code"
         ? `claude:home:${resolvedHome}`
         : `${profile.provider}:profile:${profile.id}`,

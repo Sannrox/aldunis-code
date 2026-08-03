@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-electron/
+dist-cli/
 release/
 .DS_Store
 .env
@@ -11,3 +12,4 @@ coverage/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+knowledge.db

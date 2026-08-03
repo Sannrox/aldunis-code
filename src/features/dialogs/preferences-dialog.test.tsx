@@ -97,6 +97,13 @@ test("preference drafts expose unsaved changes before cross-dialog navigation", 
     ),
     true,
   );
+  assert.equal(
+    preferencesHaveUnsavedChanges(
+      { ...DEFAULT_PREFERENCES, showThinking: !DEFAULT_PREFERENCES.showThinking },
+      DEFAULT_PREFERENCES,
+    ),
+    true,
+  );
 
   const html = renderToStaticMarkup(
     <ProviderSettingsLinks

@@ -12,6 +12,7 @@ export interface Preferences {
   commandPaletteShortcut: "mod+k" | "mod+shift+p";
   managedWorktreeLimit: number | null;
   orchestrationThreadsBeta: boolean;
+  showThinking: boolean;
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -23,6 +24,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   commandPaletteShortcut: "mod+k",
   managedWorktreeLimit: 10,
   orchestrationThreadsBeta: false,
+  showThinking: false,
 };
 
 export class PreferencesError extends Error {
@@ -48,6 +50,10 @@ function parsePreferences(value: unknown): Preferences {
       && typeof input.orchestrationThreadsBeta !== "boolean"
     )
     || (
+      input.showThinking !== undefined
+      && typeof input.showThinking !== "boolean"
+    )
+    || (
       input.managedWorktreeLimit !== undefined
       && input.managedWorktreeLimit !== null
       && (
@@ -60,11 +66,12 @@ function parsePreferences(value: unknown): Preferences {
     throw new PreferencesError("Preferences use an incompatible or invalid value.");
   }
   return {
-    ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta">),
+    ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta" | "showThinking">),
     managedWorktreeLimit: input.managedWorktreeLimit === undefined
       ? DEFAULT_PREFERENCES.managedWorktreeLimit
       : input.managedWorktreeLimit as number | null,
     orchestrationThreadsBeta: input.orchestrationThreadsBeta === true,
+    showThinking: input.showThinking === true,
   };
 }
 

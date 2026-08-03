@@ -111,7 +111,10 @@ function App() {
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = await response.json() as { profiles?: ClaudeProfile[] };
-    if (response.ok) setProfiles(body.profiles ?? []);
+    if (response.ok) {
+      setProfiles(body.profiles ?? []);
+      window.dispatchEvent(new Event("aldunis:providers-retry"));
+    }
   };
   useEffect(() => { void loadProfiles(); }, []);
   const loadSavedProjects = async () => {
@@ -350,8 +353,10 @@ function App() {
         }}
         chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
+        showThinking={preferences.showThinking}
         managedMode={hostCapabilities.managed}
         managedModel={hostCapabilities.provider?.model}
+        managedAccount={hostCapabilities.account}
       />
       <RepositoryDialog
         open={repositoryDialog}

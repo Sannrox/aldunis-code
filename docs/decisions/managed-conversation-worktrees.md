@@ -3,6 +3,10 @@
 Status: Accepted
 Source: [Issue #26 maintainer direction](https://github.com/Sannrox/aldunis-code/issues/26#issuecomment-5061520662)
 
+This record governs Aldunis-managed worktree coordination. The accepted
+workspace-mode extension, including the capability-gated provider-native
+option, is recorded in [Conversation workspace modes](conversation-workspace-modes.md).
+
 ## Decision
 
 Aldunis Code owns worktree coordination as a typed local-host capability.

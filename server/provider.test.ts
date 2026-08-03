@@ -31,6 +31,7 @@ test("normalizes provider lifecycle, text, tools, and completion", () => {
       { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "/secret" } },
     ] },
   }), [
+    { kind: "thinking", text: "private" },
     { kind: "assistant_text", text: "Done." },
     {
       kind: "tool_requested",
@@ -39,6 +40,13 @@ test("normalizes provider lifecycle, text, tools, and completion", () => {
       input: { file_path: "/secret" },
     },
   ]);
+  assert.deepEqual(normalizeClaudeEvent({
+    type: "stream_event",
+    event: {
+      type: "content_block_delta",
+      delta: { type: "thinking_delta", thinking: "private delta" },
+    },
+  }), [{ kind: "thinking", text: "private delta" }]);
   assert.deepEqual(normalizeClaudeEvent({
     type: "user",
     message: { content: [{ type: "tool_result", tool_use_id: "tool-1", content: "private" }] },

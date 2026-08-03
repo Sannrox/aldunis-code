@@ -4,8 +4,9 @@ import React, {
 import type {
   RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
   ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
+  ProviderBrowserObservation,
   ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
-  ContextPin, ContextReceipt,
+  ContextPin, ContextReceipt, WorkspaceMode,
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
@@ -16,6 +17,7 @@ import {
   type PreviewPanelStatus,
 } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
+import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
@@ -24,6 +26,7 @@ import {
   parseProviderFailure,
   providerAvatarInitials,
   providerChipName as formatProviderChipName,
+  providerDiscoveryForProfile,
   providerDisplayName,
   providerListLabel,
   providerModelLabel,
@@ -49,6 +52,21 @@ import {
   type PromptHistoryBrowse,
 } from "../../lib/composer-prompt-history";
 import { syncComposerHeight } from "../../lib/composer-height";
+import {
+  buildComposerCommandItems,
+  buildComposerPathItems,
+  buildComposerSkillItems,
+  getComposerTrigger,
+  groupComposerCommandItems,
+  replaceComposerTrigger,
+  type ComposerCommandItem,
+  type ComposerSuggestionMode,
+} from "../../lib/composer-commands";
+import {
+  nextThreadFollowEnabled,
+  readThreadScrollMetrics,
+  scrollThreadToBottom,
+} from "../../lib/thread-auto-follow";
 import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
@@ -91,9 +109,31 @@ import {
   ContextPackagePanel,
   ContextPackageSummary,
 } from "./context-package";
+import {
+  defaultWorkspaceMode,
+  NEW_CONVERSATION_WORKSPACE_MODES,
+  WORKSPACE_MODE_COPY,
+} from "../../lib/workspace-mode";
+import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
+}
+
+export function appendProviderEvent(current: ProviderEvent[], next: ProviderEvent): ProviderEvent[] {
+  if (next.kind !== "browser_observation") return [...current, next];
+  let replaced = false;
+  const result: ProviderEvent[] = [];
+  for (const event of current) {
+    if (event.kind !== "browser_observation") {
+      result.push(event);
+    } else if (!replaced) {
+      result.push(next);
+      replaced = true;
+    }
+  }
+  if (!replaced) result.push(next);
+  return result;
 }
 
 export function GovernanceCorrelationSummary({
@@ -133,7 +173,12 @@ export function Conversation({
   showOpenBeside = true,
   onClosePane,
   onConversationAvailable,
+  onRepositoryChanged,
+  onSelectWorktree,
   onOpenRepository,
+  projects = [],
+  onAddProject,
+  onSelectProject,
   onManageWorktrees,
   changes,
   changesLoading,
@@ -146,6 +191,7 @@ export function Conversation({
   managedMode = false,
   managedModel,
   quietDelegatedChild = false,
+  showThinking = false,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -156,7 +202,12 @@ export function Conversation({
   showOpenBeside?: boolean;
   onClosePane?: () => void;
   onConversationAvailable?: (id: string) => void;
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
+  onSelectWorktree: (path: string) => void;
   onOpenRepository: () => void;
+  projects?: SavedProject[];
+  onAddProject: () => void;
+  onSelectProject: (projectId: string) => void;
   onManageWorktrees: () => void;
   changes: ChangedFile[];
   changesLoading: boolean;
@@ -168,11 +219,17 @@ export function Conversation({
   onOpenProfiles: (provider?: ProviderId) => void;
   managedMode?: boolean;
   managedModel?: string;
+  showThinking?: boolean;
   /** Suppress ordinary child completion notifications while its linked parent is focused. */
   quietDelegatedChild?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  /** Scroll container for the transcript; auto-follows when the operator holds the tail. */
+  const threadRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(true);
+  const ignoreThreadScrollRef = useRef(false);
+  const [following, setFollowing] = useState(true);
   const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
   const [archivedTurns, setArchivedTurns] = useState<Array<{
     message: { text: string; mode: InteractionMode; createdAt?: string };
@@ -190,7 +247,16 @@ export function Conversation({
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
   }, [promptHistory]);
   const [mode, setMode] = useState<InteractionMode>(managedMode ? "build" : "ask");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => (
+    managedMode
+      ? "shared"
+      : defaultWorkspaceMode("ask", conversation?.workspaceMode)
+  ));
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
+  const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
+  const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -217,14 +283,37 @@ export function Conversation({
     observer.observe(composer);
     return () => observer.disconnect();
   }, []);
+  const setThreadFollowing = useCallback((value: boolean) => {
+    followingRef.current = value;
+    setFollowing(value);
+  }, []);
+  const pinThreadToBottom = useCallback(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    ignoreThreadScrollRef.current = true;
+    scrollThreadToBottom(thread);
+    queueMicrotask(() => {
+      ignoreThreadScrollRef.current = false;
+    });
+  }, []);
+  const onThreadScroll = useCallback(() => {
+    if (ignoreThreadScrollRef.current) return;
+    const thread = threadRef.current;
+    if (!thread) return;
+    setThreadFollowing(nextThreadFollowEnabled(readThreadScrollMetrics(thread)));
+  }, [setThreadFollowing]);
+  const resumeThreadFollow = useCallback(() => {
+    setThreadFollowing(true);
+    pinThreadToBottom();
+  }, [pinThreadToBottom, setThreadFollowing]);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
   const contextPins = useMemo<ContextPin[]>(() => [
     ...attachments.map((path) => ({ path, kind: "file" as const })),
     ...folderPins.map((path) => ({ path, kind: "folder" as const })),
   ], [attachments, folderPins]);
-  const [suggestions, setSuggestions] = useState<Array<{ value: string; detail: string }>>([]);
-  const [suggestionMode, setSuggestionMode] = useState<"files" | "commands" | null>(null);
+  const [suggestions, setSuggestions] = useState<ComposerCommandItem[]>([]);
+  const [suggestionMode, setSuggestionMode] = useState<ComposerSuggestionMode | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [contextError, setContextError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(
@@ -238,6 +327,13 @@ export function Conversation({
   );
   const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
     ?? claudeProfiles[0]?.id
+    ?? "";
+  const shikigamiProfiles = useMemo(
+    () => profiles.filter((profile) => profile.provider === "shikigami"),
+    [profiles],
+  );
+  const defaultShikigamiProfileId = shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id
+    ?? shikigamiProfiles[0]?.id
     ?? "";
   const [model, setModel] = useState(managedMode ? (managedModel ?? "default") : "default");
   const [notificationsEnabled, setNotificationsEnabled] = useState(
@@ -254,12 +350,17 @@ export function Conversation({
   const [provider, setProvider] = useState<ProviderId>(
     () => managedMode ? "shikigami" : conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
   );
+  const providerDiscoveryContext = useMemo(() => (
+    repository?.root && repository.selectedWorktree
+      ? { root: repository.root, worktree: repository.selectedWorktree }
+      : {}
+  ), [repository?.root, repository?.selectedWorktree]);
   const [providers, setProviders] = useState<ProviderDiscovery[]>(
-    () => peekProviderDiscoveryCache() ?? [],
+    () => peekProviderDiscoveryCache(providerDiscoveryContext) ?? [],
   );
   /** False until first /api/providers/discover settles — avoids “Install CLI” flash. */
   const [providersLoaded, setProvidersLoaded] = useState(
-    () => peekProviderDiscoveryCache() !== null,
+    () => peekProviderDiscoveryCache(providerDiscoveryContext) !== null,
   );
   const [forkOpen, setForkOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
@@ -279,14 +380,14 @@ export function Conversation({
     if (showPending) {
       setProvidersLoaded(false);
     }
-    void loadProviderDiscovery()
+    void loadProviderDiscovery(providerDiscoveryContext)
       .then((list) => setProviders(list))
       .finally(() => setProvidersLoaded(true));
-  }, []);
+  }, [providerDiscoveryContext]);
   useEffect(() => {
-    loadProviders(false);
+    loadProviders(false, true);
     const onAdaptersChanged = () => loadProviders(true);
-    const onProviderRetry = () => loadProviders(false, true);
+    const onProviderRetry = () => loadProviders(true, true);
     window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
     window.addEventListener("aldunis:providers-retry", onProviderRetry);
     return () => {
@@ -296,8 +397,12 @@ export function Conversation({
   }, [loadProviders]);
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
-  const selectedProvider = providers.find((item) => item.id === provider);
-  const discoveryTimedOut = providerDiscoveryTimedOut();
+  const selectedProvider = providerDiscoveryForProfile(
+    provider,
+    providers.find((item) => item.id === provider),
+    profileId,
+  );
+  const discoveryTimedOut = providerDiscoveryTimedOut(providerDiscoveryContext);
   const providerName = providerDisplayName(provider, selectedProvider);
   /** Short role label in the transcript (Claude / Codex / Grok Build / …). */
   const providerLabel = providerListLabel(provider);
@@ -306,13 +411,19 @@ export function Conversation({
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
+  const projectMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   /** Ignore option activation that rides the same gesture that opened the menu. */
   const providerMenuOpenedAtRef = useRef(0);
   const modelMenuOpenedAtRef = useRef(0);
   const modeMenuOpenedAtRef = useRef(0);
+  const projectMenuOpenedAtRef = useRef(0);
+  const workspaceMenuOpenedAtRef = useRef(0);
   const INTERACTION_MODES: InteractionMode[] = ["ask", "plan", "build"];
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
@@ -325,13 +436,17 @@ export function Conversation({
    */
   const availableProviders = useMemo(() => {
     if (managedMode) return shikigamiProvider?.installed === false ? [] : ["shikigami" as ProviderId];
+    const shikigamiInstalled = Boolean(
+      shikigamiProvider?.installed
+      || shikigamiProvider?.profileDiscoveries?.some((profile) => profile.installed),
+    );
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
     for (const id of BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER) {
       if (id === "codex-cli" && codex?.installed) list.push(id);
       // Keep Claude selectable when installed; empty profiles disable send, not the choice.
       if (id === "claude-code" && (!claude || claude.installed !== false)) list.push(id);
-      if (id === "shikigami" && shikigamiProvider?.installed) list.push(id);
+      if (id === "shikigami" && shikigamiInstalled) list.push(id);
     }
     for (const item of providers) {
       if (
@@ -344,7 +459,7 @@ export function Conversation({
       }
     }
     return list;
-  }, [codex?.installed, managedMode, shikigamiProvider?.installed, providers]);
+  }, [codex?.installed, managedMode, shikigamiProvider, providers]);
   /**
    * New conversations only, before a thread/run is created. Once threadId or
    * runId exists the provider is fixed (cross-provider moves use fork).
@@ -356,6 +471,11 @@ export function Conversation({
     && !runId
     && !managedMode
     && canSwitchNewConversationProvider(provider, availableProviders);
+  const canPickWorkspace = conversation === null
+    && !threadId
+    && !runId
+    && !managedMode;
+  const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
       setProfileId((current) => current || defaultClaudeProfileId);
@@ -372,7 +492,14 @@ export function Conversation({
       return;
     }
     if (next === "shikigami") {
-      const defaultModel = resolveDefaultProviderModel("shikigami", shikigamiProvider);
+      const nextProfileId = shikigamiProfiles.some((profile) => profile.id === profileId)
+        ? profileId
+        : defaultShikigamiProfileId;
+      setProfileId(nextProfileId);
+      const defaultModel = resolveDefaultProviderModel(
+        "shikigami",
+        providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+      );
       setModel(defaultModel);
       setReasoningEffort("medium");
       return;
@@ -457,13 +584,62 @@ export function Conversation({
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
     setModeMenuOpen(false);
+    setProjectMenuOpen(false);
+    setWorkspaceMenuOpen(false);
   };
   const openModeMenu = () => {
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
+    setProjectMenuOpen(false);
     setModeMenuOpen((open) => {
       if (open) return false;
       modeMenuOpenedAtRef.current = performance.now() + 200;
+      return true;
+    });
+  };
+  const selectWorkspaceMode = (
+    nextMode: WorkspaceMode,
+    source: "menu" | "keyboard" = "menu",
+  ) => {
+    if (source === "menu" && performance.now() < workspaceMenuOpenedAtRef.current) return;
+    if (!canPickWorkspace) {
+      setWorkspaceMenuOpen(false);
+      return;
+    }
+    if (nextMode === "provider-native" && !providerNativeWorkspaceAvailable) return;
+    setWorkspaceMode(nextMode);
+    setWorkspaceMenuOpen(false);
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+  };
+  const selectProject = (
+    projectId: string,
+    source: "menu" | "keyboard" = "menu",
+  ) => {
+    if (source === "menu" && performance.now() < projectMenuOpenedAtRef.current) return;
+    setProjectMenuOpen(false);
+    onSelectProject(projectId);
+  };
+  const openProjectMenu = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+    setWorkspaceMenuOpen(false);
+    setProjectMenuOpen((open) => {
+      if (open) return false;
+      projectMenuOpenedAtRef.current = performance.now() + 200;
+      return true;
+    });
+  };
+  const openWorkspaceMenu = () => {
+    setProviderMenuOpen(false);
+    setModelMenuOpen(false);
+    setModeMenuOpen(false);
+    setProjectMenuOpen(false);
+    setWorkspaceMenuOpen((open) => {
+      if (open) return false;
+      workspaceMenuOpenedAtRef.current = performance.now() + 200;
       return true;
     });
   };
@@ -625,18 +801,149 @@ export function Conversation({
     };
   }, [modeMenuOpen, mode]);
   useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const optionButtons = () => Array.from(
+      workspaceMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-workspace-option]") ?? [],
+    ).filter((button) => !button.disabled);
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && workspaceMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setWorkspaceMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setWorkspaceMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const id = options[index]?.dataset.workspaceMode as WorkspaceMode | undefined;
+        if (id) selectWorkspaceMode(id, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceMenuOpen, providerNativeWorkspaceAvailable, canPickWorkspace]);
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const optionButtons = () => Array.from(
+      projectMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-project-option]") ?? [],
+    );
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && projectMenuRef.current?.contains(target)) return;
+      event.preventDefault();
+      setProjectMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setProjectMenuOpen(false);
+        return;
+      }
+      const options = optionButtons();
+      if (options.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      const index = options.findIndex((button) => button === active);
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const next = index < 0
+          ? (delta > 0 ? 0 : options.length - 1)
+          : (index + delta + options.length) % options.length;
+        options[next]?.focus();
+        return;
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        options[0]?.focus();
+        return;
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        options[options.length - 1]?.focus();
+        return;
+      }
+      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
+        event.preventDefault();
+        const projectId = options[index]?.dataset.projectId;
+        if (projectId) selectProject(projectId, "keyboard");
+      }
+    };
+    const timer = window.setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("keydown", onKeyDown);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [projectMenuOpen, onSelectProject]);
+  useEffect(() => {
     if (!canSwitchProvider) setProviderMenuOpen(false);
   }, [canSwitchProvider]);
   useEffect(() => {
-    if (!claudeProfiles.some((profile) => profile.id === profileId)) {
-      setProfileId(defaultClaudeProfileId);
+    if (profiles.length === 0) return;
+    if (provider === "claude-code") {
+      if (!claudeProfiles.some((profile) => profile.id === profileId)) {
+        setProfileId(defaultClaudeProfileId);
+      }
+      return;
     }
-  }, [claudeProfiles, defaultClaudeProfileId, profileId]);
+    if (provider === "shikigami") {
+      if (!shikigamiProfiles.some((profile) => profile.id === profileId)) {
+        setProfileId(defaultShikigamiProfileId);
+        setModel(resolveDefaultProviderModel(
+          "shikigami",
+          providerDiscoveryForProfile("shikigami", shikigamiProvider, defaultShikigamiProfileId),
+        ));
+      }
+      return;
+    }
+    if (profileId) setProfileId("");
+  }, [
+    claudeProfiles,
+    defaultClaudeProfileId,
+    defaultShikigamiProfileId,
+    profileId,
+    profiles.length,
+    provider,
+    shikigamiProfiles,
+    shikigamiProvider,
+  ]);
   const [previewMounted, setPreviewMounted] = useState(false);
+  const [previewFloating, setPreviewFloating] = useState(false);
   const [previewStatus, setPreviewStatus] = useState<PreviewPanelStatus>({
     state: "inactive",
     error: null,
   });
+  useEffect(() => {
+    setPreviewFloating(false);
+    setAgentBrowserViewOpen(false);
+  }, [repository?.root, repository?.selectedWorktree]);
   const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
@@ -661,6 +968,7 @@ export function Conversation({
     ));
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
+    if (destination === "preview") setPreviewFloating(false);
     setWorkspacePanelFocus(destination);
     const next = toggleWorkspacePanel(activePanel, destination);
     if (next === "preview") setPreviewMounted(true);
@@ -676,6 +984,21 @@ export function Conversation({
     if (restoreFocus) {
       window.requestAnimationFrame(() => workspacePanelTrigger(destination)?.focus());
     }
+  };
+  const closePreview = () => {
+    setPreviewFloating(false);
+    setAgentBrowserViewOpen(false);
+    closeWorkspacePanel("preview");
+  };
+  const togglePreviewFloating = () => {
+    if (previewFloating) {
+      setPreviewFloating(false);
+      onPanelChange("preview");
+      return;
+    }
+    setPreviewMounted(true);
+    setPreviewFloating(true);
+    if (activePanel === "preview") onPanelChange("none");
   };
   const moveWorkspacePanel = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -743,6 +1066,14 @@ export function Conversation({
     setHistoryRestored(conversation === null);
     setHistoryRestoreError(null);
     setThreadId(conversation?.id ?? null);
+    setWorkspaceMode(
+      managedMode
+        ? "shared"
+        : defaultWorkspaceMode("ask", conversation?.workspaceMode),
+    );
+    setPreparedWorkspaceRepository(null);
+    setWorkspaceApprovalPending(false);
+    setWorkspaceDialogOpen(false);
     // Prefer the summary provider immediately so crumb/empty state match the thread
     // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
     if (!managedMode && conversation?.provider && conversation.provider !== provider) {
@@ -763,7 +1094,9 @@ export function Conversation({
     setContextOpen(false);
     setProviderState("idle");
     setRunId(null);
-  }, [conversation?.id, conversation?.provider, managedMode, repository?.projectId, repository?.selectedWorktree, provider]);
+    followingRef.current = true;
+    setFollowing(true);
+  }, [conversation?.id, conversation?.provider, conversation?.workspaceMode, managedMode, repository?.projectId, provider]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -1208,7 +1541,11 @@ export function Conversation({
     : provider === "codex-cli"
       ? Boolean(codex?.installed && codex.authenticated)
       : provider === "shikigami"
-      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
+      ? Boolean(
+          selectedProvider?.installed
+          && selectedProvider.authenticated
+          && shikigamiProfiles.some((profile) => profile.id === profileId),
+        )
       : Boolean(
         selectedProvider
         && selectedProvider.installed !== false
@@ -1276,58 +1613,56 @@ export function Conversation({
     build: { label: "Build", authority: "Mutations require approval" },
   };
   useEffect(() => {
-    const token = draft.slice(0, draft.length).match(/(?:^|\s)([@/])([^\s]*)$/);
-    if (!token || !worktree || !repository) {
+    const trigger = getComposerTrigger(draft);
+    if (!trigger || !worktree || !repository) {
       setSuggestionMode(null);
       setSuggestions([]);
       return;
     }
-    const [, prefix, query] = token;
     setSuggestionIndex(0);
-    if (prefix === "/") {
-      setSuggestionMode("commands");
-      const normalizedQuery = query.toLocaleLowerCase();
-      setSuggestions([
-        ...("context".includes(normalizedQuery)
-          ? [{ value: "/context", detail: "Inspect the Aldunis-owned draft context package" }]
-          : []),
-        ...(capabilities?.commands ?? [])
-          .filter((command) => command.name.slice(1).includes(normalizedQuery))
-          .map((command) => ({ value: command.name, detail: command.description })),
-        ...providerSkills
-          .filter((skill) => skill.name.toLocaleLowerCase().includes(normalizedQuery))
-          .map((skill) => ({ value: `$${skill.name}`, detail: skill.description })),
-      ]);
+    if (trigger.mode === "slash-command") {
+      setSuggestionMode(trigger.mode);
+      setSuggestions(buildComposerCommandItems({
+        provider,
+        capabilities,
+        query: trigger.query,
+      }));
       return;
     }
-    setSuggestionMode("files");
+    if (trigger.mode === "skill") {
+      setSuggestionMode(trigger.mode);
+      setSuggestions(buildComposerSkillItems(provider, providerSkills, trigger.query));
+      return;
+    }
+    setSuggestionMode(trigger.mode);
+    setSuggestions([]);
     const controller = new AbortController();
     void fetch("/api/context/files", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query }),
+      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query: trigger.query }),
       signal: controller.signal,
     }).then(async (response) => {
       const body = await response.json() as { files?: string[]; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Repository files could not be searched.");
-      setSuggestions((body.files ?? []).map((path) => ({ value: path, detail: "Local repository file" })));
+      setSuggestions(buildComposerPathItems(body.files ?? []));
     }).catch((error) => {
       if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
     });
     return () => controller.abort();
-  }, [capabilities, draft, providerSkills, repository, worktree]);
-  const selectSuggestion = (value: string) => {
-    if (suggestionMode === "files") {
-      if (!attachments.includes(value)) {
+  }, [capabilities, draft, provider, providerSkills, repository, worktree]);
+  const selectSuggestion = (suggestion: ComposerCommandItem) => {
+    if (suggestion.type === "path") {
+      if (!attachments.includes(suggestion.path)) {
         if (contextPins.length >= 100) {
           setContextError("Pin at most 100 file or folder paths.");
           return;
         }
-        setAttachments((current) => [...current, value]);
+        setAttachments((current) => [...current, suggestion.path]);
       }
-      setDraft((current) => current.replace(/(?:^|\s)@[^\s]*$/, (match) => match.startsWith(" ") ? " " : ""));
+      setDraft((current) => replaceComposerTrigger(current, ""));
     } else {
-      setDraft((current) => current.replace(/(?:^|\s)\/[^\s]*$/, (match) => `${match.startsWith(" ") ? " " : ""}${value} `));
+      setDraft((current) => replaceComposerTrigger(current, suggestion.label + " "));
     }
     setContextError(null);
     setSuggestionMode(null);
@@ -1341,14 +1676,25 @@ export function Conversation({
       setContextOpen(true);
       return;
     }
+    const runRepository = workspaceMode === "aldunis-managed"
+      ? preparedWorkspaceRepository ?? repository
+      : repository;
+    const runWorktree = runRepository?.worktrees.find((item) => (
+      item.path === runRepository.selectedWorktree
+      && (item.state === "available" || item.state === "detached")
+    )) ?? null;
     if (
       !value
-      || !repository
-      || !worktree
+      || !runRepository
+      || !runWorktree
       || !providerReady
       || runActive
       || !historyRestored
     ) return;
+    if (workspaceMode === "aldunis-managed" && !threadId && !preparedWorkspaceRepository) {
+      setWorkspaceDialogOpen(true);
+      return;
+    }
     const turnMode: InteractionMode = managedMode ? "build" : mode;
     const turnProvider: ProviderId = managedMode ? "shikigami" : provider;
     const turnModel = managedMode ? (managedModel ?? effectiveModel) : effectiveModel;
@@ -1358,7 +1704,9 @@ export function Conversation({
         ...current,
         {
           message: previousMessage,
-          events: providerEvents,
+          // Provider screenshots are stream-only UI state and must not remain
+          // attached to an archived in-memory turn either.
+          events: providerEvents.filter((event) => event.kind !== "browser_observation"),
           assistantAt: assistantTurnAt ?? undefined,
           state: providerState === "cancelled" ? "cancelled" : providerState,
           contextReceipt: currentContextReceipt ?? undefined,
@@ -1366,6 +1714,9 @@ export function Conversation({
       ]);
     }
     setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
+    // Sending always re-engages follow so the operator sees their prompt and the reply.
+    followingRef.current = true;
+    setFollowing(true);
     if (promptOverride === undefined) setDraft("");
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
@@ -1384,18 +1735,23 @@ export function Conversation({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          root: repository.root,
-          worktree: worktree.path,
+          root: runRepository.root,
+          worktree: runWorktree.path,
           prompt: value,
           mode: turnMode,
           conversationId,
-          projectId: repository.projectId,
+          projectId: runRepository.projectId,
           threadId: threadId ?? undefined,
           resumeSessionId: sessionId ?? undefined,
           contextPins,
-          profileId: managedMode ? null : provider === "claude-code" ? profileId : null,
+          profileId: managedMode
+            ? null
+            : provider === "claude-code" || provider === "shikigami"
+            ? profileId
+            : null,
           model: turnModel,
           provider: turnProvider,
+          workspaceMode,
           reasoningEffort: (
             !managedMode
             && (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
@@ -1453,7 +1809,7 @@ export function Conversation({
               newline = buffer.indexOf("\n");
               continue;
             }
-            setProviderEvents((current) => [...current, event]);
+            setProviderEvents((current) => appendProviderEvent(current, event));
             if (event.kind === "input_requested") setProviderState("waiting_for_input");
             if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
             if (event.kind === "turn_completed") {
@@ -1509,6 +1865,14 @@ export function Conversation({
       if (availableThreadId) onConversationAvailable?.(availableThreadId);
     }
   };
+  useEffect(() => {
+    if (!workspaceApprovalPending || !preparedWorkspaceRepository) return;
+    setWorkspaceApprovalPending(false);
+    void send();
+    // The pending flag is cleared before sending, so the prepared path cannot
+    // cause a second turn if a parent repository refresh races this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceApprovalPending, preparedWorkspaceRepository]);
   const previewRewind = async () => {
     if (!checkpoint || !repository || !worktree) return;
     setCheckpointBusy(true);
@@ -1645,27 +2009,47 @@ export function Conversation({
       setInputBusyId(null);
     }
   };
-  const assistantTimeline = presentAssistantTimeline(providerEvents);
+  const assistantTimeline = presentAssistantTimeline(providerEvents, "running", { showThinking });
+  const latestAgentBrowserObservation = useMemo<ProviderBrowserObservation | null>(() => (
+    providerEvents
+      .filter((event): event is Extract<ProviderEvent, { kind: "browser_observation" }> => (
+        event.kind === "browser_observation"
+      ))
+      .at(-1) ?? null
+  ), [providerEvents]);
+  const agentBrowserObservationIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!latestAgentBrowserObservation) {
+      agentBrowserObservationIdRef.current = null;
+      setAgentBrowserViewOpen(false);
+      return;
+    }
+    if (agentBrowserObservationIdRef.current === latestAgentBrowserObservation.observationId) return;
+    agentBrowserObservationIdRef.current = latestAgentBrowserObservation.observationId;
+    setAgentBrowserViewOpen(true);
+    setPreviewMounted(true);
+    setPreviewFloating(true);
+  }, [latestAgentBrowserObservation]);
   const latestPlan = useMemo(() => latestPlanFromEvents([
     ...archivedTurns.map((turn) => turn.events),
     providerEvents,
   ]), [archivedTurns, providerEvents]);
   const planEntries = useMemo(() => [
     ...archivedTurns.flatMap((turn, index) => (
-      presentAssistantTimeline(turn.events)
+      presentAssistantTimeline(turn.events, "running", { showThinking })
         .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
         .map((block) => ({
           key: `archived-${index}-plan-${block.artifact.provider}-${block.artifact.id}`,
           artifact: block.artifact,
         }))
     )),
-    ...presentAssistantTimeline(providerEvents)
+    ...presentAssistantTimeline(providerEvents, "running", { showThinking })
       .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
       .map((block) => ({
         key: `current-plan-${block.artifact.provider}-${block.artifact.id}`,
         artifact: block.artifact,
       })),
-  ], [archivedTurns, providerEvents]);
+  ], [archivedTurns, providerEvents, showThinking]);
   const panelPlan = selectedPlanKey
     ? planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan
     : latestPlan;
@@ -1675,6 +2059,11 @@ export function Conversation({
   const assistantText = joinAssistantTextChunks(
     providerEvents
       .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
+      .map((event) => event.text),
+  );
+  const thinkingText = joinAssistantTextChunks(
+    providerEvents
+      .filter((event): event is Extract<ProviderEvent, { kind: "thinking" }> => event.kind === "thinking")
       .map((event) => event.text),
   );
   const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
@@ -1690,6 +2079,38 @@ export function Conversation({
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
+  // Content signature: when this changes while following, pin the viewport to the tail.
+  const threadFollowContentKey = [
+    conversation?.id ?? "new",
+    historyRestored ? "ready" : "restoring",
+    archivedTurns.length,
+    messages.length,
+    providerEvents.length,
+    assistantText.length,
+    showThinking ? thinkingText.length : 0,
+    providerState,
+    approvals.length,
+    inputs.length,
+    completionDismissed ? "done-dismissed" : "done-open",
+    checkpoint?.state ?? "no-checkpoint",
+    failure ? "failed" : "ok",
+  ].join(":");
+  useLayoutEffect(() => {
+    if (!followingRef.current) return;
+    pinThreadToBottom();
+  }, [threadFollowContentKey, pinThreadToBottom]);
+  useEffect(() => {
+    const thread = threadRef.current;
+    if (!thread) return;
+    const content = thread.querySelector(".wrap");
+    if (!(content instanceof HTMLElement)) return;
+    const observer = new ResizeObserver(() => {
+      if (!followingRef.current) return;
+      pinThreadToBottom();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [pinThreadToBottom, conversation?.id, historyRestored]);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const failureNeedsConfiguration = failure
     ? providerFailureNeedsConfiguration(failure.message)
@@ -1707,6 +2128,7 @@ export function Conversation({
     configurationVerifiedAfterFailure,
   );
   const hasAssistantContent = Boolean(assistantText.trim())
+    || (showThinking && Boolean(thinkingText.trim()))
     || latestPlan != null
     || toolEvents.length > 0
     || approvals.length > 0
@@ -1798,14 +2220,33 @@ export function Conversation({
     warning: mode !== "ask",
     detail: modeCopy[mode].authority,
   };
+  const workspaceCopy = WORKSPACE_MODE_COPY[workspaceMode];
+  const hostLabel = typeof window !== "undefined" && window.location.hostname
+    ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
+    : "Local Aldunis host";
+  const selectableWorktrees = repository?.worktrees.filter((item) => (
+    item.state === "available" || item.state === "detached"
+  )) ?? [];
   const renderTimeline = (
     events: ProviderEvent[],
     keyPrefix: string,
     unfinishedStatus: "running" | "cancelled" = "running",
   ) => (
-    presentAssistantTimeline(events, unfinishedStatus).map((block, blockIndex) => {
+    presentAssistantTimeline(events, unfinishedStatus, { showThinking }).map((block, blockIndex) => {
       if (block.kind === "text") {
         return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
+      }
+      if (block.kind === "thinking") {
+        return (
+          <section
+            className="thinking-block"
+            aria-label={`${providerLabel} thinking`}
+            key={`${keyPrefix}-thinking-${blockIndex}`}
+          >
+            <div className="thinking-label">Thinking</div>
+            <MarkdownBody text={block.text} className="thinking-body" />
+          </section>
+        );
       }
       if (block.kind === "plan") {
         const planKey = `${keyPrefix}-plan-${block.artifact.provider}-${block.artifact.id}`;
@@ -1875,6 +2316,10 @@ export function Conversation({
     );
   };
   const latestMessage = messages.at(-1);
+  const suggestionGroups = suggestionMode
+    ? groupComposerCommandItems(suggestions, suggestionMode)
+    : [];
+  const orderedSuggestions = suggestionGroups.flatMap((group) => group.items);
 
   return (
     <div
@@ -1888,6 +2333,7 @@ export function Conversation({
             conversation?.title ?? "New conversation",
             worktree ? conversationBranch : null,
             repository ? providerListLabel(provider) : null,
+            repository ? workspaceCopy.shortLabel : null,
             effectiveModel !== "default" ? modelChipLabel : null,
             showReasoningEffort ? reasoningEffort : null,
           ].filter(Boolean).join(" · ")}
@@ -1895,6 +2341,7 @@ export function Conversation({
           <b>{conversation?.title ?? "New conversation"}</b>
           {worktree && <> · {conversationBranch}</>}
           {repository && <> · {providerListLabel(provider)}</>}
+          {repository && <> · {workspaceCopy.shortLabel}</>}
           {effectiveModel !== "default" && <> · {modelChipLabel}</>}
           {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
@@ -2029,7 +2476,13 @@ export function Conversation({
       </div>
       <div className={`split ${activePanel === "changes" ? "with-review" : ""}`}>
       <div className="conv">
-      <div className="thread">
+      <div className="thread-shell">
+      <div
+        className="thread"
+        ref={threadRef}
+        onScroll={onThreadScroll}
+        data-following={following ? "true" : "false"}
+      >
         <div className="wrap">
         {conversationEmpty
           ? (
@@ -2384,7 +2837,195 @@ export function Conversation({
         )}
         </div>
       </div>
+      {!following && !conversationEmpty && (
+        <button
+          type="button"
+          className="thread-follow-jump"
+          onClick={resumeThreadFollow}
+          aria-label={`Jump to latest messages, ${pane} pane`}
+        >
+          Jump to latest
+        </button>
+      )}
+      </div>
       <div className="cwrap">
+        {canPickWorkspace && (
+          <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
+            <span className="new-chat-context-eyebrow">Work on</span>
+            <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
+            <div className="new-chat-context-rows">
+              <div className="new-chat-context-row" aria-label={`${hostLabel}, current Aldunis host`}>
+                <Icon name="computer" />
+                <span className="new-chat-context-copy">
+                  <strong>{hostLabel}</strong>
+                  <small>Current Aldunis host</small>
+                </span>
+              </div>
+              <div className="new-chat-context-control" ref={projectMenuRef}>
+                <button
+                  type="button"
+                  className="new-chat-context-row new-chat-context-row--button"
+                  onClick={openProjectMenu}
+                  title={repository?.root ?? "Choose a project"}
+                  aria-haspopup="listbox"
+                  aria-expanded={projectMenuOpen}
+                  aria-controls={projectMenuOpen ? "new-chat-project-menu" : undefined}
+                  aria-label={repository ? `Project ${repository.name}. Open project selector.` : "Choose a project."}
+                >
+                  <Icon name="folder" />
+                  <span className="new-chat-context-copy">
+                    <strong>{repository?.name ?? "Choose a project"}</strong>
+                    <small title={repository?.root}>{repository?.root ?? "Open a repository before sending"}</small>
+                  </span>
+                  <Icon name="chevron" />
+                </button>
+                {projectMenuOpen && (
+                  <div
+                    id="new-chat-project-menu"
+                    className="new-chat-context-menu composer-provider-menu"
+                    role="listbox"
+                    aria-label="Choose project"
+                  >
+                    {projects.map((project) => {
+                      const selected = project.id === repository?.projectId
+                        || project.memberIds?.includes(repository?.projectId ?? "")
+                        || project.root === repository?.root;
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          aria-label={`${project.name}: ${project.root}${selected ? ", selected" : ""}`}
+                          data-project-option=""
+                          data-project-id={project.id}
+                          key={project.id}
+                          className={`composer-provider-option ${selected ? "active" : ""}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectProject(project.id);
+                          }}
+                        >
+                          <span className="n">{project.name}{selected ? " · selected" : ""}</span>
+                          <span className="p">{project.root}</span>
+                        </button>
+                      );
+                    })}
+                    {projects.length === 0 && (
+                      <p className="new-chat-context-note" role="note">No registered projects yet.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="composer-provider-option add"
+                      aria-label="Add project: Register a local repository once"
+                      onClick={() => {
+                        setProjectMenuOpen(false);
+                        onAddProject();
+                      }}
+                    >
+                      <span className="n">Add project…</span>
+                      <span className="p">Register a local repository once</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="new-chat-context-control" ref={workspaceMenuRef}>
+                <button
+                  type="button"
+                  className="new-chat-context-row new-chat-context-row--button"
+                  aria-haspopup="listbox"
+                  aria-expanded={workspaceMenuOpen}
+                  aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
+                  title={workspaceMode === "provider-native"
+                    ? WORKSPACE_MODE_COPY["provider-native"].detail
+                    : WORKSPACE_MODE_COPY["aldunis-managed"].detail}
+                  aria-label={`Workspace strategy: ${workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}. Open workspace strategy menu.`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openWorkspaceMenu();
+                  }}
+                >
+                  <Icon name="code" />
+                  <span className="new-chat-context-copy">
+                    <strong>{workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}</strong>
+                    <small>{workspaceMode === "provider-native"
+                      ? "Provider-owned workspace"
+                      : "One Aldunis worktree for this chat"}</small>
+                  </span>
+                  <Icon name="chevron" />
+                </button>
+                {workspaceMenuOpen && (
+                  <div
+                    id="new-chat-workspace-menu"
+                    className="new-chat-context-menu composer-provider-menu"
+                    role="listbox"
+                    aria-label="Choose workspace strategy"
+                  >
+                    {NEW_CONVERSATION_WORKSPACE_MODES.map((item) => {
+                      const selected = item === workspaceMode;
+                      const native = item === "provider-native";
+                      const available = !native || providerNativeWorkspaceAvailable;
+                      const detail = native && !available
+                        ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native workspace creation yet."
+                        : WORKSPACE_MODE_COPY[item].detail;
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          aria-disabled={!available}
+                          disabled={!available}
+                          aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                          key={item}
+                          data-workspace-option=""
+                          data-workspace-mode={item}
+                          className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            selectWorkspaceMode(item, "menu");
+                          }}
+                        >
+                          <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
+                          <span className="p">{detail}</span>
+                        </button>
+                      );
+                    })}
+                    {!providerNativeWorkspaceAvailable && (
+                      <p className="new-chat-context-note" role="note">
+                        Native is shown for the second design, but the selected adapter does not expose it yet.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <label className="new-chat-context-row new-chat-context-row--select">
+                <Icon name="branch" />
+                <span className="new-chat-context-copy">
+                  <strong>{worktree?.branch ?? (worktree ? "Detached HEAD" : "Choose a worktree")}</strong>
+                  <small title={worktree?.path}>{worktree?.path ?? "Select an available branch"}</small>
+                </span>
+                <Icon name="chevron" />
+                <select
+                  aria-label="Choose the conversation worktree"
+                  value={repository?.selectedWorktree ?? ""}
+                  disabled={selectableWorktrees.length === 0}
+                  onChange={(event) => {
+                    if (event.target.value) onSelectWorktree(event.target.value);
+                  }}
+                >
+                  {selectableWorktrees.length === 0 && <option value="">No available worktree</option>}
+                  {selectableWorktrees.map((item) => (
+                    <option value={item.path} key={item.path}>
+                      {item.branch ?? "Detached HEAD"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+        )}
         <div className="cbox">
           {elementReferences.length > 0 && (
             <div className="composer-context" aria-label="Attached element context">
@@ -2424,24 +3065,45 @@ export function Conversation({
             <div
               className="composer-suggestions"
               role="listbox"
-              aria-label={suggestionMode === "files" ? "File suggestions" : "Command suggestions"}
+              aria-label={suggestionMode === "path"
+                ? "File suggestions"
+                : suggestionMode === "skill" ? "Skill suggestions" : "Command suggestions"}
             >
-              {suggestions.map((suggestion, index) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === suggestionIndex}
-                  aria-label={`${suggestion.value}: ${suggestion.detail}`}
-                  title={`${suggestion.value} — ${suggestion.detail}`}
-                  className={index === suggestionIndex ? "active" : ""}
-                  key={suggestion.value}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectSuggestion(suggestion.value)}
-                >
-                  <strong title={suggestion.value}>{suggestion.value}</strong>
-                  <small title={suggestion.detail}>{suggestion.detail}</small>
-                </button>
+              {suggestionGroups.map((group) => (
+                <section className="composer-suggestions-group" key={group.id}>
+                  <div className="composer-suggestions-group-label">{group.label}</div>
+                  {group.items.map((suggestion) => {
+                    const index = orderedSuggestions.indexOf(suggestion);
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={index === suggestionIndex}
+                        aria-label={suggestion.label + ": " + suggestion.description}
+                        title={suggestion.label + " — " + suggestion.description}
+                        className={index === suggestionIndex ? "active" : ""}
+                        key={suggestion.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setSuggestionIndex(index)}
+                        onClick={() => selectSuggestion(suggestion)}
+                      >
+                        {suggestion.type === "path" && (
+                          <span className="composer-suggestion-kind" aria-hidden="true">@</span>
+                        )}
+                        <strong title={suggestion.label}>{suggestion.label}</strong>
+                        <small title={suggestion.description}>{suggestion.description}</small>
+                      </button>
+                    );
+                  })}
+                </section>
               ))}
+              {suggestions.length === 0 && (
+                <p className="composer-suggestions-empty">
+                  {suggestionMode === "path"
+                    ? "No matching files or folders."
+                    : suggestionMode === "skill" ? "No matching skills." : "No matching commands."}
+                </p>
+              )}
             </div>
           )}
           <textarea
@@ -2461,18 +3123,18 @@ export function Conversation({
             }}
             onPaste={() => setContextError(null)}
             onKeyDown={(event) => {
-              if (suggestionMode && suggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
                 event.preventDefault();
                 setSuggestionIndex((current) => (
                   event.key === "ArrowDown"
-                    ? (current + 1) % suggestions.length
-                    : (current - 1 + suggestions.length) % suggestions.length
+                    ? (current + 1) % orderedSuggestions.length
+                    : (current - 1 + orderedSuggestions.length) % orderedSuggestions.length
                 ));
                 return;
               }
-              if (suggestionMode && suggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
+              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
                 event.preventDefault();
-                selectSuggestion(suggestions[suggestionIndex].value);
+                selectSuggestion(orderedSuggestions[suggestionIndex]);
                 return;
               }
               if (event.key === "Escape" && suggestionMode) {
@@ -2617,22 +3279,38 @@ export function Conversation({
                     const label = providerDisplayName(id, discovery);
                     const chip = formatProviderChipName(id, discovery);
                     const selected = id === provider;
+                    const shikigamiMenuDiscovery = id === "shikigami"
+                      ? providerDiscoveryForProfile(
+                          "shikigami",
+                          shikigamiProvider,
+                          shikigamiProfiles.some((profile) => profile.id === profileId)
+                            ? profileId
+                            : defaultShikigamiProfileId,
+                        )
+                      : undefined;
                     const ready = id === "claude-code"
                       ? Boolean(profileId)
                       : id === "codex-cli"
                       ? Boolean(codex?.installed && codex.authenticated)
                       : id === "shikigami"
-                      ? Boolean(shikigamiProvider?.installed && shikigamiProvider.authenticated)
+                      ? Boolean(
+                          shikigamiMenuDiscovery?.installed
+                          && shikigamiMenuDiscovery.authenticated
+                          && shikigamiProfiles.length > 0,
+                        )
                       : Boolean(
                         discovery
                         && discovery.installed !== false
                         && discovery.enabled !== false
                         && discovery.authenticated !== false,
                       );
+                    const statusDiscovery = id === "shikigami"
+                      ? shikigamiMenuDiscovery
+                      : discovery;
                     const status = ready
                       ? (selected ? "selected" : "ready")
-                      : (discovery?.detail?.trim()
-                        || providerNotReadyMessage(id, discovery, {
+                      : (statusDiscovery?.detail?.trim()
+                        || providerNotReadyMessage(id, statusDiscovery, {
                           hasClaudeProfile: Boolean(profileId),
                           providerName: label,
                         }));
@@ -2657,6 +3335,28 @@ export function Conversation({
                       </button>
                     );
                   })}
+                  {provider === "shikigami" && shikigamiProfiles.length > 1 && (
+                    <div className="composer-provider-profile">
+                      <label htmlFor="composer-shikigami-profile">Shikigami profile
+                        <select
+                          id="composer-shikigami-profile"
+                          value={profileId}
+                          onChange={(event) => {
+                            const nextProfileId = event.target.value;
+                            setProfileId(nextProfileId);
+                            setModel(resolveDefaultProviderModel(
+                              "shikigami",
+                              providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                            ));
+                          }}
+                        >
+                          {shikigamiProfiles.map((profile) => (
+                            <option value={profile.id} key={profile.id}>{profile.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
                   <button
                     type="button"
                     role="option"
@@ -2781,7 +3481,7 @@ export function Conversation({
               )}
             </div>
             <span className="cdiv" />
-            <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+            {!managedMode && <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
               {/* Single control: mode + tool scope. Dual Access/Mode chips both
                   opened the same menu and "Access Read-only" read like privacy. */}
               <button
@@ -2846,7 +3546,70 @@ export function Conversation({
                   })}
                 </div>
               )}
-            </div>
+            </div>}
+            {!canPickWorkspace && <div className="composer-provider composer-workspace-group" ref={workspaceMenuRef}>
+              <button
+                type="button"
+                className="cc workspace-mode-chip"
+                disabled={!canPickWorkspace}
+                aria-haspopup={canPickWorkspace ? "listbox" : undefined}
+                aria-expanded={canPickWorkspace ? workspaceMenuOpen : undefined}
+                aria-controls={canPickWorkspace && workspaceMenuOpen ? "composer-workspace-menu" : undefined}
+                title={conversation
+                  ? `Workspace is fixed to ${workspaceCopy.label}. Use a reviewed fork to create another conversation.`
+                  : workspaceCopy.detail}
+                aria-label={conversation
+                  ? `Workspace ${workspaceCopy.label}. Fixed for this conversation.`
+                  : `Workspace ${workspaceCopy.label}. Opens workspace mode menu.`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (canPickWorkspace) openWorkspaceMenu();
+                }}
+              >
+                {workspaceCopy.shortLabel}
+                {canPickWorkspace && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
+              </button>
+              {workspaceMenuOpen && canPickWorkspace && (
+                <div
+                  id="composer-workspace-menu"
+                  className="composer-provider-menu workspace-mode-menu"
+                  role="listbox"
+                  aria-label="Choose conversation workspace"
+                >
+                  {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
+                    const selected = item === workspaceMode;
+                    const native = item === "provider-native";
+                    const available = !native || providerNativeWorkspaceAvailable;
+                    const detail = native && !available
+                      ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native worktree creation yet."
+                      : WORKSPACE_MODE_COPY[item].detail;
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        aria-disabled={!available}
+                        disabled={!available}
+                        aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                        key={item}
+                        data-workspace-option=""
+                        data-workspace-mode={item}
+                        className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          selectWorkspaceMode(item, "menu");
+                        }}
+                      >
+                        <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
+                        <span className="p">{detail}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>}
             {runId
               ? (
                 <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel, ${pane} pane`}>
@@ -2871,13 +3634,17 @@ export function Conversation({
       </div>
       {/* File browser and preview stay inside .conv; the selector guarantees
           only one workspace destination is visible at a time. */}
-      {repository && (previewMounted || activePanel === "preview") && (
+      {repository && (previewMounted || activePanel === "preview" || previewFloating || agentBrowserViewOpen) && (
         <PreviewPanel
           key={`${repository.root}:${repository.selectedWorktree}`}
           repository={repository}
           pane={pane}
-          active={activePanel === "preview"}
-          onClose={() => closeWorkspacePanel("preview")}
+          active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
+          floating={previewFloating}
+          conversationId={conversation?.id ?? threadId}
+          agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+          onClose={closePreview}
+          onToggleFloating={togglePreviewFloating}
           onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
           onStatusChange={updatePreviewStatus}
         />
@@ -2981,14 +3748,30 @@ export function Conversation({
           onClose={() => setContextOpen(false)}
         />
       )}
+      {workspaceDialogOpen && !conversation && repository && (
+        <ConversationWorkspaceDialog
+          repository={repository}
+          conversationId={conversationId}
+          onClose={() => setWorkspaceDialogOpen(false)}
+          onCreated={(next) => {
+            setPreparedWorkspaceRepository(next);
+            onRepositoryChanged?.(next);
+            setWorkspaceDialogOpen(false);
+            setWorkspaceApprovalPending(true);
+          }}
+        />
+      )}
       </div>
-      {forkOpen && threadId && !managedMode && (
+      {forkOpen && threadId && !managedMode && repository && (
         <ForkConversationDialog
           sourceThreadId={threadId}
           sourceProvider={provider}
+          sourceWorkspaceMode={conversation?.workspaceMode ?? "shared"}
+          repository={repository}
           profiles={profiles}
           providers={providers}
           onClose={() => setForkOpen(false)}
+          onRepositoryChanged={onRepositoryChanged}
           onCreated={(id) => {
             setForkOpen(false);
             onConversationAvailable?.(id);

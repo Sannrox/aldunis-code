@@ -2,6 +2,16 @@
 export type Product = "code" | "sekai" | "chisei" | "tenkai";
 export type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 export type WorktreeRecovery = "available" | "moved" | "missing" | "inaccessible";
+/** How a conversation owns or shares the workspace it is bound to. */
+export type WorkspaceMode = "shared" | "aldunis-managed" | "provider-native";
+
+export interface WorkspaceCapabilities {
+  shared: boolean;
+  aldunisManaged: boolean;
+  providerNative: boolean;
+  providerNativeDetail: string | null;
+}
+
 export interface RepositoryMetadata {
   projectId: string;
   name: string;
@@ -18,11 +28,21 @@ export interface RepositoryMetadata {
     originalPath: string | null;
   }>;
 }
+export interface ManagedAccount {
+  displayName: string;
+  tenantId: string;
+  roles: string[];
+  scopes: string[];
+  assertionExpiresAt: string;
+  sessionExpiresAt: string | null;
+  logoutUrl: string | null;
+}
 export interface HostCapabilities {
   mode: "local" | "remote" | "managed";
   managed: boolean;
   tenantScoped: boolean;
   singleTenantAlpha?: boolean;
+  account?: ManagedAccount | null;
   provider?: {
     id: ProviderId;
     name: string;
@@ -82,6 +102,7 @@ export interface ThreadMetadata {
   projectId: string;
   title: string;
   worktree: string;
+  workspaceMode?: WorkspaceMode;
   updatedAt: string;
   projectName: string;
   /** Provider id when present so search hits for the same title can be told apart. */
@@ -108,6 +129,7 @@ export interface ConversationSummary {
   projectId: string;
   title: string;
   worktree: string;
+  workspaceMode?: WorkspaceMode;
   provider: ProviderId;
   parentThreadId?: string;
   profileId?: string | null;
@@ -138,6 +160,7 @@ export interface DelegatedConversationOutcomeProjection {
 export interface ForkPreview {
   sourceThreadId: string;
   sourceProvider: ProviderId;
+  workspaceMode: WorkspaceMode;
   worktree: string;
   messages: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string }>;
   annotations: Array<{ id: string; path: string; text: string; capturedContext: string }>;
@@ -231,13 +254,18 @@ export interface RepositoryFilePreview extends RepositoryFileResult {
 }
 export interface ProviderCapabilities {
   provider: "claude-code";
-  commands: Array<{ name: string; description: string }>;
+  commands: ProviderCommand[];
   attachments: {
     maxCount: number;
     textMaxBytes: number;
     imageMaxBytes: number;
     imageTypes: string[];
   };
+  workspace: WorkspaceCapabilities;
+}
+export interface ProviderCommand {
+  name: string;
+  description: string;
 }
 export interface ProviderSkill {
   name: string;
@@ -245,6 +273,21 @@ export interface ProviderSkill {
 }
 export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export interface ProviderModelDiscovery {
+  id: string;
+  displayName: string;
+  isDefault: boolean;
+  reasoningEfforts?: ReasoningEffort[];
+  defaultReasoningEffort?: ReasoningEffort;
+}
+export interface ProviderProfileDiscovery {
+  profileId: string;
+  installed: boolean;
+  authenticated?: boolean;
+  version?: string | null;
+  detail?: string | null;
+  models?: ProviderModelDiscovery[];
+}
 export interface ProviderDiscovery {
   id: ProviderId;
   installed: boolean;
@@ -254,13 +297,9 @@ export interface ProviderDiscovery {
   enabled?: boolean;
   /** Operator-facing reason when the provider is not run-ready. */
   detail?: string | null;
-  models?: Array<{
-    id: string;
-    displayName: string;
-    isDefault: boolean;
-    reasoningEfforts?: ReasoningEffort[];
-    defaultReasoningEffort?: ReasoningEffort;
-  }>;
+  models?: ProviderModelDiscovery[];
+  /** Profile-specific readiness, currently populated for Shikigami. */
+  profileDiscoveries?: ProviderProfileDiscovery[];
 }
 export interface ProviderAdapterManifest {
   schemaVersion: 1;
@@ -270,9 +309,33 @@ export interface ProviderAdapterManifest {
   aldunis: { minimumVersion: string; maximumVersion: string };
   protocol: { kind: "acp"; minimumVersion: 1; maximumVersion: 1 };
   executable: { names: string[]; arguments: string[] };
-  capabilities: { tools: boolean; images: boolean; sessionResume: boolean };
+  capabilities: {
+    tools: boolean;
+    images: boolean;
+    browserObservation?: boolean;
+    browserAutomation?: boolean;
+    sessionResume: boolean;
+  };
   environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
   presentation: { name: string; description: string; website?: string };
+}
+
+export type BrowserSessionState = "awaiting_view" | "ready" | "closed" | "failed";
+export type BrowserController = "none" | "human" | "agent";
+export interface BrowserSessionSnapshot {
+  schemaVersion: 1;
+  id: string;
+  conversationId: string;
+  origin: string;
+  partition: string;
+  state: BrowserSessionState;
+  agentControl: boolean;
+  controller: BrowserController;
+  url: string | null;
+  title: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 export interface InstalledProviderAdapter {
   schemaVersion: 1;
@@ -326,6 +389,7 @@ export interface ClaudeProfile {
   name: string;
   binaryPath: string;
   homePath: string;
+  configPath: string;
   environment: Array<{
     name: string;
     sensitive: boolean;
@@ -462,6 +526,16 @@ export interface ProviderPlanArtifact {
   steps?: ProviderPlanStep[];
   updatedAt?: string;
 }
+export type ProviderBrowserObservationMediaType = "image/jpeg" | "image/png" | "image/webp";
+export interface ProviderBrowserObservation {
+  provider: ProviderId;
+  observationId: string;
+  imageData: string;
+  mediaType: ProviderBrowserObservationMediaType;
+  toolCallId?: string;
+  title?: string;
+  url?: string;
+}
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | {
@@ -472,6 +546,7 @@ export type ProviderEvent =
     correlationId?: string;
   }
   | { kind: "assistant_text"; text: string }
+  | { kind: "thinking"; text: string }
   | {
     kind: "plan_updated";
     artifact: ProviderPlanArtifact;
@@ -496,6 +571,7 @@ export type ProviderEvent =
   | ({ kind: "input_requested" } & ChildInputRequest)
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
+  | ({ kind: "browser_observation" } & ProviderBrowserObservation)
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
@@ -547,7 +623,9 @@ export interface CheckpointFile {
 }
 export type IconName =
   | "code"
+  | "computer"
   | "branch"
+  | "folder"
   | "message"
   | "diff"
   | "spark"

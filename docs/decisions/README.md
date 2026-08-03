@@ -7,6 +7,7 @@ new file over rewriting history: amend only for factual corrections.
 
 | Decision | Summary |
 | --- | --- |
+| [conversation-workspace-modes.md](conversation-workspace-modes.md) | Two new-chat workspace strategies with persisted shared compatibility mode |
 | [managed-conversation-worktrees.md](managed-conversation-worktrees.md) | Host-owned worktree create/remove; providers cannot rebind silently |
 | [cross-provider-conversation-forks.md](cross-provider-conversation-forks.md) | Explicit fork + allowlisted context transfer across providers |
 | [conversation-automations.md](conversation-automations.md) | Timer-only automations into existing threads |
@@ -15,6 +16,7 @@ new file over rewriting history: amend only for factual corrections.
 | [shikigami-provider.md](shikigami-provider.md) | First-class shikigami harness provider + PermissionBroker pre-exec |
 | [managed-hosted-workbench.md](managed-hosted-workbench.md) | Gateway-issued single-tenant hosted mode with fixed Shikigami Build |
 | [opencode-declarative-adapter.md](opencode-declarative-adapter.md) | Reviewed OpenCode ACP package (`opencode acp`) |
+| [shared-browser-ownership.md](shared-browser-ownership.md) | Aldunis-owned loopback browser shared by provider and operator |
 
 ## When to add one
 

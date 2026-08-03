@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-26
-- Updated: 2026-07-30 (#208 governed direct-run correlation)
+- Updated: 2026-08-02 (native config profiles and governed direct-run correlation)
 
 ## Context
 
@@ -20,12 +20,19 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
 
 1. Discover via `shikigami version` (**1.0.2+** required: `inplace` workspace + `--task-file`).
 2. Start runs by spawning `shikigami --config … --state … run …` with a
-   generated local config (workspace = selected worktree; tools filtered by
-   ask/plan/build mode).
+   private per-run overlay. The built-in `default:shikigami` profile reads
+   Shikigami's native config search order; a user-created Shikigami profile
+   may provide an explicit config path. The overlay never edits the source
+   file and preserves provider-owned model, governance, network, context, and
+   run settings while Code owns the selected inplace workspace, mode tool
+   allow-list, stderr events, bounded turns, and PermissionBroker hook.
 3. Stream harness progress from the `stderr` event sink
    (`[shikigami] {json}`) into Code’s normalized `ProviderEvent` stream.
-4. Prefer model adapter `http` when an API key is present (`OPENAI_API_KEY` or
-   `SHIKIGAMI_API_KEY_ENV`); otherwise offline `scripted` for readiness demos.
+4. Respect the native model adapter and its configured model/API-key settings;
+   environment variables remain the higher-precedence override. With no native
+   model configuration, prefer `http` when an API key is present
+   (`OPENAI_API_KEY` or `SHIKIGAMI_API_KEY_ENV`); otherwise use offline
+   `scripted` for readiness demos.
 5. Do **not** require an ACP surface or in-process Rust embed for the first
    integration.
 6. **Mutating tools require PermissionBroker pre-exec.** Build mode may enable
@@ -38,8 +45,10 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
    Park recovery remains CLI-side for now.
 8. Pass the user prompt via `run --task-file` (file under the host run state dir),
    not argv, so prompts do not appear in the process table.
-9. Governance defaults to `local`; operators may set `SHIKIGAMI_GOVERNANCE_ADAPTER`
-   / `SHIKIGAMI_FAIL_CLOSED` (and plane endpoint env) for governed profiles.
+9. Preserve native governance/profile settings. With no native config,
+   governance defaults to `local`; operators may set
+   `SHIKIGAMI_GOVERNANCE_ADAPTER` / `SHIKIGAMI_FAIL_CLOSED` (and plane endpoint
+   env) for governed profiles.
 10. When the effective governance adapter is `sekai-chisei`, Code waits for
     Shikigami's provider-confirmed run UUID and persists a metadata-only direct
     correlation with `operation_id = run_id`. It is labeled **direct governed**,

@@ -5,8 +5,13 @@ import { presentToolRows, type ToolRow } from "./tool-presentation";
 
 export type AssistantTimelineBlock =
   | { kind: "text"; text: string }
+  | { kind: "thinking"; text: string }
   | { kind: "plan"; artifact: ProviderPlanArtifact }
   | { kind: "tools"; rows: ToolRow[] };
+
+export interface AssistantTimelineOptions {
+  showThinking?: boolean;
+}
 
 /**
  * Preserve the provider event stream as a readable assistant timeline.
@@ -17,9 +22,11 @@ export type AssistantTimelineBlock =
 export function presentAssistantTimeline(
   events: ProviderEvent[],
   unfinishedStatus: "running" | "cancelled" = "running",
+  options: AssistantTimelineOptions = {},
 ): AssistantTimelineBlock[] {
   const blocks: Array<
     | { kind: "text"; chunks: string[] }
+    | { kind: "thinking"; chunks: string[] }
     | { kind: "plan"; artifact: ProviderPlanArtifact }
     | {
         kind: "tools";
@@ -31,6 +38,13 @@ export function presentAssistantTimeline(
   const planBlockById = new Map<string, Extract<(typeof blocks)[number], { kind: "plan" }>>();
 
   for (const event of events) {
+    if (event.kind === "thinking") {
+      if (!options.showThinking) continue;
+      const last = blocks.at(-1);
+      if (last?.kind === "thinking") last.chunks.push(event.text);
+      else blocks.push({ kind: "thinking", chunks: [event.text] });
+      continue;
+    }
     if (event.kind === "assistant_text") {
       const last = blocks.at(-1);
       if (last?.kind === "text") last.chunks.push(event.text);
@@ -70,6 +84,10 @@ export function presentAssistantTimeline(
     if (block.kind === "text") {
       const text = joinAssistantTextChunks(block.chunks);
       return text ? [{ kind: "text", text }] : [];
+    }
+    if (block.kind === "thinking") {
+      const text = joinAssistantTextChunks(block.chunks);
+      return text ? [{ kind: "thinking", text }] : [];
     }
     if (block.kind === "plan") return [block];
     return [{

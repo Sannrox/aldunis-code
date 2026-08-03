@@ -7,6 +7,7 @@ export interface Preferences {
   commandPaletteShortcut: "mod+k" | "mod+shift+p";
   managedWorktreeLimit: number | null;
   orchestrationThreadsBeta: boolean;
+  showThinking: boolean;
 }
 
 export function resolveTheme(
@@ -26,6 +27,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   commandPaletteShortcut: "mod+k",
   managedWorktreeLimit: 10,
   orchestrationThreadsBeta: false,
+  showThinking: false,
 };
 
 export function readPreferencesResponse(value: unknown): {
@@ -49,6 +51,10 @@ export function readPreferencesResponse(value: unknown): {
       && typeof input.orchestrationThreadsBeta !== "boolean"
     )
     || (
+      input.showThinking !== undefined
+      && typeof input.showThinking !== "boolean"
+    )
+    || (
       input.managedWorktreeLimit !== undefined
       && input.managedWorktreeLimit !== null
       && (
@@ -63,11 +69,12 @@ export function readPreferencesResponse(value: unknown): {
   }
   return {
     preferences: {
-      ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta">),
+      ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta" | "showThinking">),
       managedWorktreeLimit: input.managedWorktreeLimit === undefined
         ? DEFAULT_PREFERENCES.managedWorktreeLimit
         : input.managedWorktreeLimit as number | null,
       orchestrationThreadsBeta: input.orchestrationThreadsBeta === true,
+      showThinking: input.showThinking === true,
     },
     recovered: body.recovered,
   };

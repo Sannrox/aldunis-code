@@ -53,6 +53,25 @@ The managed verifier is a separate trust boundary from `RemoteAuth` pairing.
 Managed mode cannot combine with paired remote mode and never falls back to
 loopback or device pairing after a managed assertion failure.
 
+## Account projection
+
+The enterprise account session remains owned by the gateway and its identity
+provider. Code does not implement a password or OIDC login surface. For each
+authenticated browser request, the gateway may include signed `name`,
+`display_name`, `preferred_username`, `email`, `role` / `roles`, and optional
+`session_exp` claims. Code verifies the assertion, then exposes a bounded
+read-only account projection through `/api/host/capabilities`: display name,
+the configured tenant, roles, scopes, and assertion/session expiry. It never
+returns the assertion, provider credentials, or the raw subject identifier to
+the browser.
+
+The managed sidebar shows this projection only in managed mode. Local mode is
+accountless and remains usable offline. When
+`ALDUNIS_MANAGED_LOGOUT_URL` is configured, it must be an operator-selected
+HTTPS URL without credentials or a fragment; Code renders it as the gateway
+sign-out link. Without it, Code directs the user to the enterprise gateway
+without guessing a logout endpoint.
+
 ## State and recovery
 
 Managed mode is a single-tenant alpha. Code state and Shikigami run state live
@@ -68,6 +87,8 @@ provider subprocess still runs with the host operating system's authority.
 - Platform owns browser sessions, the gateway, private deployment, secrets,
   and repository materialization. Its audience-bound assertions are verified
   by Code and are never replaced by caller-selected tenant headers.
+- The managed account panel is a projection of that gateway-owned session;
+  it does not create local account authority or allow tenant switching.
 - Chisei owns routing, policy, usage, receipts, and audit. Code does not turn
   a local projection into governance authority.
 - Managed Shikigami requires the compatibility contract from Shikigami #152

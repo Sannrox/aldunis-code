@@ -82,6 +82,33 @@ test("conversation overlays are contained by .conv (not review dock)", () => {
   );
 });
 
+test("floating preview escapes the conversation overlay without losing bounds", () => {
+  assert.match(
+    css,
+    /\.preview-panel\.preview-panel--floating\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*50[^}]*width:\s*min\(540px/s,
+  );
+  assert.match(
+    shellCss,
+    /\.preview-panel\.preview-panel--floating\s*\{[^}]*position:\s*fixed\s*!important[^}]*inset:\s*auto 18px 18px auto\s*!important/s,
+  );
+  assert.match(
+    shellCss,
+    /@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*?\.preview-panel\.preview-panel--floating\s*\{[^}]*inset:\s*auto 10px 10px 10px\s*!important/s,
+  );
+});
+
+test("provider browser observations stay read-only inside the floating view", () => {
+  assert.match(css, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex[^}]*background:\s*#111/s);
+  assert.match(css, /\.browser-observation-workspace img\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(shellCss, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex\s*!important/s);
+});
+
+test("shared browser controls have a bounded workspace surface", () => {
+  assert.match(css, /\.shared-browser-workspace\s*\{[\s\S]*?flex:\s*1 1 auto/);
+  assert.match(css, /\.shared-browser-workspace webview\s*\{[\s\S]*?border:\s*0/);
+  assert.match(shellCss, /\.shared-browser-workspace webview\s*\{[\s\S]*?border:\s*0\s*!important/);
+});
+
 test("review dock shrinks so dual-pane conversation stays usable", () => {
   // Fixed 430px review inside a ~500px dual-pane primary left ~70px for the
   // thread. Dock must be allowed to shrink (flex-shrink + percentage cap).
@@ -111,6 +138,13 @@ test("narrow review dock must not use fixed 42vh basis that crushes .conv", () =
     shell,
     /\.split\.with-review\s*>\s*\.conv\s*\{[^}]*min-height:\s*100px/s,
   );
+});
+
+test("conversation thread shell supports auto-follow jump control", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.thread-shell\s*\{[^}]*position:\s*relative/s);
+  assert.match(shell, /\.thread-follow-jump\s*\{[^}]*position:\s*absolute/s);
 });
 
 test("review dock contains overflow; short docks use one scroll stream", () => {
@@ -220,8 +254,33 @@ test("thread row and settled-shelf actions meet minimum hit size", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   // Dense 22px / 20px targets failed residual stress; require ≥28px.
-  assert.match(shell, /\.settle,\s*\.beside,\s*\.row-more\s*\{[^}]*min-height:\s*28px/s);
+  assert.match(shell, /\.settle,\.row-more\s*\{[^}]*min-height:\s*28px/s);
   assert.match(shell, /\.sbtn\s*\{[^}]*min-height:\s*28px/s);
+});
+
+test("touch thread rows keep a compact, discoverable overflow affordance", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-more\s*\{[\s\S]*?min-width:\s*44px;[\s\S]*?background:\s*transparent;[\s\S]*?border-color:\s*transparent;[\s\S]*?opacity:\s*\.55;/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-main\s*\{\s*min-height:\s*72px;\s*padding:\s*12px 60px 12px 12px;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row:focus-within\s+\.row-main\s*\{\s*padding-right:\s*120px;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row-actions\s*\{\s*pointer-events:\s*none;\s*\}[\s\S]*?\.row-menu\s*\{\s*pointer-events:\s*auto;\s*\}/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.row:focus-within\s+\.row-more,[\s\S]*?\.row-menu:focus-within\s+\.row-more\s*\{[\s\S]*?opacity:\s*1;[\s\S]*?background:\s*var\(--accent\);/s,
+  );
 });
 
 test("command palette search field has a usable min-height", () => {

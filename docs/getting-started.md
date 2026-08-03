@@ -21,7 +21,8 @@ Open [http://127.0.0.1:4174](http://127.0.0.1:4174).
 The host binds **loopback only** by default and refuses non-loopback addresses
 unless you enable remote mode (below).
 
-`npm start` builds the web and desktop entry points, then starts the local host.
+`npm start` builds the web, desktop, and CLI entry points, then starts the local host.
+The structured host command surface is documented in [CLI reference](cli.md).
 
 ### Development (UI + API split)
 
@@ -29,7 +30,7 @@ Keep both commands running in separate terminals:
 
 ```sh
 # Terminal 1 — host
-npm run host -- --port 4175
+npm run cli -- serve --port 4175
 
 # Terminal 2 — Vite
 npm run dev
@@ -61,6 +62,10 @@ public release evidence.
 
 Provider credentials stay in each CLI’s own credential store. They are never
 returned to the browser. See [providers.md](providers.md).
+
+Local Code has no Aldunis account login. The local OS user, the loopback host,
+and each provider's own credential store form the local boundary. An account
+panel appears only when the host is running in enterprise-managed mode.
 
 ## Verify the tree
 
@@ -120,13 +125,13 @@ profile and recovery behavior.
 Remote access is **off by default**. Recommended path: Tailscale Serve.
 
 ```sh
-npm run host -- --remote tailscale
+npm run cli -- serve --remote tailscale
 ```
 
 LAN mode requires a private bind address, public HTTPS origin, and TLS material:
 
 ```sh
-npm run host -- --remote lan --host 192.168.1.20 \
+npm run cli -- serve --remote lan --host 192.168.1.20 \
   --public-url https://aldunis.home.example:4174 \
   --tls-cert /path/to/cert.pem \
   --tls-key /path/to/key.pem
@@ -158,12 +163,34 @@ pairing URL to open on the WLAN device.
 The host prints a short-lived pairing URL. Manage sessions:
 
 ```sh
-npm run host -- --remote-auth list
-npm run host -- --remote-auth pair
-npm run host -- --remote-auth revoke --session <session-id>
+npm run cli -- auth pairing list
+npm run cli -- auth pairing create
+npm run cli -- auth pairing revoke --session <session-id>
 ```
 
+The older `npm run host -- --remote-auth ...` forms remain available for
+existing scripts.
+
 Details: [remote-workbench.md](remote-workbench.md).
+
+## Enterprise-managed mode (operator deployment)
+
+Enterprise mode is started explicitly with `ALDUNIS_HOST_MODE=managed` behind
+the configured gateway. The gateway authenticates the browser through the
+enterprise identity provider and forwards short-lived signed Code assertions;
+Code verifies those assertions and shows the resulting account, tenant,
+roles/scopes, and expiry in the managed sidebar. Code does not receive a
+password or provider credential and does not allow the browser to choose a
+tenant.
+
+Set `ALDUNIS_MANAGED_LOGOUT_URL` to the gateway's HTTPS sign-out URL if the
+managed account panel should include a direct **Sign out** link. The value is
+optional and is rejected if it contains credentials or a URL fragment.
+
+The enterprise gateway must provide the managed assertion configuration and
+repository/provider settings described in the [managed hosted workbench
+decision](decisions/managed-hosted-workbench.md). Managed mode is single-tenant
+and does not fall back to local or paired-remote authentication.
 
 ## Repository and worktree notes
 

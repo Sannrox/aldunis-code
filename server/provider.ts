@@ -46,6 +46,17 @@ export interface ProviderPlanArtifact {
   updatedAt?: string;
 }
 
+export type ProviderBrowserObservationMediaType = "image/jpeg" | "image/png" | "image/webp";
+export interface ProviderBrowserObservation {
+  provider: ProviderId;
+  observationId: string;
+  imageData: string;
+  mediaType: ProviderBrowserObservationMediaType;
+  toolCallId?: string;
+  title?: string;
+  url?: string;
+}
+
 export interface ProviderInputRequest {
   id: string;
   question: string;
@@ -67,6 +78,7 @@ export type ProviderEvent =
     correlationId?: string;
   }
   | { kind: "assistant_text"; text: string }
+  | { kind: "thinking"; text: string }
   | {
     kind: "plan_updated";
     artifact: ProviderPlanArtifact;
@@ -78,6 +90,7 @@ export type ProviderEvent =
   | ({ kind: "input_requested" } & ProviderInputRequest)
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
+  | ({ kind: "browser_observation" } & ProviderBrowserObservation)
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
@@ -118,6 +131,18 @@ export class ProviderProtocolError extends Error {}
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/**
+ * A host-owned MCP server injected for one provider run. Environment values
+ * are intentionally explicit so provider adapters never inherit unrelated
+ * host credentials.
+ */
+export interface ProviderBrowserMcpConfiguration {
+  name: string;
+  command: string;
+  args: string[];
+  environment: Record<string, string>;
+}
+
 export interface ProviderStartOptions {
   repository: string;
   worktree: string;
@@ -128,6 +153,7 @@ export interface ProviderStartOptions {
   model?: string;
   reasoningEffort?: ReasoningEffort;
   mode: InteractionMode;
+  browserMcp?: ProviderBrowserMcpConfiguration;
 }
 
 export function modeArguments(mode: InteractionMode, help: string): string[] {
@@ -210,6 +236,11 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
       if (block.type === "text") {
         return [{ kind: "assistant_text", text: requiredString(block.text, "text") }];
       }
+      if (block.type === "thinking") {
+        return typeof block.thinking === "string" && block.thinking
+          ? [{ kind: "thinking", text: block.thinking }]
+          : [];
+      }
       if (block.type === "tool_use") {
         return [{
           kind: "tool_requested",
@@ -218,7 +249,6 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
           input: block.input,
         }];
       }
-      if (block.type === "thinking") return [];
       throw new ProviderProtocolError(`Unsupported Claude content block: ${block.type}.`);
     });
   }
@@ -254,11 +284,21 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
     }];
   }
 
+  if (event.type === "stream_event") {
+    const nested = record(event.event);
+    const delta = record(nested?.delta);
+    if (nested?.type === "content_block_delta" && delta?.type === "thinking_delta") {
+      return typeof delta.thinking === "string" && delta.thinking
+        ? [{ kind: "thinking", text: delta.thinking }]
+        : [];
+    }
+    return [];
+  }
+
   // Claude Code emits stream housekeeping events (rate limits, progress, …)
   // that must not abort an otherwise healthy turn.
   if (
     event.type === "rate_limit_event"
-    || event.type === "stream_event"
     || event.type === "progress"
   ) {
     return [];
@@ -295,6 +335,12 @@ export interface ProviderCapabilities {
     textMaxBytes: number;
     imageMaxBytes: number;
     imageTypes: string[];
+  };
+  workspace: {
+    shared: true;
+    aldunisManaged: true;
+    providerNative: false;
+    providerNativeDetail: string;
   };
 }
 
@@ -334,6 +380,12 @@ export class ClaudeCodeAdapter {
         textMaxBytes: 64 * 1024,
         imageMaxBytes: 2 * 1024 * 1024,
         imageTypes: ["image/gif", "image/jpeg", "image/png", "image/webp"],
+      },
+      workspace: {
+        shared: true,
+        aldunisManaged: true,
+        providerNative: false,
+        providerNativeDetail: "This adapter receives a canonical worktree from Aldunis Code and does not expose native worktree creation yet.",
       },
     };
   }

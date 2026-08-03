@@ -9,6 +9,7 @@ import {
   isUnread,
   providerLabel,
 } from "./conversation-list";
+import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
 
@@ -31,7 +32,7 @@ export function ThreadRow({
   onOpenBeside?: () => void;
   onAction?: (action: ConversationLifecycleAction) => void;
   showSettle?: boolean;
-  /** Show "Beside" to open this thread in a split secondary pane. */
+  /** Include "Beside" in the row action menu to open this thread in a split secondary pane. */
   showBeside?: boolean;
   /** When true, show restore instead of settle/archive. */
   archivedView?: boolean;
@@ -43,6 +44,7 @@ export function ThreadRow({
   const listLabel = providerLabel(conversation.provider);
   const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
   const branch = branchFromWorktree(conversation.worktree);
+  const workspaceLabel = WORKSPACE_MODE_COPY[conversation.workspaceMode ?? "shared"].shortLabel;
   const statusLabel =
     status === "pending_approval" ? "Approval needed"
     : status === "awaiting_input" ? "Awaiting input"
@@ -57,12 +59,14 @@ export function ThreadRow({
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
     branch,
+    workspaceLabel,
     listLabel,
     elapsed,
   ].filter(Boolean).join(", ");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const hasMenuActions = Boolean(onAction || (showBeside && onOpenBeside));
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -145,23 +149,11 @@ export function ThreadRow({
           {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
           <span className="pv" title={listLabel} aria-hidden="true">{monogram}</span>
           <span className="pl" title={listLabel}>{listLabel}</span>
+          <span className="pl" title={`Workspace: ${workspaceLabel}`}>{workspaceLabel}</span>
           <span className="tm" title={elapsed}>{elapsed}</span>
         </div>
       </button>
       <div className="row-actions">
-        {showBeside && onOpenBeside && (
-          <button
-            type="button"
-            className="beside"
-            aria-label={`Open "${conversation.title}" · ${listLabel} beside`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenBeside();
-            }}
-          >
-            Beside
-          </button>
-        )}
         {showSettle && onSettle && (
           <button
             type="button"
@@ -175,7 +167,7 @@ export function ThreadRow({
             Settle
           </button>
         )}
-        {onAction && (
+        {hasMenuActions && (
           <div className="row-menu" ref={menuRef}>
             <button
               type="button"
@@ -189,7 +181,7 @@ export function ThreadRow({
                 setMenuOpen((open) => !open);
               }}
             >
-              ⋯
+              ⋮
             </button>
             {menuOpen && (
               <div
@@ -198,65 +190,83 @@ export function ThreadRow({
                 role="menu"
                 aria-label={`Actions for ${conversation.title} · ${listLabel}`}
               >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuOpen(false);
-                    onAction("rename");
-                  }}
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuOpen(false);
-                    onAction("pin");
-                  }}
-                >
-                  {conversation.pinnedAt ? "Unpin" : "Pin"}
-                </button>
-                {archivedView ? (
+                {showBeside && onOpenBeside && (
                   <button
                     type="button"
                     role="menuitem"
+                    aria-label={`Open "${conversation.title}" · ${listLabel} beside`}
                     onClick={(event) => {
                       event.stopPropagation();
                       setMenuOpen(false);
-                      onAction("restore");
+                      onOpenBeside();
                     }}
                   >
-                    Restore
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setMenuOpen(false);
-                      onAction("archive");
-                    }}
-                  >
-                    Archive
+                    Beside
                   </button>
                 )}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="danger"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setMenuOpen(false);
-                    onAction("delete");
-                  }}
-                >
-                  Delete
-                </button>
+                {onAction && (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen(false);
+                        onAction("rename");
+                      }}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen(false);
+                        onAction("pin");
+                      }}
+                    >
+                      {conversation.pinnedAt ? "Unpin" : "Pin"}
+                    </button>
+                    {archivedView ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuOpen(false);
+                          onAction("restore");
+                        }}
+                      >
+                        Restore
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuOpen(false);
+                          onAction("archive");
+                        }}
+                      >
+                        Archive
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="danger"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen(false);
+                        onAction("delete");
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -265,5 +275,3 @@ export function ThreadRow({
     </div>
   );
 }
-
-

@@ -151,7 +151,7 @@ if ((skip_build == 0)); then
   npm run build:web
 fi
 
-npm run host -- \
+npm run cli -- serve \
   --remote lan \
   --host "$host" \
   --port "$port" \

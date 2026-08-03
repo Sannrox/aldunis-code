@@ -27,6 +27,8 @@
   "capabilities": {
     "tools": true,
     "images": false,
+    "browserObservation": false,
+    "browserAutomation": true,
     "sessionResume": true
   },
   "environment": [
@@ -48,7 +50,7 @@
   ],
   "presentation": {
     "name": "Grok Build CLI",
-    "description": "Runs an unmodified user-installed Grok Build CLI as a direct-only ACP provider via `grok agent stdio`. xAI owns authentication, models, settings, MCP configuration, and native sessions.",
+    "description": "Runs an unmodified user-installed Grok Build CLI as a direct-only ACP provider via `grok agent stdio`. xAI owns authentication, models, settings, and native sessions; Aldunis may add its reviewed, conversation-scoped shared-browser MCP server.",
     "website": "https://x.ai/cli"
   }
 }

@@ -1,13 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { ForkPreview, ProviderDiscovery, ProviderId, ClaudeProfile } from "../../types";
+import type {
+  ClaudeProfile,
+  ForkPreview,
+  ProviderDiscovery,
+  ProviderId,
+  RepositoryMetadata,
+  WorkspaceMode,
+} from "../../types";
 import { Button } from "../../components/ui";
 import { MarkdownBody } from "../../components/markdown-body";
 import {
+  providerDiscoveryForProfile,
   providerModelOptions,
   providerNotReadyMessage,
   resolveDefaultProviderModel,
 } from "../../lib/provider-readiness";
 import { OverlayDialog } from "./overlay-dialog";
+import { ConversationWorkspaceDialog } from "./conversation-workspace-dialog";
+import { WorktreeDialog } from "./worktree-dialog";
 import { ContextPackageSummary } from "../code/context-package";
 
 function isReady(provider: ProviderDiscovery | undefined): boolean {
@@ -17,16 +27,22 @@ function isReady(provider: ProviderDiscovery | undefined): boolean {
 export function ForkConversationDialog({
   sourceThreadId,
   sourceProvider,
+  sourceWorkspaceMode,
+  repository,
   profiles,
   providers,
   onClose,
+  onRepositoryChanged,
   onCreated,
 }: {
   sourceThreadId: string;
   sourceProvider: ProviderId;
+  sourceWorkspaceMode: WorkspaceMode;
+  repository: RepositoryMetadata;
   profiles: ClaudeProfile[];
   providers: ProviderDiscovery[];
   onClose: () => void;
+  onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   onCreated: (threadId: string) => void;
 }) {
   const codex = providers.find((provider) => provider.id === "codex-cli");
@@ -34,7 +50,13 @@ export function ForkConversationDialog({
   const claudeProfiles = profiles.filter((profile) => (
     profile.provider === "claude-code" || !profile.provider
   ));
+  const shikigamiProfiles = profiles.filter((profile) => profile.provider === "shikigami");
   const claudeReady = claudeProfiles.length > 0;
+  const shikigamiReady = shikigamiProvider?.profileDiscoveries?.length
+    ? shikigamiProvider.profileDiscoveries.some((profile) => (
+      profile.installed && profile.authenticated !== false
+    ))
+    : isReady(shikigamiProvider);
   const defaultDestination = useMemo((): ProviderId => {
     const candidates: ProviderId[] = sourceProvider === "claude-code"
       ? ["codex-cli", "shikigami"]
@@ -44,20 +66,60 @@ export function ForkConversationDialog({
     for (const id of candidates) {
       if (id === "claude-code" && claudeReady) return id;
       if (id === "codex-cli" && isReady(codex)) return id;
-      if (id === "shikigami" && isReady(shikigamiProvider)) return id;
+      if (id === "shikigami" && shikigamiReady) return id;
     }
     return candidates[0]!;
-  }, [claudeReady, codex, shikigamiProvider, sourceProvider]);
+  }, [claudeReady, codex, shikigamiReady, sourceProvider]);
+  const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
+    ?? claudeProfiles[0]?.id
+    ?? "";
+  const defaultShikigamiProfileId = shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id
+    ?? shikigamiProfiles[0]?.id
+    ?? "";
+  const defaultShikigamiDiscovery = providerDiscoveryForProfile(
+    "shikigami",
+    shikigamiProvider,
+    defaultShikigamiProfileId,
+  );
   const [destination, setDestination] = useState<ProviderId>(defaultDestination);
   const [preview, setPreview] = useState<ForkPreview | null>(null);
   const [profileId, setProfileId] = useState(
-    claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
-      ?? claudeProfiles[0]?.id
-      ?? "",
+    defaultDestination === "shikigami" ? defaultShikigamiProfileId : defaultClaudeProfileId,
   );
-  const [model, setModel] = useState(() => resolveDefaultProviderModel(defaultDestination, providers.find((p) => p.id === defaultDestination)));
+  const [model, setModel] = useState(() => resolveDefaultProviderModel(
+    defaultDestination,
+    defaultDestination === "shikigami"
+      ? defaultShikigamiDiscovery
+      : providers.find((p) => p.id === defaultDestination),
+  ));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
+  const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
+  const [forkDestinationId] = useState(() => crypto.randomUUID());
+  const requiresManagedWorkspace = (preview?.workspaceMode ?? sourceWorkspaceMode) === "aldunis-managed";
+  useEffect(() => {
+    const eligible = destination === "shikigami" ? shikigamiProfiles : claudeProfiles;
+    const fallback = destination === "shikigami" ? defaultShikigamiProfileId : defaultClaudeProfileId;
+    if (!eligible.some((profile) => profile.id === profileId)) {
+      setProfileId(fallback);
+      if (destination === "shikigami") {
+        setModel(resolveDefaultProviderModel(
+          "shikigami",
+          providerDiscoveryForProfile("shikigami", shikigamiProvider, fallback),
+        ));
+      }
+    }
+  }, [
+    claudeProfiles,
+    defaultClaudeProfileId,
+    defaultShikigamiProfileId,
+    destination,
+    profileId,
+    shikigamiProfiles,
+    shikigamiProvider,
+  ]);
   useEffect(() => {
     void fetch("/api/forks/preview", {
       method: "POST",
@@ -71,7 +133,7 @@ export function ForkConversationDialog({
       .finally(() => setBusy(false));
   }, [sourceThreadId]);
   const create = async () => {
-    if (!preview) return;
+    if (!preview || (requiresManagedWorkspace && !preparedWorkspaceRepository)) return;
     setBusy(true);
     setError(null);
     try {
@@ -81,9 +143,11 @@ export function ForkConversationDialog({
         body: JSON.stringify({
           sourceThreadId,
           provider: destination,
-          profileId: destination === "claude-code" ? profileId : null,
+          profileId: destination === "claude-code" || destination === "shikigami" ? profileId : null,
           model,
           expectedDigest: preview.digest,
+          worktree: preparedWorkspaceRepository?.selectedWorktree,
+          workspaceMode: requiresManagedWorkspace ? "aldunis-managed" : "shared",
         }),
       });
       const body = await response.json() as { thread?: { id: string }; error?: string };
@@ -97,7 +161,7 @@ export function ForkConversationDialog({
   const destinationDiscovery = destination === "codex-cli"
     ? codex
     : destination === "shikigami"
-    ? shikigamiProvider
+    ? providerDiscoveryForProfile("shikigami", shikigamiProvider, profileId)
     : { id: "claude-code" as const, installed: true };
   const destinationLabel = destination === "codex-cli"
     ? "Codex CLI"
@@ -113,6 +177,34 @@ export function ForkConversationDialog({
       providerName: destinationLabel,
     })
     : "";
+  if (cleanupDialogOpen && preparedWorkspaceRepository) {
+    return (
+      <WorktreeDialog
+        repository={preparedWorkspaceRepository}
+        selectedPath={preparedWorkspaceRepository.selectedWorktree}
+        onClose={() => setCleanupDialogOpen(false)}
+        onChanged={(next) => {
+          setPreparedWorkspaceRepository(null);
+          setCleanupDialogOpen(false);
+          onRepositoryChanged?.(next);
+        }}
+      />
+    );
+  }
+  if (workspaceDialogOpen) {
+    return (
+      <ConversationWorkspaceDialog
+        repository={repository}
+        conversationId={forkDestinationId}
+        onClose={() => setWorkspaceDialogOpen(false)}
+        onCreated={(next) => {
+          setPreparedWorkspaceRepository(next);
+          onRepositoryChanged?.(next);
+          setWorkspaceDialogOpen(false);
+        }}
+      />
+    );
+  }
   return (
     <OverlayDialog title={`Fork to ${destinationLabel}`} onClose={onClose}>
       <div className="fork-dialog">
@@ -127,7 +219,31 @@ export function ForkConversationDialog({
             <div><dt>Summaries</dt><dd>None</dd></div>
             <div><dt>Transfer size</dt><dd>{preview.byteCount.toLocaleString()} bytes</dd></div>
             <div><dt>Worktree</dt><dd title={preview.worktree}>{preview.worktree}</dd></div>
+            <div><dt>Destination workspace</dt><dd>{requiresManagedWorkspace ? "New Aldunis-managed worktree" : "Shared source worktree"}</dd></div>
           </dl>
+          {requiresManagedWorkspace && (
+            <section className="fork-workspace-notice" aria-label="Prepare fork workspace">
+              <strong>Prepare a dedicated destination worktree</strong>
+              <p>
+                The source conversation owns its Aldunis-managed worktree. This
+                fork must use a different approved worktree before it can start.
+              </p>
+              {preparedWorkspaceRepository ? (
+                <>
+                  <p role="status">Destination: <code>{preparedWorkspaceRepository.selectedWorktree}</code></p>
+                  {error && (
+                    <Button type="button" onClick={() => setCleanupDialogOpen(true)} disabled={busy}>
+                      Preview removal of unused worktree
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <Button type="button" onClick={() => setWorkspaceDialogOpen(true)} disabled={busy}>
+                  Create destination worktree
+                </Button>
+              )}
+            </section>
+          )}
           <details open>
             <summary>Exact messages crossing the boundary</summary>
             {preview.messages.length
@@ -162,7 +278,18 @@ export function ForkConversationDialog({
               onChange={(event) => {
                 const next = event.target.value as ProviderId;
                 setDestination(next);
-                setModel(resolveDefaultProviderModel(next, providers.find((p) => p.id === next)));
+                if (next === "shikigami") {
+                  const nextProfileId = shikigamiProfiles.some((profile) => profile.id === profileId)
+                    ? profileId
+                    : defaultShikigamiProfileId;
+                  setProfileId(nextProfileId);
+                  setModel(resolveDefaultProviderModel(
+                    next,
+                    providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                  ));
+                } else {
+                  setModel(resolveDefaultProviderModel(next, providers.find((p) => p.id === next)));
+                }
               }}
             >
               <option value="claude-code" disabled={sourceProvider === "claude-code" || !claudeReady}>
@@ -176,9 +303,9 @@ export function ForkConversationDialog({
               </option>
               <option
                 value="shikigami"
-                disabled={sourceProvider === "shikigami" || !isReady(shikigamiProvider)}
+                disabled={sourceProvider === "shikigami" || !shikigamiReady}
               >
-                Shikigami{shikigamiProvider && !isReady(shikigamiProvider) ? " (not ready)" : !shikigamiProvider ? " (not ready)" : ""}
+                Shikigami{!shikigamiReady ? " (not ready)" : ""}
               </option>
             </select>
           </label>
@@ -221,25 +348,46 @@ export function ForkConversationDialog({
               </select>
             </label>
           ) : (
-            <label htmlFor="fork-model-shikigami">Model
-              <select
-                id="fork-model-shikigami"
-                name="fork-model"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              >
-                {providerModelOptions("shikigami", shikigamiProvider).map((item) => (
-                  <option value={item.id} key={item.id}>{item.displayName}</option>
-                ))}
-              </select>
-            </label>
+            <>
+              <label htmlFor="fork-profile-shikigami">Profile
+                <select
+                  id="fork-profile-shikigami"
+                  name="fork-profile"
+                  value={profileId}
+                  onChange={(event) => {
+                    const nextProfileId = event.target.value;
+                    setProfileId(nextProfileId);
+                    setModel(resolveDefaultProviderModel(
+                      "shikigami",
+                      providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
+                    ));
+                  }}
+                >
+                  {shikigamiProfiles.map((profile) => (
+                    <option value={profile.id} key={profile.id}>{profile.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label htmlFor="fork-model-shikigami">Model
+                <select
+                  id="fork-model-shikigami"
+                  name="fork-model"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  {providerModelOptions("shikigami", destinationDiscovery).map((item) => (
+                    <option value={item.id} key={item.id}>{item.displayName}</option>
+                  ))}
+                </select>
+              </label>
+            </>
           )}
           <footer>
             <Button onClick={onClose} disabled={busy} aria-label="Cancel fork">Cancel</Button>
             <Button
               variant="primary"
               onClick={() => void create()}
-              disabled={busy || unavailable}
+              disabled={busy || unavailable || (requiresManagedWorkspace && !preparedWorkspaceRepository)}
               aria-label={busy ? "Creating reviewed fork" : "Create reviewed fork"}
             >
               Create reviewed fork

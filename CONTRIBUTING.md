@@ -31,7 +31,7 @@ Run the stack locally:
 
 ```sh
 # Terminal 1 — API host (loopback only by default)
-npm run host -- --port 4175
+npm run cli -- serve --port 4175
 
 # Terminal 2 — Vite UI
 npm run dev
@@ -45,13 +45,32 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 | Script | Purpose |
 | --- | --- |
 | `npm run host` | Local API / provider host |
+| `npm run cli -- --help` | Inspect the structured host CLI |
 | `npm run dev` | Vite UI on 127.0.0.1:4174 |
 | `npm run wlan` | Authenticated private-WLAN host with HTTPS pairing |
+| `npm run ontology:sync` | Rebuild the ignored project-local Sekai database from `docs/ontology.json` |
+| `npm run ontology:check` | Verify the project-local Sekai database matches `docs/ontology.json` |
 | `npm test` | Deterministic unit tests |
 | `npm run check` | TypeScript project build check |
 | `npm run build` | Web + desktop main bundles |
 | `npm run desktop` | Build and run the local Electron shell |
 | `npm run package:desktop` | Build non-release local test packages |
+
+### Local Sekai ontology
+
+The tracked ontology source is [`docs/ontology.json`](docs/ontology.json). The
+project-local `knowledge.db` is generated runtime state and is intentionally
+ignored. From a clean checkout, create or refresh it with:
+
+```sh
+npm run ontology:sync
+npm run ontology:check
+```
+
+These commands use the `sekai` CLI with an explicit project-local database;
+they do not read or modify the user-level ontology database, `data/sekai.db`,
+or any remote service. The check exits non-zero when the local database is
+missing, invalid, or stale.
 
 ## Pull requests
 

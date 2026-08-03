@@ -22,6 +22,24 @@ test("presentAssistantTimeline keeps tools between assistant text segments", () 
   ]);
 });
 
+test("presentAssistantTimeline hides thinking by default and shows joined chunks when enabled", () => {
+  const events: ProviderEvent[] = [
+    { kind: "assistant_text", text: "Before." },
+    { kind: "thinking", text: "First " },
+    { kind: "thinking", text: "private thought." },
+    { kind: "assistant_text", text: "After." },
+  ];
+
+  assert.deepEqual(presentAssistantTimeline(events), [
+    { kind: "text", text: "Before.After." },
+  ]);
+  assert.deepEqual(presentAssistantTimeline(events, "running", { showThinking: true }), [
+    { kind: "text", text: "Before." },
+    { kind: "thinking", text: "First private thought." },
+    { kind: "text", text: "After." },
+  ]);
+});
+
 test("presentAssistantTimeline updates a tool in its original group after later text", () => {
   const events: ProviderEvent[] = [
     { kind: "tool_started", toolCallId: "call-abc12345", name: "Command" },

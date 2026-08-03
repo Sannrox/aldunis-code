@@ -48,6 +48,15 @@ test("Codex version and native lifecycle events normalize without provider paylo
   assert.throws(() => assertSupportedCodexVersion("codex-cli 1.0.0"), ProviderProtocolError);
   assert.equal(codexAppServerArguments("0.92.0").includes("--stdio"), false);
   assert.equal(codexAppServerArguments("0.144.3").includes("--stdio"), true);
+  const browserArgs = codexAppServerArguments("0.145.0", {
+    name: "aldunis_browser",
+    command: "/usr/bin/node",
+    args: ["/app/browser-mcp.mjs"],
+    environment: { ALDUNIS_BROWSER_TOKEN: "token", ALDUNIS_BROWSER_TOOL_URL: "http://127.0.0.1:4173/api/browser/tools" },
+  });
+  assert.match(browserArgs.join(" "), /mcp_servers\.aldunis_browser/);
+  assert.match(browserArgs.join(" "), /ALDUNIS_BROWSER_TOOL_URL/);
+  assert.ok(browserArgs.indexOf("mcp_servers={}") < browserArgs.findIndex((value) => value.includes("mcp_servers.aldunis_browser")));
   assert.deepEqual(normalizeCodexNotification({
     method: "item/started",
     params: { item: { id: "item-1", type: "commandExecution", command: "private" } },
@@ -56,6 +65,10 @@ test("Codex version and native lifecycle events normalize without provider paylo
     method: "item/completed",
     params: { item: { id: "item-2", type: "agentMessage", text: "Done." } },
   }), [{ kind: "assistant_text", text: "Done." }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/reasoning/textDelta",
+    params: { itemId: "reasoning-1", delta: "private reasoning" },
+  }), [{ kind: "thinking", text: "private reasoning" }]);
   assert.deepEqual(normalizeCodexNotification({
     method: "item/completed",
     params: { item: { id: "item-1", type: "commandExecution", status: "failed", aggregatedOutput: "secret" } },
@@ -68,6 +81,25 @@ test("Codex version and native lifecycle events normalize without provider paylo
     method: "item/completed",
     params: { item: { id: "item-3", type: "collabAgentToolCall", tool: "spawnAgent", status: "completed" } },
   }), [{ kind: "tool_finished", toolCallId: "item-3", failed: false }]);
+  const inlineImage = Buffer.from("codex browser frame", "utf8").toString("base64");
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/completed",
+    params: {
+      item: { id: "image-1", type: "imageView", imageData: inlineImage, mimeType: "image/webp" },
+    },
+  }), [{
+    kind: "browser_observation",
+    provider: "codex-cli",
+    observationId: "image-1",
+    imageData: `data:image/webp;base64,${inlineImage}`,
+    mediaType: "image/webp",
+  }]);
+  // The shipped Codex schema exposes a local path. It must not become a file
+  // read or a browser view merely because the provider emitted an imageView.
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/completed",
+    params: { item: { id: "path-image", type: "imageView", path: "/private/provider/image.png" } },
+  }), []);
   assert.deepEqual(normalizeCodexNotification({
     method: "thread/goal/cleared",
     params: { threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" },
@@ -518,6 +550,29 @@ test("unknown and malformed Codex notifications fail closed", () => {
     code: "unsupported_external_tool",
     message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
   }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/started",
+    params: {
+      item: {
+        id: "item-3",
+        type: "mcpToolCall",
+        server: "aldunis_browser",
+        tool: "browser_snapshot",
+      },
+    },
+  }), [{ kind: "tool_started", toolCallId: "item-3", name: "MCP browser_snapshot" }]);
+  assert.deepEqual(normalizeCodexNotification({
+    method: "item/completed",
+    params: {
+      item: {
+        id: "item-2",
+        type: "mcpToolCall",
+        server: "aldunis_browser",
+        tool: "browser_snapshot",
+        status: "completed",
+      },
+    },
+  }), [{ kind: "tool_finished", toolCallId: "item-2", failed: false }]);
 });
 
 test("Codex protocol failures preserve a safe diagnostic and settle active tools", async () => {
