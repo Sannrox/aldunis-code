@@ -47,4 +47,8 @@ test("automation run statuses use reader-facing language", () => {
     "Last run skipped — conversation was busy",
   );
   assert.equal(formatAutomationLastStatus("error"), "Last run failed");
+  assert.equal(
+    formatAutomationLastStatus("unknown"),
+    "Outcome unknown — explicit retry required",
+  );
 });

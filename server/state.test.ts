@@ -275,6 +275,82 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "active");
 });
 
+test("automation fires are durable, idempotent, and bind turn and provider identities", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const key = {
+    automationId: "automation-1",
+    key: "scheduled:2026-01-01T00:01:00.000Z",
+    kind: "scheduled" as const,
+    scheduledAt: "2026-01-01T00:01:00.000Z",
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    retryOf: null,
+  };
+  const skipped = await store.recordAutomationFireSkippedBusy(key);
+  const claimed = await store.claimAutomationFire(key);
+  assert.equal(claimed.claimed, true);
+  assert.equal(claimed.fire.id, skipped.id);
+  const duplicate = await store.claimAutomationFire(key);
+  assert.equal(duplicate.claimed, false);
+  assert.equal(duplicate.fire.id, skipped.id);
+
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "automation prompt",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.bindAutomationFireTurn(claimed.fire.id, started.turn.id);
+  await store.bindProviderRun(started.turn.id, "provider-run-1");
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "provider-session-1",
+    costUsd: null,
+  });
+  await store.finishAutomationFire(claimed.fire.id, "completed");
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.deepEqual(rebuilt.automationFires, [{
+    ...rebuilt.automationFires[0],
+    status: "completed",
+    turnId: started.turn.id,
+    providerRunId: "provider-run-1",
+    error: null,
+  }]);
+  assert.equal(
+    (await store.latestAutomationFire("automation-1"))?.key,
+    "scheduled:2026-01-01T00:01:00.000Z",
+  );
+});
+
+test("automation fires become explicit unknown after an interrupted host", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "may have mutated the worktree",
+    mode: "build",
+    provider: "claude-code",
+  });
+  const claim = await store.claimAutomationFire({
+    automationId: "automation-1",
+    key: "scheduled:2026-01-01T00:01:00.000Z",
+    kind: "scheduled",
+    scheduledAt: "2026-01-01T00:01:00.000Z",
+    requestedAt: "2026-01-01T00:01:00.000Z",
+    retryOf: null,
+  });
+  await store.bindAutomationFireTurn(claim.fire.id, started.turn.id);
+  await store.recoverInterruptedTurns();
+  await store.reconcileAutomationFires();
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.turns[0].status, "interrupted");
+  assert.equal(rebuilt.automationFires[0].status, "unknown");
+  assert.match(rebuilt.automationFires[0].error ?? "", /could not be proven/);
+});
+
 test("governed Shikigami correlation receipts survive restart without sensitive run content", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -652,13 +728,22 @@ test("corruption and incompatible schemas fail visibly without discarding histor
 test("project deletion and retention physically remove sensitive conversation data", async () => {
   const deleted = await fixtureStore();
   await deleted.store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  await deleted.store.startTurn({
+  const deletedTurn = await deleted.store.startTurn({
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "secret prompt sentinel",
     mode: "build",
     provider: "claude-code",
   });
+  const deletedFire = await deleted.store.claimAutomationFire({
+    automationId: "automation-project-delete",
+    key: "manual:project-delete",
+    kind: "manual",
+    scheduledAt: null,
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    retryOf: null,
+  });
+  await deleted.store.bindAutomationFireTurn(deletedFire.fire.id, deletedTurn.turn.id);
   await deleted.store.deleteProject("project-1");
   assert.deepEqual(await deleted.store.load(), {
     schemaVersion: 2,
@@ -680,22 +765,33 @@ test("project deletion and retention physically remove sensitive conversation da
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    automationFires: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 
   const retained = await fixtureStore();
   await retained.store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  await retained.store.startTurn({
+  const retainedTurn = await retained.store.startTurn({
     projectId: "project-1",
     worktree: "/fixture",
     prompt: "expired sensitive prompt",
     mode: "build",
     provider: "claude-code",
   });
+  const retainedFire = await retained.store.claimAutomationFire({
+    automationId: "automation-retention",
+    key: "manual:retention",
+    kind: "manual",
+    scheduledAt: null,
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    retryOf: null,
+  });
+  await retained.store.bindAutomationFireTurn(retainedFire.fire.id, retainedTurn.turn.id);
   await retained.store.enforceRetention(new Date(Date.now() + 60_000));
   const projection = await retained.store.load();
   assert.equal(projection.projects.length, 1);
   assert.equal(projection.threads.length, 0);
+  assert.equal(projection.automationFires.length, 0);
   assert.equal((await readFile(join(retained.directory, "events.v1.jsonl"), "utf8")).includes("sensitive"), false);
 });
 
@@ -816,6 +912,15 @@ test("conversation deletion previews and physically compacts only conversation-o
     sessionId: "session-secret-sentinel",
     costUsd: 0,
   });
+  const fire = await store.claimAutomationFire({
+    automationId: "automation-conversation-delete",
+    key: "manual:conversation-delete",
+    kind: "manual",
+    scheduledAt: null,
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    retryOf: null,
+  });
+  await store.bindAutomationFireTurn(fire.fire.id, turn.id);
 
   assert.deepEqual(await store.previewConversationDeletion(thread.id), {
     thread: 1,
@@ -844,6 +949,7 @@ test("conversation deletion previews and physically compacts only conversation-o
   assert.equal(rebuilt.turns.length, 0);
   assert.equal(rebuilt.messages.length, 0);
   assert.equal(rebuilt.providerSessions.length, 0);
+  assert.equal(rebuilt.automationFires.length, 0);
   assert.equal(rebuilt.conversationDeletions[0].status, "completed");
   const persisted = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal(persisted.includes("secret sentinel"), false);

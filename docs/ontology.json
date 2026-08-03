@@ -22,6 +22,14 @@
       "description": "The local workbench UI and host boundary for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations."
     },
     {
+      "name": "ConversationAutomation",
+      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation while preserving the conversation, worktree, provider, and explicit approval boundaries."
+    },
+    {
+      "name": "ConversationAutomationFire",
+      "description": "A metadata-only durable identity for one scheduled or explicitly requested conversation automation attempt; it records idempotency, bound turn and provider-run identities, bounded outcome, and explicit unknown-after-restart state without raw provider output."
+    },
+    {
       "name": "ProviderDiscovery",
       "description": "Aldunis Code host-owned readiness projection for locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery."
     },
@@ -167,6 +175,22 @@
     }
   ],
   "relations": [
+    {
+      "name": "targets_existing_conversation",
+      "description": "Binds a timer-only automation to one existing local conversation; scheduling never creates a new conversation or worktree.",
+      "domain": "ConversationAutomation",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "records_automation_fire",
+      "description": "Records each scheduled slot or explicit manual request as one idempotent fire identity with bounded outcome and recovery state.",
+      "domain": "ConversationAutomation",
+      "range": "ConversationAutomationFire"
+    },
     {
       "name": "exposes_host_commands",
       "description": "The CLI exposes typed start and serve commands that route into the local host lifecycle without adding provider or terminal authority.",
@@ -425,6 +449,30 @@
       "subject": "ConversationLifecycleControl",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/workbench.tsx:manageConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationAutomation",
+      "source": "GitHub Issue Sannrox/aldunis-code#448",
+      "locator": "server/automations.ts#Automation; docs/automations.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationAutomationFire",
+      "source": "GitHub Issue Sannrox/aldunis-code#448",
+      "locator": "server/automations.ts#AutomationFire; server/state.ts#automation_fire_saved",
+      "confidence": 1.0
+    },
+    {
+      "subject": "targets_existing_conversation",
+      "source": "Aldunis Code automation boundary",
+      "locator": "server/automations.ts#Automation; server/host.ts#/api/automations/create",
+      "confidence": 1.0
+    },
+    {
+      "subject": "records_automation_fire",
+      "source": "Aldunis Code durable automation fire boundary",
+      "locator": "server/state.ts#AutomationFire; server/state.ts#automation_fire_saved",
       "confidence": 1.0
     },
     {

@@ -13,6 +13,11 @@ import {
   type ProviderPlanStep,
   type ReasoningEffort,
 } from "./provider.ts";
+import type {
+  AutomationFire,
+  AutomationFireKey,
+  AutomationFireStatus,
+} from "./automations.ts";
 import type { ContextPin, ContextReceiptEntry } from "./context.ts";
 import type { WorkspaceMode } from "../src/types.ts";
 
@@ -355,6 +360,7 @@ export interface StateProjection {
   delegatedRelationships: DelegatedConversationRelationship[];
   inputRequests: ChildInputRequest[];
   inputReceipts: ChildInputReceipt[];
+  automationFires: AutomationFire[];
 }
 
 type StateEvent =
@@ -375,7 +381,8 @@ type StateEvent =
   | { type: "fork_saved"; fork: ConversationFork }
   | { type: "delegated_relationship_saved"; delegatedRelationship: DelegatedConversationRelationship }
   | { type: "input_request_saved"; inputRequest: ChildInputRequest }
-  | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt };
+  | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt }
+  | { type: "automation_fire_saved"; automationFire: AutomationFire };
 
 interface EventEnvelope {
   schemaVersion: 2;
@@ -412,6 +419,24 @@ function emptyProjection(): StateProjection {
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    automationFires: [],
+  };
+}
+
+type AutomationFireTerminalStatus = Exclude<AutomationFireStatus, "started" | "skipped_busy">;
+
+function automationFireOutcome(
+  projection: StateProjection,
+  fire: AutomationFire,
+): { status: AutomationFireTerminalStatus; error: string | null } {
+  const turn = fire.turnId
+    ? projection.turns.find((item) => item.id === fire.turnId)
+    : undefined;
+  if (turn?.status === "completed") return { status: "completed", error: null };
+  if (turn?.status === "failed") return { status: "failed", error: "The provider turn failed." };
+  return {
+    status: "unknown",
+    error: "The provider outcome could not be proven after the host stopped or disconnected.",
   };
 }
 
@@ -794,6 +819,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.inputRequests, event.inputRequest);
   } else if (event.type === "input_receipt_saved") {
     replaceById(projection.inputReceipts, event.inputReceipt);
+  } else if (event.type === "automation_fire_saved") {
+    replaceById(projection.automationFires, event.automationFire);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -841,6 +868,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     delegated_relationship_saved: "delegatedRelationship",
     input_request_saved: "inputRequest",
     input_receipt_saved: "inputReceipt",
+    automation_fire_saved: "automationFire",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -1416,9 +1444,192 @@ export class LocalStateStore {
   }
 
   async bindProviderRun(turnId: string, providerRunId: string): Promise<void> {
-    const turn = (await this.load()).turns.find((item) => item.id === turnId);
-    if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
-    await this.#append({ type: "turn_saved", turn: { ...turn, providerRunId } });
+    await this.#appendComputed((projection) => {
+      const turn = projection.turns.find((item) => item.id === turnId);
+      if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
+      const fire = projection.automationFires.find((item) => item.turnId === turnId);
+      if (fire?.providerRunId && fire.providerRunId !== providerRunId) {
+        throw new LocalStateError("The automation fire is already bound to another provider run.", 409);
+      }
+      const events: StateEvent[] = [{
+        type: "turn_saved",
+        turn: { ...turn, providerRunId },
+      }];
+      if (fire && fire.providerRunId !== providerRunId) {
+        events.push({
+          type: "automation_fire_saved",
+          automationFire: {
+            ...fire,
+            providerRunId,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+      return { event: events, value: undefined };
+    });
+  }
+
+  async getAutomationFire(automationId: string, key: string): Promise<AutomationFire | null> {
+    const projection = await this.load();
+    return projection.automationFires.find(
+      (fire) => fire.automationId === automationId && fire.key === key,
+    ) ?? null;
+  }
+
+  async getAutomationFireById(fireId: string): Promise<AutomationFire | null> {
+    const projection = await this.load();
+    return projection.automationFires.find((fire) => fire.id === fireId) ?? null;
+  }
+
+  async latestAutomationFire(automationId: string): Promise<AutomationFire | null> {
+    const projection = await this.load();
+    return projection.automationFires
+      .filter((fire) => fire.automationId === automationId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+  }
+
+  async recordAutomationFireSkippedBusy(input: AutomationFireKey): Promise<AutomationFire> {
+    return this.#appendComputed((projection) => {
+      const existing = projection.automationFires.find(
+        (fire) => fire.automationId === input.automationId && fire.key === input.key,
+      );
+      if (existing) return { event: null, value: existing };
+      const now = new Date().toISOString();
+      const fire: AutomationFire = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        automationId: input.automationId,
+        key: input.key,
+        kind: input.kind,
+        scheduledAt: input.scheduledAt,
+        requestedAt: input.requestedAt,
+        turnId: null,
+        providerRunId: null,
+        status: "skipped_busy",
+        error: null,
+        retryOf: input.retryOf ?? null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return { event: { type: "automation_fire_saved", automationFire: fire }, value: fire };
+    });
+  }
+
+  async claimAutomationFire(input: AutomationFireKey): Promise<{ fire: AutomationFire; claimed: boolean }> {
+    return this.#appendComputed((projection) => {
+      const existing = projection.automationFires.find(
+        (fire) => fire.automationId === input.automationId && fire.key === input.key,
+      );
+      const now = new Date().toISOString();
+      if (existing) {
+        if (existing.kind !== "scheduled" || existing.status !== "skipped_busy" || existing.turnId) {
+          return { event: null, value: { fire: existing, claimed: false } };
+        }
+        const fire: AutomationFire = {
+          ...existing,
+          requestedAt: input.requestedAt,
+          status: "started",
+          error: null,
+          updatedAt: now,
+        };
+        return {
+          event: { type: "automation_fire_saved", automationFire: fire },
+          value: { fire, claimed: true },
+        };
+      }
+      const fire: AutomationFire = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        automationId: input.automationId,
+        key: input.key,
+        kind: input.kind,
+        scheduledAt: input.scheduledAt,
+        requestedAt: input.requestedAt,
+        turnId: null,
+        providerRunId: null,
+        status: "started",
+        error: null,
+        retryOf: input.retryOf ?? null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return {
+        event: { type: "automation_fire_saved", automationFire: fire },
+        value: { fire, claimed: true },
+      };
+    });
+  }
+
+  async bindAutomationFireTurn(fireId: string, turnId: string): Promise<void> {
+    await this.#appendComputed((projection) => {
+      const fire = projection.automationFires.find((item) => item.id === fireId);
+      if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
+      if (fire.turnId && fire.turnId !== turnId) {
+        throw new LocalStateError("The automation fire is already bound to another turn.", 409);
+      }
+      if (fire.turnId === turnId) return { event: null, value: undefined };
+      const next: AutomationFire = {
+        ...fire,
+        turnId,
+        updatedAt: new Date().toISOString(),
+      };
+      return { event: { type: "automation_fire_saved", automationFire: next }, value: undefined };
+    });
+  }
+
+  async finishAutomationFire(
+    fireId: string,
+    status: AutomationFireTerminalStatus,
+    error: string | null = null,
+  ): Promise<AutomationFire> {
+    return this.#appendComputed((projection) => {
+      const fire = projection.automationFires.find((item) => item.id === fireId);
+      if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
+      if (fire.status !== "started" && fire.status !== "skipped_busy") {
+        return { event: null, value: fire };
+      }
+      const safeError = error?.trim().slice(0, 500) || null;
+      const next: AutomationFire = {
+        ...fire,
+        status,
+        error: status === "completed" ? null : safeError,
+        updatedAt: new Date().toISOString(),
+      };
+      return { event: { type: "automation_fire_saved", automationFire: next }, value: next };
+    });
+  }
+
+  async automationFireOutcome(fireId: string): Promise<{
+    status: AutomationFireTerminalStatus;
+    error: string | null;
+  }> {
+    const projection = await this.load();
+    const fire = projection.automationFires.find((item) => item.id === fireId);
+    if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
+    if (fire.status !== "started" && fire.status !== "skipped_busy") {
+      return { status: fire.status, error: fire.error };
+    }
+    return automationFireOutcome(projection, fire);
+  }
+
+  async reconcileAutomationFires(): Promise<void> {
+    await this.#appendComputed((projection) => {
+      const events: StateEvent[] = [];
+      for (const fire of projection.automationFires) {
+        if (fire.status !== "started") continue;
+        const outcome = automationFireOutcome(projection, fire);
+        events.push({
+          type: "automation_fire_saved",
+          automationFire: {
+            ...fire,
+            status: outcome.status,
+            error: outcome.error,
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+      return { event: events, value: undefined };
+    });
   }
 
   async renameConversation(threadId: string, title: string): Promise<Thread> {
@@ -1778,6 +1989,9 @@ export class LocalStateStore {
     );
     projection.threads = projection.threads.filter((thread) => thread.id !== threadId);
     projection.turns = projection.turns.filter((turn) => turn.threadId !== threadId);
+    projection.automationFires = projection.automationFires.filter(
+      (fire) => !fire.turnId || !turnIds.has(fire.turnId),
+    );
     projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
     projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
     projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
@@ -2282,6 +2496,9 @@ export class LocalStateStore {
       projection.projects = projection.projects.filter((project) => project.id !== projectId);
       projection.threads = projection.threads.filter((thread) => !threadIds.has(thread.id));
       projection.turns = projection.turns.filter((turn) => !turnIds.has(turn.id));
+      projection.automationFires = projection.automationFires.filter(
+        (fire) => !fire.turnId || !turnIds.has(fire.turnId),
+      );
       projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
       projection.plans = projection.plans.filter((plan) => !threadIds.has(plan.threadId));
@@ -2341,6 +2558,9 @@ export class LocalStateStore {
       );
       projection.threads = projection.threads.filter((thread) => !expiredThreads.has(thread.id));
       projection.turns = projection.turns.filter((turn) => !expiredTurns.has(turn.id));
+      projection.automationFires = projection.automationFires.filter(
+        (fire) => !fire.turnId || !expiredTurns.has(fire.turnId),
+      );
       projection.messages = projection.messages.filter((message) => !expiredTurns.has(message.turnId));
       projection.activities = projection.activities.filter((activity) => !expiredTurns.has(activity.turnId));
       projection.plans = projection.plans.filter((plan) => !expiredThreads.has(plan.threadId));
@@ -2465,6 +2685,10 @@ export class LocalStateStore {
         ...next.inputReceipts.map((inputReceipt): StateEvent => ({
           type: "input_receipt_saved",
           inputReceipt,
+        })),
+        ...next.automationFires.map((automationFire): StateEvent => ({
+          type: "automation_fire_saved",
+          automationFire,
         })),
       ];
       const rebuilt = emptyProjection();

@@ -14,6 +14,59 @@ export type AutomationSchedule =
   | { kind: "interval"; seconds: number }
   | { kind: "cron"; expression: string };
 
+export type AutomationFireKind = "scheduled" | "manual";
+export type AutomationFireStatus =
+  | "started"
+  | "completed"
+  | "failed"
+  | "skipped_busy"
+  | "unknown";
+
+/** Metadata-only durable identity for one automation execution attempt. */
+export interface AutomationFire {
+  schemaVersion: 2;
+  id: string;
+  automationId: string;
+  key: string;
+  kind: AutomationFireKind;
+  scheduledAt: string | null;
+  requestedAt: string;
+  turnId: string | null;
+  providerRunId: string | null;
+  status: AutomationFireStatus;
+  error: string | null;
+  retryOf: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationFireKey {
+  automationId: string;
+  key: string;
+  kind: AutomationFireKind;
+  scheduledAt: string | null;
+  requestedAt: string;
+  retryOf?: string | null;
+}
+
+export interface AutomationFireExecution {
+  status: Exclude<AutomationFireStatus, "started" | "skipped_busy">;
+  error?: string | null;
+}
+
+export interface AutomationFireStore {
+  get(automationId: string, key: string): Promise<AutomationFire | null>;
+  getById?(fireId: string): Promise<AutomationFire | null>;
+  latest?(automationId: string): Promise<AutomationFire | null>;
+  recordSkippedBusy(input: AutomationFireKey): Promise<AutomationFire>;
+  claim(input: AutomationFireKey): Promise<{ fire: AutomationFire; claimed: boolean }>;
+  finish(
+    fireId: string,
+    status: Exclude<AutomationFireStatus, "started" | "skipped_busy">,
+    error?: string | null,
+  ): Promise<AutomationFire>;
+}
+
 export interface Automation {
   schemaVersion: 1;
   id: string;
@@ -27,7 +80,7 @@ export interface Automation {
   updatedAt: string;
   /** null until first host evaluation seeds without firing. */
   lastRunAt: string | null;
-  lastStatus: "ok" | "skipped_busy" | "error" | null;
+  lastStatus: "ok" | "skipped_busy" | "error" | "unknown" | null;
   lastError: string | null;
 }
 
@@ -162,7 +215,8 @@ export function parseAutomation(value: unknown): Automation {
     || (input.lastStatus !== null
       && input.lastStatus !== "ok"
       && input.lastStatus !== "skipped_busy"
-      && input.lastStatus !== "error")
+      && input.lastStatus !== "error"
+      && input.lastStatus !== "unknown")
     || (input.lastError !== null && typeof input.lastError !== "string")
   ) {
     throw new AutomationError("Automation uses an incompatible or invalid value.");
@@ -342,14 +396,10 @@ export class AutomationStore {
   }
 }
 
-export type AutomationFireResult =
-  | { status: "ok" }
-  | { status: "skipped_busy" }
-  | { status: "error"; message: string };
-
 export class AutomationScheduler {
   #timer: NodeJS.Timeout | null = null;
   #running = false;
+  #threadExecutionTails = new Map<string, Promise<void>>();
 
   constructor(
     private readonly store: AutomationStore,
@@ -357,7 +407,12 @@ export class AutomationScheduler {
       /** Return true when the target thread cannot accept a new turn. */
       isThreadBusy: (threadId: string) => Promise<boolean>;
       /** Start a provider turn for this automation; throws on hard failure. */
-      fire: (automation: Automation) => Promise<void>;
+      fire: (
+        automation: Automation,
+        fire?: AutomationFire,
+      ) => Promise<AutomationFireExecution | void>;
+      /** Production state hooks; omitted by focused scheduler tests. */
+      fireStore?: AutomationFireStore;
       intervalMs?: number;
       now?: () => Date;
     },
@@ -378,15 +433,157 @@ export class AutomationScheduler {
     this.#timer = null;
   }
 
+  #now(): Date {
+    return this.options.now?.() ?? new Date();
+  }
+
+  #scheduledFireKey(automation: Automation, now: Date): AutomationFireKey {
+    let scheduledAt = now;
+    if (automation.schedule.kind === "interval") {
+      const lastRun = automation.lastRunAt ? Date.parse(automation.lastRunAt) : Number.NaN;
+      if (Number.isFinite(lastRun)) {
+        scheduledAt = new Date(lastRun + automation.schedule.seconds * 1000);
+      }
+    } else {
+      scheduledAt = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+    }
+    const scheduledAtValue = scheduledAt.toISOString();
+    return {
+      automationId: automation.id,
+      key: `scheduled:${scheduledAtValue}`,
+      kind: "scheduled",
+      scheduledAt: scheduledAtValue,
+      requestedAt: now.toISOString(),
+      retryOf: null,
+    };
+  }
+
+  #statusForAutomation(status: AutomationFireStatus): Automation["lastStatus"] {
+    switch (status) {
+      case "completed": return "ok";
+      case "skipped_busy": return "skipped_busy";
+      case "failed": return "error";
+      case "unknown": return "unknown";
+      default: return null;
+    }
+  }
+
+  #errorMessage(error: unknown): string {
+    const message = error instanceof Error ? error.message : "Automation failed.";
+    return message.trim().slice(0, 500) || "Automation failed.";
+  }
+
+  async #saveOutcome(
+    automation: Automation,
+    fire: AutomationFire | null,
+    now: Date,
+    outcome: AutomationFireExecution,
+  ): Promise<void> {
+    const status = outcome.status;
+    const error = outcome.error == null ? null : this.#errorMessage(outcome.error);
+    if (this.options.fireStore && fire) {
+      await this.options.fireStore.finish(fire.id, status, error);
+    }
+    await this.store.update(automation.id, {
+      lastRunAt: now.toISOString(),
+      lastStatus: this.#statusForAutomation(status),
+      lastError: error,
+    });
+  }
+
+  async #saveSkippedBusy(automation: Automation, input: AutomationFireKey): Promise<void> {
+    if (this.options.fireStore) {
+      await this.options.fireStore.recordSkippedBusy(input);
+    }
+    await this.store.update(automation.id, {
+      lastStatus: "skipped_busy",
+      lastError: null,
+    });
+  }
+
+  async #syncExisting(
+    automation: Automation,
+    fire: AutomationFire,
+    now: Date,
+  ): Promise<void> {
+    if (fire.status === "started" || fire.status === "skipped_busy") return;
+    const latest = await this.options.fireStore?.latest?.(automation.id);
+    if (latest && latest.id !== fire.id) return;
+    await this.store.update(automation.id, {
+      lastRunAt: now.toISOString(),
+      lastStatus: this.#statusForAutomation(fire.status),
+      lastError: fire.error,
+    });
+  }
+
+  async #execute(
+    automation: Automation,
+    input: AutomationFireKey,
+    now: Date,
+    syncExisting = false,
+  ): Promise<void> {
+    const previous = this.#threadExecutionTails.get(automation.threadId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.then(() => current);
+    this.#threadExecutionTails.set(automation.threadId, queued);
+    await previous;
+    try {
+      const existing = await this.options.fireStore?.get(automation.id, input.key);
+      if (existing && existing.status !== "skipped_busy") {
+        if (syncExisting) await this.#syncExisting(automation, existing, now);
+        return;
+      }
+      if (await this.options.isThreadBusy(automation.threadId)) {
+        await this.#saveSkippedBusy(automation, input);
+        return;
+      }
+      const claim = this.options.fireStore
+        ? await this.options.fireStore.claim(input)
+        : null;
+      if (claim && !claim.claimed) {
+        if (syncExisting) await this.#syncExisting(automation, claim.fire, now);
+        return;
+      }
+      const fire = claim?.fire ?? null;
+      try {
+        const outcome = await this.options.fire(automation, fire ?? undefined);
+        await this.#saveOutcome(
+          automation,
+          fire,
+          now,
+          outcome ?? { status: "completed" },
+        );
+      } catch (error) {
+        const message = this.#errorMessage(error);
+        if (this.options.fireStore && fire) {
+          await this.options.fireStore.finish(fire.id, "failed", message);
+        }
+        await this.store.update(automation.id, {
+          lastRunAt: now.toISOString(),
+          lastStatus: "error",
+          lastError: message,
+        });
+      }
+    } finally {
+      release();
+      if (this.#threadExecutionTails.get(automation.threadId) === queued) {
+        this.#threadExecutionTails.delete(automation.threadId);
+      }
+    }
+  }
+
   async tick(): Promise<void> {
     if (this.#running) return;
     this.#running = true;
     try {
-      const now = this.options.now?.() ?? new Date();
+      const now = this.#now();
       const items = await this.store.list();
       // Evaluate schedules first, then fire due items concurrently so one long
       // provider turn does not delay other due automations.
-      const due: Automation[] = [];
+      const due: Array<{ automation: Automation; input: AutomationFireKey }> = [];
       const claimedThreads = new Set<string>();
       for (const automation of items) {
         if (!isScheduleDue(automation, now)) continue;
@@ -399,65 +596,53 @@ export class AutomationScheduler {
           });
           continue;
         }
-        if (
-          claimedThreads.has(automation.threadId)
-          || await this.options.isThreadBusy(automation.threadId)
-        ) {
+        const input = this.#scheduledFireKey(automation, now);
+        if (claimedThreads.has(automation.threadId) || await this.options.isThreadBusy(automation.threadId)) {
           // Skip without advancing lastRun on scheduled ticks.
-          await this.store.update(automation.id, {
-            lastStatus: "skipped_busy",
-            lastError: null,
-          });
+          await this.#saveSkippedBusy(automation, input);
           continue;
         }
         claimedThreads.add(automation.threadId);
-        due.push(automation);
+        due.push({ automation, input });
       }
-      await Promise.all(due.map(async (automation) => {
-        try {
-          await this.options.fire(automation);
-          await this.store.update(automation.id, {
-            lastRunAt: now.toISOString(),
-            lastStatus: "ok",
-            lastError: null,
-          });
-        } catch (error) {
-          await this.store.update(automation.id, {
-            lastRunAt: now.toISOString(),
-            lastStatus: "error",
-            lastError: error instanceof Error ? error.message : "Automation failed.",
-          });
-        }
-      }));
+      await Promise.all(due.map(({ automation, input }) => (
+        this.#execute(automation, input, now, true)
+      )));
     } finally {
       this.#running = false;
     }
   }
 
   /** Immediate run; advances lastRun even if the schedule is not due. */
-  async runNow(id: string): Promise<Automation> {
+  async runNow(
+    id: string,
+    idempotencyKey = randomUUID(),
+    retryOf: string | null = null,
+  ): Promise<Automation> {
     const automation = await this.store.get(id);
     if (!automation) throw new AutomationError("Automation not found.", 404);
-    const now = this.options.now?.() ?? new Date();
-    if (await this.options.isThreadBusy(automation.threadId)) {
-      return this.store.update(id, {
-        lastStatus: "skipped_busy",
-        lastError: null,
-      });
+    if (retryOf && this.options.fireStore?.getById) {
+      const original = await this.options.fireStore.getById(retryOf);
+      if (!original || original.automationId !== id || original.status !== "unknown") {
+        throw new AutomationError("Only an unknown fire for this automation can be retried.", 409);
+      }
     }
-    try {
-      await this.options.fire(automation);
-      return this.store.update(id, {
-        lastRunAt: now.toISOString(),
-        lastStatus: "ok",
-        lastError: null,
-      });
-    } catch (error) {
-      return this.store.update(id, {
-        lastRunAt: now.toISOString(),
-        lastStatus: "error",
-        lastError: error instanceof Error ? error.message : "Automation failed.",
-      });
+    const now = this.#now();
+    const input: AutomationFireKey = {
+      automationId: id,
+      key: `manual:${idempotencyKey}`,
+      kind: "manual",
+      scheduledAt: null,
+      requestedAt: now.toISOString(),
+      retryOf,
+    };
+    if (retryOf && this.options.fireStore?.get) {
+      const existingKey = await this.options.fireStore.get(id, input.key);
+      if (existingKey) {
+        throw new AutomationError("An explicit retry must use a new idempotency key.", 409);
+      }
     }
+    await this.#execute(automation, input, now);
+    return (await this.store.get(id)) ?? automation;
   }
 }
