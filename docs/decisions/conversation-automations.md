@@ -22,6 +22,21 @@ Ship **timer-only** automations stored outside preferences:
 6. If the target thread is busy, scheduled ticks **skip without advancing** `lastRunAt`.
 7. Explicit PermissionBroker approvals remain required for mutating tools; automations never auto-approve.
 
+## Durability extension (#448)
+
+Each scheduled slot receives a deterministic fire key and each explicit manual
+request receives a caller-provided idempotency key. The fire identity is
+appended to the local event log before provider launch, then bound to the
+created Aldunis turn and provider-confirmed run identity. Reusing a key is
+idempotent. An explicit retry of an unknown fire must use a new key and remains
+visible as a separate attempt.
+
+On host recovery, a fire is marked completed or failed only when the bound turn
+proves that outcome. Any started fire whose provider outcome cannot be proven
+is marked unknown and is never replayed automatically. This preserves the
+existing writer lease, existing-conversation/worktree binding, and explicit
+PermissionBroker approval boundary.
+
 ## Non-goals
 
 - Event triggers (git push, file watch, webhooks)
@@ -32,7 +47,8 @@ Ship **timer-only** automations stored outside preferences:
 
 ## Consequences
 
-- Automations are best-effort while the workbench host is up.
+- Automations are best-effort while the workbench host is up; an interrupted
+  provider execution is visible as unknown and requires an explicit retry.
 - Cron is UTC and minute-granularity; sub-minute intervals use interval schedules.
 - Operators manage automations via the Automations dialog (command palette).
 - Create / update / delete / run-now reject authenticated remote clients (same

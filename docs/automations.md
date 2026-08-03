@@ -30,10 +30,18 @@ Design record: [decisions/conversation-automations.md](decisions/conversation-au
    (either field may match).
 5. Due automations in one tick start **concurrently**; two automations on the
    same thread still serialize (second skips busy).
+6. Every scheduled slot and manual request has a durable fire key. Reusing a
+   key never creates another provider turn; an explicit retry uses a new key.
+7. Fires bind to the Aldunis turn and provider run in the append-only local
+   history. A host restart that cannot prove the provider outcome records
+   `unknown` and never replays the prompt automatically.
 
 ## Safety
 
 - Tool approvals are **unchanged**: automations never auto-approve mutations.
+- The Automations view exposes the last fire key, requested/scheduled time,
+  bound turn when available, and bounded outcome. An unknown fire offers an
+  explicit retry action; it is never silently replayed.
 - Create / update / delete / run-now are **loopback-only** for remote-paired
   clients (same posture as adapter administration). List remains available.
 - Schedules evaluate only while the **host process is alive**. There is no
@@ -41,8 +49,10 @@ Design record: [decisions/conversation-automations.md](decisions/conversation-au
 
 ## Persistence
 
-Stored as `automations.v1.json` under the host state directory (not preferences).
-See [local-data.md](local-data.md).
+Schedule configuration remains in `automations.v1.json` under the host state
+directory (not preferences). Fire identities and lifecycle metadata are
+appended to `events.v1.jsonl` with conversation history so the writer lease and
+startup recovery use one local authority. See [local-data.md](local-data.md).
 
 ## Non-goals
 
@@ -50,6 +60,7 @@ See [local-data.md](local-data.md).
 - RFC 5545 RRULE
 - New conversation or worktree targets
 - Chisei policy hooks
+- Automatic replay of an unknown provider execution
 
 ## API (host)
 

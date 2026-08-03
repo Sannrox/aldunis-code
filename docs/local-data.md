@@ -36,6 +36,13 @@ Projects, threads, turns, messages, typed tool activity, provider session
 references, context receipts, checkpoints, delegated-conversation
 relationships, and related records rebuild from the event log.
 
+Automation fire identities also rebuild from the event log. They contain only
+bounded idempotency and lifecycle metadata: fire key, scheduled/requested time,
+bound Aldunis turn and provider-run identifiers, outcome, retry link, and safe
+error code. Raw prompts, provider output, credentials, and approval material do
+not enter the fire record. A started fire whose outcome cannot be proven after
+host recovery is retained as unknown and is never replayed automatically.
+
 A project may also retain one Chisei namespace binding. This is local routing
 metadata, not a copy of Chisei authority. Action/effect/receipt projections are
 not written to disk; a successful list may remain in memory for at most 30

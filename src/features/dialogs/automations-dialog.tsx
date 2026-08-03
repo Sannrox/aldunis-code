@@ -8,6 +8,18 @@ export type AutomationSchedule =
   | { kind: "interval"; seconds: number }
   | { kind: "cron"; expression: string };
 
+export interface AutomationFireSummary {
+  id: string;
+  key: string;
+  kind: "scheduled" | "manual";
+  scheduledAt: string | null;
+  requestedAt: string;
+  turnId: string | null;
+  providerRunId: string | null;
+  status: "started" | "completed" | "failed" | "skipped_busy" | "unknown";
+  error: string | null;
+}
+
 export interface AutomationItem {
   id: string;
   name: string;
@@ -17,8 +29,9 @@ export interface AutomationItem {
   enabled: boolean;
   schedule: AutomationSchedule;
   lastRunAt: string | null;
-  lastStatus: "ok" | "skipped_busy" | "error" | null;
+  lastStatus: "ok" | "skipped_busy" | "error" | "unknown" | null;
   lastError: string | null;
+  lastFire: AutomationFireSummary | null;
 }
 
 export interface AutomationThreadOption {
@@ -82,6 +95,8 @@ export function formatAutomationLastStatus(
       return "Last run skipped — conversation was busy";
     case "error":
       return "Last run failed";
+    case "unknown":
+      return "Outcome unknown — explicit retry required";
     default:
       return "Not run yet";
   }
@@ -180,13 +195,17 @@ export function AutomationsDialog({
     await load();
   };
 
-  const runNow = async (id: string) => {
+  const runNow = async (id: string, retryOf: string | null = null) => {
     setBusy(true);
     try {
       const response = await fetch("/api/automations/run-now", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({
+          id,
+          idempotencyKey: crypto.randomUUID(),
+          ...(retryOf ? { retryOf } : {}),
+        }),
       });
       if (!response.ok) {
         const body = await response.json() as { error?: string };
@@ -334,6 +353,18 @@ export function AutomationsDialog({
               {formatAutomationLastStatus(item.lastStatus)}
               {item.lastError ? ` (${item.lastError})` : ""}
             </div>
+            {item.lastFire && (
+              <div className="muted">
+                Fire {item.lastFire.key}
+                {" · "}
+                {item.lastFire.scheduledAt ?? item.lastFire.requestedAt}
+                {" · "}
+                {item.lastFire.turnId ? `Turn ${item.lastFire.turnId}` : "No turn bound"}
+                {" · "}
+                {item.lastFire.status}
+                {item.lastFire.error ? ` (${item.lastFire.error})` : ""}
+              </div>
+            )}
             <div className="row gap-sm">
               <Button
                 type="button"
@@ -348,9 +379,12 @@ export function AutomationsDialog({
                 size="sm"
                 disabled={busy}
                 aria-label={`Run automation ${item.name} now`}
-                onClick={() => void runNow(item.id)}
+                onClick={() => void runNow(
+                  item.id,
+                  item.lastFire?.status === "unknown" ? item.lastFire.id : null,
+                )}
               >
-                Run now
+                {item.lastFire?.status === "unknown" ? "Retry unknown" : "Run now"}
               </Button>
               <Button
                 type="button"

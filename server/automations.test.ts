@@ -11,6 +11,9 @@ import {
   isScheduleDue,
   MIN_INTERVAL_SECONDS,
   type Automation,
+  type AutomationFire,
+  type AutomationFireKey,
+  type AutomationFireStore,
 } from "./automations.ts";
 
 function baseAutomation(overrides: Partial<Automation> = {}): Automation {
@@ -161,6 +164,18 @@ test("tick fires multiple due automations without waiting serially", async () =>
   // Seed both
   let now = new Date("2026-06-01T00:00:00.000Z");
   const order: string[] = [];
+  let resolveAStarted!: () => void;
+  let resolveBStarted!: () => void;
+  let resolveBEnded!: () => void;
+  const aStarted = new Promise<void>((resolve) => {
+    resolveAStarted = resolve;
+  });
+  const bStarted = new Promise<void>((resolve) => {
+    resolveBStarted = resolve;
+  });
+  const bEnded = new Promise<void>((resolve) => {
+    resolveBEnded = resolve;
+  });
   let releaseA!: () => void;
   const gateA = new Promise<void>((resolve) => {
     releaseA = resolve;
@@ -169,8 +184,14 @@ test("tick fires multiple due automations without waiting serially", async () =>
     isThreadBusy: async () => false,
     fire: async (automation) => {
       order.push(`start:${automation.id}`);
-      if (automation.id === a.id) await gateA;
+      if (automation.id === a.id) {
+        resolveAStarted();
+        await gateA;
+      } else {
+        resolveBStarted();
+      }
       order.push(`end:${automation.id}`);
+      if (automation.id === b.id) resolveBEnded();
     },
     now: () => now,
   });
@@ -178,7 +199,7 @@ test("tick fires multiple due automations without waiting serially", async () =>
   now = new Date("2026-06-01T00:02:00.000Z");
   const tick = scheduler.tick();
   // B should finish while A is still gated.
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await Promise.all([aStarted, bStarted, bEnded]);
   assert.ok(order.includes(`start:${a.id}`));
   assert.ok(order.includes(`start:${b.id}`));
   assert.ok(order.includes(`end:${b.id}`));
@@ -211,4 +232,140 @@ test("runNow fires immediately and can report errors", async () => {
   const failed = await scheduler.runNow(automation.id);
   assert.equal(failed.lastStatus, "error");
   assert.match(failed.lastError ?? "", /provider down/);
+});
+
+test("runNow serializes distinct keys for one conversation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-run-lock-"));
+  const store = new AutomationStore(directory);
+  const automation = await store.create({
+    name: "Serialized",
+    threadId: "t-serialized",
+    prompt: "go",
+    schedule: { kind: "interval", seconds: 3600 },
+  });
+  let active = 0;
+  let maximumActive = 0;
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+    },
+  });
+
+  await Promise.all([
+    scheduler.runNow(automation.id, "request-a"),
+    scheduler.runNow(automation.id, "request-b"),
+  ]);
+  assert.equal(maximumActive, 1);
+});
+
+test("runNow is idempotent for one key and requires a new key for explicit retry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-idempotent-"));
+  const store = new AutomationStore(directory);
+  const automation = await store.create({
+    name: "Idempotent",
+    threadId: "t-idempotent",
+    prompt: "go",
+    schedule: { kind: "interval", seconds: 3600 },
+  });
+  const fires = new Map<string, AutomationFire>();
+  let sequence = 0;
+  const makeFire = (input: AutomationFireKey, status: AutomationFire["status"]): AutomationFire => {
+    const now = new Date().toISOString();
+    return {
+      schemaVersion: 2,
+      id: `fire-${++sequence}`,
+      automationId: input.automationId,
+      key: input.key,
+      kind: input.kind,
+      scheduledAt: input.scheduledAt,
+      requestedAt: input.requestedAt,
+      turnId: null,
+      providerRunId: null,
+      status,
+      error: null,
+      retryOf: input.retryOf ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  };
+  const fireStore: AutomationFireStore = {
+    async get(automationId, key) {
+      return [...fires.values()].find((fire) => fire.automationId === automationId && fire.key === key) ?? null;
+    },
+    async getById(fireId) {
+      return fires.get(fireId) ?? null;
+    },
+    async latest(automationId) {
+      return [...fires.values()]
+        .filter((fire) => fire.automationId === automationId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+    },
+    async recordSkippedBusy(input) {
+      const existing = await this.get(input.automationId, input.key);
+      if (existing) return existing;
+      const fire = makeFire(input, "skipped_busy");
+      fires.set(fire.id, fire);
+      return fire;
+    },
+    async claim(input) {
+      const existing = await this.get(input.automationId, input.key);
+      if (existing) {
+        if (existing.kind === "scheduled" && existing.status === "skipped_busy") {
+          const fire = { ...existing, status: "started" as const };
+          fires.set(fire.id, fire);
+          return { fire, claimed: true };
+        }
+        return { fire: existing, claimed: false };
+      }
+      const fire = makeFire(input, "started");
+      fires.set(fire.id, fire);
+      return { fire, claimed: true };
+    },
+    async finish(fireId, status, error = null) {
+      const existing = fires.get(fireId)!;
+      const fire = { ...existing, status, error };
+      fires.set(fire.id, fire);
+      return fire;
+    },
+  };
+  let launches = 0;
+  let busy = false;
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => busy,
+    fire: async () => {
+      launches += 1;
+      return launches === 1
+        ? { status: "unknown", error: "outcome unavailable" }
+        : { status: "completed" };
+    },
+    fireStore,
+  });
+
+  const first = await scheduler.runNow(automation.id, "request-1");
+  const duplicate = await scheduler.runNow(automation.id, "request-1");
+  assert.equal(launches, 1);
+  assert.equal(first.lastStatus, "unknown");
+  assert.equal(duplicate.lastStatus, "unknown");
+  busy = true;
+  const skipped = await scheduler.runNow(automation.id, "request-busy");
+  assert.equal(skipped.lastStatus, "skipped_busy");
+  busy = false;
+  const duplicateSkipped = await scheduler.runNow(automation.id, "request-busy");
+  assert.equal(duplicateSkipped.lastStatus, "skipped_busy");
+  assert.equal(launches, 1);
+  await assert.rejects(
+    () => scheduler.runNow(automation.id, "request-1", "fire-1"),
+    /explicit retry must use a new idempotency key/,
+  );
+  const retry = await scheduler.runNow(automation.id, "request-2", "fire-1");
+  assert.equal(launches, 2);
+  assert.equal(retry.lastStatus, "ok");
+  await assert.rejects(
+    () => scheduler.runNow(automation.id, "request-3", "fire-2"),
+    /Only an unknown fire/,
+  );
 });

@@ -112,6 +112,8 @@ import {
   AutomationScheduler,
   AutomationStore,
   type Automation,
+  type AutomationFire,
+  type AutomationFireExecution,
   type AutomationSchedule,
 } from "./automations.ts";
 import { WorktreeManager } from "./worktrees.ts";
@@ -1709,7 +1711,13 @@ async function handleApi(
         sendJson(response, 200, { automations: [] });
         return true;
       }
-      sendJson(response, 200, { automations: await automations.list() });
+      const items = await automations.list();
+      sendJson(response, 200, {
+        automations: await Promise.all(items.map(async (automation) => ({
+          ...automation,
+          lastFire: await state.latestAutomationFire(automation.id),
+        }))),
+      });
       return true;
     }
     if (route === "/api/automations/create") {
@@ -1784,9 +1792,49 @@ async function handleApi(
       if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot run automations.", 403);
       }
-      const body = await readJson(request) as { id?: unknown };
+      const body = await readJson(request) as {
+        id?: unknown;
+        idempotencyKey?: unknown;
+        retryOf?: unknown;
+      };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-      sendJson(response, 200, await automationScheduler.runNow(body.id));
+      if (
+        body.idempotencyKey !== undefined
+        && (
+          typeof body.idempotencyKey !== "string"
+          || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(body.idempotencyKey)
+        )
+      ) {
+        throw new AutomationError("A bounded automation idempotency key is required.");
+      }
+      if (
+        body.retryOf !== undefined
+        && (
+          typeof body.retryOf !== "string"
+          || !/^[0-9a-f-]{36}$/i.test(body.retryOf)
+        )
+      ) {
+        throw new AutomationError("A valid automation fire retry identity is required.");
+      }
+      if (typeof body.retryOf === "string") {
+        const original = await state.getAutomationFireById(body.retryOf);
+        if (
+          !original
+          || original.automationId !== body.id
+          || original.status !== "unknown"
+        ) {
+          throw new AutomationError("Only an unknown fire for this automation can be retried.", 409);
+        }
+      }
+      const result = await automationScheduler.runNow(
+        body.id,
+        typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        typeof body.retryOf === "string" ? body.retryOf : null,
+      );
+      sendJson(response, 200, {
+        ...result,
+        lastFire: await state.latestAutomationFire(result.id),
+      });
       return true;
     }
     if (route === "/api/state/projects/delete") {
@@ -2269,6 +2317,7 @@ async function handleApi(
         provider?: unknown;
         reasoningEffort?: unknown;
         inputRequestId?: unknown;
+        automationFireId?: unknown;
         workspaceMode?: unknown;
       };
       if (managedHost) {
@@ -2329,6 +2378,11 @@ async function handleApi(
           || !body.parentThreadId
         ))
         || (body.inputRequestId !== undefined && typeof body.inputRequestId !== "string")
+        || (body.automationFireId !== undefined && (
+          !internalRequest
+          || typeof body.automationFireId !== "string"
+          || !/^[0-9a-f-]{36}$/i.test(body.automationFireId)
+        ))
         || !["ask", "plan", "build"].includes(body.mode as string)
         || (body.attachments !== undefined && (
           !Array.isArray(body.attachments)
@@ -2646,6 +2700,9 @@ async function handleApi(
         contextPins: assembledContext.pins,
         workspaceMode,
       });
+      if (typeof body.automationFireId === "string") {
+        await state.bindAutomationFireTurn(body.automationFireId, persisted.turn.id);
+      }
       await state.saveContextReceipt({
         threadId: persisted.thread.id,
         turnId: persisted.turn.id,
@@ -2823,6 +2880,8 @@ async function handleApi(
         response.setHeader("x-turn-id", persisted.turn.id);
         throw error;
       }
+      response.setHeader("x-thread-id", persisted.thread.id);
+      response.setHeader("x-turn-id", persisted.turn.id);
       try {
         if (resumedCheckpoint) {
           await state.saveCheckpoint({ ...resumedCheckpoint, turnId: persisted.turn.id });
@@ -3897,7 +3956,9 @@ export function createLocalHost(
   });
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
-  const recovery = state.recoverInterruptedTurns();
+  const recovery = state.recoverInterruptedTurns().then(
+    () => state.reconcileAutomationFires(),
+  );
 
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
 
@@ -3961,10 +4022,17 @@ export function createLocalHost(
     });
   }
 
-  async function fireAutomation(automation: Automation): Promise<void> {
+  async function fireAutomation(
+    automation: Automation,
+    fire?: AutomationFire,
+  ): Promise<AutomationFireExecution> {
+    if (!fire) throw new AutomationError("Automation fire identity is unavailable.", 500);
     const address = serverRef?.address();
     if (!address || typeof address === "string") {
-      throw new AutomationError("Local host is not listening yet.", 503);
+      return {
+        status: "unknown",
+        error: "The provider outcome could not be proven because the local host was not listening.",
+      };
     }
     const projection = await state.load();
     const thread = projection.threads.find((item) => item.id === automation.threadId);
@@ -3979,43 +4047,91 @@ export function createLocalHost(
     const profileId = thread.profileId
       ?? session?.profileId
       ?? (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
-    const protocol = tls ? "https" : "http";
-    const response = await fetch(`${protocol}://127.0.0.1:${address.port}/api/provider/runs`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        root: project.root,
-        worktree: thread.worktree,
-        prompt: automation.prompt,
-        mode: automation.mode,
-        conversationId: thread.id,
-        projectId: project.id,
-        threadId: thread.id,
-        resumeSessionId: session?.sessionId,
-        provider: providerId,
-        model,
-        profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({})) as { error?: string };
-      throw new AutomationError(
-        body.error ?? `Automation run failed (${response.status}).`,
-        response.status,
-      );
+    const internalHost = address.address === "::"
+      ? "::1"
+      : address.address === "0.0.0.0"
+        ? "127.0.0.1"
+        : address.address;
+    const payload = Buffer.from(JSON.stringify({
+      root: project.root,
+      worktree: thread.worktree,
+      prompt: automation.prompt,
+      mode: automation.mode,
+      conversationId: thread.id,
+      projectId: project.id,
+      threadId: thread.id,
+      resumeSessionId: session?.sessionId,
+      provider: providerId,
+      model,
+      profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
+      automationFireId: fire.id,
+    }), "utf8");
+    let incoming: IncomingMessage;
+    try {
+      const send = tls ? httpsRequest : httpRequest;
+      incoming = await new Promise<IncomingMessage>((resolve, reject) => {
+        const outgoing = send({
+          host: internalHost,
+          port: address.port,
+          path: "/api/provider/runs",
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(payload.length),
+            "x-aldunis-internal-request": internalRequestToken,
+          },
+          ...(tls ? { rejectUnauthorized: false } : {}),
+        }, resolve);
+        outgoing.once("error", reject);
+        outgoing.end(payload);
+      });
+    } catch {
+      return {
+        status: "unknown",
+        error: "The provider outcome could not be proven after the local request disconnected.",
+      };
     }
-    if (response.body) {
-      const reader = response.body.getReader();
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
+    const statusCode = incoming.statusCode ?? 500;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        incoming.once("end", resolve);
+        incoming.once("error", reject);
+        incoming.resume();
+      });
+    } catch {
+      const outcome = await state.automationFireOutcome(fire.id);
+      return outcome.status === "unknown"
+        ? {
+            status: "unknown",
+            error: "The provider outcome could not be proven after the event stream disconnected.",
+          }
+        : outcome;
+    }
+    if (statusCode < 200 || statusCode >= 300) {
+      const outcome = await state.automationFireOutcome(fire.id);
+      if (outcome.status !== "unknown") return outcome;
+      if (statusCode < 500 && !(await state.getAutomationFireById(fire.id))?.turnId) {
+        return {
+          status: "failed",
+          error: "The automation request was rejected before provider launch.",
+        };
       }
+      return { status: "unknown", error: outcome.error };
     }
+    return state.automationFireOutcome(fire.id);
   }
 
   const automationScheduler = new AutomationScheduler(automations, {
     isThreadBusy,
     fire: fireAutomation,
+    fireStore: {
+      get: (automationId, key) => state.getAutomationFire(automationId, key),
+      getById: (fireId) => state.getAutomationFireById(fireId),
+      latest: (automationId) => state.latestAutomationFire(automationId),
+      recordSkippedBusy: (input) => state.recordAutomationFireSkippedBusy(input),
+      claim: (input) => state.claimAutomationFire(input),
+      finish: (fireId, status, error) => state.finishAutomationFire(fireId, status, error),
+    },
   });
 
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
@@ -4102,7 +4218,13 @@ export function createLocalHost(
   };
   const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
   serverRef = server;
-  if (!managedHost) automationScheduler.start();
+  if (!managedHost) {
+    server.once("listening", () => {
+      void recovery.then(() => {
+        if (server.listening) automationScheduler.start();
+      }).catch(() => undefined);
+    });
+  }
   server.once("close", () => {
     unsubscribePermissionChanges();
     automationScheduler.stop();
