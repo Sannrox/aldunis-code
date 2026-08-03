@@ -13,6 +13,25 @@ message GetOperationReceiptResponse {
   repeated string missing_surfaces = 3;
 }
 
+message GetSampleObservationRequest {
+  string request_id = 1;
+  string namespace = 2;
+}
+
+message SampleObservationReadback {
+  string request_id = 1;
+  string namespace = 2;
+  string observation_digest = 3;
+  string state = 4;
+  int64 observed_at = 5;
+  int64 read_at = 6;
+}
+
+message GetSampleObservationResponse {
+  SampleObservationReadback observation = 1;
+}
+
 service ChiseiService {
   rpc GetOperationReceipt(GetOperationReceiptRequest) returns (GetOperationReceiptResponse);
+  rpc GetSampleObservation(GetSampleObservationRequest) returns (GetSampleObservationResponse);
 }

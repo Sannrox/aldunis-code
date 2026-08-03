@@ -1354,6 +1354,104 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   overflow-wrap: anywhere;
   font-size: 11.5px;
 }
+.tenkai-outcome-card {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--muted) 28%, var(--background));
+  padding: 14px;
+}
+.tenkai-outcome-card > header,
+.tenkai-outcome-list li > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tenkai-outcome-card h3 { margin: 3px 0 0; font-size: 15px; }
+.tenkai-outcome-state {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font: 9.5px var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.tenkai-outcome-state.live { border-color: var(--success, #4fa66a); color: var(--success, #4fa66a); }
+.tenkai-outcome-state.unknown,
+.tenkai-outcome-state.unavailable { border-color: var(--amber); color: var(--amber); }
+.tenkai-outcome-list {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.tenkai-outcome-list li {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.tenkai-outcome-list li > header { margin-bottom: 8px; }
+.tenkai-outcome-list li > header strong { font-size: 12px; text-transform: capitalize; }
+.tenkai-outcome-list li > header span {
+  color: var(--muted-foreground);
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.tenkai-outcome-list dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+.tenkai-outcome-list dl div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--background);
+}
+.tenkai-outcome-list dt {
+  color: var(--muted-foreground);
+  font: 9.5px/1.5 var(--font-mono);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.tenkai-outcome-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.tenkai-outcome-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+.tenkai-observation-readback {
+  color: var(--success, #4fa66a);
+  font: 10.5px/1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.tenkai-repair-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tenkai-repair-action p,
+.tenkai-outcome-note {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tenkai-outcome-note { margin-top: 12px; }
 .tenkai-preview {
   border: 1px solid var(--amber);
   background:
@@ -1429,8 +1527,10 @@ svg.ic, .ic { width: 13px !important; height: 13px !important; flex: 0 0 13px !i
   .tenkai-stage-rail li { grid-template-columns: 1fr; min-height: auto; gap: 5px; }
   .tenkai-ledger-main { padding: 16px 0; }
   .tenkai-manifest,
-  .tenkai-candidate-card dl { grid-template-columns: 1fr; }
+  .tenkai-candidate-card dl,
+  .tenkai-outcome-list dl { grid-template-columns: 1fr; }
   .tenkai-rollback { grid-template-columns: 1fr; }
+  .tenkai-repair-action { align-items: stretch; flex-direction: column; }
 }
 
 /* settings full-screen (mock .settings) — already in extracted CSS; ensure live wins */

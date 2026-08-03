@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReleaseDeliverySession } from "../../types";
 import {
   nextReleaseAction,
+  repairPromptForOutcome,
   releaseSessionForView,
   TenkaiDeliveryPanel,
 } from "./tenkai-delivery";
@@ -48,4 +49,40 @@ test("starting a new candidate does not reuse the selected historical session", 
   assert.equal(releaseSessionForView([historical], historical.id, false), historical);
   assert.equal(releaseSessionForView([historical], historical.id, true), null);
   assert.equal(nextReleaseAction(releaseSessionForView([historical], historical.id, true)), "prepare");
+});
+
+test("repair handoff contains bounded evidence without provider output or local paths", () => {
+  const prompt = repairPromptForOutcome(
+    {
+      candidate: {
+        identity: `sha256:${"a".repeat(64)}`,
+        document: { commit: { oid: "a".repeat(40) } },
+      },
+    } as ReleaseDeliverySession,
+    {
+      eventId: "tenkai:outcome:v2:event-1",
+      schema: "tenkai.terminal_outcome.v1",
+      deploymentId: "tenkai:deployment:local:widget:1",
+      planId: "tenkai:plan:local:1",
+      releaseId: "tenkai:release:widget:1.2.3",
+      product: "widget",
+      environmentId: "tenkai:environment:local",
+      configurationId: "tenkai:configuration:local",
+      terminalState: "deployment_failed",
+      observedAt: new Date(1_000).toISOString(),
+      bindingDigest: `sha256:${"b".repeat(64)}`,
+      releaseDigest: `sha256:${"c".repeat(64)}`,
+      planDigest: `sha256:${"d".repeat(64)}`,
+      configurationDigest: `sha256:${"e".repeat(64)}`,
+      deliveryState: "delivered",
+      attempts: 1,
+      nextAttemptAt: new Date(1_000).toISOString(),
+      deliveredAt: new Date(1_010).toISOString(),
+      claimUntil: null,
+      deliveryLagMs: 10,
+    },
+  );
+  assert.match(prompt, /event_id=tenkai:outcome:v2:event-1/);
+  assert.match(prompt, /binding_digest=sha256:/);
+  assert.doesNotMatch(prompt, /payload|raw output|\/Users\/|tenkai\.db/);
 });

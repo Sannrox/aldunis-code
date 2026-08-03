@@ -29,6 +29,8 @@ export function PaneConversation({
   managedModel,
   quietDelegatedChild = false,
   showThinking = false,
+  initialPrompt,
+  initialProvider,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -53,6 +55,8 @@ export function PaneConversation({
   managedModel?: string;
   quietDelegatedChild?: boolean;
   showThinking?: boolean;
+  initialPrompt?: string;
+  initialProvider?: ProviderId;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -126,6 +130,8 @@ export function PaneConversation({
       onOpenProfiles={onOpenProfiles}
       managedMode={managedMode}
       managedModel={managedModel}
+      initialPrompt={initialPrompt}
+      initialProvider={initialProvider}
     />
   );
 }

@@ -42,6 +42,16 @@ const WORKFLOW_STATES: ReleaseWorkflowState[] = [
   "stale",
 ];
 const COMPLETENESS_VALUES: ReleaseCompleteness[] = ["complete", "partial", "stale", "unknown"];
+const TERMINAL_OUTCOME_STATES = [
+  "deployment_succeeded",
+  "deployment_failed",
+  "automatic_rollback_succeeded",
+  "rollback_succeeded",
+  "rollback_failed",
+  "execution_cancelled",
+  "unknown_reconciled",
+] as const;
+const TERMINAL_OUTCOME_DELIVERY_STATES = ["pending", "in_flight", "retrying", "delivered"] as const;
 
 export type ReleaseWorkflowAction = typeof ACTIONS[number];
 export type ReleaseCompleteness = "complete" | "partial" | "stale" | "unknown";
@@ -110,6 +120,39 @@ export interface ReleaseDeliverySession {
   updatedAt: string;
 }
 
+export type TenkaiTerminalOutcomeState = typeof TERMINAL_OUTCOME_STATES[number];
+export type TenkaiTerminalOutcomeDeliveryState = typeof TERMINAL_OUTCOME_DELIVERY_STATES[number];
+
+export interface TenkaiTerminalOutcomeProjection {
+  eventId: string;
+  schema: "tenkai.terminal_outcome.v1";
+  deploymentId: string;
+  planId: string;
+  releaseId: string;
+  product: string;
+  environmentId: string;
+  configurationId: string;
+  terminalState: TenkaiTerminalOutcomeState;
+  observedAt: string;
+  bindingDigest: string;
+  releaseDigest: string;
+  planDigest: string;
+  configurationDigest: string;
+  deliveryState: TenkaiTerminalOutcomeDeliveryState;
+  attempts: number;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  claimUntil: string | null;
+  deliveryLagMs: number;
+}
+
+export interface TenkaiTerminalOutcomeInspection {
+  authority: "tenkai";
+  state: "live" | "unavailable" | "unknown";
+  outcomes: TenkaiTerminalOutcomeProjection[];
+  warning: string | null;
+}
+
 export interface ReleaseDeliveryPlan {
   id: string;
   action: ReleaseWorkflowAction;
@@ -137,6 +180,7 @@ export interface ReleaseDeliveryInspection {
     localOnly: true;
   };
   sessions: Array<Omit<ReleaseDeliverySession, "repository" | "worktree">>;
+  terminalOutcomes: TenkaiTerminalOutcomeInspection;
 }
 
 interface CommandResult {
@@ -191,6 +235,7 @@ interface EnvironmentInspection {
       release_id: string;
     }>;
   } | null;
+  terminalOutcomes: TenkaiTerminalOutcomeProjection[];
 }
 
 interface ReleaseInspection {
@@ -289,6 +334,110 @@ function parseMachineResult(output: string, expectedCommand: string): MachineRes
   };
 }
 
+function parseEpochMillis(value: unknown, label: string, nullable = false): string | null {
+  if (nullable && value === null) return null;
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    throw new RepositoryError(`${label} is incompatible.`, 502);
+  }
+  const date = new Date(Number(value));
+  if (!Number.isFinite(date.getTime())) {
+    throw new RepositoryError(`${label} is incompatible.`, 502);
+  }
+  return date.toISOString();
+}
+
+function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
+  if (!isRecord(value)) throw new RepositoryError("Tenkai returned an incompatible terminal outcome.", 502);
+  exactKeys(
+    value,
+    [
+      "event_id",
+      "schema",
+      "deployment_id",
+      "plan_id",
+      "release_id",
+      "product",
+      "environment_id",
+      "configuration_id",
+      "terminal_state",
+      "observed_at",
+      "binding_digest",
+      "release_digest",
+      "plan_digest",
+      "configuration_digest",
+      "delivery_state",
+      "attempts",
+      "next_attempt_at",
+      "delivered_at",
+      "claim_until",
+      "delivery_lag_ms",
+    ],
+    "A Tenkai terminal outcome",
+  );
+  const eventId = boundedString(value.event_id, "A Tenkai terminal outcome event identity");
+  if (!OPAQUE_ID.test(eventId)) throw new RepositoryError("Tenkai returned an invalid terminal outcome identity.", 502);
+  if (value.schema !== "tenkai.terminal_outcome.v1") {
+    throw new RepositoryError("Tenkai returned an incompatible terminal outcome schema.", 502);
+  }
+  const terminalState = value.terminal_state;
+  if (!TERMINAL_OUTCOME_STATES.includes(terminalState as TenkaiTerminalOutcomeState)) {
+    throw new RepositoryError("Tenkai returned an incompatible terminal outcome state.", 502);
+  }
+  const deliveryState = value.delivery_state;
+  if (!TERMINAL_OUTCOME_DELIVERY_STATES.includes(deliveryState as TenkaiTerminalOutcomeDeliveryState)) {
+    throw new RepositoryError("Tenkai returned an incompatible terminal outcome delivery state.", 502);
+  }
+  const attempts = value.attempts;
+  if (!Number.isSafeInteger(attempts) || Number(attempts) < 0 || Number(attempts) > 1_000_000) {
+    throw new RepositoryError("Tenkai returned incompatible terminal outcome attempts.", 502);
+  }
+  const deliveryLagMs = value.delivery_lag_ms;
+  if (!Number.isSafeInteger(deliveryLagMs) || Number(deliveryLagMs) < 0) {
+    throw new RepositoryError("Tenkai returned incompatible terminal outcome delivery lag.", 502);
+  }
+  const identities = [
+    value.deployment_id,
+    value.plan_id,
+    value.release_id,
+    value.product,
+    value.environment_id,
+    value.configuration_id,
+  ].map((item, index) => boundedString(item, `A Tenkai terminal outcome identity ${index + 1}`));
+  if (identities.some((item) => !OPAQUE_ID.test(item))) {
+    throw new RepositoryError("Tenkai returned an invalid terminal outcome reference.", 502);
+  }
+  const digests = [value.binding_digest, value.release_digest, value.plan_digest, value.configuration_digest]
+    .map((item, index) => boundedString(item, `A Tenkai terminal outcome digest ${index + 1}`, 71));
+  if (digests.some((item) => !SHA256.test(item))) {
+    throw new RepositoryError("Tenkai returned invalid terminal outcome digests.", 502);
+  }
+  return {
+    eventId,
+    schema: "tenkai.terminal_outcome.v1",
+    deploymentId: identities[0]!,
+    planId: identities[1]!,
+    releaseId: identities[2]!,
+    product: identities[3]!,
+    environmentId: identities[4]!,
+    configurationId: identities[5]!,
+    terminalState: terminalState as TenkaiTerminalOutcomeState,
+    observedAt: parseEpochMillis(value.observed_at, "A Tenkai terminal outcome observation time")!,
+    bindingDigest: digests[0]!,
+    releaseDigest: digests[1]!,
+    planDigest: digests[2]!,
+    configurationDigest: digests[3]!,
+    deliveryState: deliveryState as TenkaiTerminalOutcomeDeliveryState,
+    attempts: Number(attempts),
+    // Tenkai's TerminalOutcomeProjection contract defines next_attempt_at as
+    // a required i64 even after delivery; only delivered_at and claim_until
+    // are nullable.
+    nextAttemptAt: parseEpochMillis(value.next_attempt_at, "A Tenkai next-attempt time")!,
+    deliveredAt: parseEpochMillis(value.delivered_at, "A Tenkai delivery acknowledgement time", true),
+    claimUntil: parseEpochMillis(value.claim_until, "A Tenkai delivery claim time", true),
+    deliveryLagMs: Number(deliveryLagMs),
+  };
+}
+
 function parseEnvironmentInspection(output: string): EnvironmentInspection {
   let value: unknown;
   try {
@@ -299,7 +448,17 @@ function parseEnvironmentInspection(output: string): EnvironmentInspection {
   if (!isRecord(value)) throw new RepositoryError("Tenkai environment reconciliation failed.", 502);
   exactKeys(
     value,
-    ["name", "id", "description", "subscriptions", "facts", "lease", "latest_plan", "execution_note"],
+    [
+      "name",
+      "id",
+      "description",
+      "subscriptions",
+      "facts",
+      "lease",
+      "latest_plan",
+      "terminal_outcomes",
+      "execution_note",
+    ],
     "The Tenkai environment",
   );
   const name = boundedString(value.name, "The Tenkai environment name", 128);
@@ -358,7 +517,14 @@ function parseEnvironmentInspection(output: string): EnvironmentInspection {
       }),
     };
   }
-  return { name, id, subscriptions, latest_plan: latestPlan };
+  let terminalOutcomes: TenkaiTerminalOutcomeProjection[] = [];
+  if (value.terminal_outcomes !== undefined) {
+    if (!Array.isArray(value.terminal_outcomes) || value.terminal_outcomes.length > 100) {
+      throw new RepositoryError("Tenkai returned incompatible terminal outcomes.", 502);
+    }
+    terminalOutcomes = value.terminal_outcomes.map(parseTerminalOutcome);
+  }
+  return { name, id, subscriptions, latest_plan: latestPlan, terminalOutcomes };
 }
 
 function parseReleaseInspection(output: string): ReleaseInspection {
@@ -485,6 +651,31 @@ function baseEnvironment(): NodeJS.ProcessEnv {
 function publicSession(session: ReleaseDeliverySession): Omit<ReleaseDeliverySession, "repository" | "worktree"> {
   const { repository: _repository, worktree: _worktree, ...projection } = session;
   return projection;
+}
+
+function outcomesForSessions(
+  outcomes: TenkaiTerminalOutcomeProjection[],
+  sessions: ReleaseDeliverySession[],
+): TenkaiTerminalOutcomeProjection[] {
+  const references = new Set(
+    sessions.flatMap((session) => [
+      session.tenkai.releaseId,
+      session.tenkai.planId,
+      session.tenkai.rollbackPlanId,
+    ]).filter((value): value is string => value !== null),
+  );
+  const products = new Set(sessions.map((session) => session.candidate.product));
+  if (references.size === 0) return [];
+  return outcomes
+    .filter((outcome) => (
+      products.has(outcome.product)
+      && (
+        references.has(outcome.releaseId)
+        || references.has(outcome.planId)
+      )
+    ))
+    .sort((left, right) => right.observedAt.localeCompare(left.observedAt))
+    .slice(0, 32);
 }
 
 function persistedCandidate(candidate: PreparedReleaseCandidate): PreparedReleaseCandidate {
@@ -811,9 +1002,9 @@ export class ReleaseDeliveryBroker {
   ) {}
 
   async inspect(projectId: string, repository: string, worktree: string): Promise<ReleaseDeliveryInspection> {
-    const sessions = (await this.store.load())
-      .filter((item) => item.projectId === projectId && item.repository === repository && item.worktree === worktree)
-      .map(publicSession);
+    const localSessions = (await this.store.load())
+      .filter((item) => item.projectId === projectId && item.repository === repository && item.worktree === worktree);
+    const sessions = localSessions.map(publicSession);
     return {
       configuration: {
         chisei: Boolean(this.env.ALDUNIS_CHISEI_ENDPOINT?.trim() && this.env.ALDUNIS_CHISEI_TOKEN?.trim()),
@@ -821,7 +1012,38 @@ export class ReleaseDeliveryBroker {
         localOnly: true,
       },
       sessions,
+      terminalOutcomes: await this.#inspectTerminalOutcomes(worktree, localSessions),
     };
+  }
+
+  async #inspectTerminalOutcomes(
+    worktree: string,
+    sessions: ReleaseDeliverySession[],
+  ): Promise<TenkaiTerminalOutcomeInspection> {
+    if (!this.env.ALDUNIS_TENKAI_DATABASE?.trim()) {
+      return {
+        authority: "tenkai",
+        state: "unavailable",
+        outcomes: [],
+        warning: "Tenkai is not configured on this local host.",
+      };
+    }
+    try {
+      const environment = await this.#inspectEnvironment(worktree);
+      return {
+        authority: "tenkai",
+        state: "live",
+        outcomes: outcomesForSessions(environment.terminalOutcomes, sessions),
+        warning: null,
+      };
+    } catch {
+      return {
+        authority: "tenkai",
+        state: "unknown",
+        outcomes: [],
+        warning: "The authoritative Tenkai terminal-outcome projection is unavailable.",
+      };
+    }
   }
 
   async #session(id: string, repository: string, worktree: string, projectId: string) {
@@ -1106,6 +1328,7 @@ export class ReleaseDeliveryBroker {
     worktree: string,
   ): Promise<Record<string, unknown>> {
     const session = await this.#session(id, repository, worktree, projectId);
+    const terminalOutcomes = await this.#inspectTerminalOutcomes(worktree, [session]);
     let completeness = session.completeness;
     const evaluationFresh = session.evaluation?.fresh === true
       && (!session.tenkai.releaseId || this.#provenanceFresh(session));
@@ -1154,6 +1377,7 @@ export class ReleaseDeliveryBroker {
         rollback_plan_id: session.tenkai.rollbackPlanId,
         provenance_expires_at: session.tenkai.provenanceExpiresAt,
         observed_at: session.tenkai.observedAt,
+        terminal_outcomes: terminalOutcomes,
       },
       state: session.state,
       completeness,

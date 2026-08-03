@@ -118,7 +118,13 @@ test("loopback routes preview, execute, and resume a clean candidate without exp
 
     const inspection = await post(current.url, "/api/release-delivery/inspect", context);
     assert.equal(inspection.status, 200);
-    const serialized = JSON.stringify(await inspection.json());
+    const inspected = await inspection.json() as {
+      terminalOutcomes?: { authority?: string; state?: string; outcomes?: unknown[] };
+    };
+    assert.equal(inspected.terminalOutcomes?.authority, "tenkai");
+    assert.equal(inspected.terminalOutcomes?.state, "unavailable");
+    assert.deepEqual(inspected.terminalOutcomes?.outcomes, []);
+    const serialized = JSON.stringify(inspected);
     assert.doesNotMatch(serialized, /ALDUNIS_CHISEI_TOKEN|TENKAI_DATABASE|package-lock/);
     assert.doesNotMatch(serialized, new RegExp(current.directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   } finally {

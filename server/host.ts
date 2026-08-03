@@ -1119,6 +1119,33 @@ async function handleApi(
       );
       return true;
     }
+    if (route === "/api/integrations/chisei/observations/detail") {
+      const body = await readJson(request) as { projectId?: unknown; requestId?: unknown };
+      if (
+        typeof body.projectId !== "string"
+        || typeof body.requestId !== "string"
+        || !body.requestId
+        || body.requestId.length > 512
+        || body.requestId.includes("\0")
+      ) {
+        throw new LocalStateError("A local project and bounded observation identity are required.", 400);
+      }
+      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
+      if (!project.chiseiNamespace) {
+        throw new ChiseiClientError(
+          "This project is not bound to a Chisei namespace.",
+          409,
+          "unconfigured",
+        );
+      }
+      const observation = await chisei.sampleObservation(project.chiseiNamespace, body.requestId);
+      if (!observation) {
+        throw new LocalStateError("The Chisei observation is unavailable on the read surface.", 404);
+      }
+      sendJson(response, 200, observation);
+      return true;
+    }
     if (route === "/api/integrations/chisei/operations/detail") {
       const body = await readJson(request) as {
         projectId?: unknown;

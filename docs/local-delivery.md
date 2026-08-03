@@ -80,6 +80,18 @@ has a single-use five-minute preview:
    A subprocess exit never becomes delivery success. A healthy authoritative
    rollback remains recovered after provenance expiry, while its exported
    delivery receipt is marked stale.
+7. **Inspect terminal evidence** reads Tenkai's bounded `terminal_outcomes`
+   projection for the selected release and plan. Code displays only event,
+   deployment, release, plan, environment, configuration, binding digests,
+   terminal state, observation time, delivery attempts, and delivery lag. The
+   projection never includes payloads, retry errors, credentials, source, or
+   logs. `pending`, `in_flight`, and `retrying` remain visible and the absence
+   of a row is never treated as successful delivery.
+8. **Confirm the observation** optionally reads the Chisei bounded sample
+   observation using the Tenkai event identity as `request_id`. The host derives
+   the Chisei namespace from the local project binding; the browser cannot
+   select or override it. A missing readback is explicit and does not recreate
+   the original observation content.
 
 Completed and historical sessions remain selectable. Use **New candidate** to
 return to the committed manifest input and start the next one-release ledger.
@@ -103,4 +115,9 @@ reconciled terminal deployment or rollback.
 
 `aldunis.delivery-receipt/v1` exports correlation only. `complete` requires a
 fresh matching Chisei allow receipt and a reconciled terminal Tenkai outcome.
-Deleting the local receipt or session never deletes Chisei or Tenkai records.
+When a failed or unknown terminal state is present, **Prepare Shikigami repair**
+opens a new normal Build conversation with a bounded evidence brief. It does
+not start a hidden provider run, bypass approval, or read either product's
+database. The existing provider-confirmed Shikigami run and native parked-run
+resume boundary remain the provider's responsibility. Deleting the local
+receipt or session never deletes Chisei or Tenkai records.

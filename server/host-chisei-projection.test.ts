@@ -15,6 +15,7 @@ async function fixture(remote = false) {
   const state = new LocalStateStore(directory);
   await state.saveProject({ id: "project-1", name: "Project", root: directory });
   const calls: Array<{ projectId: string; namespace: string }> = [];
+  const observationCalls: Array<{ namespace: string; requestId: string }> = [];
   const chisei = {
     async listActions(projectId: string, namespace: string) {
       calls.push({ projectId, namespace });
@@ -49,6 +50,17 @@ async function fixture(remote = false) {
         eventCount: 2,
       };
     },
+    async sampleObservation(namespace: string, requestId: string) {
+      observationCalls.push({ namespace, requestId });
+      return {
+        requestId,
+        namespace,
+        observationDigest: `sha256:${"a".repeat(64)}`,
+        state: "recorded",
+        observedAt: new Date(1_000).toISOString(),
+        readAt: new Date(2_000).toISOString(),
+      };
+    },
   } as unknown as ChiseiProjectionClient;
   const remoteAuth = remote ? { verify: async () => ({}) } as unknown as RemoteAuth : undefined;
   const server = createLocalHost(
@@ -65,6 +77,7 @@ async function fixture(remote = false) {
   const address = server.address() as AddressInfo;
   return {
     calls,
+    observationCalls,
     server,
     state,
     url: `http://127.0.0.1:${address.port}`,
@@ -153,6 +166,33 @@ test("operation inspection derives authority from a persisted project correlatio
       correlationId,
     });
     assert.equal(denied.status, 404);
+  } finally {
+    await close(current.server);
+  }
+});
+
+test("sample-observation readback derives namespace authority from the local project binding", async () => {
+  const current = await fixture();
+  try {
+    await current.state.bindProjectChiseiNamespace("project-1", "team/project");
+    const response = await post(current.url, "/api/integrations/chisei/observations/detail", {
+      projectId: "project-1",
+      requestId: "tenkai:outcome:v2:event-1",
+      namespace: "attacker/override",
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      requestId: "tenkai:outcome:v2:event-1",
+      namespace: "team/project",
+      observationDigest: `sha256:${"a".repeat(64)}`,
+      state: "recorded",
+      observedAt: new Date(1_000).toISOString(),
+      readAt: new Date(2_000).toISOString(),
+    });
+    assert.deepEqual(current.observationCalls, [{
+      namespace: "team/project",
+      requestId: "tenkai:outcome:v2:event-1",
+    }]);
   } finally {
     await close(current.server);
   }
