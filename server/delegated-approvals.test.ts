@@ -39,6 +39,15 @@ function fixture(): StateProjection {
       childThreadId: "child",
       createdAt: "2026-07-30T09:00:00.000Z",
     }],
+    inputRequests: [],
+    inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 

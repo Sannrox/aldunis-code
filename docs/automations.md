@@ -3,6 +3,10 @@
 Timer-only **durable prompts** that fire into an **existing conversation** while
 the local host is running.
 
+Automations are the schedule-to-conversation layer. For read-only awareness,
+durable multi-step work, internal event reactions, and maintenance reports, use
+the [Autonomy](autonomy.md) surface instead.
+
 Open via the command palette → **Automations**.
 
 ## What they are
@@ -56,11 +60,14 @@ startup recovery use one local authority. See [local-data.md](local-data.md).
 
 ## Non-goals
 
-- Event triggers (git hooks, webhooks, file watchers)
+- External event triggers (git hooks, webhooks, file watchers)
 - RFC 5545 RRULE
 - New conversation or worktree targets
 - Chisei policy hooks
 - Automatic replay of an unknown provider execution
+
+Internal lifecycle hooks are available in the Autonomy surface. They cannot
+silently turn an automation into a provider mutation or bypass approval.
 
 ## API (host)
 

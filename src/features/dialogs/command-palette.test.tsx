@@ -15,6 +15,7 @@ test("command palette exposes one generic provider management action", () => {
       onProviderManagement={() => undefined}
       onManageWorktrees={() => undefined}
       onAutomations={() => undefined}
+      onAutonomy={() => undefined}
     />,
   );
 

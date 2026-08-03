@@ -12,6 +12,7 @@ want to change it.
 | [getting-started.md](getting-started.md) | Install, run, first conversation, remote, desktop |
 | [providers.md](providers.md) | Claude, Codex, Shikigami, reviewed ACP adapters |
 | [automations.md](automations.md) | Timer-only scheduled prompts |
+| [autonomy.md](autonomy.md) | Durable runs, Task Flows, heartbeats, hooks, standing orders, gardener |
 | [local-delivery.md](local-delivery.md) | Clean candidate → Chisei evidence → Tenkai local release |
 | [chisei-sdk.md](chisei-sdk.md) | Pinned server-side Chisei SDK and projection compatibility surface |
 | [local-data.md](local-data.md) | State directory, history, preferences, secrets |
@@ -34,6 +35,7 @@ want to change it.
 | [research/364-provider-management-entry.md](research/364-provider-management-entry.md) | Provider administration entry-point decision |
 | [research/365-conversation-lifecycle.md](research/365-conversation-lifecycle.md) | Pin, archive, settle, and worktree-release lifecycle decision |
 | [decisions/README.md](decisions/README.md) | Accepted design decisions (ADRs) |
+| [decisions/autonomy-stack.md](decisions/autonomy-stack.md) | Safe local autonomy boundary |
 
 ## Repository root
 

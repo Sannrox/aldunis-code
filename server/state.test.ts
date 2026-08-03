@@ -766,6 +766,12 @@ test("project deletion and retention physically remove sensitive conversation da
     inputRequests: [],
     inputReceipts: [],
     automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   });
   assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
 

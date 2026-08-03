@@ -34,6 +34,38 @@
       "description": "A metadata-only durable identity for one scheduled or explicitly requested conversation automation attempt; it records idempotency, bound turn and provider-run identities, bounded outcome, and explicit unknown-after-restart state without raw provider output."
     },
     {
+      "name": "AutonomyRun",
+      "description": "A durable local autonomy execution record with a typed workflow identity, bounded budget, resumable status, trigger provenance, and metadata-only result. It cannot grant provider, filesystem, or approval authority."
+    },
+    {
+      "name": "AutonomyTask",
+      "description": "One durable bounded step in an AutonomyRun, with retry count, timeout state, approval-gate state, and metadata-only output."
+    },
+    {
+      "name": "AutonomyFlow",
+      "description": "A typed multi-step local workflow definition with ordered steps, retries, timeouts, explicit approval-gate markers, resumability metadata, and cost/runtime limits. The shipped flows are read-only."
+    },
+    {
+      "name": "HeartbeatMonitor",
+      "description": "A durable periodic-awareness or scheduled-gardener configuration evaluated while the local Aldunis Code host is alive, with a bounded built-in flow, active hours, and a link to its latest AutonomyRun."
+    },
+    {
+      "name": "StandingOrder",
+      "description": "A durable operator-authored bounded preference for autonomy planning. It is informational policy input and never expands provider, filesystem, credential, tenant, or approval authority."
+    },
+    {
+      "name": "AutonomyHook",
+      "description": "An internal event-driven reaction from a local lifecycle event to a built-in read-only AutonomyFlow, guarded by enablement and cooldown metadata."
+    },
+    {
+      "name": "MaintenanceFinding",
+      "description": "A bounded metadata-only suggestion produced by the nightly maintenance gardener, containing category, severity, optional repository-relative path, risk, and a suggested approved follow-up."
+    },
+    {
+      "name": "MaintenanceGardener",
+      "description": "The built-in read-only AutonomyFlow that checks repository availability, scans bounded maintenance signals, ranks findings, and produces an operator report without changing source or launching a provider turn."
+    },
+    {
       "name": "ProviderDiscovery",
       "description": "Aldunis Code host-owned readiness projection for locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery."
     },
@@ -222,6 +254,76 @@
       "description": "Records each scheduled slot or explicit manual request as one idempotent fire identity with bounded outcome and recovery state.",
       "domain": "ConversationAutomation",
       "range": "ConversationAutomationFire"
+    },
+    {
+      "name": "uses_typed_flow",
+      "description": "Binds a durable autonomy execution to one typed workflow definition and its bounded step graph.",
+      "domain": "AutonomyRun",
+      "range": "AutonomyFlow",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "records_autonomy_task",
+      "description": "Decomposes a durable autonomy execution into ordered, retryable, timeout-bounded task records.",
+      "domain": "AutonomyRun",
+      "range": "AutonomyTask",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "reports_maintenance_finding",
+      "description": "Records bounded maintenance findings as metadata for operator review rather than source or provider output.",
+      "domain": "AutonomyTask",
+      "range": "MaintenanceFinding",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "starts_autonomy_run",
+      "description": "Allows a heartbeat monitor, standing internal hook, or standing order context to initiate a durable autonomy run without changing its authority boundary.",
+      "domain": "HeartbeatMonitor",
+      "range": "AutonomyRun",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "reacts_with_flow",
+      "description": "Maps one internal lifecycle hook to a built-in read-only typed flow subject to cooldown and local-host execution.",
+      "domain": "AutonomyHook",
+      "range": "AutonomyFlow",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "informs_autonomy_run",
+      "description": "Provides bounded operator-authored preference context to an autonomy run without granting new authority.",
+      "domain": "StandingOrder",
+      "range": "AutonomyRun",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "implements_read_only_flow",
+      "description": "Identifies the maintenance gardener as the shipped read-only implementation of a typed autonomy flow.",
+      "domain": "MaintenanceGardener",
+      "range": "AutonomyFlow",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
     },
     {
       "name": "exposes_host_commands",
@@ -565,6 +667,96 @@
       "subject": "records_automation_fire",
       "source": "Aldunis Code durable automation fire boundary",
       "locator": "server/state.ts#AutomationFire; server/state.ts#automation_fire_saved",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyRun",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyRun; server/state.ts#autonomy_run_saved",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyTask",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyTask; server/state.ts#autonomy_task_saved",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyFlow",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyFlow; server/autonomy.ts#builtInAutonomyFlows",
+      "confidence": 1.0
+    },
+    {
+      "subject": "HeartbeatMonitor",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#HeartbeatMonitor; server/autonomy-engine.ts#AutonomyScheduler",
+      "confidence": 1.0
+    },
+    {
+      "subject": "StandingOrder",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#StandingOrder; server/host.ts#/api/autonomy/standing-orders",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyHook",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyHook; server/autonomy-engine.ts#AutonomyEngine.dispatch",
+      "confidence": 1.0
+    },
+    {
+      "subject": "MaintenanceFinding",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#MaintenanceFinding; server/autonomy-engine.ts#scanRepository",
+      "confidence": 1.0
+    },
+    {
+      "subject": "MaintenanceGardener",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#NIGHTLY_GARDENER_FLOW_ID; src/features/dialogs/autonomy-dialog.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_typed_flow",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyRun.flowId; server/autonomy-engine.ts#startFlow",
+      "confidence": 1.0
+    },
+    {
+      "subject": "records_autonomy_task",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#AutonomyTask; server/state.ts#autonomy_task_saved",
+      "confidence": 1.0
+    },
+    {
+      "subject": "reports_maintenance_finding",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#MaintenanceFinding; server/autonomy-engine.ts#scanRepository",
+      "confidence": 1.0
+    },
+    {
+      "subject": "starts_autonomy_run",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy-engine.ts#tickHeartbeats",
+      "confidence": 1.0
+    },
+    {
+      "subject": "reacts_with_flow",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy-engine.ts#AutonomyEngine.dispatch",
+      "confidence": 1.0
+    },
+    {
+      "subject": "informs_autonomy_run",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#StandingOrder; server/autonomy.ts#AutonomyRun.standingOrderIds",
+      "confidence": 1.0
+    },
+    {
+      "subject": "implements_read_only_flow",
+      "source": "Aldunis Code autonomy stack",
+      "locator": "server/autonomy.ts#builtInAutonomyFlows; server/autonomy-engine.ts#scanRepository",
       "confidence": 1.0
     },
     {

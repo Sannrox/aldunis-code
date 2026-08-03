@@ -413,6 +413,8 @@ export class AutomationScheduler {
       ) => Promise<AutomationFireExecution | void>;
       /** Production state hooks; omitted by focused scheduler tests. */
       fireStore?: AutomationFireStore;
+      /** Advisory internal hook after a fire reaches a terminal outcome. */
+      onFinished?: (automation: Automation, outcome: AutomationFireExecution) => Promise<void>;
       intervalMs?: number;
       now?: () => Date;
     },
@@ -556,6 +558,7 @@ export class AutomationScheduler {
           now,
           outcome ?? { status: "completed" },
         );
+        await this.options.onFinished?.(automation, outcome ?? { status: "completed" });
       } catch (error) {
         const message = this.#errorMessage(error);
         if (this.options.fireStore && fire) {
@@ -566,6 +569,7 @@ export class AutomationScheduler {
           lastStatus: "error",
           lastError: message,
         });
+        await this.options.onFinished?.(automation, { status: "failed", error: message });
       }
     } finally {
       release();

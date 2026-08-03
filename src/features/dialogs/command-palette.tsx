@@ -16,6 +16,7 @@ export function CommandPalette({
   onProviderManagement,
   onManageWorktrees,
   onAutomations,
+  onAutonomy,
   hasRepository = false,
 }: {
   open: boolean;
@@ -26,6 +27,7 @@ export function CommandPalette({
   onProviderManagement: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
+  onAutonomy: () => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
   hasRepository?: boolean;
 }) {
@@ -76,6 +78,11 @@ export function CommandPalette({
           detail: "Schedule interval or cron prompts into existing conversations",
           run: onAutomations,
         },
+        {
+          label: "Autonomy",
+          detail: "Runs, heartbeats, hooks, standing orders, and the maintenance gardener",
+          run: onAutonomy,
+        },
         ...(hasRepository
           ? [
               {
@@ -91,7 +98,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
+    [hasRepository, onAutonomy, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
   );
 
   useEffect(() => {

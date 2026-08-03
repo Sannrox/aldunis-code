@@ -55,6 +55,13 @@ function projection(): StateProjection {
     }],
     inputRequests: [request],
     inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 

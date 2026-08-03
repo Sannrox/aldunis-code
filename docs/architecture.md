@@ -17,6 +17,7 @@ local Aldunis Code host
     |-- normalized conversation / event store
     |-- permission broker
     |-- scheduled automations (timer → existing conversation)
+    |-- autonomy plane (heartbeat → typed read-only flow → task ledger)
     |-- product availability (Code always; planes if configured)
     `-- provider adapters
             |-- Claude Code (profiles)
@@ -125,6 +126,11 @@ through a versioned authenticated contract.
   Build children use an isolated managed worktree; Ask/Plan children may use
   the parent worktree.
 - Unknown provider events and incompatible contract versions fail closed.
+- Autonomy records use the same append-only local history and writer lease.
+  Heartbeats, hooks, and standing orders cannot grant provider, filesystem,
+  credential, tenant, or approval authority. The shipped maintenance flow is
+  read-only and records bounded metadata findings only; mutation remains behind
+  the existing provider and approval surfaces.
 - Provider browser observations are a separate, explicitly declared adapter
   capability. Only bounded inline JPEG/PNG/WebP frames may reach the transient
   UI; provider filesystem paths, arbitrary Chrome/CDP attachment, page
@@ -215,14 +221,17 @@ See [providers.md](providers.md) for operator detail and
 4. Permission broker and changed-file/diff workflows.
 5. Multi-provider: Codex, declarative ACP, Shikigami.
 6. Automations, checkpoints, remote workbench, desktop shell.
-7. Sekai / Chisei / Tenkai product clients via authenticated contracts (in progress;
+7. Durable local autonomy: task ledger, typed read-only flows, heartbeats,
+   internal hooks, standing orders, and maintenance gardener.
+8. Sekai / Chisei / Tenkai product clients via authenticated contracts (in progress;
    planes disabled in the switcher until configured).
-8. Optional Aldunis enterprise session and tenant composition.
+9. Optional Aldunis enterprise session and tenant composition.
 
 ## Related guides
 
 - [Getting started](getting-started.md)
 - [Local data](local-data.md)
 - [Automations](automations.md)
+- [Autonomy](autonomy.md)
 - [Remote workbench](remote-workbench.md)
 - [Workspace checkpoints](workspace-checkpoints.md)

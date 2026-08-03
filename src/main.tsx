@@ -22,6 +22,7 @@ import {
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
+import { AutonomyDialog } from "./features/dialogs/autonomy-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
@@ -68,6 +69,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [autonomyOpen, setAutonomyOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
@@ -409,6 +411,7 @@ function App() {
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
         onAutomations={() => setAutomationsOpen(true)}
+        onAutonomy={() => setAutonomyOpen(true)}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
           setWorktreeDialog(true);
@@ -424,6 +427,13 @@ function App() {
           provider: thread.provider,
         }))}
         onClose={() => setAutomationsOpen(false)}
+      />
+      <AutonomyDialog
+        open={autonomyOpen}
+        repository={repository}
+        projects={savedProjects}
+        managed={hostCapabilities.managed}
+        onClose={() => setAutonomyOpen(false)}
       />
       <PreferencesDialog
         open={preferencesOpen}
