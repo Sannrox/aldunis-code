@@ -335,6 +335,75 @@ code{font-family:var(--font-mono)}
 .cc.scoped .ic{color:var(--amber)}
 .cdiv{width:1px;height:16px;background:var(--border);flex:0 0 1px;margin:0 2px}
 
+/* Voice input is a secondary composer action: quiet at rest, unmistakable
+   while active, and never confused with the primary send control. */
+.voice-input-toggle {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+.voice-input-toggle:hover:not(:disabled),
+.voice-input-toggle:focus-visible {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.voice-input-toggle.is-listening {
+  border-color: color-mix(in srgb, var(--destructive-foreground) 42%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive-foreground);
+}
+.voice-input-toggle.is-error { color: var(--destructive-foreground); }
+.voice-input-toggle:disabled { opacity: .4; cursor: default; }
+.voice-input-toggle.is-listening::after {
+  position: absolute;
+  inset: -3px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  content: "";
+  opacity: .28;
+  pointer-events: none;
+  animation: voice-input-pulse 1.8s ease-out infinite;
+}
+@keyframes voice-input-pulse {
+  0% { transform: scale(.92); opacity: .34; }
+  70%, 100% { transform: scale(1.12); opacity: 0; }
+}
+.voice-input-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: -2px 0 8px;
+  color: var(--muted-foreground);
+  font: 11.5px/1.4 var(--font-mono);
+}
+.voice-input-status > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.voice-input-status-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--destructive-foreground);
+}
+.voice-input-error { margin-top: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .voice-input-toggle.is-listening::after { animation: none; }
+}
+[data-motion="reduce"] .voice-input-toggle.is-listening::after { animation: none; }
+
 /* review panel — dock prefers 430px but shrinks so .conv stays usable
    (dual-pane + fixed 430px was collapsing the thread to ~70px). */
 .split{position:relative;flex:1;display:flex;min-height:0;min-width:0}
@@ -2227,6 +2296,12 @@ html[data-theme="dark"], html[data-theme="dark"] body {
     font-size: 16px;
   }
   .send {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+    border-radius: 10px;
+  }
+  .voice-input-toggle {
     width: 44px;
     height: 44px;
     flex-basis: 44px;

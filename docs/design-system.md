@@ -114,6 +114,21 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Voice input
+
+Voice input is a secondary action in the conversation composer. The microphone
+stays quiet at rest, becomes visibly active while listening, and never replaces
+the primary send control. Finalized speech is appended to the current draft;
+interim speech is shown as it arrives and remains editable after listening
+stops. Manual typing stops the active dictation session so a late recognition
+event cannot overwrite the operator's edit.
+
+The feature uses the browser's speech-recognition capability only. Aldunis Code
+does not receive, persist, or forward microphone audio; the browser or operating
+system speech implementation may apply its own service and privacy policy. An
+unsupported browser, blocked microphone, missing device, or unavailable speech
+service is shown inline and leaves ordinary text input available.
+
 ## Settings
 
 Anything not touched during work belongs in Settings, not in the chrome.

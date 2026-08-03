@@ -106,3 +106,32 @@ test("native packages cannot overwrite the web build output", async () => {
 
   assert.equal(packageJson.build?.directories?.output, "release");
 });
+
+test("mac packages explain the microphone permission used by voice input", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    build?: {
+      mac?: {
+        entitlements?: string;
+        entitlementsInherit?: string;
+        extendInfo?: { NSMicrophoneUsageDescription?: string };
+      };
+    };
+  };
+
+  assert.match(packageJson.build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? "", /microphone/i);
+
+  const appEntitlements = await readFile(new URL("../build/entitlements.mac.plist", import.meta.url), "utf8");
+  const inheritedEntitlements = await readFile(
+    new URL("../build/entitlements.mac.inherit.plist", import.meta.url),
+    "utf8",
+  );
+  assert.equal(packageJson.build?.mac?.entitlements, "build/entitlements.mac.plist");
+  assert.equal(packageJson.build?.mac?.entitlementsInherit, "build/entitlements.mac.inherit.plist");
+  for (const entitlements of [appEntitlements, inheritedEntitlements]) {
+    assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/);
+    assert.match(entitlements, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/);
+    assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/);
+  }
+  assert.match(appEntitlements, /com\.apple\.security\.device\.audio-input/);
+  assert.match(inheritedEntitlements, /com\.apple\.security\.device\.audio-input/);
+});
