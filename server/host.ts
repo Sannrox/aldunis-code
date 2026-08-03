@@ -2063,14 +2063,19 @@ async function handleApi(
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
-      const effectiveModel = managedHost
-        ? managedHost.shikigami.model
-        : await validateProviderModel(
-          providerId,
-          body.model,
-          { codex, shikigami, adapters },
-          context.worktree,
-        );
+      const delegatedParentThreadId = typeof body.parentThreadId === "string"
+        ? body.parentThreadId
+        : null;
+      const earlyEffectiveModel = delegatedParentThreadId
+        ? null
+        : managedHost
+          ? managedHost.shikigami.model
+          : await validateProviderModel(
+            providerId,
+            body.model,
+            { codex, shikigami, adapters },
+            context.worktree,
+          );
       const contextPins = body.contextPins !== undefined
         ? body.contextPins as ContextPin[]
         : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
@@ -2101,9 +2106,6 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
-      const delegatedParentThreadId = typeof body.parentThreadId === "string"
-        ? body.parentThreadId
-        : null;
       if (delegatedParentThreadId) {
         if (body.threadId !== undefined) {
           throw new LocalStateError(
@@ -2153,6 +2155,15 @@ async function handleApi(
           }
         }
       }
+      const effectiveModel = earlyEffectiveModel
+        ?? (managedHost
+          ? managedHost.shikigami.model
+          : await validateProviderModel(
+            providerId,
+            body.model,
+            { codex, shikigami, adapters },
+            context.worktree,
+          ));
       const resumedInput = typeof body.inputRequestId === "string"
         ? projection.inputRequests.find((item) => (
           item.id === body.inputRequestId
