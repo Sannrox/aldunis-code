@@ -482,6 +482,18 @@ test("composer grows within its established desktop height bounds", () => {
   );
 });
 
+test("voice input keeps a secondary control hierarchy and touch hit target", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.voice-input-toggle\s*\{[^}]*flex:\s*0\s+0\s+30px[^}]*width:\s*30px[^}]*height:\s*30px/s);
+  assert.match(
+    shell,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.voice-input-toggle\s*\{[^}]*width:\s*44px[^}]*height:\s*44px[^}]*flex-basis:\s*44px/s,
+  );
+  assert.match(shell, /\.voice-input-toggle\.is-listening::after\s*\{[^}]*animation:\s*voice-input-pulse/s);
+  assert.match(shell, /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.voice-input-toggle\.is-listening::after\s*\{\s*animation:\s*none/s);
+});
+
 test("sparse mobile empty state stays above the fixed composer", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
