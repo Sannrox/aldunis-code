@@ -11,19 +11,50 @@ function responseError(body: unknown, fallback: string): string {
   return fallback;
 }
 
+export const CURRENT_WORKSPACE_RECOVERY_COPY = {
+  label: "Use current workspace",
+  detail: "Managed worktrees require a clean repository; use the current workspace below to keep local changes.",
+} as const;
+
+export const CLEAN_REPOSITORY_ERROR = "Start from a clean repository before creating an isolated worktree.";
+
+export function isDirtyRepositoryError(message: string): boolean {
+  return message === CLEAN_REPOSITORY_ERROR;
+}
+
+export function canUseCurrentWorkspace(
+  selectedWorktree: RepositoryMetadata["worktrees"][number] | undefined,
+  onUseCurrentWorkspace?: () => void,
+  dirtyRepository = false,
+): boolean {
+  return Boolean(
+    dirtyRepository
+      && onUseCurrentWorkspace
+      && selectedWorktree?.ownership === "user",
+  );
+}
+
 export function ConversationWorkspaceDialog({
   repository,
   conversationId,
   onClose,
   onCreated,
+  onUseCurrentWorkspace,
 }: {
   repository: RepositoryMetadata;
   conversationId: string;
   onClose: () => void;
   onCreated: (repository: RepositoryMetadata) => void;
+  onUseCurrentWorkspace?: () => void;
 }) {
   const selectedWorktree = repository.worktrees.find((worktree) => worktree.path === repository.selectedWorktree);
   const rootWorktree = repository.worktrees.find((worktree) => worktree.path === repository.root);
+  const [dirtyRepository, setDirtyRepository] = useState(false);
+  const canUseCurrentWorkspaceOption = canUseCurrentWorkspace(
+    selectedWorktree,
+    onUseCurrentWorkspace,
+    dirtyRepository,
+  );
   const initialBase = selectedWorktree?.head ?? rootWorktree?.head ?? "HEAD";
   const [base, setBase] = useState(initialBase);
   const [branch, setBranch] = useState(() => `aldunis/chat-${conversationId.slice(0, 8)}`);
@@ -38,12 +69,14 @@ export function ConversationWorkspaceDialog({
     setBranch(`aldunis/chat-${conversationId.slice(0, 8)}`);
     setPlan(null);
     setError(null);
+    setDirtyRepository(false);
   }, [conversationId, repository.root, repository.selectedWorktree]);
 
   const preview = async (event: React.FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setDirtyRepository(false);
     try {
       const response = await fetch("/api/worktrees/create/preview", {
         method: "POST",
@@ -56,7 +89,9 @@ export function ConversationWorkspaceDialog({
       }
       setPlan(body);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The conversation worktree could not be prepared.");
+      const message = cause instanceof Error ? cause.message : "The conversation worktree could not be prepared.";
+      setError(message);
+      setDirtyRepository(isDirtyRepositoryError(message));
     } finally {
       setBusy(false);
     }
@@ -66,6 +101,7 @@ export function ConversationWorkspaceDialog({
     if (!plan) return;
     setBusy(true);
     setError(null);
+    setDirtyRepository(false);
     try {
       const response = await fetch("/api/worktrees/create", {
         method: "POST",
@@ -82,7 +118,9 @@ export function ConversationWorkspaceDialog({
       }
       onCreated(body);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The conversation worktree could not be created.");
+      const message = cause instanceof Error ? cause.message : "The conversation worktree could not be created.";
+      setError(message);
+      setDirtyRepository(isDirtyRepositoryError(message));
     } finally {
       setBusy(false);
     }
@@ -97,6 +135,9 @@ export function ConversationWorkspaceDialog({
         <p>
           This conversation will get its own Git worktree and branch. The
           conversation will be bound to the approved canonical path.
+          {canUseCurrentWorkspaceOption && (
+            <> {CURRENT_WORKSPACE_RECOVERY_COPY.detail}</>
+          )}
         </p>
         {!plan ? (
           <form onSubmit={(event) => void preview(event)}>
@@ -107,6 +148,7 @@ export function ConversationWorkspaceDialog({
               onChange={(event) => {
                 setBase(event.target.value);
                 setPlan(null);
+                setDirtyRepository(false);
               }}
               disabled={busy}
               data-dialog-initial-focus
@@ -118,11 +160,17 @@ export function ConversationWorkspaceDialog({
               onChange={(event) => {
                 setBranch(event.target.value);
                 setPlan(null);
+                setDirtyRepository(false);
               }}
               disabled={busy}
             />
             <footer>
               <Button type="button" onClick={onClose} disabled={busy}>Use another workspace</Button>
+              {canUseCurrentWorkspaceOption && (
+                <Button type="button" onClick={onUseCurrentWorkspace} disabled={busy}>
+                  {CURRENT_WORKSPACE_RECOVERY_COPY.label}
+                </Button>
+              )}
               <Button
                 type="submit"
                 variant="primary"
@@ -144,6 +192,11 @@ export function ConversationWorkspaceDialog({
             <p>Approval is single-use. No provider process runs until this exact plan is approved.</p>
             <footer>
               <Button type="button" onClick={() => setPlan(null)} disabled={busy}>Back</Button>
+              {canUseCurrentWorkspaceOption && (
+                <Button type="button" onClick={onUseCurrentWorkspace} disabled={busy}>
+                  {CURRENT_WORKSPACE_RECOVERY_COPY.label}
+                </Button>
+              )}
               <Button type="button" variant="primary" onClick={() => void approve()} disabled={busy}>
                 {busy ? "Revalidating…" : "Approve and start"}
               </Button>

@@ -3111,10 +3111,8 @@ export function Conversation({
                   aria-haspopup="listbox"
                   aria-expanded={workspaceMenuOpen}
                   aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
-                  title={workspaceMode === "provider-native"
-                    ? WORKSPACE_MODE_COPY["provider-native"].detail
-                    : WORKSPACE_MODE_COPY["aldunis-managed"].detail}
-                  aria-label={`Workspace strategy: ${workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}. Open workspace strategy menu.`}
+                  title={workspaceCopy.detail}
+                  aria-label={`Workspace strategy: ${workspaceCopy.label}. Open workspace strategy menu.`}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -3123,10 +3121,12 @@ export function Conversation({
                 >
                   <Icon name="code" />
                   <span className="new-chat-context-copy">
-                    <strong>{workspaceMode === "provider-native" ? "Provider-native" : "Aldunis worktree"}</strong>
+                    <strong>{workspaceCopy.label}</strong>
                     <small>{workspaceMode === "provider-native"
                       ? "Provider-owned workspace"
-                      : "One Aldunis worktree for this chat"}</small>
+                      : workspaceMode === "shared"
+                        ? "Use the selected worktree for this chat"
+                        : "One Aldunis worktree for this chat"}</small>
                   </span>
                   <Icon name="chevron" />
                 </button>
@@ -3975,6 +3975,12 @@ export function Conversation({
           repository={repository}
           conversationId={conversationId}
           onClose={() => setWorkspaceDialogOpen(false)}
+          onUseCurrentWorkspace={() => {
+            setPreparedWorkspaceRepository(null);
+            setWorkspaceApprovalPending(false);
+            setWorkspaceMode("shared");
+            setWorkspaceDialogOpen(false);
+          }}
           onCreated={(next) => {
             setPreparedWorkspaceRepository(next);
             onRepositoryChanged?.(next);
