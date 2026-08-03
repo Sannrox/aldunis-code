@@ -14,6 +14,7 @@ const MAX_ACTIONS = 50;
 const MAX_EFFECTS = 50;
 const CACHE_TTL_MS = 30_000;
 const MAX_CACHE_ENTRIES = 100;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 export interface ChiseiActionProjection {
   instanceId: string;
@@ -42,6 +43,15 @@ export interface ChiseiReceiptProjection {
   complete: boolean;
   missingSurfaces: string[];
   eventCount: number | null;
+}
+
+export interface ChiseiSampleObservationProjection {
+  requestId: string;
+  namespace: string;
+  observationDigest: string;
+  state: string;
+  observedAt: string;
+  readAt: string;
 }
 
 export interface ChiseiActionDetailProjection {
@@ -75,7 +85,7 @@ export class ChiseiClientError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly kind: "unconfigured" | "unauthorized" | "unavailable" | "incompatible",
+    readonly kind: "unconfigured" | "unauthorized" | "unavailable" | "incompatible" | "not_found",
   ) {
     super(message);
   }
@@ -284,6 +294,9 @@ export class ChiseiProjectionClient {
       if (code === 16 || code === 7) {
         throw new ChiseiClientError("Chisei denied this projection.", 403, "unauthorized");
       }
+      if (code === 5) {
+        throw new ChiseiClientError("The Chisei projection was not found.", 404, "not_found");
+      }
       if (code === 12 || code === 3) {
         throw new ChiseiClientError("The configured Chisei contract is incompatible.", 502, "incompatible");
       }
@@ -427,6 +440,56 @@ export class ChiseiProjectionClient {
       complete: response.complete,
       missingSurfaces: missing as string[],
       eventCount: eventCount(response.receiptJson),
+    };
+  }
+
+  async sampleObservation(
+    namespace: string,
+    requestId: string,
+  ): Promise<ChiseiSampleObservationProjection | null> {
+    if (
+      typeof namespace !== "string"
+      || !namespace
+      || namespace.length > 200
+      || namespace.includes("\0")
+      || typeof requestId !== "string"
+      || !requestId
+      || requestId.length > 512
+      || requestId.includes("\0")
+    ) {
+      throw new ChiseiClientError("The Chisei observation identity is incompatible.", 502, "incompatible");
+    }
+    let response: Record<string, unknown>;
+    try {
+      response = await this.#call("chisei", "getSampleObservation", {
+        requestId,
+        namespace,
+      });
+    } catch (error) {
+      if (error instanceof ChiseiClientError && error.kind === "not_found") return null;
+      throw error;
+    }
+    const value = response.observation;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new ChiseiClientError("Chisei returned an incompatible observation projection.", 502, "incompatible");
+    }
+    const observation = value as Record<string, unknown>;
+    const returnedRequestId = boundedText(observation.requestId, "observation request id", 512);
+    const returnedNamespace = boundedText(observation.namespace, "observation namespace", 200);
+    if (returnedRequestId !== requestId || returnedNamespace !== namespace) {
+      throw new ChiseiClientError("Chisei returned an observation outside the requested identity.", 502, "incompatible");
+    }
+    const observationDigest = boundedText(observation.observationDigest, "observation digest", 71);
+    if (!SHA256.test(observationDigest)) {
+      throw new ChiseiClientError("Chisei returned an incompatible observation digest.", 502, "incompatible");
+    }
+    return {
+      requestId: returnedRequestId,
+      namespace: returnedNamespace,
+      observationDigest,
+      state: boundedText(observation.state, "observation state", 50),
+      observedAt: timestamp(observation.observedAt, "observation time")!,
+      readAt: timestamp(observation.readAt, "observation read time")!,
     };
   }
 }

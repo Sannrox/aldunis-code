@@ -190,6 +190,18 @@
       "description": "A bounded local reference to a Tenkai-owned release, channel, plan, environment, deployment, health, or rollback record."
     },
     {
+      "name": "TenkaiTerminalOutcomeProjection",
+      "description": "A bounded Tenkai-owned read projection of a content-bound terminal deployment or rollback event. It exposes identities, evidence-binding digests, terminal state, observation time, delivery attempts, and delivery lag without payloads, retry errors, credentials, source, or logs."
+    },
+    {
+      "name": "ChiseiObservationReadback",
+      "description": "A bounded authenticated Chisei readback addressed by a Tenkai terminal event identity and the local project's server-derived namespace. It exposes only request identity, namespace, safe projection digest, recorded state, and read times."
+    },
+    {
+      "name": "ShikigamiRepairBrief",
+      "description": "A bounded Aldunis Code handoff that opens a normal Build conversation for investigating a failed or unknown Tenkai outcome. It carries stable evidence references and requires the ordinary Shikigami send and approval flow; it never starts a hidden provider run or reads foreign databases."
+    },
+    {
       "name": "DeliveryCorrelationReceipt",
       "description": "An aldunis.delivery-receipt/v1 correlation export containing stable identities, digests, freshness, and completeness without signed assertions, credentials, source, command output, or approval material."
     }
@@ -450,6 +462,24 @@
       "description": "Records bounded reconciled Tenkai identifiers without transferring delivery or recovery authority.",
       "domain": "CapabilityLinkedDeliverySession",
       "range": "TenkaiDeliveryReference"
+    },
+    {
+      "name": "projects_tenkai_terminal_outcome",
+      "description": "Projects bounded Tenkai terminal deployment or rollback evidence into the local delivery ledger without transferring Tenkai authority.",
+      "domain": "CapabilityLinkedDeliverySession",
+      "range": "TenkaiTerminalOutcomeProjection"
+    },
+    {
+      "name": "confirms_chisei_observation",
+      "description": "Confirms a Tenkai event identity against a bounded Chisei observation readback while preserving both products' authority boundaries.",
+      "domain": "TenkaiTerminalOutcomeProjection",
+      "range": "ChiseiObservationReadback"
+    },
+    {
+      "name": "prepares_shikigami_repair",
+      "description": "Turns a failed or unknown terminal outcome into a bounded repair brief for a new normal Shikigami Build conversation.",
+      "domain": "TenkaiTerminalOutcomeProjection",
+      "range": "ShikigamiRepairBrief"
     },
     {
       "name": "exports_delivery_correlation",
@@ -844,6 +874,24 @@
       "confidence": 1.0
     },
     {
+      "subject": "TenkaiTerminalOutcomeProjection",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#422 and Tenkai bounded terminal-outcome read contract",
+      "locator": "server/release-delivery-workflow.ts#parseTerminalOutcome; docs/local-delivery.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChiseiObservationReadback",
+      "source": "Sekai Chisei sample-observation readback contract",
+      "locator": "contracts/chisei-operation-read.proto; server/chisei-client.ts#sampleObservation; server/host.ts#/api/integrations/chisei/observations/detail",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiRepairBrief",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#422 repair handoff",
+      "locator": "src/features/shell/tenkai-delivery.tsx#repairPromptForOutcome; src/features/code/workbench.tsx#aldunis:start-shikigami-repair",
+      "confidence": 1.0
+    },
+    {
       "subject": "DeliveryCorrelationReceipt",
       "source": "GitHub Issue Sannrox/aldunis-code#332",
       "locator": "server/release-delivery-workflow.ts#receipt",
@@ -865,6 +913,24 @@
       "subject": "references_tenkai_delivery",
       "source": "Aldunis Code local release-delivery contract",
       "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_tenkai_terminal_outcome",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#422 evidence-chain contract",
+      "locator": "server/release-delivery-workflow.ts#ReleaseDeliveryInspection",
+      "confidence": 1.0
+    },
+    {
+      "subject": "confirms_chisei_observation",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#422 authenticated readback contract",
+      "locator": "server/host.ts#/api/integrations/chisei/observations/detail",
+      "confidence": 1.0
+    },
+    {
+      "subject": "prepares_shikigami_repair",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#422 repair handoff contract",
+      "locator": "src/features/shell/tenkai-delivery.tsx#startRepair; src/features/code/workbench.tsx",
       "confidence": 1.0
     },
     {

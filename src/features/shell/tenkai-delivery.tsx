@@ -4,6 +4,8 @@ import type {
   ReleaseDeliverySession,
   ReleaseWorkflowAction,
   RepositoryMetadata,
+  TenkaiTerminalOutcomeInspection,
+  TenkaiTerminalOutcomeProjection,
 } from "../../types";
 import { Button, Input } from "../../components/ui";
 
@@ -14,6 +16,16 @@ interface Inspection {
     localOnly: true;
   };
   sessions: ReleaseDeliverySession[];
+  terminalOutcomes: TenkaiTerminalOutcomeInspection;
+}
+
+interface ChiseiObservation {
+  requestId: string;
+  namespace: string;
+  observationDigest: string;
+  state: string;
+  observedAt: string;
+  readAt: string;
 }
 
 const stages = [
@@ -84,6 +96,49 @@ function compactIdentity(value: string | null | undefined): string {
   return value.length > 32 ? `${value.slice(0, 18)}…${value.slice(-10)}` : value;
 }
 
+function terminalOutcomeLabel(outcome: TenkaiTerminalOutcomeProjection): string {
+  return outcome.terminalState.replaceAll("_", " ");
+}
+
+function repairOutcomeForSession(
+  session: ReleaseDeliverySession | null,
+  outcomes: TenkaiTerminalOutcomeProjection[],
+): TenkaiTerminalOutcomeProjection | null {
+  if (!session) return null;
+  return outcomes.find((outcome) => [
+    "deployment_failed",
+    "rollback_failed",
+    "execution_cancelled",
+    "unknown_reconciled",
+  ].includes(outcome.terminalState)) ?? null;
+}
+
+export function repairPromptForOutcome(
+  session: ReleaseDeliverySession,
+  outcome: TenkaiTerminalOutcomeProjection,
+): string {
+  return [
+    "Investigate and repair the local release delivery failure represented by this bounded evidence.",
+    "Work in the selected repository and worktree only. Treat Tenkai as authoritative for deployment, rollback, and terminal state; do not read Tenkai or Chisei databases directly.",
+    "Correlate the provider-confirmed Shikigami run with this evidence, inspect the repository and committed configuration, explain the smallest safe repair, and ask for explicit approval before mutating files or invoking mutating provider tools.",
+    "",
+    "Bounded evidence:",
+    `candidate=${session.candidate.identity}`,
+    `commit=${session.candidate.document.commit.oid}`,
+    `event_id=${outcome.eventId}`,
+    `terminal_state=${outcome.terminalState}`,
+    `deployment_id=${outcome.deploymentId}`,
+    `plan_id=${outcome.planId}`,
+    `release_id=${outcome.releaseId}`,
+    `environment_id=${outcome.environmentId}`,
+    `binding_digest=${outcome.bindingDigest}`,
+    `release_digest=${outcome.releaseDigest}`,
+    `plan_digest=${outcome.planDigest}`,
+    `configuration_digest=${outcome.configurationDigest}`,
+    `delivery_state=${outcome.deliveryState}`,
+  ].join("\n");
+}
+
 export function TenkaiDeliveryPanel({
   repository,
   projectId,
@@ -102,6 +157,9 @@ export function TenkaiDeliveryPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [observation, setObservation] = useState<ChiseiObservation | null>(null);
+  const [observationEventId, setObservationEventId] = useState<string | null>(null);
+  const [observationBusy, setObservationBusy] = useState(false);
   const context = repository && projectId ? {
     root: repository.root,
     worktree: repository.selectedWorktree,
@@ -131,6 +189,8 @@ export function TenkaiDeliveryPanel({
   useEffect(() => {
     setInspection(null);
     setPreview(null);
+    setObservation(null);
+    setObservationEventId(null);
     setStartingNewCandidate(false);
     setError(null);
     setMessage(null);
@@ -151,6 +211,17 @@ export function TenkaiDeliveryPanel({
   );
   const nextAction = nextReleaseAction(session);
   const progress = session ? stateProgress[session.state] ?? 0 : 0;
+  const matchingOutcomes = session
+    ? (inspection?.terminalOutcomes.outcomes ?? []).filter((outcome) => (
+      outcome.product === session.candidate.product
+      && (
+        outcome.releaseId === session.tenkai.releaseId
+        || outcome.planId === session.tenkai.planId
+        || outcome.planId === session.tenkai.rollbackPlanId
+      )
+    ))
+    : [];
+  const repairOutcome = repairOutcomeForSession(session, matchingOutcomes);
 
   const preparePreview = async (action: ReleaseWorkflowAction) => {
     if (!context) return;
@@ -230,6 +301,41 @@ export function TenkaiDeliveryPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const readObservation = async (outcome: TenkaiTerminalOutcomeProjection) => {
+    if (!projectId) return;
+    setObservationBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/integrations/chisei/observations/detail", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId, requestId: outcome.eventId }),
+      });
+      const body = await response.json() as ChiseiObservation & { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Chisei observation readback failed.");
+      setObservation(body);
+      setObservationEventId(outcome.eventId);
+      setMessage("Chisei confirmed the bounded observation projection for this Tenkai event.");
+    } catch (cause) {
+      setObservation(null);
+      setObservationEventId(outcome.eventId);
+      setError(cause instanceof Error ? cause.message : "Chisei observation readback failed.");
+    } finally {
+      setObservationBusy(false);
+    }
+  };
+
+  const startRepair = () => {
+    if (!projectId || !session || !repairOutcome) return;
+    window.dispatchEvent(new CustomEvent("aldunis:start-shikigami-repair", {
+      detail: {
+        projectId,
+        prompt: repairPromptForOutcome(session, repairOutcome),
+      },
+    }));
+    setMessage("A bounded repair brief is ready in a new Shikigami conversation. Review it and press Send.");
   };
 
   return (
@@ -332,6 +438,84 @@ export function TenkaiDeliveryPanel({
                   autoComplete="off"
                 />
               </div>
+            )}
+
+            {session && inspection?.terminalOutcomes && (
+              <article className="tenkai-outcome-card" aria-labelledby="tenkai-outcome-title">
+                <header>
+                  <div>
+                    <p className="eyebrow">Authoritative Tenkai projection</p>
+                    <h3 id="tenkai-outcome-title">Terminal outcome evidence</h3>
+                  </div>
+                  <span className={`tenkai-outcome-state ${inspection.terminalOutcomes.state}`}>
+                    {inspection.terminalOutcomes.state}
+                  </span>
+                </header>
+                {inspection.terminalOutcomes.warning && (
+                  <p className="domain-message error" role="status">{inspection.terminalOutcomes.warning}</p>
+                )}
+                {inspection.terminalOutcomes.state === "live" && matchingOutcomes.length === 0 && (
+                  <p className="domain-message">
+                    No matching terminal outcome is recorded for this release or plan. The absence of a row is not treated as delivery success.
+                  </p>
+                )}
+                {matchingOutcomes.length > 0 && (
+                  <ul className="tenkai-outcome-list">
+                    {matchingOutcomes.map((outcome) => (
+                      <li key={outcome.eventId}>
+                        <header>
+                          <strong>{terminalOutcomeLabel(outcome)}</strong>
+                          <span>{outcome.deliveryState} · {outcome.attempts} attempt{outcome.attempts === 1 ? "" : "s"}</span>
+                        </header>
+                        <dl>
+                          <div><dt>Event</dt><dd title={outcome.eventId}><code>{compactIdentity(outcome.eventId)}</code></dd></div>
+                          <div><dt>Deployment</dt><dd title={outcome.deploymentId}><code>{compactIdentity(outcome.deploymentId)}</code></dd></div>
+                          <div><dt>Plan</dt><dd title={outcome.planId}><code>{compactIdentity(outcome.planId)}</code></dd></div>
+                          <div><dt>Release</dt><dd title={outcome.releaseId}><code>{compactIdentity(outcome.releaseId)}</code></dd></div>
+                          <div><dt>Environment</dt><dd title={outcome.environmentId}><code>{compactIdentity(outcome.environmentId)}</code></dd></div>
+                          <div><dt>Observed</dt><dd>{new Date(outcome.observedAt).toLocaleString()}</dd></div>
+                          <div><dt>Binding</dt><dd title={outcome.bindingDigest}><code>{compactIdentity(outcome.bindingDigest)}</code></dd></div>
+                          <div><dt>Release digest</dt><dd title={outcome.releaseDigest}><code>{compactIdentity(outcome.releaseDigest)}</code></dd></div>
+                          <div><dt>Plan digest</dt><dd title={outcome.planDigest}><code>{compactIdentity(outcome.planDigest)}</code></dd></div>
+                          <div><dt>Config digest</dt><dd title={outcome.configurationDigest}><code>{compactIdentity(outcome.configurationDigest)}</code></dd></div>
+                          <div><dt>Delivery lag</dt><dd>{outcome.deliveryLagMs.toLocaleString()} ms</dd></div>
+                        </dl>
+                        <div className="tenkai-outcome-actions">
+                          {outcome.deliveryState === "delivered" && (
+                            <Button
+                              type="button"
+                              disabled={observationBusy || !chiseiBound}
+                              onClick={() => void readObservation(outcome)}
+                            >
+                              {observationBusy && observationEventId === outcome.eventId
+                                ? "Reading Chisei…"
+                                : "Read Chisei confirmation"}
+                            </Button>
+                          )}
+                          {observationEventId === outcome.eventId && observation && (
+                            <span className="tenkai-observation-readback">
+                              Chisei {observation.state} · <code>{compactIdentity(observation.observationDigest)}</code> · read {new Date(observation.readAt).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {repairOutcome && (
+                  <div className="tenkai-repair-action">
+                    <p>
+                      The failed terminal state is correlated to this candidate. Shikigami can inspect and propose a repair using only these bounded references.
+                    </p>
+                    <Button type="button" variant="primary" onClick={startRepair} disabled={busy}>
+                      Prepare Shikigami repair
+                    </Button>
+                  </div>
+                )}
+                <p className="tenkai-outcome-note">
+                  Projection contains identities, digests, timestamps, and delivery state only; payloads, retry errors, credentials, source, and logs remain with their owning systems.
+                </p>
+              </article>
             )}
 
             {message && <p className="domain-message" role="status">{message}</p>}

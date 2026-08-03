@@ -202,6 +202,8 @@ export function Conversation({
   managedModel,
   quietDelegatedChild = false,
   showThinking = false,
+  initialPrompt,
+  initialProvider,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -232,6 +234,9 @@ export function Conversation({
   showThinking?: boolean;
   /** Suppress ordinary child completion notifications while its linked parent is focused. */
   quietDelegatedChild?: boolean;
+  /** One-shot bounded brief for a new conversation opened by a domain handoff. */
+  initialPrompt?: string;
+  initialProvider?: ProviderId;
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -473,6 +478,18 @@ export function Conversation({
   const [provider, setProvider] = useState<ProviderId>(
     () => managedMode ? "shikigami" : conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
   );
+  const initialPromptAppliedReference = useRef(false);
+  useEffect(() => {
+    if (
+      conversation !== null
+      || !initialPrompt
+      || initialPromptAppliedReference.current
+    ) return;
+    initialPromptAppliedReference.current = true;
+    setDraft(initialPrompt);
+    if (initialProvider) setProvider(initialProvider);
+    setMode("build");
+  }, [conversation, initialPrompt, initialProvider]);
   const providerDiscoveryContext = useMemo(() => (
     repository?.root && repository.selectedWorktree
       ? { root: repository.root, worktree: repository.selectedWorktree }

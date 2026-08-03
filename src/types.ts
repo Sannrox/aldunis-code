@@ -493,6 +493,43 @@ export interface ReleaseDeliverySession {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface TenkaiTerminalOutcomeProjection {
+  eventId: string;
+  schema: "tenkai.terminal_outcome.v1";
+  deploymentId: string;
+  planId: string;
+  releaseId: string;
+  product: string;
+  environmentId: string;
+  configurationId: string;
+  terminalState:
+    | "deployment_succeeded"
+    | "deployment_failed"
+    | "automatic_rollback_succeeded"
+    | "rollback_succeeded"
+    | "rollback_failed"
+    | "execution_cancelled"
+    | "unknown_reconciled";
+  observedAt: string;
+  bindingDigest: string;
+  releaseDigest: string;
+  planDigest: string;
+  configurationDigest: string;
+  deliveryState: "pending" | "in_flight" | "retrying" | "delivered";
+  attempts: number;
+  nextAttemptAt: string;
+  deliveredAt: string | null;
+  claimUntil: string | null;
+  deliveryLagMs: number;
+}
+
+export interface TenkaiTerminalOutcomeInspection {
+  authority: "tenkai";
+  state: "live" | "unavailable" | "unknown";
+  outcomes: TenkaiTerminalOutcomeProjection[];
+  warning: string | null;
+}
 export type PreviewState = "approval_pending" | "starting" | "running" | "stopping" | "stopped" | "failed";
 export interface PreviewSnapshot {
   id: string;

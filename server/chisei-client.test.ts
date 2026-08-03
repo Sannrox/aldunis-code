@@ -289,3 +289,48 @@ test("ChiseiProjectionClient exposes a bounded operation receipt projection", as
     eventCount: 2,
   });
 });
+
+test("ChiseiProjectionClient reads only the authenticated sample-observation projection", async () => {
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    (() => fixtureClient({
+      getSampleObservation(request, _metadata, callback) {
+        assert.deepEqual(request, {
+          requestId: "tenkai:outcome:v2:event-1",
+          namespace: "team/project",
+        });
+        callback(null, {
+          observation: {
+            requestId: request.requestId,
+            namespace: request.namespace,
+            observationDigest: `sha256:${"a".repeat(64)}`,
+            state: "recorded",
+            observedAt: "1000",
+            readAt: "2000",
+            outputContent: "must not cross the boundary",
+          },
+        });
+      },
+    }) as never) as never,
+  );
+  assert.deepEqual(await client.sampleObservation("team/project", "tenkai:outcome:v2:event-1"), {
+    requestId: "tenkai:outcome:v2:event-1",
+    namespace: "team/project",
+    observationDigest: `sha256:${"a".repeat(64)}`,
+    state: "recorded",
+    observedAt: "1970-01-01T00:00:01.000Z",
+    readAt: "1970-01-01T00:00:02.000Z",
+  });
+});
+
+test("ChiseiProjectionClient turns a missing sample observation into an explicit absence", async () => {
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    (() => fixtureClient({
+      getSampleObservation(_request, _metadata, callback) {
+        callback(Object.assign(new Error("not found"), { code: 5 }));
+      },
+    }) as never) as never,
+  );
+  assert.equal(await client.sampleObservation("team/project", "event-1"), null);
+});

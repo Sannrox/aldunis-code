@@ -71,6 +71,34 @@ function fakeRunner() {
   let includeUnrelatedRollbackStep = false;
   let applyCalls = 0;
   let artifactReferenceOverride: string | null = null;
+  let outcomeSequence = 0;
+  const terminalOutcomes: Array<Record<string, unknown>> = [];
+  const addTerminalOutcome = (terminalState: string, planId: string) => {
+    outcomeSequence += 1;
+    const now = Date.now() + outcomeSequence;
+    terminalOutcomes.push({
+      event_id: `tenkai:outcome:v2:${String(outcomeSequence).padStart(64, "0")}`,
+      schema: "tenkai.terminal_outcome.v1",
+      deployment_id: `tenkai:deployment:local:widget:${outcomeSequence}`,
+      plan_id: planId,
+      release_id: "tenkai:release:widget:1.2.3",
+      product: "widget",
+      environment_id: "tenkai:environment:local",
+      configuration_id: "tenkai:configuration:local",
+      terminal_state: terminalState,
+      observed_at: now,
+      binding_digest: `sha256:${"1".repeat(64)}`,
+      release_digest: `sha256:${"2".repeat(64)}`,
+      plan_digest: `sha256:${"3".repeat(64)}`,
+      configuration_digest: `sha256:${"4".repeat(64)}`,
+      delivery_state: "delivered",
+      attempts: 1,
+      next_attempt_at: now,
+      delivered_at: now + 10,
+      claim_until: null,
+      delivery_lag_ms: 10,
+    });
+  };
   const runner: ReleaseCommandRunner = async (executable, args) => {
     if (executable === "npm") {
       return { stdout: "", stderr: "", exitCode: 0, timedOut: false, aborted: false };
@@ -154,6 +182,7 @@ function fakeRunner() {
           facts: {},
           lease: {},
           latest_plan: latestPlan,
+          terminal_outcomes: terminalOutcomes,
           execution_note: "fixture",
         }),
         stderr: "",
@@ -231,6 +260,7 @@ function fakeRunner() {
     if (command === "apply" && applyUnknown) {
       applyCalls += 1;
       health = "unknown";
+      addTerminalOutcome("deployment_failed", "tenkai:plan:local:1:opaque");
       return {
         stdout: JSON.stringify({
           schema: "tenkai.command-result/v1",
@@ -292,6 +322,10 @@ function fakeRunner() {
         steps,
         steps_truncated: false,
       };
+      addTerminalOutcome(
+        rollbackHealthy ? "automatic_rollback_succeeded" : "rollback_failed",
+        "tenkai:plan:local:2:rollback",
+      );
       return {
         stdout: machine("rollback", [
           { kind: "plan", id: "tenkai:plan:local:2:rollback" },
@@ -1008,6 +1042,15 @@ test("unknown apply reconciles before rollback and reaches a terminal recovered 
   });
   assert.equal(reconciled.state, "recovered");
   assert.equal(reconciled.completeness, "stale");
+  const evidence = await broker.inspect("project-1", root, root);
+  assert.equal(evidence.terminalOutcomes.state, "live");
+  const terminalStates = evidence.terminalOutcomes.outcomes.map((outcome) => outcome.terminalState);
+  assert.ok(terminalStates.includes("deployment_failed"));
+  assert.ok(terminalStates.includes("rollback_failed"));
+  assert.ok(terminalStates.includes("automatic_rollback_succeeded"));
+  assert.equal(evidence.terminalOutcomes.outcomes[0]?.deliveryState, "delivered");
+  assert.equal(evidence.terminalOutcomes.outcomes[0]?.deliveryLagMs, 10);
+  assert.doesNotMatch(JSON.stringify(evidence), /payload|claim_token|last_error|fixture-token/);
 });
 
 test("corrupt persisted history fails visibly instead of resetting sessions", async () => {
