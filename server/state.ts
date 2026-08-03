@@ -14,6 +14,7 @@ import {
   type ReasoningEffort,
 } from "./provider.ts";
 import type { ContextPin, ContextReceiptEntry } from "./context.ts";
+import type { WorkspaceMode } from "../src/types.ts";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 2;
 /** Schema versions accepted when loading on-disk history. */
@@ -35,6 +36,7 @@ export interface Thread {
   projectId: string;
   title: string;
   worktree: string;
+  workspaceMode: WorkspaceMode;
   provider: ProviderId;
   parentThreadId?: string;
   forkId?: string;
@@ -605,9 +607,18 @@ function migrateNullableTimestamp(value: unknown): string | null {
 }
 
 function migrateThreadRecord(payload: Record<string, unknown>): Thread {
+  const workspaceMode = payload.workspaceMode === undefined ? "shared" : payload.workspaceMode;
+  if (
+    workspaceMode !== "shared"
+    && workspaceMode !== "aldunis-managed"
+    && workspaceMode !== "provider-native"
+  ) {
+    throw new LocalStateError("Local history is corrupt.");
+  }
   return {
     ...(payload as unknown as Omit<Thread, "schemaVersion" | "settledAt" | "wokeAt" | "lastVisitedAt">),
     schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+    workspaceMode,
     settledAt: migrateNullableTimestamp(payload.settledAt),
     wokeAt: migrateNullableTimestamp(payload.wokeAt),
     lastVisitedAt: migrateNullableTimestamp(payload.lastVisitedAt),
@@ -681,6 +692,51 @@ function renderForkPrompt(
     "Excluded by policy: provider credentials, environment values, native session identifiers, hidden reasoning, raw tool inputs and outputs, and approval state.",
   );
   return sections.join("\n\n");
+}
+
+function buildForkPreview(source: Thread, projection: StateProjection) {
+  const turnIds = new Set(
+    projection.turns.filter((turn) => turn.threadId === source.id).map((turn) => turn.id),
+  );
+  const messages = coalesceForkTransferMessages(
+    projection.messages
+      .filter((message) => turnIds.has(message.turnId))
+      .map(({ id, role, text, createdAt }) => ({ id, role, text, createdAt })),
+  );
+  const annotations = projection.annotations
+    .filter((annotation) => annotation.threadId === source.id)
+    .map(({ id, path, text, capturedContext }) => ({ id, path, text, capturedContext }));
+  const prompt = renderForkPrompt(source, messages, annotations);
+  const byteCount = Buffer.byteLength(prompt, "utf8");
+  const digest = createHash("sha256").update(prompt, "utf8").digest("hex");
+  return {
+    sourceThreadId: source.id,
+    sourceProvider: source.provider,
+    workspaceMode: source.workspaceMode ?? "shared" as const,
+    worktree: source.worktree,
+    messages,
+    annotations,
+    files: [] as [],
+    summaries: [] as [],
+    prompt,
+    byteCount,
+    digest,
+    contextPackage: {
+      pins: [] as [],
+      entries: [] as [],
+      totalBytes: byteCount,
+      estimatedTokens: Math.ceil(byteCount / 4),
+      digest,
+    },
+    excluded: [
+      "Provider credentials and environment values",
+      "Native provider session identifiers",
+      "Hidden reasoning",
+      "Raw tool inputs and outputs",
+      "Tool approvals and runtime activity",
+      "Provider plan artifacts",
+    ],
+  };
 }
 
 function applyEvent(projection: StateProjection, envelope: EventEnvelope): void {
@@ -984,7 +1040,7 @@ export class LocalStateStore {
   }
 
   async #appendComputed<T>(
-    compute: (projection: StateProjection) => { event: StateEvent | null; value: T },
+    compute: (projection: StateProjection) => { event: StateEvent | StateEvent[] | null; value: T },
   ): Promise<T> {
     await this.load();
     let result!: T;
@@ -992,21 +1048,24 @@ export class LocalStateStore {
       const computed = compute(this.#projection);
       result = computed.value;
       if (!computed.event) return;
-      const envelope: EventEnvelope = {
-        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-        sequence: this.#projection.sequence + 1,
-        id: randomUUID(),
-        recordedAt: new Date().toISOString(),
-        event: computed.event,
-      };
-      const handle = await open(this.#eventPath, "a", 0o600);
-      try {
-        await handle.writeFile(`${JSON.stringify(envelope)}\n`, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
+      const events = Array.isArray(computed.event) ? computed.event : [computed.event];
+      for (const event of events) {
+        const envelope: EventEnvelope = {
+          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+          sequence: this.#projection.sequence + 1,
+          id: randomUUID(),
+          recordedAt: new Date().toISOString(),
+          event,
+        };
+        const handle = await open(this.#eventPath, "a", 0o600);
+        try {
+          await handle.writeFile(`${JSON.stringify(envelope)}\n`, "utf8");
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        applyEvent(this.#projection, envelope);
       }
-      applyEvent(this.#projection, envelope);
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;
@@ -1067,94 +1126,119 @@ export class LocalStateStore {
     reasoningEffort?: ReasoningEffort;
     threadId?: string;
     contextPins?: ContextPin[];
+    workspaceMode?: WorkspaceMode;
   }): Promise<{ thread: Thread; turn: Turn }> {
-    const projection = await this.load();
-    if (!projection.projects.some((project) => project.id === input.projectId)) {
-      throw new LocalStateError("The selected project is not in local history.", 404);
-    }
-    if (
-      !input.threadId
-      && projection.threads.filter((thread) => thread.projectId === input.projectId).length
-        >= MAX_THREADS_PER_PROJECT
-    ) {
-      throw new LocalStateError(
-        `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit. Delete or retain older conversations before starting another.`,
-        429,
-      );
-    }
-    const now = new Date().toISOString();
-    const existing = input.threadId
-      ? projection.threads.find((thread) => thread.id === input.threadId)
-      : undefined;
-    if (input.threadId && (!existing || existing.projectId !== input.projectId)) {
-      throw new LocalStateError("The selected conversation is not available.", 404);
-    }
-    if (existing) {
-      const providerSession = projection.providerSessions.find(
-        (session) => session.threadId === existing.id,
-      );
-      const existingProvider = existing.provider ?? providerSession?.provider ?? "claude-code";
-      if (existingProvider && existingProvider !== input.provider) {
+    return this.#appendComputed((projection) => {
+      if (!projection.projects.some((project) => project.id === input.projectId)) {
+        throw new LocalStateError("The selected project is not in local history.", 404);
+      }
+      if (
+        !input.threadId
+        && projection.threads.filter((thread) => thread.projectId === input.projectId).length
+          >= MAX_THREADS_PER_PROJECT
+      ) {
         throw new LocalStateError(
-          `This conversation belongs to ${existingProvider} and cannot switch providers.`,
-          409,
+          `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit. Delete or retain older conversations before starting another.`,
+          429,
         );
       }
-      if (existing.worktree !== input.worktree) {
-        throw new LocalStateError(
-          "This conversation is bound to a different canonical worktree and cannot be silently moved.",
-          409,
-        );
+      const now = new Date().toISOString();
+      const existing = input.threadId
+        ? projection.threads.find((thread) => thread.id === input.threadId)
+        : undefined;
+      if (input.threadId && (!existing || existing.projectId !== input.projectId)) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
       }
-    }
-    const thread: Thread = existing
-      ? {
-          ...existing,
-          provider: existing.provider ?? input.provider,
-          ...(input.model !== undefined ? { model: input.model } : {}),
-          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
-          ...(input.contextPins ? { contextPins: input.contextPins } : {}),
-          updatedAt: now,
+      if (existing) {
+        const providerSession = projection.providerSessions.find(
+          (session) => session.threadId === existing.id,
+        );
+        const existingProvider = existing.provider ?? providerSession?.provider ?? "claude-code";
+        if (existingProvider && existingProvider !== input.provider) {
+          throw new LocalStateError(
+            `This conversation belongs to ${existingProvider} and cannot switch providers.`,
+            409,
+          );
         }
-      : {
-          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-          id: randomUUID(),
-          projectId: input.projectId,
-          title: input.prompt.slice(0, 80),
-          worktree: input.worktree,
-          provider: input.provider,
-          ...(input.model !== undefined ? { model: input.model } : {}),
-          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
-          contextPins: input.contextPins ?? [],
-          createdAt: now,
-          updatedAt: now,
-          pinnedAt: null,
-          archivedAt: null,
-          settledAt: null,
-          wokeAt: null,
-          lastVisitedAt: null,
-        };
-    const turn: Turn = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: randomUUID(),
-      threadId: thread.id,
-      status: "active",
-      createdAt: now,
-      completedAt: null,
-      mode: input.mode,
-    };
-    const message: Message = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: randomUUID(),
-      turnId: turn.id,
-      role: "user",
-      text: input.prompt,
-      createdAt: now,
-    };
-    await this.#append({ type: "thread_saved", thread });
-    await this.#append({ type: "turn_saved", turn });
-    await this.#append({ type: "message_saved", message });
-    return { thread, turn };
+        if (existing.worktree !== input.worktree) {
+          throw new LocalStateError(
+            "This conversation is bound to a different canonical worktree and cannot be silently moved.",
+            409,
+          );
+        }
+        if (input.workspaceMode && (existing.workspaceMode ?? "shared") !== input.workspaceMode) {
+          throw new LocalStateError(
+            "This conversation uses a different workspace mode and cannot be silently changed.",
+            409,
+          );
+        }
+      }
+      const workspaceMode = existing?.workspaceMode ?? input.workspaceMode ?? "shared";
+      if (
+        !input.threadId
+        && workspaceMode === "aldunis-managed"
+        && projection.threads.some((thread) => thread.worktree === input.worktree)
+      ) {
+        throw new LocalStateError(
+          "Each Aldunis-managed conversation needs its own worktree. Create a new one before starting this chat.",
+          409,
+        );
+      }
+      const thread: Thread = existing
+        ? {
+            ...existing,
+            workspaceMode,
+            provider: existing.provider ?? input.provider,
+            ...(input.model !== undefined ? { model: input.model } : {}),
+            ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+            ...(input.contextPins ? { contextPins: input.contextPins } : {}),
+            updatedAt: now,
+          }
+        : {
+            schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+            id: randomUUID(),
+            projectId: input.projectId,
+            title: input.prompt.slice(0, 80),
+            worktree: input.worktree,
+            workspaceMode,
+            provider: input.provider,
+            ...(input.model !== undefined ? { model: input.model } : {}),
+            ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+            contextPins: input.contextPins ?? [],
+            createdAt: now,
+            updatedAt: now,
+            pinnedAt: null,
+            archivedAt: null,
+            settledAt: null,
+            wokeAt: null,
+            lastVisitedAt: null,
+          };
+      const turn: Turn = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        threadId: thread.id,
+        status: "active",
+        createdAt: now,
+        completedAt: null,
+        mode: input.mode,
+      };
+      const message: Message = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        turnId: turn.id,
+        role: "user",
+        text: input.prompt,
+        createdAt: now,
+      };
+      return {
+        event: [
+          { type: "thread_saved", thread },
+          { type: "turn_saved", turn },
+          { type: "message_saved", message },
+        ],
+        value: { thread, turn },
+      };
+    });
   }
 
   async saveContextReceipt(
@@ -1183,6 +1267,8 @@ export class LocalStateStore {
     profileId: string | null;
     model: string;
     worktree: string;
+    destinationWorktree?: string;
+    workspaceMode?: WorkspaceMode;
     expectedDigest: string;
   }): Promise<{ thread: Thread; fork: ConversationFork }> {
     const projection = await this.load();
@@ -1193,6 +1279,20 @@ export class LocalStateStore {
     }
     if (source.worktree !== input.worktree) {
       throw new LocalStateError("The source worktree changed after the fork preview.", 409);
+    }
+    const destinationWorktree = input.destinationWorktree ?? source.worktree;
+    const destinationWorkspaceMode = input.workspaceMode ?? source.workspaceMode ?? "shared";
+    if (source.workspaceMode === "aldunis-managed" && destinationWorkspaceMode !== "aldunis-managed") {
+      throw new LocalStateError(
+        "A fork from an Aldunis-managed conversation requires a distinct Aldunis-managed worktree.",
+        409,
+      );
+    }
+    if (destinationWorkspaceMode === "aldunis-managed" && destinationWorktree === source.worktree) {
+      throw new LocalStateError(
+        "Aldunis-managed forks cannot reuse the source conversation's worktree.",
+        409,
+      );
     }
     if (
       projection.threads.filter((thread) => thread.projectId === source.projectId).length
@@ -1218,7 +1318,8 @@ export class LocalStateStore {
       id: randomUUID(),
       projectId: source.projectId,
       title: `${source.title} (fork)`.slice(0, 80),
-      worktree: source.worktree,
+      worktree: destinationWorktree,
+      workspaceMode: destinationWorkspaceMode,
       provider: input.provider,
       parentThreadId: source.id,
       forkId,
@@ -1240,7 +1341,7 @@ export class LocalStateStore {
       provider: input.provider,
       profileId: input.profileId,
       model: input.model,
-      worktree: source.worktree,
+      worktree: destinationWorktree,
       status: "pending",
       messages,
       annotations,
@@ -1251,74 +1352,49 @@ export class LocalStateStore {
       createdAt: now,
       startedAt: null,
     };
-    await this.#append({ type: "fork_created", thread, fork });
-    return { thread, fork };
+    return this.#appendComputed((currentProjection) => {
+      const currentSource = currentProjection.threads.find((item) => item.id === source.id);
+      if (
+        !currentSource
+        || currentSource.worktree !== source.worktree
+        || (currentSource.workspaceMode ?? "shared") !== (source.workspaceMode ?? "shared")
+      ) {
+        throw new LocalStateError("The source conversation changed after the fork preview.", 409);
+      }
+      const currentPreview = buildForkPreview(currentSource, currentProjection);
+      if (currentPreview.digest !== input.expectedDigest) {
+        throw new LocalStateError("The source context changed after the fork preview.", 409);
+      }
+      if (currentPreview.byteCount > 64 * 1024) {
+        throw new LocalStateError("The reviewed context exceeds the 64 KiB fork limit.", 413);
+      }
+      if (
+        destinationWorkspaceMode === "aldunis-managed"
+        && currentProjection.threads.some((item) => item.worktree === destinationWorktree)
+      ) {
+        throw new LocalStateError(
+          "The fork destination worktree is already bound to another conversation.",
+          409,
+        );
+      }
+      if (
+        currentProjection.threads.filter((item) => item.projectId === source.projectId).length
+        >= MAX_THREADS_PER_PROJECT
+      ) {
+        throw new LocalStateError(
+          `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit.`,
+          429,
+        );
+      }
+      return { event: { type: "fork_created", thread, fork }, value: { thread, fork } };
+    });
   }
 
-  async previewFork(sourceThreadId: string): Promise<{
-    sourceThreadId: string;
-    sourceProvider: ProviderId;
-    worktree: string;
-    messages: ForkTransferMessage[];
-    annotations: ForkTransferAnnotation[];
-    files: [];
-    summaries: [];
-    prompt: string;
-    byteCount: number;
-    digest: string;
-    contextPackage: {
-      pins: [];
-      entries: [];
-      totalBytes: number;
-      estimatedTokens: number;
-      digest: string;
-    };
-    excluded: string[];
-  }> {
+  async previewFork(sourceThreadId: string): Promise<ReturnType<typeof buildForkPreview>> {
     const projection = await this.load();
     const source = projection.threads.find((thread) => thread.id === sourceThreadId);
     if (!source) throw new LocalStateError("The source conversation is unavailable.", 404);
-    const turnIds = new Set(
-      projection.turns.filter((turn) => turn.threadId === source.id).map((turn) => turn.id),
-    );
-    const messages = coalesceForkTransferMessages(
-      projection.messages
-        .filter((message) => turnIds.has(message.turnId))
-        .map(({ id, role, text, createdAt }) => ({ id, role, text, createdAt })),
-    );
-    const annotations = projection.annotations
-      .filter((annotation) => annotation.threadId === source.id)
-      .map(({ id, path, text, capturedContext }) => ({ id, path, text, capturedContext }));
-    const prompt = renderForkPrompt(source, messages, annotations);
-    const byteCount = Buffer.byteLength(prompt, "utf8");
-    const digest = createHash("sha256").update(prompt, "utf8").digest("hex");
-    return {
-      sourceThreadId: source.id,
-      sourceProvider: source.provider,
-      worktree: source.worktree,
-      messages,
-      annotations,
-      files: [],
-      summaries: [],
-      prompt,
-      byteCount,
-      digest,
-      contextPackage: {
-        pins: [],
-        entries: [],
-        totalBytes: byteCount,
-        estimatedTokens: Math.ceil(byteCount / 4),
-        digest,
-      },
-      excluded: [
-        "Provider credentials and environment values",
-        "Native provider session identifiers",
-        "Hidden reasoning",
-        "Raw tool inputs and outputs",
-        "Tool approvals and runtime activity",
-        "Provider plan artifacts",
-      ],
-    };
+    return buildForkPreview(source, projection);
   }
 
   async pendingForkPrompt(threadId: string): Promise<string | null> {
@@ -1833,6 +1909,14 @@ export class LocalStateStore {
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
     const now = new Date().toISOString();
+    if (event.kind === "browser_observation") {
+      if (event.provider !== provider) {
+        throw new LocalStateError("The browser observation provider does not match the active provider.", 502);
+      }
+      // Screenshots are sensitive provider output. They are stream-only UI
+      // state: never append them to local history, activity, or checkpoints.
+      return;
+    }
     if (event.kind === "input_requested") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn || !turn.providerRunId) {
@@ -1932,6 +2016,11 @@ export class LocalStateStore {
           createdAt: now,
         },
       });
+      return;
+    }
+    if (event.kind === "thinking") {
+      // Provider reasoning is a live-only projection. It must not enter the
+      // durable transcript, fork context, delegated outcome, or local journal.
       return;
     }
     if (event.kind === "plan_updated") {

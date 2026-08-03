@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,8 +22,9 @@ async function fixture(remote = false) {
   await writeFile(join(repository, "README.md"), "fixture\n");
   await execFileAsync("git", ["-C", repository, "add", "."]);
   await execFileAsync("git", ["-C", repository, "commit", "-qm", "fixture"]);
+  const canonicalRepository = await realpath(repository);
   const state = new LocalStateStore(directory);
-  await state.saveProject({ id: "project-1", name: "Fixture", root: repository });
+  await state.saveProject({ id: "project-1", name: "Fixture", root: canonicalRepository });
   const remoteAuth = remote
     ? { verify: async () => ({}) } as unknown as RemoteAuth
     : undefined;
@@ -36,7 +37,7 @@ async function fixture(remote = false) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
-    repository,
+    repository: canonicalRepository,
     server,
     state,
     url: `http://127.0.0.1:${address.port}`,

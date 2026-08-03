@@ -2,6 +2,38 @@
   "schema_version": 1,
   "classes": [
     {
+      "name": "AldunisCodeCli",
+      "description": "The local Aldunis Code executable boundary that parses structured host and remote-auth commands before startup while preserving loopback defaults and legacy flag compatibility."
+    },
+    {
+      "name": "HostCommand",
+      "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
+    },
+    {
+      "name": "RemoteAuthCommand",
+      "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
+    },
+    {
+      "name": "ConversationComposer",
+      "description": "The desktop conversation input surface that selects a provider, model, interaction mode, and explicit tool scope."
+    },
+    {
+      "name": "ConversationLifecycleControl",
+      "description": "The local workbench UI and host boundary for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations."
+    },
+    {
+      "name": "ProviderDiscovery",
+      "description": "Aldunis Code host-owned readiness projection for locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery."
+    },
+    {
+      "name": "ProviderProfileDiscovery",
+      "description": "A profile-keyed provider readiness projection that keeps executable, configuration, authentication, and model discovery aligned with the selected Shikigami profile."
+    },
+    {
+      "name": "ThreadSearch",
+      "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
+    },
+    {
       "name": "LocalConversation",
       "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
       "properties": [
@@ -18,6 +50,30 @@
           "description": "The canonical local worktree bound to the conversation."
         }
       ]
+    },
+    {
+      "name": "ConstrainedWebPreview",
+      "description": "A loopback-only Aldunis Code preview session that starts one selected worktree's declared development command after scoped approval and renders it in a sandboxed iframe with browser permissions denied."
+    },
+    {
+      "name": "FloatingWebPreview",
+      "description": "A transient presentation of a running ConstrainedWebPreview in a fixed in-workbench window so the operator can keep the local application visible while continuing the conversation; it adds no provider-browser, navigation, credential, or persistence authority."
+    },
+    {
+      "name": "EphemeralBrowserObservation",
+      "description": "A bounded JPEG, PNG, or WebP frame supplied inline by a reviewed provider adapter for read-only operator observation; it is stream-only, never reads a provider filesystem path, and is not persisted as conversation or activity state."
+    },
+    {
+      "name": "SharedBrowserSession",
+      "description": "A desktop-only Aldunis-owned Electron browser session bound to one local conversation and loopback preview origin, using a conversation-scoped persistent partition and transient page state shared by the operator and an authorized provider."
+    },
+    {
+      "name": "BrowserAutomationBroker",
+      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, authenticates one conversation-scoped provider token, and rejects actions when agent control is disabled or human input has advanced the control epoch."
+    },
+    {
+      "name": "PictureInPictureBrowserMirror",
+      "description": "A transient always-on-top desktop mirror of a SharedBrowserSession captured from the same Electron page; it adds presentation only and no independent navigation or control authority."
     },
     {
       "name": "ProviderModelValidationBoundary",
@@ -52,6 +108,10 @@
     {
       "name": "ManagedHostedAssertion",
       "description": "A short-lived EdDSA gateway assertion bound to the configured issuer, audience, tenant, instance, Code workbench scope, managed profile, and single-use identity; altered, expired, replayed, or cross-context assertions are denied."
+    },
+    {
+      "name": "ManagedAccountProjection",
+      "description": "A bounded, read-only browser projection of the gateway-verified enterprise identity for one managed Code request, containing display name, fixed tenant, roles, scopes, and expiry without the assertion, credentials, or raw subject identifier."
     },
     {
       "name": "ManagedRepositoryCatalogue",
@@ -108,12 +168,52 @@
   ],
   "relations": [
     {
+      "name": "exposes_host_commands",
+      "description": "The CLI exposes typed start and serve commands that route into the local host lifecycle without adding provider or terminal authority.",
+      "domain": "AldunisCodeCli",
+      "range": "HostCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 2
+      }
+    },
+    {
+      "name": "exposes_remote_auth_commands",
+      "description": "The CLI exposes nested remote pairing commands for creating, listing, and revoking sessions before host startup.",
+      "domain": "AldunisCodeCli",
+      "range": "RemoteAuthCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "gates",
+      "description": "Provider discovery gates provider-dependent composer controls until readiness is known or a bounded fallback is selected.",
+      "domain": "ProviderDiscovery",
+      "range": "ConversationComposer",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
       "name": "authenticates_managed_host",
       "description": "The managed hosted workbench accepts API authority only from a verified gateway assertion.",
       "domain": "ManagedHostedWorkbench",
       "range": "ManagedHostedAssertion",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "projects_managed_account",
+      "description": "The managed hosted workbench projects the current gateway-verified account into a bounded browser capability response without creating account or tenant authority in Code.",
+      "domain": "ManagedHostedWorkbench",
+      "range": "ManagedAccountProjection",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     },
@@ -134,6 +234,56 @@
       "range": "ManagedShikigamiProfile",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "floats_constrained_preview",
+      "description": "Presents a running loopback-only preview in a transient fixed window without changing the preview's origin, sandbox, denied permissions, or approval boundary.",
+      "domain": "ConstrainedWebPreview",
+      "range": "FloatingWebPreview",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "renders_ephemeral_browser_observation",
+      "description": "Shows at most the latest bounded provider browser frame in a transient floating view without granting page controls, provider credentials, navigation, or persistence authority.",
+      "domain": "FloatingWebPreview",
+      "range": "EphemeralBrowserObservation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "has_shared_browser_session",
+      "description": "Binds at most one desktop shared browser session to a local conversation without adding browser page state to conversation history.",
+      "domain": "LocalConversation",
+      "range": "SharedBrowserSession",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "brokers_shared_browser_control",
+      "description": "Routes bounded provider browser operations through the host-owned broker and its explicit session control rule.",
+      "domain": "BrowserAutomationBroker",
+      "range": "SharedBrowserSession",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "mirrors_shared_browser",
+      "description": "Presents the same shared Electron page in a transient picture-in-picture window without creating a second browser session.",
+      "domain": "SharedBrowserSession",
+      "range": "PictureInPictureBrowserMirror",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     },
@@ -236,9 +386,141 @@
   ],
   "provenance": [
     {
+      "subject": "AldunisCodeCli",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts; server/main.ts; docs/cli.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "HostCommand",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#parseCliArgs; server/main.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteAuthCommand",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#parseAuth; server/main.ts#RemoteAuth",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_host_commands",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#HostCommand",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_remote_auth_commands",
+      "source": "Aldunis Code CLI command contract",
+      "locator": "server/cli.ts#RemoteAuthCommand",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationComposer",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationLifecycleControl",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/workbench.tsx:manageConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderDiscovery",
+      "source": "Sannrox/aldunis-code",
+      "locator": "server/host.ts:/api/providers/discover",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderProfileDiscovery",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/types.ts:ProviderProfileDiscovery",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ThreadSearch",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/dialogs/thread-search-dialog.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "gates",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/provider-discovery-cache.ts",
+      "confidence": 1.0
+    },
+    {
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",
       "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConstrainedWebPreview",
+      "source": "Aldunis Code constrained web preview contract",
+      "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "FloatingWebPreview",
+      "source": "Aldunis Code floating live view",
+      "locator": "docs/web-preview.md#floating-live-view; src/features/preview/preview-panel.tsx; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "floats_constrained_preview",
+      "source": "Aldunis Code floating live view",
+      "locator": "src/features/code/conversation.tsx#togglePreviewFloating; src/styles.css;.preview-panel--floating",
+      "confidence": 1.0
+    },
+    {
+      "subject": "EphemeralBrowserObservation",
+      "source": "Aldunis Code provider observation contract",
+      "locator": "docs/web-preview.md#provider-browser-observations; server/browser-observation.ts; server/provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "renders_ephemeral_browser_observation",
+      "source": "Aldunis Code provider observation presentation",
+      "locator": "src/features/code/conversation.tsx; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SharedBrowserSession",
+      "source": "Accepted Aldunis Code shared-browser ownership decision",
+      "locator": "docs/decisions/shared-browser-ownership.md; server/browser.ts; desktop/shared-browser.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BrowserAutomationBroker",
+      "source": "Aldunis Code shared-browser broker contract",
+      "locator": "server/browser.ts; server/browser-mcp.mjs; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PictureInPictureBrowserMirror",
+      "source": "Aldunis Code shared-browser desktop mirror",
+      "locator": "desktop/shared-browser.ts; desktop/channels.ts; desktop/preload.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "has_shared_browser_session",
+      "source": "Aldunis Code shared-browser ownership decision",
+      "locator": "docs/decisions/shared-browser-ownership.md; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "brokers_shared_browser_control",
+      "source": "Aldunis Code shared-browser MCP and control contract",
+      "locator": "server/browser.ts; server/browser-mcp.mjs; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "mirrors_shared_browser",
+      "source": "Aldunis Code shared-browser picture-in-picture implementation",
+      "locator": "desktop/shared-browser.ts#setPictureInPicture; src/features/preview/preview-panel.tsx",
       "confidence": 1.0
     },
     {
@@ -296,6 +578,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "ManagedAccountProjection",
+      "source": "Accepted Aldunis Code managed account projection contract",
+      "locator": "docs/decisions/managed-hosted-workbench.md#account-projection; server/managed-host.ts#ManagedHost.capabilities",
+      "confidence": 1.0
+    },
+    {
       "subject": "ManagedRepositoryCatalogue",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#loadManagedHostConfiguration",
@@ -311,6 +599,12 @@
       "subject": "authenticates_managed_host",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "server/managed-host.ts#ManagedHost.verify",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_managed_account",
+      "source": "Accepted Aldunis Code managed account projection contract",
+      "locator": "server/host.ts#/api/host/capabilities; src/features/code/managed-account-panel.tsx",
       "confidence": 1.0
     },
     {

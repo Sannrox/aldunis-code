@@ -20,7 +20,11 @@ import {
 } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
-import { ShikigamiAdapter } from "./shikigami-provider.ts";
+import {
+  ShikigamiAdapter,
+  type ShikigamiProfileRuntime,
+  type ShikigamiReadiness,
+} from "./shikigami-provider.ts";
 import { beginProviderEventStream } from "./provider-stream.ts";
 import { declarativeAdapterReadiness } from "./provider-discovery.ts";
 import { probeAcpModels } from "./acp-models.ts";
@@ -87,6 +91,8 @@ import {
 } from "./state.ts";
 import {
   ClaudeProfileStore,
+  DEFAULT_SHIKIGAMI_PROFILE_ID,
+  isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
   type ProfileProbeKind,
@@ -113,11 +119,17 @@ import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
-import { ManagedHost, ManagedHostError } from "./managed-host.ts";
+import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
+import {
+  BrowserError,
+  SharedBrowserBroker,
+  type BrowserHost,
+} from "./browser.ts";
 import {
   ChiseiClientError,
   ChiseiProjectionClient,
 } from "./chisei-client.ts";
+import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -143,6 +155,19 @@ function adapterProfileSeed(adapter: {
       })),
   };
 }
+
+function unavailableShikigamiReadiness(detail: string): ShikigamiReadiness {
+  return {
+    id: "shikigami",
+    installed: false,
+    authenticated: false,
+    version: null,
+    models: [],
+    name: "Shikigami",
+    detail,
+  };
+}
+
 const MAX_BODY_BYTES = 128 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
@@ -265,6 +290,14 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   } catch {
     throw new RepositoryError("Request body must be valid JSON.");
   }
+}
+
+async function readOptionalJson(request: IncomingMessage): Promise<unknown> {
+  const contentLength = request.headers["content-length"];
+  if (contentLength !== undefined) {
+    return Number.parseInt(contentLength, 10) > 0 ? readJson(request) : {};
+  }
+  return request.headers["transfer-encoding"] ? readJson(request) : {};
 }
 
 async function bufferRequest(request: IncomingMessage): Promise<Buffer> {
@@ -453,6 +486,9 @@ async function handleApi(
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
   managedHost?: ManagedHost,
+  managedIdentity?: ManagedIdentity,
+  browser?: SharedBrowserBroker | null,
+  browserMcpPath?: string,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -484,12 +520,125 @@ async function handleApi(
     const project = assertManagedProject(projection, thread.projectId);
     return { thread, project };
   };
-  if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
+  const assertBrowserContext = async (body: Record<string, unknown>) => {
+    if (
+      typeof body.root !== "string"
+      || typeof body.worktree !== "string"
+      || typeof body.conversationId !== "string"
+      || !body.conversationId
+    ) {
+      throw new BrowserError("A repository, worktree, and conversation are required.");
+    }
+    const context = await selectedWorktree(body.root, body.worktree);
+    const projection = await state.load();
+    const thread = projection.threads.find((candidate) => candidate.id === body.conversationId);
+    const project = thread ? projection.projects.find((candidate) => candidate.id === thread.projectId) : undefined;
+    if (!thread || !project || project.root !== context.root || thread.worktree !== context.worktree) {
+      throw new BrowserError("The selected conversation is not bound to this repository and worktree.", 403);
+    }
+    return { context, conversationId: body.conversationId };
+  };
+    if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
-  }
+    }
 
   try {
+    if (route === "/api/browser/tools") {
+      if (!browser || remoteRequest || managedHost) {
+        throw new BrowserError("Shared browser tools are available in the local desktop host only.", 403);
+      }
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
+        throw new BrowserError("Browser tool authorization is required.", 403, "browser_authorization_denied");
+      }
+      const body = await readJson(request) as { conversationId?: unknown; operation?: unknown };
+      if (typeof body.conversationId !== "string") {
+        throw new BrowserError("A browser conversation is required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.executeProvider(body.conversationId, authorization.slice("Bearer ".length), body.operation),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/open") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.origin !== "string") throw new BrowserError("A loopback browser origin is required.");
+      sendJson(response, 200, browser.open(conversationId, body.origin));
+      return true;
+    }
+    if (route === "/api/browser/sessions/status") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
+        throw new BrowserError("A browser session and loopback origin are required.");
+      }
+      const snapshot = await browser.snapshot(body.sessionId);
+      if (snapshot.conversationId !== conversationId || snapshot.origin !== body.origin) {
+        throw new BrowserError("The browser session is bound to a different conversation or origin.", 403);
+      }
+      sendJson(response, 200, snapshot);
+      return true;
+    }
+    if (route === "/api/browser/sessions/control") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (
+        typeof body.sessionId !== "string"
+        || typeof body.origin !== "string"
+        || typeof body.enabled !== "boolean"
+      ) {
+        throw new BrowserError("A browser session, loopback origin, and control state are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.setAgentControl(body.sessionId, { conversationId, origin: body.origin }, body.enabled),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/close") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
+        throw new BrowserError("A browser session and loopback origin are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.close(body.sessionId, { conversationId, origin: body.origin }),
+      );
+      return true;
+    }
+    if (route === "/api/browser/sessions/picture-in-picture") {
+      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
+      const body = await readJson(request) as Record<string, unknown>;
+      const { conversationId } = await assertBrowserContext(body);
+      if (
+        typeof body.sessionId !== "string"
+        || typeof body.origin !== "string"
+        || typeof body.open !== "boolean"
+      ) {
+        throw new BrowserError("A browser session, loopback origin, and picture-in-picture state are required.");
+      }
+      sendJson(
+        response,
+        200,
+        await browser.setPictureInPicture(
+          body.sessionId,
+          { conversationId, origin: body.origin },
+          body.open,
+        ),
+      );
+      return true;
+    }
     if (isWakeStream) {
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
@@ -525,7 +674,7 @@ async function handleApi(
     }
     if (route === "/api/host/capabilities") {
       sendJson(response, 200, managedHost
-        ? managedHost.capabilities()
+        ? managedHost.capabilities(managedIdentity)
         : {
             mode: remoteAuth ? "remote" : "local",
             managed: false,
@@ -543,6 +692,19 @@ async function handleApi(
       return true;
     }
     if (route === "/api/providers/discover") {
+      const body = await readOptionalJson(request);
+      if (!isRecord(body)) throw new RepositoryError("Provider discovery context must be an object.");
+      const hasRoot = body.root !== undefined;
+      const hasWorktree = body.worktree !== undefined;
+      if (hasRoot !== hasWorktree || (hasRoot && (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+      ))) {
+        throw new RepositoryError("Provider discovery requires both a repository root and worktree.");
+      }
+      const discoveryCwd = hasRoot
+        ? (await selectedWorktree(body.root as string, body.worktree as string)).worktree
+        : process.cwd();
       if (managedHost) {
         sendJson(response, 200, {
           providers: [{
@@ -626,20 +788,56 @@ async function handleApi(
           };
         }),
       );
-      const shikigamiReadiness = await shikigami.readiness().catch(() => ({
-        id: "shikigami" as const,
-        installed: false,
-        authenticated: false,
-        version: null,
-        models: [] as Array<{ id: string; displayName: string; isDefault: boolean }>,
-        name: "Shikigami",
-        detail: "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
-      }));
+      const shikigamiProfiles = (await profiles.list().catch(() => []))
+        .filter((profile) => profile.provider === "shikigami");
+      const shikigamiProfileDiscoveries = await Promise.all(
+        shikigamiProfiles.map(async (profile) => {
+          let readiness: ShikigamiReadiness;
+          try {
+            const runtime = await profiles.runtime(profile.id);
+            readiness = await shikigami.readiness(runtime.environment, {
+              executable: runtime.executable,
+              configPath: runtime.configPath,
+              cwd: discoveryCwd,
+            });
+          } catch (error) {
+            readiness = unavailableShikigamiReadiness(
+              error instanceof ProviderProtocolError
+                ? error.message
+                : "The selected Shikigami profile could not be checked.",
+            );
+          }
+          return {
+            profileId: profile.id,
+            installed: readiness.installed,
+            authenticated: readiness.authenticated,
+            version: readiness.version,
+            detail: readiness.detail,
+            models: readiness.models,
+          };
+        }),
+      );
+      const defaultShikigamiDiscovery = shikigamiProfileDiscoveries.find(
+        (profile) => profile.profileId === DEFAULT_SHIKIGAMI_PROFILE_ID,
+      );
+      const shikigamiReadiness = defaultShikigamiDiscovery
+        ? {
+            id: "shikigami" as const,
+            installed: defaultShikigamiDiscovery.installed,
+            authenticated: defaultShikigamiDiscovery.authenticated,
+            version: defaultShikigamiDiscovery.version,
+            models: defaultShikigamiDiscovery.models,
+            name: "Shikigami",
+            detail: defaultShikigamiDiscovery.detail,
+          }
+        : unavailableShikigamiReadiness(
+            "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
+          );
       sendJson(response, 200, {
         providers: [
           { id: "claude-code", installed: true, models: claudeModelCatalog() },
           codexReadiness,
-          shikigamiReadiness,
+          { ...shikigamiReadiness, profileDiscoveries: shikigamiProfileDiscoveries },
           ...declarativeProviders,
         ],
       });
@@ -1130,6 +1328,8 @@ async function handleApi(
         profileId?: unknown;
         model?: unknown;
         expectedDigest?: unknown;
+        worktree?: unknown;
+        workspaceMode?: unknown;
       };
       const providerValue = typeof body.provider === "string" ? body.provider : null;
       const supportedProvider = providerValue === "claude-code"
@@ -1142,8 +1342,21 @@ async function handleApi(
         || typeof body.model !== "string"
         || !body.model
         || typeof body.expectedDigest !== "string"
+        || (body.worktree !== undefined && typeof body.worktree !== "string")
+        || (body.workspaceMode !== undefined
+          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
         || (providerValue === "claude-code" && typeof body.profileId !== "string")
-        || (providerValue !== "claude-code" && body.profileId !== null)
+        || (providerValue === "codex-cli" && body.profileId !== null)
+        || (providerValue !== "claude-code"
+          && providerValue !== "shikigami"
+          && providerValue !== "codex-cli"
+          && body.profileId !== null)
+        || (
+          providerValue === "shikigami"
+          && body.profileId !== undefined
+          && body.profileId !== null
+          && typeof body.profileId !== "string"
+        )
       ) {
         throw new LocalStateError(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
@@ -1160,22 +1373,102 @@ async function handleApi(
         : undefined;
       if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
       await selectedWorktree(project.root, source.worktree);
+      const sourceWorkspaceMode = source.workspaceMode ?? "shared";
+      const requestedWorkspaceMode = body.workspaceMode as WorkspaceMode | undefined;
+      const destinationWorkspaceMode = requestedWorkspaceMode
+        ?? (sourceWorkspaceMode === "aldunis-managed" ? "aldunis-managed" : "shared");
+      let destinationWorktree = source.worktree;
+      if (sourceWorkspaceMode === "aldunis-managed") {
+        if (destinationWorkspaceMode !== "aldunis-managed" || typeof body.worktree !== "string") {
+          throw new LocalStateError(
+            "A fork from an Aldunis-managed conversation requires a separately approved Aldunis worktree.",
+            409,
+          );
+        }
+        destinationWorktree = (await selectedWorktree(project.root, body.worktree)).worktree;
+        if (destinationWorktree === source.worktree) {
+          throw new LocalStateError(
+            "A fork from an Aldunis-managed conversation cannot reuse its source worktree.",
+            409,
+          );
+        }
+        const selected = (await worktrees.list(project.root)).find(
+          (candidate) => candidate.path === destinationWorktree,
+        );
+        if (
+          !selected
+          || selected.ownership !== "aldunis"
+          || selected.recovery !== "available"
+        ) {
+          throw new LocalStateError(
+            "The fork destination must be an available Aldunis-owned worktree.",
+            409,
+          );
+        }
+        if (projection.threads.some((thread) => thread.worktree === destinationWorktree)) {
+          throw new LocalStateError(
+            "The fork destination worktree is already bound to another conversation.",
+            409,
+          );
+        }
+      } else if (destinationWorkspaceMode !== "shared") {
+        throw new LocalStateError(
+          "Only the shared workspace mode is available for forks from this conversation.",
+          409,
+        );
+      }
       const provider = providerValue as ProviderId;
+      const shikigamiProfile = provider === "shikigami" && typeof body.profileId === "string"
+        ? await profiles.runtime(body.profileId)
+        : null;
+      if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
+        throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
+      }
       const effectiveModel = await validateProviderModel(
         provider,
         body.model,
-        { codex, shikigami, adapters },
-        source.worktree,
+        {
+          codex,
+          shikigami,
+          shikigamiProfile: shikigamiProfile
+            ? {
+                executable: shikigamiProfile.executable,
+                environment: shikigamiProfile.environment,
+                configPath: shikigamiProfile.configPath,
+              }
+            : undefined,
+          adapters,
+        },
+        destinationWorktree,
       );
       if (provider === "claude-code") {
         await profiles.runtime(body.profileId as string);
+      } else if (provider === "shikigami") {
+        const readiness = await shikigami.readiness(
+          shikigamiProfile?.environment ?? process.env,
+          {
+            executable: shikigamiProfile?.executable,
+            configPath: shikigamiProfile?.configPath,
+            cwd: destinationWorktree,
+          },
+        );
+        if (!readiness.installed || !readiness.authenticated) {
+          throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
+        }
+      } else if (provider === "codex-cli") {
+        const readiness = await codex.readiness();
+        if (!readiness.installed || !readiness.authenticated) {
+          throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
+        }
       }
       const created = await state.createFork({
         sourceThreadId: source.id,
         provider,
-        profileId: body.profileId as string | null,
+        profileId: typeof body.profileId === "string" ? body.profileId : null,
         model: effectiveModel,
         worktree: source.worktree,
+        destinationWorktree,
+        workspaceMode: destinationWorkspaceMode,
         expectedDigest: body.expectedDigest,
       });
       sendJson(response, 201, created);
@@ -1210,6 +1503,7 @@ async function handleApi(
           projectId: thread.projectId,
           title: thread.title,
           worktree: thread.worktree,
+          workspaceMode: thread.workspaceMode ?? "shared",
           provider: thread.provider,
           updatedAt: thread.updatedAt,
           pinnedAt: thread.pinnedAt ?? null,
@@ -1726,6 +2020,12 @@ async function handleApi(
           provider: "shikigami",
           commands: [],
           attachments: provider.capabilities().attachments,
+          workspace: {
+            shared: true,
+            aldunisManaged: true,
+            providerNative: false,
+            providerNativeDetail: "Managed hosted mode supplies the workspace; provider-native worktree creation is unavailable.",
+          },
         });
         return true;
       }
@@ -1884,6 +2184,7 @@ async function handleApi(
         name?: unknown;
         binaryPath?: unknown;
         homePath?: unknown;
+        configPath?: unknown;
         environment?: unknown;
       };
       const environment = Array.isArray(body.environment)
@@ -1911,6 +2212,7 @@ async function handleApi(
         || (body.provider !== undefined && typeof body.provider !== "string")
         || (body.binaryPath !== undefined && typeof body.binaryPath !== "string")
         || (body.homePath !== undefined && typeof body.homePath !== "string")
+        || (body.configPath !== undefined && typeof body.configPath !== "string")
         || (body.environment !== undefined && !Array.isArray(body.environment))
       ) {
         throw new ProfileError("A valid provider profile is required.");
@@ -1921,6 +2223,7 @@ async function handleApi(
         name: body.name,
         ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
         ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
+        ...(typeof body.configPath === "string" ? { configPath: body.configPath } : {}),
         ...(environment ? { environment } : {}),
       }));
       return true;
@@ -1966,6 +2269,7 @@ async function handleApi(
         provider?: unknown;
         reasoningEffort?: unknown;
         inputRequestId?: unknown;
+        workspaceMode?: unknown;
       };
       if (managedHost) {
         const forbiddenManagedOverrides = [
@@ -2043,9 +2347,17 @@ async function handleApi(
         ))
         || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
         || (providerId === "claude-code" && typeof body.profileId !== "string")
+        || (
+          providerId === "shikigami"
+          && body.profileId !== undefined
+          && body.profileId !== null
+          && typeof body.profileId !== "string"
+        )
         || typeof body.model !== "string"
         || (body.reasoningEffort !== undefined
           && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
+        || (body.workspaceMode !== undefined
+          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
         || (body.elementReferences !== undefined && (
           !Array.isArray(body.elementReferences)
           || body.elementReferences.length > 3
@@ -2066,16 +2378,6 @@ async function handleApi(
       const delegatedParentThreadId = typeof body.parentThreadId === "string"
         ? body.parentThreadId
         : null;
-      const earlyEffectiveModel = delegatedParentThreadId
-        ? null
-        : managedHost
-          ? managedHost.shikigami.model
-          : await validateProviderModel(
-            providerId,
-            body.model,
-            { codex, shikigami, adapters },
-            context.worktree,
-          );
       const contextPins = body.contextPins !== undefined
         ? body.contextPins as ContextPin[]
         : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
@@ -2106,6 +2408,69 @@ async function handleApi(
         ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
         : projection.projects.find((item) => item.root === context.root);
       if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const existingThread = typeof body.threadId === "string"
+        ? projection.threads.find((thread) => thread.id === body.threadId)
+        : undefined;
+      if (body.threadId !== undefined && !existingThread) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
+      }
+      if (existingThread && existingThread.projectId !== project.id) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
+      }
+      const workspaceMode = (body.workspaceMode
+        ?? existingThread?.workspaceMode
+        ?? "shared") as WorkspaceMode;
+      if (managedHost && workspaceMode !== "shared") {
+        throw new LocalStateError(
+          "Managed hosted mode supplies the workspace and only supports the shared workspace mode.",
+          409,
+        );
+      }
+      if (workspaceMode === "provider-native") {
+        throw new LocalStateError(
+          "Provider-native worktrees are not supported by the selected Aldunis adapter yet. Use an Aldunis worktree or a shared checkout.",
+          409,
+        );
+      }
+      if (workspaceMode === "aldunis-managed") {
+        const selected = (await worktrees.list(context.root)).find(
+          (candidate) => candidate.path === context.worktree,
+        );
+        if (
+          !selected
+          || selected.ownership !== "aldunis"
+          || selected.recovery !== "available"
+        ) {
+          throw new LocalStateError(
+            "An Aldunis-managed conversation must use an available Aldunis-owned worktree.",
+            409,
+          );
+        }
+        if (!body.threadId && projection.threads.some((thread) => thread.worktree === context.worktree)) {
+          throw new LocalStateError(
+            "Each Aldunis-managed conversation needs its own worktree. Create a new one before starting this chat.",
+            409,
+          );
+        }
+      }
+      if (existingThread) {
+        const providerSession = projection.providerSessions.find(
+          (session) => session.threadId === existingThread.id,
+        );
+        const existingProvider = existingThread.provider ?? providerSession?.provider ?? "claude-code";
+        if (existingProvider !== providerId) {
+          throw new LocalStateError(
+            `This conversation belongs to ${existingProvider} and cannot switch providers.`,
+            409,
+          );
+        }
+        if (existingThread.worktree !== context.worktree) {
+          throw new LocalStateError(
+            "This conversation is bound to a different canonical worktree and cannot be silently moved.",
+            409,
+          );
+        }
+      }
       if (delegatedParentThreadId) {
         if (body.threadId !== undefined) {
           throw new LocalStateError(
@@ -2155,15 +2520,31 @@ async function handleApi(
           }
         }
       }
-      const effectiveModel = earlyEffectiveModel
-        ?? (managedHost
-          ? managedHost.shikigami.model
-          : await validateProviderModel(
-            providerId,
-            body.model,
-            { codex, shikigami, adapters },
-            context.worktree,
-          ));
+      const shikigamiProfile = providerId === "shikigami" && typeof body.profileId === "string"
+        ? await profiles.runtime(body.profileId)
+        : null;
+      if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
+        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+      }
+      const effectiveModel = managedHost
+        ? managedHost.shikigami.model
+        : await validateProviderModel(
+          providerId,
+          body.model,
+          {
+            codex,
+            shikigami,
+            shikigamiProfile: shikigamiProfile
+              ? {
+                  executable: shikigamiProfile.executable,
+                  environment: shikigamiProfile.environment,
+                  configPath: shikigamiProfile.configPath,
+                }
+              : undefined,
+            adapters,
+          },
+          context.worktree,
+        );
       const resumedInput = typeof body.inputRequestId === "string"
         ? projection.inputRequests.find((item) => (
           item.id === body.inputRequestId
@@ -2190,7 +2571,11 @@ async function handleApi(
         && (
           pendingFork.provider !== providerId
           || pendingFork.model !== effectiveModel
-          || pendingFork.profileId !== (providerId === "claude-code" ? body.profileId : null)
+          || pendingFork.profileId !== (
+            providerId === "claude-code" || providerId === "shikigami"
+              ? (body.profileId ?? null) as string | null
+              : null
+          )
           || pendingFork.worktree !== context.worktree
         )
       ) {
@@ -2201,7 +2586,10 @@ async function handleApi(
       }
       const profile = providerId === "claude-code"
         ? await profiles.runtime(body.profileId as string)
-        : null;
+        : shikigamiProfile;
+      if (profile && profile.profile.provider !== providerId) {
+        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+      }
       const previousSession = typeof body.threadId === "string"
         ? projection.providerSessions.find(
           (session) => session.threadId === body.threadId && session.provider === providerId,
@@ -2224,7 +2612,7 @@ async function handleApi(
         && previousSession.continuationKey !== profile.continuationKey
       ) {
         throw new ProfileError(
-          "This thread can only continue with a Claude profile using the same Claude home.",
+          "This thread can only continue with the same provider profile.",
           409,
         );
       }
@@ -2256,6 +2644,7 @@ async function handleApi(
         reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
         threadId: body.threadId,
         contextPins: assembledContext.pins,
+        workspaceMode,
       });
       await state.saveContextReceipt({
         threadId: persisted.thread.id,
@@ -2330,6 +2719,19 @@ async function handleApi(
           ? Promise.resolve(`http://127.0.0.1:${port}/api/provider/permissions/request`)
           : Promise.reject(new RepositoryError("The local permission broker is unavailable.", 503))
       );
+      const browserAutomationAllowed = providerId === "codex-cli"
+        || (installedAdapter?.manifest.capabilities.browserAutomation === true);
+      const browserMcp = browserAutomationAllowed && browser && browserMcpPath && port
+        ? browser.providerMcpConfiguration({
+            conversationId: persisted.thread.id,
+            endpoint: `http://127.0.0.1:${port}/api/browser/tools`,
+            command: process.execPath,
+            script: browserMcpPath,
+          })
+        : undefined;
+      const effectiveProviderPromptWithBrowser = browserMcp
+        ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
+        : effectiveProviderPrompt;
       let run;
       try {
         run = providerId === "codex-cli"
@@ -2337,12 +2739,13 @@ async function handleApi(
             repository: context.root,
             worktree: context.worktree,
             conversationId: persisted.thread.id,
-            prompt: effectiveProviderPrompt,
+            prompt: effectiveProviderPromptWithBrowser,
             approvalUrl: await approvalUrl,
             mode,
             resumeSessionId: body.resumeSessionId,
             model: effectiveModel,
             reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+            browserMcp,
           })
           : providerId === "shikigami"
           ? await shikigami.start({
@@ -2359,7 +2762,14 @@ async function handleApi(
                 ...managedHost.shikigami,
                 stateRoot: join(state.directory, "managed-shikigami"),
               }
-            : undefined)
+            : undefined,
+            profile && providerId === "shikigami"
+              ? {
+                  executable: profile.executable,
+                  environment: profile.environment,
+                  configPath: profile.configPath,
+                } satisfies ShikigamiProfileRuntime
+              : undefined)
           : installedAdapter
           ? await (async () => {
               const executable = await adapters.resolveExecutable(installedAdapter);
@@ -2368,12 +2778,13 @@ async function handleApi(
                 repository: context.root,
                 worktree: context.worktree,
                 conversationId: persisted.thread.id,
-                prompt: providerPrompt,
+            prompt: effectiveProviderPromptWithBrowser,
                 approvalUrl: await approvalUrl,
                 mode,
                 resumeSessionId: body.resumeSessionId,
                 model: effectiveModel,
                 reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+                browserMcp,
               });
               activeAcp.set(started.id, adapter);
               return started;
@@ -3357,6 +3768,7 @@ async function handleApi(
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
+      || error instanceof BrowserError
       ? error.status
       : 500;
     const message = error instanceof RepositoryError
@@ -3372,6 +3784,7 @@ async function handleApi(
       || error instanceof ChiseiClientError
       || error instanceof RemoteAuthError
       || error instanceof ManagedHostError
+      || error instanceof BrowserError
       ? error.message
       : "The local operation failed.";
     sendJson(response, status, { error: message });
@@ -3413,6 +3826,8 @@ export function createLocalHost(
   childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
   chisei = new ChiseiProjectionClient(),
   managedHost?: ManagedHost,
+  browserHost?: BrowserHost,
+  browserMcpPath?: string,
 ) {
   const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
@@ -3429,6 +3844,7 @@ export function createLocalHost(
   const directories = new DirectoryBrowser();
   const adapters = new ProviderAdapterStore(state.directory);
   const activeAcp = new Map<string, AcpProviderAdapter>();
+  const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const wake = new WakeBroker();
   const internalRequestToken = randomUUID();
   let delegatedControlTail = Promise.resolve();
@@ -3560,7 +3976,9 @@ export function createLocalHost(
     const model = thread.model
       ?? session?.model
       ?? (providerId === "claude-code" ? "default" : providerId === "shikigami" ? "scripted" : "default");
-    const profileId = thread.profileId ?? session?.profileId ?? undefined;
+    const profileId = thread.profileId
+      ?? session?.profileId
+      ?? (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
     const protocol = tls ? "https" : "http";
     const response = await fetch(`${protocol}://127.0.0.1:${address.port}/api/provider/runs`, {
       method: "POST",
@@ -3576,7 +3994,7 @@ export function createLocalHost(
         resumeSessionId: session?.sessionId,
         provider: providerId,
         model,
-        profileId: providerId === "claude-code" ? profileId : undefined,
+        profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
       }),
     });
     if (!response.ok) {
@@ -3615,6 +4033,7 @@ export function createLocalHost(
         )
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost
       && !internalRequest
@@ -3622,7 +4041,7 @@ export function createLocalHost(
       && route !== "/api/remote/descriptor"
     ) {
       try {
-        await managedHost.verify(request, await bufferRequest(request));
+        managedIdentity = await managedHost.verify(request, await bufferRequest(request));
       } catch (error) {
         const status = error instanceof ManagedHostError ? error.status : 500;
         const message = error instanceof ManagedHostError ? error.message : "Managed authentication failed.";
@@ -3674,6 +4093,9 @@ export function createLocalHost(
         remoteAuth,
         internalPermissionCallback?.url,
         managedHost,
+        managedIdentity,
+        browser,
+        browserMcpPath,
       )
     ) return;
     await serveStatic(request, response, dist);

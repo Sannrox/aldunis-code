@@ -64,6 +64,7 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.threads[0].settledAt, null);
   assert.equal(rebuilt.threads[0].wokeAt, null);
   assert.equal(rebuilt.threads[0].lastVisitedAt, null);
+  assert.equal(rebuilt.threads[0].workspaceMode, "shared");
   assert.equal(rebuilt.threads[0].model, "claude-sonnet-5");
   assert.equal(rebuilt.turns[0].status, "completed");
   assert.equal(rebuilt.turns[0].mode, "plan");
@@ -74,6 +75,49 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     "provider records retain their shared event-log order across collections",
   );
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
+});
+
+test("provider thinking stays live-only and is excluded from local history", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Inspect the change",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "thinking",
+    text: "private reasoning sentinel",
+  });
+
+  const projection = await store.load();
+  assert.equal(projection.messages.some((message) => message.text.includes("private reasoning sentinel")), false);
+  assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /private reasoning sentinel/);
+});
+
+test("browser observations never enter local history or activity projections", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Observe the provider view",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "browser_observation",
+    provider: "codex-cli",
+    observationId: "frame-1",
+    imageData: "data:image/png;base64,AAAA",
+    mediaType: "image/png",
+  });
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.activities.length, 0);
+  assert.equal(JSON.stringify(projection).includes("data:image"), false);
+  assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("browser_observation"), false);
 });
 
 test("project Chisei namespace bindings persist locally and validate their bounded identity", async () => {
@@ -526,6 +570,65 @@ test("existing conversations cannot silently change their bound worktree", async
   assert.equal((await store.load()).threads[0].worktree, "/repo/worktree-a");
 });
 
+test("workspace mode persists and cannot be changed on an existing conversation", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "Fixture", root: "/repo" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Build in isolation",
+    mode: "build",
+    provider: "codex-cli",
+    workspaceMode: "aldunis-managed",
+  });
+  assert.equal(first.thread.workspaceMode, "aldunis-managed");
+  const continued = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Continue in isolation",
+    mode: "build",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+    workspaceMode: "aldunis-managed",
+  });
+  assert.equal(continued.thread.workspaceMode, "aldunis-managed");
+  await assert.rejects(() => store.startTurn({
+    projectId: "project-1",
+    worktree: "/repo/managed",
+    prompt: "Switch to shared",
+    mode: "ask",
+    provider: "codex-cli",
+    threadId: first.thread.id,
+    workspaceMode: "shared",
+  }), /different workspace mode/);
+});
+
+test("concurrent managed conversation starts claim one worktree", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "Fixture", root: "/repo" });
+  const results = await Promise.allSettled([
+    store.startTurn({
+      projectId: "project-1",
+      worktree: "/repo/managed",
+      prompt: "First concurrent build",
+      mode: "build",
+      provider: "codex-cli",
+      workspaceMode: "aldunis-managed",
+    }),
+    store.startTurn({
+      projectId: "project-1",
+      worktree: "/repo/managed",
+      prompt: "Second concurrent build",
+      mode: "build",
+      provider: "codex-cli",
+      workspaceMode: "aldunis-managed",
+    }),
+  ]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal((await store.load()).threads.length, 1);
+});
+
 test("corruption and incompatible schemas fail visibly without discarding history", async () => {
   const corrupt = await fixtureStore();
   await writeFile(join(corrupt.directory, "events.v1.jsonl"), "{\"schemaVersion\":1", "utf8");
@@ -645,6 +748,7 @@ test("version-one history loads with null thread lifecycle timestamps", async ()
   assert.equal(projection.threads[0].settledAt, null);
   assert.equal(projection.threads[0].wokeAt, null);
   assert.equal(projection.threads[0].lastVisitedAt, null);
+  assert.equal(projection.threads[0].workspaceMode, "shared");
   assert.equal(projection.threads[0].archivedAt, null);
   assert.equal(projection.threads[0].reasoningEffort, undefined);
 });
@@ -1484,6 +1588,72 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   const afterDeletion = await store.load();
   assert.equal(afterDeletion.forks.length, 0);
   assert.equal(afterDeletion.threads.length, 1);
+});
+
+test("managed conversation forks require a distinct managed worktree", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/managed/source",
+    prompt: "Prepare an isolated fork",
+    mode: "build",
+    provider: "claude-code",
+    workspaceMode: "aldunis-managed",
+  });
+  const preview = await store.previewFork(thread.id);
+  assert.equal(preview.workspaceMode, "aldunis-managed");
+
+  const concurrentForks = await Promise.allSettled([
+    store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      destinationWorktree: "/managed/concurrent",
+      workspaceMode: "aldunis-managed",
+      expectedDigest: preview.digest,
+    }),
+    store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      destinationWorktree: "/managed/concurrent",
+      workspaceMode: "aldunis-managed",
+      expectedDigest: preview.digest,
+    }),
+  ]);
+  assert.equal(concurrentForks.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(concurrentForks.filter((result) => result.status === "rejected").length, 1);
+
+  await assert.rejects(
+    () => store.createFork({
+      sourceThreadId: thread.id,
+      provider: "codex-cli",
+      profileId: null,
+      model: "default",
+      worktree: "/managed/source",
+      expectedDigest: preview.digest,
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
+
+  const created = await store.createFork({
+    sourceThreadId: thread.id,
+    provider: "codex-cli",
+    profileId: null,
+    model: "default",
+    worktree: "/managed/source",
+    destinationWorktree: "/managed/destination",
+    workspaceMode: "aldunis-managed",
+    expectedDigest: preview.digest,
+  });
+  assert.equal(created.thread.workspaceMode, "aldunis-managed");
+  assert.equal(created.thread.worktree, "/managed/destination");
+  assert.equal(created.fork.worktree, "/managed/destination");
 });
 
 test("settle and unsettle are idempotent and never archive the conversation", async () => {

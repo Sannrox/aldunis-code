@@ -37,6 +37,23 @@ manifest (values remain empty until you set them).
 
 Sensitive environment values live in the host secret store (write-only in the UI).
 
+### Composer commands, skills, and files
+
+The composer keeps these entry types distinct, matching the selected provider:
+
+- "/" lists Aldunis built-in commands and commands in the selected provider capability projection, grouped as **Built-in** and **Provider**. Claude Code currently advertises provider commands; other providers show built-ins until their adapter exposes normalized command metadata.
+- "$" lists enabled provider skills.
+- "@" searches bounded repository files that can be attached as conversation context.
+
+Selecting an entry only inserts the typed prompt token or adds a local context
+pin. It never executes a general-purpose terminal command; provider tools remain
+inside the normal inspectable approval flow.
+
+Provider-emitted thinking is normalized at the adapter boundary but hidden by
+default. Settings → General can enable its live display for the current
+in-memory timeline; thinking is not persisted, restored, or transferred across
+provider forks.
+
 ### Claude Code
 
 - Uses named profiles for binary, optional `CLAUDE_CONFIG_DIR`, and env.
@@ -63,6 +80,10 @@ Sensitive environment values live in the host secret store (write-only in the UI
   through the original app-server JSON-RPC request. Multi-question and secret
   requests fail closed until the normalized UI can preserve their distinct
   answer semantics.
+- In the desktop application, Codex can use the Aldunis shared loopback
+  browser. The MCP server is injected into the Codex app-server process only
+  for that conversation; the operator must open the shared browser and enable
+  **Allow agent control** before mutations are accepted.
 
 ### Shikigami
 
@@ -75,7 +96,14 @@ Because the current adapter does not keep a parked subprocess resumable, an
 answer starts an explicitly identified follow-up turn in the same child
 conversation. The answer is never copied into the parent provider context.
 
-- Code generates a run config with the selected worktree as workspace.
+- The built-in Shikigami profile uses Shikigami's native config resolution:
+  `SHIKIGAMI_CONFIG`, `$SHIKIGAMI_STATE/shikigami.toml`, then the selected
+  worktree's `shikigami.toml`. A user-created Shikigami profile may provide an
+  explicit config path. Code never edits the source config; it creates a
+  private per-run overlay that preserves model, governance, network, context,
+  and other provider settings while enforcing the selected worktree, Code's
+  mode tool allow-list, stderr events, bounded turns, and the local approval
+  hook. Native MCP definitions are not imported implicitly.
 - Progress is streamed from stderr events (`[shikigami] {…}`).
 - Build-mode mutating tools are gated by a fail-closed `pre_tool` hook into the
   PermissionBroker (same allow-once contract as other providers).
@@ -84,7 +112,7 @@ conversation. The answer is never copied into the parent provider context.
   API key. The composer surfaces that copy instead of a generic “not ready”.
 - Parked questions remain actionable in the child conversation and, when beta
   delegation is enabled, from the exact parent-child coordination card.
-- Governance defaults to `local`; operators may point
+- With no native config, governance defaults to `local`; operators may point
   `SHIKIGAMI_GOVERNANCE_ADAPTER` at `sekai-chisei` for plane-governed runs.
 - Governed direct runs display a **Direct governed** correlation after
   Shikigami confirms its run UUID. Code enforces `operation_id = run_id`; this
@@ -138,7 +166,7 @@ rewrite provider-owned config.
 | Package | Launch | Notes |
 | --- | --- | --- |
 | `kiro-cli` | `kiro-cli acp` | Direct-only ACP |
-| `grok-build-cli` | `grok agent stdio` | Direct-only ACP |
+| `grok-build-cli` | `grok agent stdio` | Direct-only ACP; reviewed shared-browser MCP capability |
 | `opencode-cli` | `opencode acp` | Direct-only ACP |
 
 Rules shared by reviewed ACP adapters:
@@ -152,6 +180,10 @@ Rules shared by reviewed ACP adapters:
   (and `configOptions` with `category: "model"`). The composer model menu lists
   those options; the selected model is applied with `session/set_model` before
   the first prompt.
+- The reviewed Grok package can receive the same Aldunis shared loopback
+  browser MCP server as Codex. Aldunis supplies it through the ACP session
+  `mcpServers` list; other reviewed adapters retain their provider-owned MCP
+  configuration and do not receive browser control.
 
 Design notes:
 
