@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-26
-- Updated: 2026-08-02 (native config profiles and governed direct-run correlation)
+- Updated: 2026-08-03 (native parked-run resume in Code)
 
 ## Context
 
@@ -41,8 +41,13 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
    `pre_tool` hook that calls Code’s local permission request endpoint (same
    allow-once / deny / cancel / expiry contract as Claude). Ask and Plan stay
    non-mutating. Mode selection alone is not a substitute for approval.
-7. **Each Code message is a new harness run** (not checkpoint `--resume`).
-   Park recovery remains CLI-side for now.
+7. **Each ordinary Code message is a new harness run.** Parked input is the
+   exception: with Shikigami **1.0.5+**, Code uses the native checkpoint
+   `--resume <run-id> --answer-file <protected-file>` operation only after
+   binding the exact request, conversation, turn, worktree, and baseline
+   checkpoint. Answers remain transient, fresh PermissionBroker approvals are
+   required, and missing or stale capability fails closed as an explicit
+   unavailable state.
 8. Pass the user prompt via `run --task-file` (file under the host run state dir),
    not argv, so prompts do not appear in the process table.
 9. Preserve native governance/profile settings. With no native config,
@@ -57,8 +62,9 @@ Integrate shikigami as a **first-class subprocess provider** (`provider: "shikig
 ## Consequences
 
 - Operators need the `shikigami` binary on `PATH` (tenkai/GitHub Release).
-- Park/resume is reported as a failed terminal with CLI resume guidance until
-  Code grows a park-answer UX.
+- Native parked-run resume requires Shikigami 1.0.5+ and a provider-confirmed
+  run UUID. Code never tracks an unowned process after restart; the UI reports
+  unavailable and the operator can start a fresh run.
 - Pre-tool approval waits are capped by shikigami’s hook `timeout_ms` max (120s).
 - MCP and ACP remain available later if product needs them; they are not the
   default Code path.

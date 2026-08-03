@@ -2305,6 +2305,7 @@ async function handleApi(
         prompt?: unknown;
         conversationId?: unknown;
         resumeSessionId?: unknown;
+        resumeAnswer?: unknown;
         projectId?: unknown;
         threadId?: unknown;
         parentThreadId?: unknown;
@@ -2362,15 +2363,21 @@ async function handleApi(
       }
       const providerId = (body.provider ?? "claude-code") as ProviderId;
       const isDeclarativeAdapter = typeof providerId === "string" && providerId.startsWith("adapter:");
+      const nativeResumePayload = internalRequest
+        && providerId === "shikigami"
+        && typeof body.inputRequestId === "string"
+        && typeof body.resumeSessionId === "string"
+        && typeof body.resumeAnswer === "string";
       const reasoningEfforts = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
       if (
         typeof body.root !== "string"
         || typeof body.worktree !== "string"
         || typeof body.prompt !== "string"
-        || !body.prompt.trim()
+        || (!body.prompt.trim() && !nativeResumePayload)
         || typeof body.conversationId !== "string"
         || !body.conversationId
         || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
+        || (body.resumeAnswer !== undefined && typeof body.resumeAnswer !== "string")
         || (body.projectId !== undefined && typeof body.projectId !== "string")
         || (body.threadId !== undefined && typeof body.threadId !== "string")
         || (body.parentThreadId !== undefined && (
@@ -2447,7 +2454,7 @@ async function handleApi(
         { includeProviderInstructions: !remoteRequest && !managedHost },
       );
       const providerPrompt = composePrompt(
-        body.prompt.trim(),
+        nativeResumePayload ? "" : body.prompt.trim(),
         assembledContext.attachments,
         (body.elementReferences ?? []) as Array<{
           selector: string;
@@ -2599,6 +2606,11 @@ async function handleApi(
           },
           context.worktree,
         );
+      const previousSession = typeof body.threadId === "string"
+        ? projection.providerSessions.find(
+          (session) => session.threadId === body.threadId && session.provider === providerId,
+        )
+        : undefined;
       const resumedInput = typeof body.inputRequestId === "string"
         ? projection.inputRequests.find((item) => (
           item.id === body.inputRequestId
@@ -2607,14 +2619,56 @@ async function handleApi(
           && item.responseMode === "child_follow_up"
         ))
         : undefined;
-      if (body.inputRequestId !== undefined && (!internalRequest || !resumedInput)) {
-        throw new LocalStateError("The child follow-up request is no longer pending.", 409);
-      }
-      const resumedCheckpoint = resumedInput
-        ? projection.checkpoints.find((item) => (
-          item.turnId === resumedInput.turnId && item.state === "baseline"
+      const nativeResumeInput = nativeResumePayload
+        ? projection.inputRequests.find((item) => (
+          item.id === body.inputRequestId
+          && item.threadId === body.threadId
+          && item.state === "answered"
+          && item.responseMode === "native_resume"
+          && item.resumeState === "starting"
+          && item.providerRequestId === body.resumeSessionId
         ))
         : undefined;
+      if (nativeResumePayload && (!nativeResumeInput || !body.resumeAnswer?.trim())) {
+        throw new LocalStateError("The native Shikigami resume request is no longer available.", 409);
+      }
+      if (body.inputRequestId !== undefined && (!internalRequest || (!resumedInput && !nativeResumeInput))) {
+        throw new LocalStateError("The provider input request is no longer available.", 409);
+      }
+      const nativeResumeSourceTurn = nativeResumeInput
+        ? projection.turns.find((item) => item.id === nativeResumeInput.turnId)
+        : undefined;
+      const nativeResumeThread = nativeResumeInput
+        ? projection.threads.find((item) => item.id === nativeResumeInput.threadId)
+        : undefined;
+      if (nativeResumeInput && (
+        !nativeResumeSourceTurn
+        || !nativeResumeThread
+        || nativeResumeThread.provider !== "shikigami"
+        || nativeResumeThread.worktree !== context.worktree
+        || nativeResumeSourceTurn.mode !== mode
+        || nativeResumeSourceTurn.providerRunId !== nativeResumeInput.providerRunId
+        || nativeResumeThread.model && nativeResumeThread.model !== effectiveModel
+        || (previousSession?.profileId ?? null) !== (body.profileId ?? null)
+        || (nativeResumeThread.workspaceMode ?? "shared") !== workspaceMode
+        || body.conversationId !== nativeResumeThread.id
+        || body.threadId !== nativeResumeThread.id
+        || body.projectId !== project.id
+        || body.parentThreadId !== undefined
+      )) {
+        throw new LocalStateError("The native Shikigami resume binding does not match the parked turn.", 409);
+      }
+      const resumedCheckpoint = (nativeResumeInput ?? resumedInput)
+        ? projection.checkpoints.find((item) => (
+          item.turnId === (nativeResumeInput ?? resumedInput)!.turnId
+          && item.threadId === body.threadId
+          && item.worktree === context.worktree
+          && item.state === "baseline"
+        ))
+        : undefined;
+      if ((resumedInput || nativeResumeInput) && !resumedCheckpoint) {
+        throw new LocalStateError("The parked provider turn has no usable baseline checkpoint.", 409);
+      }
       const pendingFork = typeof body.threadId === "string"
         ? projection.forks.find((fork) => (
             fork.destinationThreadId === body.threadId && fork.status === "pending"
@@ -2644,11 +2698,6 @@ async function handleApi(
       if (profile && profile.profile.provider !== providerId) {
         throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
       }
-      const previousSession = typeof body.threadId === "string"
-        ? projection.providerSessions.find(
-          (session) => session.threadId === body.threadId && session.provider === providerId,
-        )
-        : undefined;
       const installedAdapter = isDeclarativeAdapter ? await adapters.version(providerId) : null;
       if (isDeclarativeAdapter && !installedAdapter) {
         throw new ProviderAdapterError(
@@ -2670,8 +2719,15 @@ async function handleApi(
           409,
         );
       }
+      if (providerId === "shikigami" && body.resumeSessionId !== undefined && !nativeResumeInput) {
+        throw new LocalStateError(
+          "Shikigami resume is only available through a bound parked-run input request.",
+          409,
+        );
+      }
       if (
         body.resumeSessionId !== undefined
+        && !nativeResumeInput
         && (!previousSession || body.resumeSessionId !== previousSession.sessionId)
       ) {
         throw new LocalStateError(
@@ -2688,40 +2744,53 @@ async function handleApi(
       }
       activeCheckpointWorktrees.add(activeWorktreeKey);
       try {
-      const persisted = await state.startTurn({
-        projectId: project.id,
-        worktree: context.worktree,
-        prompt: body.prompt.trim(),
-        mode,
-        provider: providerId,
-        model: effectiveModel,
-        reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
-        threadId: body.threadId,
-        contextPins: assembledContext.pins,
-        workspaceMode,
-      });
-      if (typeof body.automationFireId === "string") {
+      const nativeResumeClaim = nativeResumeInput
+        ? await state.claimNativeShikigamiResume(
+          nativeResumeInput.id,
+          nativeResumeInput.threadId,
+          body.resumeSessionId as string,
+        )
+        : null;
+      const persisted = nativeResumeClaim
+        ? { thread: nativeResumeClaim.thread, turn: nativeResumeClaim.turn }
+        : await state.startTurn({
+          projectId: project.id,
+          worktree: context.worktree,
+          prompt: body.prompt.trim(),
+          mode,
+          provider: providerId,
+          model: effectiveModel,
+          reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+          threadId: body.threadId,
+          contextPins: assembledContext.pins,
+          workspaceMode,
+        });
+      if (!nativeResumeClaim && typeof body.automationFireId === "string") {
         await state.bindAutomationFireTurn(body.automationFireId, persisted.turn.id);
       }
-      await state.saveContextReceipt({
-        threadId: persisted.thread.id,
-        turnId: persisted.turn.id,
-        pins: assembledContext.pins,
-        entries: assembledContext.entries,
-        totalBytes: assembledContext.totalBytes,
-        estimatedTokens: assembledContext.estimatedTokens,
-        digest: assembledContext.digest,
-      });
-      if (delegatedParentThreadId) {
+      if (!nativeResumeClaim) {
+        await state.saveContextReceipt({
+          threadId: persisted.thread.id,
+          turnId: persisted.turn.id,
+          pins: assembledContext.pins,
+          entries: assembledContext.entries,
+          totalBytes: assembledContext.totalBytes,
+          estimatedTokens: assembledContext.estimatedTokens,
+          digest: assembledContext.digest,
+        });
+      }
+      if (!nativeResumeClaim && delegatedParentThreadId) {
         await withDelegatedControlLock(() => state.linkDelegatedConversation(
           delegatedParentThreadId,
           persisted.thread.id,
         ));
       }
-      const forkPrompt = await state.pendingForkPrompt(persisted.thread.id);
-      const effectiveProviderPrompt = forkPrompt
-        ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
-        : providerPrompt;
+      const forkPrompt = nativeResumeClaim ? null : await state.pendingForkPrompt(persisted.thread.id);
+      const effectiveProviderPrompt = nativeResumeClaim
+        ? ""
+        : forkPrompt
+          ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
+          : providerPrompt;
       const checkpointId = resumedCheckpoint?.id ?? randomUUID();
       const checkpointCreatedAt = new Date().toISOString();
       let baselineIdentity: string | null = resumedCheckpoint?.baselineIdentity ?? null;
@@ -2805,28 +2874,51 @@ async function handleApi(
             browserMcp,
           })
           : providerId === "shikigami"
-          ? await shikigami.start({
-            repository: context.root,
-            worktree: context.worktree,
-            conversationId: persisted.thread.id,
-            prompt: effectiveProviderPrompt,
-            approvalUrl: await approvalUrl,
-            mode,
-            resumeSessionId: body.resumeSessionId,
-            model: effectiveModel,
-          }, process.env, managedHost
-            ? {
-                ...managedHost.shikigami,
-                stateRoot: join(state.directory, "managed-shikigami"),
-              }
-            : undefined,
-            profile && providerId === "shikigami"
+          ? await (nativeResumeClaim
+            ? shikigami.resumeParked({
+              repository: context.root,
+              worktree: context.worktree,
+              conversationId: persisted.thread.id,
+              prompt: "",
+              approvalUrl: await approvalUrl,
+              mode,
+              resumeSessionId: body.resumeSessionId as string,
+              model: effectiveModel,
+            }, body.resumeAnswer as string, process.env, managedHost
               ? {
-                  executable: profile.executable,
-                  environment: profile.environment,
-                  configPath: profile.configPath,
-                } satisfies ShikigamiProfileRuntime
-              : undefined)
+                  ...managedHost.shikigami,
+                  stateRoot: join(state.directory, "managed-shikigami"),
+                }
+              : undefined,
+              profile
+                ? {
+                    executable: profile.executable,
+                    environment: profile.environment,
+                    configPath: profile.configPath,
+                  } satisfies ShikigamiProfileRuntime
+                : undefined)
+            : shikigami.start({
+              repository: context.root,
+              worktree: context.worktree,
+              conversationId: persisted.thread.id,
+              prompt: effectiveProviderPrompt,
+              approvalUrl: await approvalUrl,
+              mode,
+              resumeSessionId: undefined,
+              model: effectiveModel,
+            }, process.env, managedHost
+              ? {
+                  ...managedHost.shikigami,
+                  stateRoot: join(state.directory, "managed-shikigami"),
+                }
+              : undefined,
+              profile
+                ? {
+                    executable: profile.executable,
+                    environment: profile.environment,
+                    configPath: profile.configPath,
+                  } satisfies ShikigamiProfileRuntime
+                : undefined))
           : installedAdapter
           ? await (async () => {
               const executable = await adapters.resolveExecutable(installedAdapter);
@@ -2861,6 +2953,9 @@ async function handleApi(
             },
           );
       } catch (error) {
+        if (nativeResumeClaim) {
+          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+        }
         await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
           kind: "failed",
           message: error instanceof ProviderProtocolError
@@ -2887,8 +2982,14 @@ async function handleApi(
           await state.saveCheckpoint({ ...resumedCheckpoint, turnId: persisted.turn.id });
         }
         await state.bindProviderRun(persisted.turn.id, run.id);
+        if (nativeResumeClaim) {
+          await state.markNativeShikigamiResumeStarted(nativeResumeClaim.request.id);
+        }
         await state.markForkStarted(persisted.thread.id);
       } catch (error) {
+        if (nativeResumeClaim) {
+          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+        }
         if (providerId === "codex-cli") codex.cancel(run.id);
         else if (providerId === "shikigami") shikigami.cancel(run.id);
         else if (isDeclarativeAdapter) {
@@ -2918,6 +3019,9 @@ async function handleApi(
             event,
             profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined,
           );
+          if (nativeResumeClaim && (event.kind === "failed" || event.kind === "cancelled")) {
+            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+          }
           if (event.kind === "approval_resolved") {
             const sibling = permissions.approvalsFor(run.id).find(
               (approval) => approval.state === "pending",
@@ -2976,6 +3080,9 @@ async function handleApi(
             if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
           }
         } catch {
+          if (nativeResumeClaim) {
+            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+          }
           if (providerId === "codex-cli") codex.cancel(run.id);
           else if (providerId === "shikigami") shikigami.cancel(run.id);
           else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
@@ -3039,10 +3146,13 @@ async function handleApi(
         } else if ((await state.load()).inputRequests.some((item) => (
           item.turnId === persisted.turn.id
           && item.state === "pending"
-          && item.responseMode === "child_follow_up"
+          && (
+            item.responseMode === "child_follow_up"
+            || item.responseMode === "native_resume"
+          )
         ))) {
-          // Preserve the original baseline while the parked child awaits its
-          // explicit follow-up turn; that turn rebinds and finalizes this checkpoint.
+          // Preserve the original baseline while a parked run awaits an
+          // explicit answer; that answer rebinds and finalizes this checkpoint.
         } else {
           await state.saveCheckpoint({
             ...checkpoint,
@@ -3256,32 +3366,91 @@ async function handleApi(
             body.answer as string,
             typeof body.parentThreadId === "string" ? body.parentThreadId : null,
           );
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              await runChildFollowUp({
+                root: project.root,
+                worktree: child.worktree,
+                prompt: followUpPrompt,
+                mode: sourceTurn.mode ?? "ask",
+                conversationId: child.id,
+                projectId: child.projectId,
+                threadId: child.id,
+                contextPins: child.contextPins ?? [],
+                profileId: child.profileId ?? null,
+                model: child.model ?? childSession?.model ?? "default",
+                provider: child.provider,
+                reasoningEffort: child.reasoningEffort,
+                inputRequestId: selectedRequest.id,
+              });
+              break;
+            } catch (error) {
+              if (!(error instanceof LocalStateError) || error.status !== 409 || attempt >= 24) {
+                await state.failInputResolution(selectedRequest.id);
+                throw error;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+          }
+          await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
+          return result;
+        }
+        if (selectedRequest.responseMode === "native_resume") {
+          const projection = await state.load();
+          const child = projection.threads.find((item) => item.id === body.childThreadId);
+          const childSession = projection.providerSessions.find((item) => (
+            item.threadId === body.childThreadId && item.provider === child?.provider
+          ));
+          const sourceTurn = projection.turns.find((item) => item.id === selectedRequest.turnId);
+          const project = child
+            ? projection.projects.find((item) => item.id === child.projectId)
+            : undefined;
+          if (
+            !child
+            || child.provider !== "shikigami"
+            || !project
+            || !sourceTurn
+            || !selectedRequest.providerRequestId
+          ) {
+            throw new LocalStateError("The native Shikigami resume route is unavailable.", 409);
+          }
+          const result = await state.resolveInputRequest(
+            inputResponseMatch[1],
+            body.answer as string,
+            typeof body.parentThreadId === "string" ? body.parentThreadId : null,
+          );
+          try {
             for (let attempt = 0; ; attempt += 1) {
               try {
                 await runChildFollowUp({
                   root: project.root,
                   worktree: child.worktree,
-                  prompt: followUpPrompt,
+                  prompt: "",
                   mode: sourceTurn.mode ?? "ask",
                   conversationId: child.id,
                   projectId: child.projectId,
                   threadId: child.id,
-                  contextPins: child.contextPins ?? [],
-                  profileId: child.profileId ?? null,
+                  resumeSessionId: selectedRequest.providerRequestId,
+                  resumeAnswer: (body.answer as string).trim(),
+                  profileId: childSession?.profileId ?? child.profileId ?? null,
                   model: child.model ?? childSession?.model ?? "default",
-                  provider: child.provider,
+                  provider: "shikigami",
                   reasoningEffort: child.reasoningEffort,
                   inputRequestId: selectedRequest.id,
+                  workspaceMode: child.workspaceMode,
                 });
                 break;
               } catch (error) {
                 if (!(error instanceof LocalStateError) || error.status !== 409 || attempt >= 24) {
-                  await state.failInputResolution(selectedRequest.id);
                   throw error;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 100));
               }
             }
+          } catch (error) {
+            await state.markNativeShikigamiResumeUnavailable(selectedRequest.id);
+            throw error;
+          }
           await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
           return result;
         }
@@ -4060,7 +4229,7 @@ export function createLocalHost(
       conversationId: thread.id,
       projectId: project.id,
       threadId: thread.id,
-      resumeSessionId: session?.sessionId,
+      resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
       provider: providerId,
       model,
       profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,

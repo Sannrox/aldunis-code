@@ -110,6 +110,10 @@ export interface ChildInputRequest {
   providerRequestId: string | null;
   expiresAt: string | null;
   allowFreeForm: boolean;
+  /** Shikigami parked-run lifecycle; absent for other native providers. */
+  resumeState?: "available" | "starting" | "claimed" | "started" | "unavailable";
+  /** Repository-owned explanation when native resume is no longer available. */
+  resumeError?: string | null;
   state: "pending" | "answered" | "cancelled";
   createdAt: string;
   answeredAt: string | null;
@@ -1787,8 +1791,26 @@ export class LocalStateStore {
       if (!turn || turn.status !== "waiting_for_user") {
         throw new LocalStateError("The input request is stale.", 409);
       }
+      const thread = projection.threads.find((item) => item.id === request.threadId);
+      if (
+        request.responseMode === "native_resume"
+        && thread?.provider === "shikigami"
+        && request.resumeState !== "available"
+      ) {
+        throw new LocalStateError(
+          request.resumeError ?? "Native Shikigami resume is unavailable.",
+          409,
+        );
+      }
       const now = new Date().toISOString();
-      const nextRequest = { ...request, state: "answered" as const, answeredAt: now };
+      const nextRequest = {
+        ...request,
+        state: "answered" as const,
+        answeredAt: now,
+        ...(thread?.provider === "shikigami" && request.responseMode === "native_resume"
+          ? { resumeState: "starting" as const, resumeError: null }
+          : {}),
+      };
       const receipt: ChildInputReceipt = {
         schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
         id: randomUUID(),
@@ -1827,6 +1849,17 @@ export class LocalStateStore {
     if (request.state !== "pending") {
       throw new LocalStateError("The input request has already been resolved.", 409);
     }
+    const thread = projection.threads.find((item) => item.id === request.threadId);
+    if (
+      request.responseMode === "native_resume"
+      && thread?.provider === "shikigami"
+      && request.resumeState !== "available"
+    ) {
+      throw new LocalStateError(
+        request.resumeError ?? "Native Shikigami resume is unavailable.",
+        409,
+      );
+    }
     if (!request.allowFreeForm && !request.choices.some((choice) => choice.label === trimmed)) {
       throw new LocalStateError("Select one of the available answers.", 400);
     }
@@ -1837,6 +1870,96 @@ export class LocalStateStore {
       throw new LocalStateError("The input request is stale.", 409);
     }
     return request;
+  }
+
+  async claimNativeShikigamiResume(
+    requestId: string,
+    threadId: string,
+    resumeSessionId: string,
+  ): Promise<{ request: ChildInputRequest; thread: Thread; turn: Turn; checkpoint: TurnCheckpoint }> {
+    return this.#appendComputed((projection) => {
+      const request = projection.inputRequests.find(
+        (item) => item.id === requestId && item.threadId === threadId,
+      );
+      const thread = projection.threads.find((item) => item.id === threadId);
+      const turn = request
+        ? projection.turns.find((item) => item.id === request.turnId)
+        : undefined;
+      const checkpoint = request
+        ? projection.checkpoints.find((item) => (
+          item.turnId === request.turnId
+          && item.threadId === threadId
+          && item.worktree === thread?.worktree
+          && item.state === "baseline"
+        ))
+        : undefined;
+      if (!request || !thread || !turn || !checkpoint) {
+        throw new LocalStateError("The native Shikigami resume binding is unavailable.", 409);
+      }
+      if (
+        request.state !== "answered"
+        || request.responseMode !== "native_resume"
+        || request.resumeState !== "starting"
+        || thread.provider !== "shikigami"
+        || request.providerRequestId !== resumeSessionId
+        || turn.providerRunId !== request.providerRunId
+        || !["active", "running"].includes(turn.status)
+      ) {
+        throw new LocalStateError("The native Shikigami resume binding is stale or already claimed.", 409);
+      }
+      const claimed = {
+        ...request,
+        resumeState: "claimed" as const,
+        resumeError: null,
+      };
+      return {
+        event: { type: "input_request_saved", inputRequest: claimed },
+        value: { request: claimed, thread, turn, checkpoint },
+      };
+    });
+  }
+
+  async markNativeShikigamiResumeStarted(requestId: string): Promise<void> {
+    await this.#appendComputed((projection) => {
+      const request = projection.inputRequests.find((item) => item.id === requestId);
+      if (!request || request.responseMode !== "native_resume") return { event: null, value: undefined };
+      if (request.resumeState === "started") return { event: null, value: undefined };
+      if (request.resumeState !== "claimed") {
+        throw new LocalStateError("The native Shikigami resume was not claimed.", 409);
+      }
+      return {
+        event: {
+          type: "input_request_saved",
+          inputRequest: { ...request, resumeState: "started" as const, resumeError: null },
+        },
+        value: undefined,
+      };
+    });
+  }
+
+  async markNativeShikigamiResumeUnavailable(requestId: string): Promise<void> {
+    const message = "Native Shikigami resume is unavailable.";
+    await this.#appendComputed((projection) => {
+      const request = projection.inputRequests.find((item) => item.id === requestId);
+      if (!request || request.responseMode !== "native_resume") {
+        return { event: null, value: undefined };
+      }
+      if (request.resumeState === "unavailable") return { event: null, value: undefined };
+      if (!["starting", "claimed", "started"].includes(request.resumeState ?? "")) {
+        return { event: null, value: undefined };
+      }
+      return {
+        event: {
+          type: "input_request_saved",
+          inputRequest: {
+            ...request,
+            resumeState: "unavailable" as const,
+            resumeError: message,
+          },
+        },
+        value: undefined,
+      };
+    });
   }
 
   async failInputResolution(requestId: string): Promise<void> {
@@ -2070,6 +2193,25 @@ export class LocalStateStore {
           });
         }
       }
+      const unavailableMessage = "Native Shikigami resume is unavailable after the host restarted.";
+      for (const request of current.inputRequests) {
+        if (request.responseMode !== "native_resume") continue;
+        const thread = current.threads.find((item) => item.id === request.threadId);
+        if (thread?.provider !== "shikigami" || request.resumeState === "unavailable") continue;
+        replaceById(current.inputRequests, {
+          ...request,
+          resumeState: "unavailable",
+          resumeError: unavailableMessage,
+        });
+        const sourceTurn = current.turns.find((item) => item.id === request.turnId);
+        if (sourceTurn && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(sourceTurn.status)) {
+          replaceById(current.turns, {
+            ...sourceTurn,
+            status: "interrupted",
+            completedAt: new Date().toISOString(),
+          });
+        }
+      }
     });
     const projection = await this.load();
     for (const turn of projection.turns) {
@@ -2078,6 +2220,7 @@ export class LocalStateStore {
           request.turnId === turn.id
           && request.state === "pending"
           && request.responseMode === "native_resume"
+          && projection.threads.find((thread) => thread.id === turn.threadId)?.provider !== "shikigami"
         ))
         : [];
       if (
@@ -2154,6 +2297,11 @@ export class LocalStateStore {
         providerRequestId: event.providerRequestId,
         expiresAt: event.expiresAt,
         allowFreeForm: event.allowFreeForm,
+        ...(provider === "shikigami"
+          && event.responseMode === "native_resume"
+          && event.providerRequestId
+          ? { resumeState: "available" as const, resumeError: null }
+          : {}),
         state: "pending",
         createdAt: now,
         answeredAt: null,

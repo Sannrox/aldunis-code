@@ -597,6 +597,8 @@ export interface ChildInputRequest {
   createdAt: string;
   expiresAt: string | null;
   allowFreeForm: boolean;
+  resumeState?: "available" | "starting" | "claimed" | "started" | "unavailable";
+  resumeError?: string | null;
 }
 export interface DelegatedInputProjection {
   parentThreadId: string;

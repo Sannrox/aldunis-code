@@ -206,3 +206,41 @@ test("delegated child input identifies its recipient, choices, and recommendatio
     assert.match(html, new RegExp(expected));
   }
 });
+
+test("delegated Shikigami resume card explains restart unavailability", () => {
+  const input: DelegatedInputProjection = {
+    parentThreadId: parent.id,
+    childThreadId: child.id,
+    request: {
+      id: "native-request",
+      threadId: child.id,
+      question: "Continue the parked run?",
+      choices: [],
+      recommendation: null,
+      responseMode: "native_resume",
+      state: "pending",
+      createdAt: "2026-08-03T10:02:00.000Z",
+      expiresAt: null,
+      allowFreeForm: true,
+      resumeState: "unavailable",
+      resumeError: "Native Shikigami resume is unavailable after the host restarted.",
+    },
+  };
+  const html = renderToStaticMarkup(createElement(DelegatedChildrenPanel, {
+    parent,
+    conversations: [parent, {
+      ...child,
+      provider: "shikigami",
+      status: "failed",
+    }],
+    relationships: [relationship],
+    outcomes: [],
+    approvals: [],
+    inputs: [input],
+    onOpen: () => undefined,
+    onChanged: async () => undefined,
+  }));
+  assert.match(html, /Native Shikigami resume is unavailable after the host restarted/);
+  assert.doesNotMatch(html, /Send to Child delivery/);
+  assert.doesNotMatch(html, /<textarea/);
+});

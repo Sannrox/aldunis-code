@@ -12,7 +12,7 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +36,8 @@ const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
 /** inplace workspace + --task-file for private prompts. */
 const MIN_PATCH_FOR_HOST = 2;
+/** Native parked-run resume (--resume + --answer-file) shipped in v1.0.5. */
+const MIN_PATCH_FOR_RESUME = 5;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const RUN_TIMEOUT_MS = 30 * 60_000;
 const EVENT_PREFIX = "[shikigami] ";
@@ -90,10 +92,20 @@ interface ActiveRun {
   cancelled: boolean;
   spawnFailed: boolean;
   cleanup: () => Promise<void>;
+  expectedRunId: string | null;
   runId: string | null;
   governed: boolean;
   permissionToken: string;
 }
+
+type ShikigamiStartOptions = ProviderStartOptions & {
+  /** Only populated by the host-side parked-run resume operation. */
+  resumeAnswer?: string;
+};
+
+export type ShikigamiResumeOptions = ProviderStartOptions & {
+  resumeSessionId: string;
+};
 
 const SHIKIGAMI_RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -644,7 +656,7 @@ export class ShikigamiAdapter {
   }
 
   async start(
-    options: ProviderStartOptions,
+    options: ShikigamiStartOptions,
     env: NodeJS.ProcessEnv = process.env,
     managed?: ManagedShikigamiRuntime,
     profile?: ShikigamiProfileRuntime,
@@ -766,8 +778,36 @@ export class ShikigamiAdapter {
     );
 
     // Keep prompts off argv (process table privacy).
-    const taskPath = join(workDir, "task.txt");
-    await writeFile(taskPath, options.prompt, "utf8");
+    const resumeId = options.resumeSessionId
+      ? confirmShikigamiRunId(null, options.resumeSessionId)
+      : null;
+    if (resumeId) {
+      const versionMatch = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+      const supportsResume = versionMatch
+        && Number(versionMatch[1]) === SUPPORTED_SHIKIGAMI_MAJOR
+        && (
+          Number(versionMatch[2]) > 0
+          || Number(versionMatch[2]) === 0 && Number(versionMatch[3]) >= MIN_PATCH_FOR_RESUME
+        );
+      if (!supportsResume) {
+        throw new ProviderProtocolError(
+          "Native Shikigami parked-run resume requires Shikigami 1.0.5+.",
+        );
+      }
+    }
+    let answerPath: string | null = null;
+    if (resumeId) {
+      if (!options.resumeAnswer?.trim()) {
+        throw new ProviderProtocolError("A parked Shikigami run requires a non-empty answer.");
+      }
+      answerPath = join(workDir, "tmp", `resume-${randomUUID()}.answer`);
+      try {
+        await writeFile(answerPath, options.resumeAnswer, { encoding: "utf8", mode: 0o600 });
+      } catch (error) {
+        await rm(answerPath, { force: true });
+        throw error;
+      }
+    }
     const args = [
       "--config",
       configPath,
@@ -776,12 +816,17 @@ export class ShikigamiAdapter {
       "run",
       // inplace workspaces must not be deleted; keep_workspace is still set for safety.
       "--keep-workspace",
-      "--task-file",
-      taskPath,
+      ...(resumeId
+        ? ["--resume", resumeId, "--answer-file", answerPath!]
+        : (() => {
+            const taskPath = join(workDir, "task.txt");
+            return ["--task-file", taskPath];
+          })()),
     ];
-    // Each Code message is a fresh harness run. Checkpoint --resume is for
-    // mid-run park recovery, not multi-turn chat continuation.
-    void options.resumeSessionId;
+    if (!resumeId) {
+      // Keep prompts off argv (process table privacy).
+      await writeFile(join(workDir, "task.txt"), options.prompt, "utf8");
+    }
 
     const child = spawn(executable, args, {
       cwd: options.worktree,
@@ -800,10 +845,10 @@ export class ShikigamiAdapter {
       child,
       cancelled: false,
       spawnFailed: false,
-      // Persist conversation state for resume; do not wipe after each turn.
-      cleanup: async () => undefined,
-      // Code starts a fresh harness run for every message. The prior provider
-      // session is historical context, not an identity for this invocation.
+      cleanup: async () => {
+        if (answerPath) await rm(answerPath, { force: true });
+      },
+      expectedRunId: resumeId,
       runId: null,
       governed: Boolean(
         managed
@@ -818,6 +863,16 @@ export class ShikigamiAdapter {
     });
     this.#active.set(id, active);
     return { id, events: this.#events(id, active, options, stdoutPromise) };
+  }
+
+  async resumeParked(
+    options: ShikigamiResumeOptions,
+    answer: string,
+    env: NodeJS.ProcessEnv = process.env,
+    managed?: ManagedShikigamiRuntime,
+    profile?: ShikigamiProfileRuntime,
+  ): Promise<ProviderRun> {
+    return this.start({ ...options, resumeAnswer: answer }, env, managed, profile);
   }
 
   cancel(id: string): boolean {
@@ -885,6 +940,9 @@ export class ShikigamiAdapter {
             if (event.kind === "turn_completed") {
               try {
                 active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
+                if (active.expectedRunId && active.runId !== active.expectedRunId) {
+                  throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+                }
               } catch (error) {
                 sawTerminal = true;
                 pendingTerminal = null;
@@ -906,6 +964,9 @@ export class ShikigamiAdapter {
               if (event.sessionId) {
                 try {
                   active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
+                  if (active.expectedRunId && active.runId !== active.expectedRunId) {
+                    throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+                  }
                 } catch (error) {
                   sawTerminal = true;
                   pendingTerminal = null;
@@ -983,6 +1044,9 @@ export class ShikigamiAdapter {
         if (runMatch) {
           try {
             active.runId = confirmShikigamiRunId(active.runId, runMatch[1]);
+            if (active.expectedRunId && active.runId !== active.expectedRunId) {
+              throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+            }
           } catch (error) {
             sawTerminal = true;
             pendingTerminal = null;
@@ -1020,7 +1084,7 @@ export class ShikigamiAdapter {
             question: question || reason || "Shikigami is waiting for operator input.",
             choices: [],
             recommendation: null,
-            responseMode: "child_follow_up",
+            responseMode: active.runId ? "native_resume" : "child_follow_up",
             providerRequestId: resumeId === "<run-id>" ? null : resumeId,
             expiresAt: null,
             allowFreeForm: true,
@@ -1068,6 +1132,14 @@ export class ShikigamiAdapter {
       } else if (!sawTerminal) {
         const code = active.child.exitCode;
         if (code === 0) {
+          if (active.expectedRunId && !active.runId) {
+            yield {
+              kind: "failed",
+              message: "Shikigami resume did not confirm the requested run identity.",
+              code: "provider_protocol_error",
+            };
+            return;
+          }
           if (active.governed && !active.runId) {
             yield {
               kind: "failed",

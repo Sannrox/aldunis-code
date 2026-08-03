@@ -1280,6 +1280,104 @@ test("child input requests and parent coordination receipts persist and resolve 
   assert.equal(rebuilt.inputReceipts.length, 1);
 });
 
+test("native Shikigami resume claims the exact parked turn once and never stores the answer", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Park this run",
+    mode: "build",
+    provider: "shikigami",
+    model: "scripted",
+  });
+  const runId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  await store.bindProviderRun(started.turn.id, runId);
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "native-resume-request",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "native_resume",
+    providerRequestId: runId,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await store.saveCheckpoint({
+    id: "checkpoint-native-resume",
+    turnId: started.turn.id,
+    threadId: started.thread.id,
+    worktree: "/fixture",
+    gitDirectory: null,
+    baselineHead: "before",
+    baselineIdentity: "before",
+    baselineIndexIdentity: null,
+    completedIdentity: null,
+    completedIndexIdentity: null,
+    completedHead: null,
+    state: "baseline",
+    message: null,
+    createdAt: new Date().toISOString(),
+  });
+  await store.resolveInputRequest("native-resume-request", "secret answer", null);
+  const claimed = await store.claimNativeShikigamiResume(
+    "native-resume-request",
+    started.thread.id,
+    runId,
+  );
+  assert.equal(claimed.request.resumeState, "claimed");
+  assert.equal(claimed.checkpoint.id, "checkpoint-native-resume");
+  await assert.rejects(
+    () => store.claimNativeShikigamiResume(
+      "native-resume-request",
+      started.thread.id,
+      runId,
+    ),
+    (error: unknown) => error instanceof LocalStateError && error.status === 409,
+  );
+  await store.markNativeShikigamiResumeStarted("native-resume-request");
+  await store.markNativeShikigamiResumeUnavailable("native-resume-request");
+  const projection = await store.load();
+  assert.equal(projection.inputRequests[0].resumeState, "unavailable");
+  assert.equal(projection.inputRequests[0].resumeError, "Native Shikigami resume is unavailable.");
+  assert.equal(projection.turns[0].status, "active");
+  assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /secret answer/);
+});
+
+test("restart marks Shikigami parked requests unavailable without cancelling the visible request", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Park this run",
+    mode: "build",
+    provider: "shikigami",
+  });
+  await store.bindProviderRun(started.turn.id, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "native-restart-request",
+    question: "Continue after restart?",
+    choices: [],
+    recommendation: null,
+    responseMode: "native_resume",
+    providerRequestId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await store.recoverInterruptedTurns();
+  const projection = await store.load();
+  assert.equal(projection.inputRequests[0].state, "pending");
+  assert.equal(projection.inputRequests[0].resumeState, "unavailable");
+  assert.equal(
+    projection.inputRequests[0].resumeError,
+    "Native Shikigami resume is unavailable after the host restarted.",
+  );
+  assert.equal(projection.turns[0].status, "interrupted");
+});
+
 test("failed child follow-up startup rolls back its receipt and interrupts the source turn", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

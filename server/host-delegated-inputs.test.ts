@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,6 +103,106 @@ test("parent resolves one exact delegated input and records a child-bound receip
     assert.equal(followedUp[0].model, "selected-model");
     assert.equal(followedUp[0].inputRequestId, "00000000-0000-4000-8000-000000000001");
     assert.deepEqual(followedUp[0].contextPins, [{ kind: "file", path: "src/example.ts" }]);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
+});
+
+test("parent-routed Shikigami input resumes the parked run once without persisting the answer", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-native-input-"));
+  const state = new LocalStateStore(directory);
+  const resumed: Array<Record<string, unknown>> = [];
+  const server = createLocalHost(
+    directory,
+    state,
+    new ClaudeProfileStore(directory),
+    undefined,
+    undefined,
+    undefined,
+    async (body) => {
+      resumed.push(body);
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  await fetch("http://127.0.0.1:" + address.port + "/api/state/load", { method: "POST" });
+  await state.saveProject({ id: "project", name: "Project", root: directory });
+  const parent = await state.startTurn({
+    projectId: "project",
+    worktree: directory,
+    prompt: "Coordinate",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  const child = await state.startTurn({
+    projectId: "project",
+    worktree: directory,
+    prompt: "Work",
+    mode: "build",
+    provider: "shikigami",
+    model: "scripted",
+  });
+  await state.linkDelegatedConversation(parent.thread.id, child.thread.id);
+  const runId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  await state.bindProviderRun(child.turn.id, runId);
+  await state.recordProviderEvent(child.thread.id, child.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "00000000-0000-4000-8000-000000000002",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "native_resume",
+    providerRequestId: runId,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await state.saveCheckpoint({
+    id: "checkpoint-native-input",
+    turnId: child.turn.id,
+    threadId: child.thread.id,
+    worktree: directory,
+    gitDirectory: null,
+    baselineHead: "before",
+    baselineIdentity: "before",
+    baselineIndexIdentity: null,
+    completedIdentity: null,
+    completedIndexIdentity: null,
+    completedHead: null,
+    state: "baseline",
+    message: null,
+    createdAt: new Date().toISOString(),
+  });
+  await new PreferencesStore(directory).save({
+    ...DEFAULT_PREFERENCES,
+    orchestrationThreadsBeta: true,
+  });
+  try {
+    const route = "http://127.0.0.1:" + address.port
+      + "/api/provider/input-requests/00000000-0000-4000-8000-000000000002/respond";
+    const body = JSON.stringify({
+      childThreadId: child.thread.id,
+      parentThreadId: parent.thread.id,
+      answer: "secret answer",
+    });
+    const responses = await Promise.all([
+      fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body }),
+      fetch(route, { method: "POST", headers: { "content-type": "application/json" }, body }),
+    ]);
+    assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
+    assert.equal(resumed.length, 1);
+    assert.equal(resumed[0].prompt, "");
+    assert.equal(resumed[0].resumeSessionId, runId);
+    assert.equal(resumed[0].resumeAnswer, "secret answer");
+    assert.equal(resumed[0].inputRequestId, "00000000-0000-4000-8000-000000000002");
+    assert.equal("parentThreadId" in resumed[0], false);
+    const projection = await state.load();
+    assert.equal(projection.inputRequests[0].state, "answered");
+    assert.equal(projection.inputRequests[0].resumeState, "starting");
+    assert.equal(projection.inputReceipts.length, 1);
+    assert.equal(projection.turns[0].status, "active");
+    assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /secret answer/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

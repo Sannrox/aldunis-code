@@ -118,6 +118,8 @@ export function persistedProviderFailureMessage(
       || event.message === CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE
       || event.message === "Shikigami emitted a malformed run identity."
       || event.message === "Shikigami emitted conflicting run identities."
+      || event.message === "Shikigami resume reported a different run identity."
+      || event.message === "Shikigami resume did not confirm the requested run identity."
       || event.message === "Shikigami completed without a provider-confirmed run identity."
       || event.message === "Codex stream processing failed."
     ) {
