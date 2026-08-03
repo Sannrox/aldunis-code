@@ -1290,7 +1290,13 @@ export function Conversation({
             eventSequence: plan.eventSequence,
           })),
         ...(projection.inputRequests ?? [])
-          .filter((request) => request.turnId === turnId && request.state === "pending")
+          .filter((request) => (
+            request.turnId === turnId
+            && (
+              request.state === "pending"
+              || (request.responseMode === "native_resume" && request.resumeState === "unavailable")
+            )
+          ))
           .map((request) => ({
             event: { ...request, kind: "input_requested" as const },
             createdAt: request.createdAt,
@@ -1742,7 +1748,7 @@ export function Conversation({
           conversationId,
           projectId: runRepository.projectId,
           threadId: threadId ?? undefined,
-          resumeSessionId: sessionId ?? undefined,
+          resumeSessionId: turnProvider === "shikigami" ? undefined : sessionId ?? undefined,
           contextPins,
           profileId: managedMode
             ? null
@@ -1995,6 +2001,7 @@ export function Conversation({
       )));
       if (input.responseMode === "native_resume") {
         setProviderState("streaming");
+        setHistoryRefreshSignal((current) => current + 1);
       } else {
         setProviderState("streaming");
         setHistoryRefreshSignal((current) => current + 1);
@@ -2073,7 +2080,11 @@ export function Conversation({
   const inputs = providerEvents.filter(
     (event): event is Extract<ProviderEvent, { kind: "input_requested" }> => (
       event.kind === "input_requested"
-      && (event.state === undefined || event.state === "pending")
+      && (
+        event.state === undefined
+        || event.state === "pending"
+        || (event.responseMode === "native_resume" && event.resumeState === "unavailable")
+      )
     ),
   );
   const failure = providerEvents
@@ -2686,51 +2697,63 @@ export function Conversation({
                 >
                   <header>
                     <strong>{input.question}</strong>
-                    <span>Response stays in this child conversation</span>
+                    <span>
+                      {input.responseMode === "native_resume"
+                        ? "Resume stays in this conversation with a fresh approval scope"
+                        : "Response stays in this child conversation"}
+                    </span>
                   </header>
-                  {input.recommendation && <p>Recommendation: {input.recommendation}</p>}
-                  {input.choices.length > 0 && (
-                    <div className="input-request-choices">
-                      {input.choices.map((choice) => (
+                  {input.responseMode === "native_resume" && input.resumeState === "unavailable" ? (
+                    <p className="provider-error-hint" role="alert">
+                      {input.resumeError ?? "Native Shikigami resume is unavailable. Start a new run to continue."}
+                    </p>
+                  ) : (
+                    <>
+                      {input.recommendation && <p>Recommendation: {input.recommendation}</p>}
+                      {input.choices.length > 0 && (
+                        <div className="input-request-choices">
+                          {input.choices.map((choice) => (
+                            <Button
+                              type="button"
+                              size="sm"
+                              key={choice.id}
+                              title={choice.description ?? undefined}
+                              onClick={() => setInputAnswers((current) => ({
+                                ...current,
+                                [input.id]: choice.label,
+                              }))}
+                            >
+                              {choice.label}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                      <label htmlFor={`input-request-${pane}-${input.id}`}>
+                        Answer for this conversation
+                      </label>
+                      <textarea
+                        id={`input-request-${pane}-${input.id}`}
+                        maxLength={4_000}
+                        readOnly={!input.allowFreeForm}
+                        value={inputAnswers[input.id] ?? ""}
+                        onChange={(event) => setInputAnswers((current) => ({
+                          ...current,
+                          [input.id]: event.target.value,
+                        }))}
+                      />
+                      <footer>
                         <Button
                           type="button"
+                          variant="primary"
                           size="sm"
-                          key={choice.id}
-                          title={choice.description ?? undefined}
-                          onClick={() => setInputAnswers((current) => ({
-                            ...current,
-                            [input.id]: choice.label,
-                          }))}
+                          disabled={inputBusyId === input.id || !(inputAnswers[input.id] ?? "").trim()}
+                          onClick={() => void answerInput(input)}
                         >
-                          {choice.label}
+                          Send answer
                         </Button>
-                      ))}
-                    </div>
+                      </footer>
+                    </>
                   )}
-                  <label htmlFor={`input-request-${pane}-${input.id}`}>
-                    Answer for this conversation
-                  </label>
-                  <textarea
-                    id={`input-request-${pane}-${input.id}`}
-                    maxLength={4_000}
-                    readOnly={!input.allowFreeForm}
-                    value={inputAnswers[input.id] ?? ""}
-                    onChange={(event) => setInputAnswers((current) => ({
-                      ...current,
-                      [input.id]: event.target.value,
-                    }))}
-                  />
-                  <footer>
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      disabled={inputBusyId === input.id || !(inputAnswers[input.id] ?? "").trim()}
-                      onClick={() => void answerInput(input)}
-                    >
-                      Send answer
-                    </Button>
-                  </footer>
                 </section>
               ))}
               {failureView && (
@@ -2770,7 +2793,8 @@ export function Conversation({
                   )}
                   {failureView.kind === "park" && (
                     <p className="provider-error-hint">
-                      Park answers are not wired in the workbench yet. Resume from a terminal with the command above.
+                      Code can resume parked Shikigami runs only when the provider confirms the
+                      bound run identity; otherwise start a fresh run from this conversation.
                     </p>
                   )}
                 </div>

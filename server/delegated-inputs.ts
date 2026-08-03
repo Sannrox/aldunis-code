@@ -14,12 +14,20 @@ export function projectDelegatedInputs(projection: StateProjection): DelegatedIn
     ]),
   );
   return projection.inputRequests.flatMap((request) => {
-    if (request.state !== "pending") return [];
+    const unavailableNativeResume = request.responseMode === "native_resume"
+      && request.resumeState === "unavailable";
+    if (request.state !== "pending" && !unavailableNativeResume) return [];
     const relationship = relationshipByChild.get(request.threadId);
     const turn = projection.turns.find((item) => (
       item.id === request.turnId
       && item.providerRunId === request.providerRunId
-      && item.status === "waiting_for_user"
+      && (
+        item.status === "waiting_for_user"
+        || (
+          unavailableNativeResume
+          && ["interrupted", "failed", "cancelled"].includes(item.status)
+        )
+      )
     ));
     return relationship && turn ? [{
       parentThreadId: relationship.parentThreadId,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -274,7 +274,6 @@ process.exit(1);
     prompt: "demo task",
     approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
     mode: "build",
-    resumeSessionId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
   }, {
     ...process.env,
     SHIKIGAMI_MODEL_ADAPTER: "scripted",
@@ -417,7 +416,7 @@ console.log("shikigami 1.0.2");
   assert.match(readiness.detail ?? "", /OPENAI_API_KEY|SHIKIGAMI_API_KEY_ENV|scripted/);
 });
 
-test("ShikigamiAdapter normalizes a parked question as a child follow-up request", async () => {
+test("ShikigamiAdapter normalizes a parked question as a native resume request", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-park-"));
   const executable = join(directory, "fake-shikigami");
   await writeFile(executable, `#!/usr/bin/env node
@@ -460,8 +459,95 @@ process.exit(1);
   if (request?.kind === "input_requested") {
     assert.equal(request.question, "continue?");
     assert.equal(request.providerRequestId, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee");
-    assert.equal(request.responseMode, "child_follow_up");
+    assert.equal(request.responseMode, "native_resume");
   }
+});
+
+test("ShikigamiAdapter resumes with a protected transient answer file and cleans it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-resume-"));
+  const stateRoot = join(directory, "state-root");
+  const executable = join(directory, "fake-shikigami");
+  const runId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const conversationId = "44444444-4444-4444-8444-444444444444";
+  await writeFile(executable, `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "version") {
+  console.log("shikigami 1.0.5");
+  process.exit(0);
+}
+if (args.includes("--resume")) {
+  const resumeId = args[args.indexOf("--resume") + 1];
+  const answerPath = args[args.indexOf("--answer-file") + 1];
+  const answer = fs.readFileSync(answerPath, "utf8");
+  const permissions = fs.statSync(answerPath).mode & 0o777;
+  if (resumeId !== "${runId}" || answer !== "operator answer" || permissions !== 0o600) process.exit(2);
+  console.error("[shikigami] " + JSON.stringify({
+    type: "run_finished",
+    run_id: resumeId,
+    success: true,
+    summary: "resumed",
+  }));
+  console.log("run " + resumeId + " turns=2 success=true termination=completed summary=resumed");
+  process.exit(0);
+}
+process.exit(1);
+`);
+  await chmod(executable, 0o700);
+
+  const adapter = new ShikigamiAdapter(executable);
+  const run = await adapter.resumeParked({
+    repository: directory,
+    worktree: directory,
+    conversationId,
+    prompt: "",
+    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+    mode: "build",
+    resumeSessionId: runId,
+    model: "scripted",
+  }, "operator answer", process.env, {
+    executable,
+    model: "scripted",
+    governanceEndpoint: "http://127.0.0.1:9",
+    principal: "service:test",
+    namespace: "test",
+    tokenEnv: "TEST_TOKEN",
+    token: "test-token",
+    path: process.env.PATH,
+    stateRoot,
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.equal(events.at(-1)?.kind, "turn_completed");
+  assert.equal(events.some((event) => event.kind === "failed"), false);
+  assert.deepEqual(await readdir(join(stateRoot, conversationId, "tmp")), []);
+});
+
+test("ShikigamiAdapter fails closed when native resume capability is too old", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-resume-version-"));
+  const executable = join(directory, "fake-shikigami");
+  await writeFile(executable, `#!/usr/bin/env node
+if (process.argv[2] === "version") console.log("shikigami 1.0.4");
+else process.exit(0);
+`);
+  await chmod(executable, 0o700);
+  const adapter = new ShikigamiAdapter(executable);
+  await assert.rejects(
+    () => adapter.resumeParked({
+      repository: directory,
+      worktree: directory,
+      conversationId: "55555555-5555-4555-8555-555555555555",
+      prompt: "",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+      resumeSessionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      model: "scripted",
+    }, "answer", {
+      ...process.env,
+      SHIKIGAMI_MODEL_ADAPTER: "scripted",
+    }),
+    /requires Shikigami 1\.0\.5/,
+  );
 });
 
 test("ShikigamiAdapter emits approval_pending for mutating tools in build mode", async () => {

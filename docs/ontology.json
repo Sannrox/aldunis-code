@@ -38,6 +38,22 @@
       "description": "A profile-keyed provider readiness projection that keeps executable, configuration, authentication, and model discovery aligned with the selected Shikigami profile."
     },
     {
+      "name": "ShikigamiCheckpointResumeBoundary",
+      "description": "The Shikigami provider boundary that accepts a provider-confirmed run UUID, loads the matching checkpoint, and requires the canonical workspace and adapter identity to match before native resume.",
+      "properties": [
+        {
+          "name": "minimum_version",
+          "type": "string",
+          "required": true,
+          "description": "The minimum compatible Shikigami version for native parked-run resume."
+        }
+      ]
+    },
+    {
+      "name": "ShikigamiParkedRunResume",
+      "description": "The Aldunis Code operation that resumes one Shikigami parked run through a bound input request and existing local turn. It keeps the answer transient, requires a fresh PermissionBroker scope, preserves the baseline checkpoint, and reports explicit unavailability when exact identity or capability cannot be proven."
+    },
+    {
       "name": "ThreadSearch",
       "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
     },
@@ -374,6 +390,26 @@
       "description": "Associates a local Shikigami conversation with a bounded direct-run correlation receipt.",
       "domain": "LocalConversation",
       "range": "GovernedDirectRunCorrelation"
+    },
+    {
+      "name": "uses_shikigami_checkpoint_resume_boundary",
+      "description": "The Code-side parked-run resume operation delegates checkpoint identity and native resume semantics to Shikigami after Code validates its local request and turn binding.",
+      "domain": "ShikigamiParkedRunResume",
+      "range": "ShikigamiCheckpointResumeBoundary",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "preserves_local_conversation_turn",
+      "description": "Rebinds the resumed provider process to the existing local conversation turn rather than creating a synthetic answer message or child turn.",
+      "domain": "ShikigamiParkedRunResume",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
     },
     {
       "name": "binds_local_delivery_candidate",
@@ -731,6 +767,30 @@
       "subject": "records_governed_direct_run",
       "source": "Accepted Shikigami provider decision",
       "locator": "docs/decisions/shikigami-provider.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiCheckpointResumeBoundary",
+      "source": "Shikigami native checkpoint resume contract",
+      "locator": "src/checkpoint.rs;src/run.rs; server/shikigami-provider.ts#resumeParked",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiParkedRunResume",
+      "source": "GitHub Issue Sannrox/aldunis-code#447 and accepted delivery decision",
+      "locator": "server/host.ts#/api/provider/runs; server/state.ts#claimNativeShikigamiResume; docs/decisions/shikigami-provider.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_shikigami_checkpoint_resume_boundary",
+      "source": "Aldunis Code native parked-run resume contract",
+      "locator": "server/shikigami-provider.ts#resumeParked; server/host.ts#/api/provider/runs",
+      "confidence": 1.0
+    },
+    {
+      "subject": "preserves_local_conversation_turn",
+      "source": "Aldunis Code native parked-run resume contract",
+      "locator": "server/state.ts#claimNativeShikigamiResume; server/host.ts#/api/provider/input-requests",
       "confidence": 1.0
     },
     {

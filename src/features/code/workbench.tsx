@@ -405,56 +405,70 @@ export function DelegatedChildrenPanel({
                   >
                     <header>
                       <strong>{delegatedInput.request.question}</strong>
-                      <span>Answer routes only to {child.title}</span>
+                      <span>
+                        {delegatedInput.request.responseMode === "native_resume"
+                          ? `Resume routes only to ${child.title} with a fresh approval scope`
+                          : `Answer routes only to ${child.title}`}
+                      </span>
                     </header>
-                    {delegatedInput.request.recommendation && (
-                      <p>Recommendation: {delegatedInput.request.recommendation}</p>
-                    )}
-                    {delegatedInput.request.choices.length > 0 && (
-                      <div className="delegated-input-choices">
-                        {delegatedInput.request.choices.map((choice) => (
-                          <Button
-                            type="button"
-                            size="sm"
-                            key={choice.id}
-                            title={choice.description ?? undefined}
-                            onClick={() => setInputAnswers((current) => ({
+                    {delegatedInput.request.responseMode === "native_resume"
+                      && delegatedInput.request.resumeState === "unavailable" ? (
+                        <p className="provider-error-hint" role="alert">
+                          {delegatedInput.request.resumeError
+                            ?? "Native Shikigami resume is unavailable. Start a new child run to continue."}
+                        </p>
+                      ) : (
+                        <>
+                          {delegatedInput.request.recommendation && (
+                            <p>Recommendation: {delegatedInput.request.recommendation}</p>
+                          )}
+                          {delegatedInput.request.choices.length > 0 && (
+                            <div className="delegated-input-choices">
+                              {delegatedInput.request.choices.map((choice) => (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  key={choice.id}
+                                  title={choice.description ?? undefined}
+                                  onClick={() => setInputAnswers((current) => ({
+                                    ...current,
+                                    [delegatedInput.request.id]: choice.label,
+                                  }))}
+                                >
+                                  {choice.label}
+                                </Button>
+                              ))}
+                            </div>
+                          )}
+                          <label htmlFor={`delegated-input-${delegatedInput.request.id}`}>
+                            Answer for {child.title}
+                          </label>
+                          <textarea
+                            id={`delegated-input-${delegatedInput.request.id}`}
+                            maxLength={4_000}
+                            readOnly={!delegatedInput.request.allowFreeForm}
+                            value={inputAnswers[delegatedInput.request.id] ?? ""}
+                            onChange={(event) => setInputAnswers((current) => ({
                               ...current,
-                              [delegatedInput.request.id]: choice.label,
+                              [delegatedInput.request.id]: event.target.value,
                             }))}
-                          >
-                            {choice.label}
-                          </Button>
-                        ))}
-                      </div>
-                    )}
-                    <label htmlFor={`delegated-input-${delegatedInput.request.id}`}>
-                      Answer for {child.title}
-                    </label>
-                    <textarea
-                      id={`delegated-input-${delegatedInput.request.id}`}
-                      maxLength={4_000}
-                      readOnly={!delegatedInput.request.allowFreeForm}
-                      value={inputAnswers[delegatedInput.request.id] ?? ""}
-                      onChange={(event) => setInputAnswers((current) => ({
-                        ...current,
-                        [delegatedInput.request.id]: event.target.value,
-                      }))}
-                    />
-                    <footer>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        disabled={
-                          inputBusyId === delegatedInput.request.id
-                          || !(inputAnswers[delegatedInput.request.id] ?? "").trim()
-                        }
-                        onClick={() => void answerInput(delegatedInput)}
-                      >
-                        Send to {child.title}
-                      </Button>
-                    </footer>
+                          />
+                          <footer>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              disabled={
+                                inputBusyId === delegatedInput.request.id
+                                || !(inputAnswers[delegatedInput.request.id] ?? "").trim()
+                              }
+                              onClick={() => void answerInput(delegatedInput)}
+                            >
+                              Send to {child.title}
+                            </Button>
+                          </footer>
+                        </>
+                      )}
                   </section>
                 ))}
               </li>

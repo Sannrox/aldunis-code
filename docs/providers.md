@@ -92,9 +92,15 @@ First-class harness provider (`provider: "shikigami"`). Seeds
 (`inplace` workspace + `--task-file`).
 
 Parked Shikigami questions normalize to a bounded Aldunis input request.
-Because the current adapter does not keep a parked subprocess resumable, an
-answer starts an explicitly identified follow-up turn in the same child
-conversation. The answer is never copied into the parent provider context.
+With Shikigami **1.0.5+**, Code resumes the provider-confirmed parked run with
+native `--resume <run-id> --answer-file <protected-file>`. Code binds the
+request to the exact conversation, turn, run UUID, repository, worktree, and
+baseline checkpoint; the answer is transient and never copied into durable
+history or parent context. Resume starts a fresh PermissionBroker scope, so
+approvals are never replayed. If the installed binary cannot prove native
+resume support, or the host restarts before the resume starts, Code shows an
+explicit unavailable state rather than tracking an unowned process. The
+child-conversation and parent-coordination cards use the same route.
 
 - The built-in Shikigami profile uses Shikigami's native config resolution:
   `SHIKIGAMI_CONFIG`, `$SHIKIGAMI_STATE/shikigami.toml`, then the selected
