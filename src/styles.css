@@ -2214,6 +2214,55 @@ select.ui-input {
   margin: 0 auto 12px;
   padding: 0 8px;
 }
+.new-chat-context-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 8px;
+  padding: 0 4px;
+}
+.new-chat-context-heading {
+  min-width: 0;
+}
+.new-chat-context-heading p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.new-chat-context-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  font: 10px var(--font-mono);
+  white-space: nowrap;
+}
+.new-chat-context-status > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.new-chat-context-status.ready {
+  border-color: color-mix(in srgb, var(--emerald) 35%, var(--border));
+  color: var(--emerald);
+}
+.new-chat-context-status.ready > span { background: var(--emerald); }
+.new-chat-context-status.pending > span { background: var(--amber); }
+.new-chat-context-rows {
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .035);
+}
 .new-chat-context-eyebrow {
   display: block;
   margin: 0 0 4px;

@@ -2,6 +2,8 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { ChangedFile, FileDiff, DiffAnnotation, DeliveryContext, DeliveryPlan, DeliveryAction, ConversationSummary, RepositoryMetadata } from "../../types";
 import { Button, CloseButton, NestedDialogSurface, handleNestedEscape } from "../../components/ui";
 
+export type ChangesPanelMode = "review" | "deliver";
+
 export function ChangesPanel({
   repository,
   threadId,
@@ -13,6 +15,8 @@ export function ChangesPanel({
   onRefresh,
   onSendRevision,
   canSendRevision,
+  mode,
+  onModeChange,
 }: {
   repository: RepositoryMetadata;
   threadId: string | null;
@@ -25,7 +29,12 @@ export function ChangesPanel({
   onRefresh: () => void;
   onSendRevision: (prompt: string) => void;
   canSendRevision: boolean;
+  /** Review and delivery share the dock, but never compete for the same primary action. */
+  mode?: ChangesPanelMode;
+  onModeChange?: (mode: ChangesPanelMode) => void;
 }) {
+  const [uncontrolledMode, setUncontrolledMode] = useState<ChangesPanelMode>("review");
+  const panelMode = mode ?? uncontrolledMode;
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -48,25 +57,34 @@ export function ChangesPanel({
   const [plan, setPlan] = useState<DeliveryPlan | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
   const inspectDelivery = async () => {
-    const response = await fetch("/api/delivery/inspect", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
-    });
-    const result = await response.json() as DeliveryContext | { error?: string };
-    if (!response.ok) throw new Error("error" in result ? result.error : "Delivery state could not be inspected.");
-    const context = result as DeliveryContext;
-    setDelivery(context);
-    setRemote((current) => current || context.remotes[0]?.name || "");
+    setDeliveryLoading(true);
+    try {
+      const response = await fetch("/api/delivery/inspect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
+      });
+      const result = await response.json() as DeliveryContext | { error?: string };
+      if (!response.ok) throw new Error("error" in result ? result.error : "Delivery state could not be inspected.");
+      const context = result as DeliveryContext;
+      setDelivery(context);
+      setRemote((current) => current || context.remotes[0]?.name || "");
+    } finally {
+      setDeliveryLoading(false);
+    }
   };
   useEffect(() => {
     setSelectedPaths([]);
     setPlan(null);
     setRemote("");
     setDeliveryError(null);
+    setDelivery(null);
+    setDeliveryLoading(false);
+    if (panelMode !== "deliver") return;
     void inspectDelivery().catch((cause) => setDeliveryError(cause instanceof Error ? cause.message : "Delivery state could not be inspected."));
-  }, [repository.root, repository.selectedWorktree]);
+  }, [panelMode, repository.root, repository.selectedWorktree]);
   // Match file-browser Escape: dismiss nested review first, then the dock.
   // Skip when a true modal dialog owns the key (command palette, etc.).
   useEffect(() => {
@@ -281,22 +299,59 @@ export function ChangesPanel({
   }, [revisionPreview]);
   const added = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const removed = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  const changeMode = (next: ChangesPanelMode) => {
+    if (next === panelMode) return;
+    if (next === "deliver") {
+      setCommentLineIndex(undefined);
+      setCommentText("");
+      setRevisionPreview(null);
+    } else {
+      setPlan(null);
+    }
+    setUncontrolledMode(next);
+    onModeChange?.(next);
+  };
 
   // Embedded in the conversation review dock (mock .rv) — not a portal modal.
   return (
     <div className="changes-panel rv-panel" aria-label={`Changes for ${pane} conversation`}>
-      <div className="rv-h">
-        <span className="rv-t">Review</span>
-        <span className="rv-s">
-          {files.length} files
-          {(added > 0 || removed > 0) && (
-            <> · <b className="ok">+{added}</b> <b className="bad">−{removed}</b></>
-          )}
-        </span>
+      <div className="rv-h changes-panel-header">
+        <div className="changes-panel-heading">
+          <span className="rv-t">Changes</span>
+          <span className="rv-s">
+            {files.length} files
+            {(added > 0 || removed > 0) && (
+              <> · <b className="ok">+{added}</b> <b className="bad">−{removed}</b></>
+            )}
+          </span>
+        </div>
+        <div className="changes-panel-tabs" role="tablist" aria-label={`Change workspace, ${pane} pane`}>
+          <button
+            type="button"
+            role="tab"
+            id={`${pane}-changes-review-tab`}
+            className={panelMode === "review" ? "active" : ""}
+            aria-selected={panelMode === "review"}
+            aria-controls={`${pane}-changes-review-panel`}
+            onClick={() => changeMode("review")}
+          >
+            Review
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id={`${pane}-changes-deliver-tab`}
+            className={panelMode === "deliver" ? "active" : ""}
+            aria-selected={panelMode === "deliver"}
+            aria-controls={`${pane}-changes-deliver-panel`}
+            onClick={() => changeMode("deliver")}
+          >
+            Deliver
+          </button>
+        </div>
         <Button
           size="sm"
-          className="btn btn-ghost btn-xs"
-          style={{ marginLeft: "auto" }}
+          className="btn btn-ghost btn-xs changes-panel-refresh"
           aria-label={`Refresh changed files and review comments, ${pane} pane`}
           onClick={() => { onRefresh(); void loadAnnotations(); }}
         >
@@ -311,19 +366,21 @@ export function ChangesPanel({
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
           {files.map((file) => (
             <div className={selected === file.path ? "changed-file active" : "changed-file"} key={file.path}>
-              <label className="changed-file-select">
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${file.path} for staging`}
-                  checked={selectedPaths.includes(file.path)}
-                  onChange={(event) => {
-                    const stagedPaths = file.previousPath ? [file.path, file.previousPath] : [file.path];
-                    setSelectedPaths((paths) => event.target.checked
-                      ? [...new Set([...paths, ...stagedPaths])]
-                      : paths.filter((path) => !stagedPaths.includes(path)));
-                  }}
-                />
-              </label>
+              {panelMode === "deliver" && (
+                <label className="changed-file-select">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${file.path} for staging`}
+                    checked={selectedPaths.includes(file.path)}
+                    onChange={(event) => {
+                      const stagedPaths = file.previousPath ? [file.path, file.previousPath] : [file.path];
+                      setSelectedPaths((paths) => event.target.checked
+                        ? [...new Set([...paths, ...stagedPaths])]
+                        : paths.filter((path) => !stagedPaths.includes(path)));
+                    }}
+                  />
+                </label>
+              )}
               <button
                 type="button"
                 className="changed-file-main"
@@ -353,7 +410,15 @@ export function ChangesPanel({
           ))}
         </nav>
         <div className="review-workspace">
-        <div className="diff-view" tabIndex={0} aria-label={selected ? `Diff for ${selected}, ${pane} pane` : `File diff, ${pane} pane`}>
+        <div
+          id={`${pane}-changes-review-panel`}
+          className="diff-view"
+          role="tabpanel"
+          aria-labelledby={`${pane}-changes-review-tab`}
+          hidden={panelMode !== "review"}
+          tabIndex={0}
+          aria-label={selected ? `Diff for ${selected}, ${pane} pane` : `File diff, ${pane} pane`}
+        >
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
           {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
@@ -427,7 +492,13 @@ export function ChangesPanel({
             </section>
           )}
         </div>
-        <section className="annotations-panel" aria-label={`Local diff comments, ${pane} pane`}>
+        <section
+          className="annotations-panel"
+          role="tabpanel"
+          aria-labelledby={`${pane}-changes-review-tab`}
+          hidden={panelMode !== "review"}
+          aria-label={`Local diff comments, ${pane} pane`}
+        >
           <header className="review-section-header">
             <strong>Review comments</strong>
             <small>{annotations.filter((item) => item.resolution === "unresolved").length} unresolved</small>
@@ -493,7 +564,7 @@ export function ChangesPanel({
             Preview revision request
           </Button>
         </section>
-        {revisionPreview && (
+        {panelMode === "review" && revisionPreview && (
           <section
             ref={revisionPreviewRef}
             tabIndex={-1}
@@ -524,7 +595,14 @@ export function ChangesPanel({
             {!canSendRevision && <p role="alert">Configure an available provider before sending this revision request.</p>}
           </section>
         )}
-        <section className="delivery-panel" aria-label={`Commit, push, and pull request actions, ${pane} pane`}>
+        {panelMode === "deliver" && (
+        <section
+          id={`${pane}-changes-deliver-panel`}
+          className="delivery-panel"
+          role="tabpanel"
+          aria-labelledby={`${pane}-changes-deliver-tab`}
+          aria-label={`Commit, push, and pull request actions, ${pane} pane`}
+        >
           <header className="review-section-header delivery-header">
             <div>
               <strong>Reviewed delivery</strong>
@@ -534,11 +612,17 @@ export function ChangesPanel({
             </div>
             <span title={delivery?.upstream ?? "No upstream"}>{delivery?.upstream ?? "No upstream"}</span>
           </header>
+          <p className="delivery-boundary-note">
+            Preview first. Nothing changes until you approve the reviewed plan.
+          </p>
+          {!delivery && !deliveryError && (
+            <p className="delivery-loading" role="status">Reading branch and remote…</p>
+          )}
           <div className="delivery-form">
-            <label htmlFor="delivery-action">Action
+            <label htmlFor={`${pane}-delivery-action`}>Action
               <select
-                id="delivery-action"
-                name="delivery-action"
+                id={`${pane}-delivery-action`}
+                name={`${pane}-delivery-action`}
                 value={deliveryAction}
                 onChange={(event) => {
                   setDeliveryAction(event.target.value as DeliveryAction);
@@ -552,20 +636,20 @@ export function ChangesPanel({
               </select>
             </label>
             {deliveryAction === "commit" && (
-              <label htmlFor="delivery-commit-message">Commit message
+              <label htmlFor={`${pane}-delivery-commit-message`}>Commit message
                 <input
-                  id="delivery-commit-message"
-                  name="delivery-commit-message"
+                  id={`${pane}-delivery-commit-message`}
+                  name={`${pane}-delivery-commit-message`}
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
                 />
               </label>
             )}
             {(deliveryAction === "push" || deliveryAction === "pull_request") && (
-              <label htmlFor="delivery-remote">Remote
+              <label htmlFor={`${pane}-delivery-remote`}>Remote
                 <select
-                  id="delivery-remote"
-                  name="delivery-remote"
+                  id={`${pane}-delivery-remote`}
+                  name={`${pane}-delivery-remote`}
                   value={remote}
                   onChange={(event) => setRemote(event.target.value)}
                 >
@@ -577,26 +661,26 @@ export function ChangesPanel({
             )}
             {deliveryAction === "pull_request" && (
               <>
-                <label htmlFor="delivery-pr-base">Base
+                <label htmlFor={`${pane}-delivery-pr-base`}>Base
                   <input
-                    id="delivery-pr-base"
-                    name="delivery-pr-base"
+                    id={`${pane}-delivery-pr-base`}
+                    name={`${pane}-delivery-pr-base`}
                     value={base}
                     onChange={(event) => setBase(event.target.value)}
                   />
                 </label>
-                <label htmlFor="delivery-pr-title">Title
+                <label htmlFor={`${pane}-delivery-pr-title`}>Title
                   <input
-                    id="delivery-pr-title"
-                    name="delivery-pr-title"
+                    id={`${pane}-delivery-pr-title`}
+                    name={`${pane}-delivery-pr-title`}
                     value={title}
                     onChange={(event) => setTitle(event.target.value)}
                   />
                 </label>
-                <label className="delivery-body" htmlFor="delivery-pr-body">Body
+                <label className="delivery-body" htmlFor={`${pane}-delivery-pr-body`}>Body
                   <textarea
-                    id="delivery-pr-body"
-                    name="delivery-pr-body"
+                    id={`${pane}-delivery-pr-body`}
+                    name={`${pane}-delivery-pr-body`}
                     value={body}
                     onChange={(event) => setBody(event.target.value)}
                   />
@@ -609,10 +693,10 @@ export function ChangesPanel({
                 size="sm"
                 className="prepare-delivery"
                 onClick={() => void prepareDelivery()}
-                disabled={deliveryBusy || delivery?.detached}
-                aria-label={`Inspect ${deliveryAction} action for delivery, ${pane} pane`}
+                disabled={deliveryBusy || deliveryLoading || !delivery || delivery.detached}
+                aria-label={`Preview ${deliveryAction} action for delivery, ${pane} pane`}
               >
-                Inspect action
+                {deliveryBusy ? "Preparing…" : "Preview action"}
               </Button>
             )}
           </div>
@@ -640,10 +724,9 @@ export function ChangesPanel({
             </div>
           )}
         </section>
+        )}
         </div>
       </div>
     </div>
   );
 }
-
-
