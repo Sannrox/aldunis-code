@@ -128,7 +128,7 @@ import {
 import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
-  return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
+  return threadId ? `Reply to ${providerName}…` : "Describe the task you want to tackle…";
 }
 
 /**
@@ -435,6 +435,7 @@ export function Conversation({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [folderPins, setFolderPins] = useState<string[]>([]);
   const [contextOpen, setContextOpen] = useState(false);
+  const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
   const [draftContextReceipt, setDraftContextReceipt] = useState<ContextReceipt | null>(null);
   useLayoutEffect(() => {
     if (composerRef.current) syncComposerHeight(composerRef.current);
@@ -2465,10 +2466,22 @@ export function Conversation({
     ? { label: "Choose project", tone: "pending" }
     : !worktree
       ? { label: "Choose worktree", tone: "pending" }
-      : { label: "Ready to start", tone: "ready" };
+      : { label: "Ready", tone: "ready" };
   const hostLabel = typeof window !== "undefined" && window.location.hostname
     ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
     : "Local Aldunis host";
+  const workspaceSetupRequired = !repository || !worktree;
+  const workspaceSetupVisible = workspaceSetupOpen || workspaceSetupRequired;
+  const workspaceSummary = !repository
+    ? "Choose a project"
+    : !worktree
+      ? "Choose a worktree"
+      : `${repository.name} · ${conversationBranch}`;
+  const workspaceSummaryDetail = !repository
+    ? "Set the project and worktree before sending"
+    : !worktree
+      ? "Select an available worktree before sending"
+      : `${workspaceCopy.label} · ${hostLabel}`;
   const selectableWorktrees = useMemo(() => repository?.worktrees.filter((item) => (
     item.state === "available" || item.state === "detached"
   )) ?? [], [repository?.worktrees]);
@@ -2604,9 +2617,14 @@ export function Conversation({
             showReasoningEffort ? reasoningEffort : null,
           ].filter(Boolean).join(" · ")}
         >
-          <b>{conversation?.title ?? "New conversation"}</b>
-          {repository && <> · {repository.name}</>}
-          {worktree && <> · {conversationBranch}</>}
+          <span className="crumb-title"><b>{conversation?.title ?? "New conversation"}</b></span>
+          <span className="crumb-meta">
+            {worktree && <span className="crumb-chip crumb-chip--branch" title={conversationBranch} aria-label={`Branch ${conversationBranch}`}>{conversationBranch}</span>}
+            {repository && <span className="crumb-chip" title={`Provider: ${providerListLabel(provider)}`} aria-label={`Provider ${providerListLabel(provider)}`}>{providerListLabel(provider)}</span>}
+            {repository && <span className="crumb-chip" title={`Workspace: ${workspaceCopy.label}`} aria-label={`Workspace ${workspaceCopy.label}`}>{workspaceCopy.shortLabel}</span>}
+            {effectiveModel !== "default" && <span className="crumb-chip crumb-chip--secondary" title={`Model: ${modelChipLabel}`} aria-label={`Model ${modelChipLabel}`}>{modelChipLabel}</span>}
+            {showReasoningEffort && <span className="crumb-chip crumb-chip--secondary" title={`Reasoning effort: ${reasoningEffort}`} aria-label={`Reasoning effort ${reasoningEffort}`}>{reasoningEffort}</span>}
+          </span>
         </div>
         <div className="tb-r">
           {latestPlan && (
@@ -3118,47 +3136,53 @@ export function Conversation({
           </div>
         )}
         {canPickWorkspace && (
-          <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
-            <div className="new-chat-context-header">
-              <div className="new-chat-context-heading">
-                <span className="new-chat-context-eyebrow">Start here</span>
-                <p>Choose a project, worktree, then describe the outcome.</p>
-              </div>
+          <section className={`new-chat-context ${workspaceSetupVisible ? "is-open" : "is-collapsed"}`} aria-labelledby={`${pane}-new-chat-context-title`}>
+            <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
+            <button
+              type="button"
+              className="new-chat-context-summary"
+              disabled={workspaceSetupRequired}
+              aria-expanded={workspaceSetupVisible}
+              aria-controls={`${pane}-new-chat-context-body`}
+              aria-label={workspaceSetupRequired
+                ? `Workspace: ${workspaceSummary}. Setup details are required until a project and worktree are selected.`
+                : `Workspace: ${workspaceSummary}. ${workspaceSetupVisible ? "Hide" : "Show"} setup details.`}
+              onClick={() => {
+                if (workspaceSetupRequired) return;
+                setWorkspaceSetupOpen((open) => !open);
+              }}
+            >
+              <span className="new-chat-context-summary-icon" aria-hidden="true"><Icon name="route" /></span>
+              <span className="new-chat-context-summary-copy">
+                <span className="new-chat-context-eyebrow">Runs in</span>
+                <strong title={workspaceSummary}>{workspaceSummary}</strong>
+                <small title={workspaceSummaryDetail}>{workspaceSummaryDetail}</small>
+              </span>
               <span
                 className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
-                aria-label={`Workspace setup: ${workspaceSetupStatus.label}`}
+                aria-hidden="true"
               >
-                <span aria-hidden="true" />
+                <span />
                 {workspaceSetupStatus.label}
               </span>
-            </div>
-            <div
-              className="new-chat-context-stepper"
-              aria-label={`Conversation setup steps. Current status: ${workspaceSetupStatus.label}`}
-            >
-              {setupSteps.map((step, index) => (
-                <React.Fragment key={step.label}>
-                  {index > 0 && <span className="new-chat-context-stepper-line" aria-hidden="true" />}
-                  <span
-                    className={`new-chat-context-step ${step.complete ? "complete" : ""} ${step.active ? "active" : ""}`}
-                    aria-current={step.active ? "step" : undefined}
-                  >
-                    <b>{index + 1}</b>
-                    {step.label}
-                  </span>
-                </React.Fragment>
-              ))}
-            </div>
-            <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
-            <div className="new-chat-context-rows">
-              <div className="new-chat-context-row" aria-label={`${hostLabel}, current Aldunis host`}>
-                <Icon name="computer" />
-                <span className="new-chat-context-copy">
-                  <strong>{hostLabel}</strong>
-                  <small>Current Aldunis host</small>
-                </span>
+              <Icon name="chevron" />
+            </button>
+            {workspaceSetupVisible && <div className="new-chat-context-body" id={`${pane}-new-chat-context-body`}>
+              <div className="new-chat-context-header">
+                <div className="new-chat-context-heading">
+                  <span className="new-chat-context-eyebrow">Workspace setup</span>
+                  <p>Adjust the project, worktree, or ownership before sending.</p>
+                </div>
               </div>
-              <div className="new-chat-context-control" ref={projectMenuRef}>
+              <div className="new-chat-context-rows">
+                <div className="new-chat-context-row new-chat-context-row--host" aria-label={`${hostLabel}, current Aldunis host`}>
+                  <Icon name="computer" />
+                  <span className="new-chat-context-copy">
+                    <strong>{hostLabel}</strong>
+                    <small>Current Aldunis host</small>
+                  </span>
+                </div>
+                <div className="new-chat-context-control" ref={projectMenuRef}>
                 <button
                   type="button"
                   className="new-chat-context-row new-chat-context-row--button"
@@ -3172,7 +3196,7 @@ export function Conversation({
                   <Icon name="folder" />
                   <span className="new-chat-context-copy">
                     <strong>{repository?.name ?? "Choose a project"}</strong>
-                    <small title={repository?.root}>{repository?.root ?? "Open a repository before sending"}</small>
+                    <small title={repository?.root}>{repository?.root ?? "Choose a project before sending"}</small>
                   </span>
                   <Icon name="chevron" />
                 </button>
@@ -3225,8 +3249,8 @@ export function Conversation({
                     </button>
                   </div>
                 )}
-              </div>
-              <div className="new-chat-context-control" ref={workspaceMenuRef}>
+                </div>
+                <div className="new-chat-context-control" ref={workspaceMenuRef}>
                 <button
                   type="button"
                   className="new-chat-context-row new-chat-context-row--button"
@@ -3358,6 +3382,7 @@ export function Conversation({
                 </label>
               </div>
             </div>
+            </div>}
           </section>
         )}
         <div className="cbox">
@@ -3531,7 +3556,7 @@ export function Conversation({
                 ? providerReadinessMessage
                 : worktree
                 ? readyComposerPlaceholder(providerName, threadId)
-                : "Open a repository with an available worktree…"
+                : "Choose a project and worktree to continue…"
             }
             id={`${pane}-composer`}
             name={`${pane}-composer`}

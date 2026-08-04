@@ -34,6 +34,7 @@ const PRODUCTS: Array<{ id: Product; label: string; detail: string; mark: string
 export function CodeSidebar({
   sidebarOpen = true,
   onToggleSidebar = () => undefined,
+  onRequestClose,
   product,
   onProductChange,
   productAvailability = DEFAULT_PRODUCT_AVAILABILITY,
@@ -69,6 +70,7 @@ export function CodeSidebar({
 }: {
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  onRequestClose?: () => void;
   product: Product;
   onProductChange: (product: Product) => void;
   /** Which planes may be selected; unconfigured planes stay visible but disabled. */
@@ -151,6 +153,7 @@ export function CodeSidebar({
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         setProductOpen(false);
         root.querySelector<HTMLElement>(".brandbtn")?.focus();
         return;
@@ -203,6 +206,7 @@ export function CodeSidebar({
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         setProjectMenuOpen(false);
         root.querySelector<HTMLElement>(".project-filter-trigger")?.focus();
         return;
@@ -235,6 +239,17 @@ export function CodeSidebar({
       window.removeEventListener("keydown", onKey);
     };
   }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!sidebarOpen || !onRequestClose) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.key !== "Escape") return;
+      event.preventDefault();
+      onRequestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onRequestClose, sidebarOpen]);
 
   const selectedProject = useMemo(
     () => (projectFilter === "all" ? null : projects.find((project) => project.id === projectFilter) ?? null),
@@ -319,7 +334,7 @@ export function CodeSidebar({
           <div className="pswitch" role="menu" aria-label="Products">
             {PRODUCTS.map((item, index) => {
               const available = isProductAvailable(item.id, productAvailability);
-              const detail = available ? item.detail : "Not configured";
+              const detail = available ? item.detail : "Not configured yet";
               return (
                 <button
                   type="button"
@@ -329,7 +344,7 @@ export function CodeSidebar({
                   aria-label={
                     available
                       ? `${item.label}: ${item.detail}`
-                      : `${item.label}: not configured`
+                      : `${item.label}: not configured yet`
                   }
                   key={item.id}
                   disabled={!available}
@@ -369,7 +384,7 @@ export function CodeSidebar({
             <button
               type="button"
               className="newthr"
-              title={repositoryRestoring ? "Restoring projects…" : "New thread"}
+              title={repositoryRestoring ? "Restoring projects…" : "New conversation"}
               aria-label="New conversation"
               disabled={repositoryRestoring}
               onClick={onNewConversation}

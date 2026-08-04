@@ -6,7 +6,7 @@ import type { ProviderEvent, RepositoryMetadata } from "../../types";
 test("ready composer copy distinguishes new work from an existing conversation", () => {
   assert.equal(
     readyComposerPlaceholder("Codex CLI", null),
-    "Describe what you want to work on…",
+    "Describe the task you want to tackle…",
   );
   assert.equal(
     readyComposerPlaceholder("Codex CLI", "thread-1"),
