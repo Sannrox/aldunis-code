@@ -225,6 +225,19 @@ test("minimum desktop width shows one active conversation so review stays readab
   );
 });
 
+test("tablet review docks stack below the conversation at full width", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(min-width:\s*681px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.split\.with-review\s*\{[^}]*flex-direction:\s*column\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(min-width:\s*681px\)\s*and\s*\(max-width:\s*1100px\)[\s\S]*?\.split\.with-review\s*>\s*\.review-dock,[\s\S]*?\.split\.with-review\s*>\s*\.rv\s*\{[^}]*width:\s*100%\s*!important/s,
+  );
+});
+
 test("touch tablet clients get readable type and touch-sized shell controls", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");

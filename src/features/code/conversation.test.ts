@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendProviderEvent, readyComposerPlaceholder } from "./conversation";
-import type { ProviderEvent } from "../../types";
+import { appendProviderEvent, filterSelectableWorktrees, readyComposerPlaceholder } from "./conversation";
+import type { ProviderEvent, RepositoryMetadata } from "../../types";
 
 test("ready composer copy distinguishes new work from an existing conversation", () => {
   assert.equal(
@@ -33,4 +33,36 @@ test("provider browser observations replace the prior transient frame", () => {
     second,
     { kind: "assistant_text", text: "after" },
   ]);
+});
+
+test("worktree filtering groups branch search without hiding the selected worktree", () => {
+  const worktrees = [
+    {
+      path: "/repo/.aldunis/wt/feature",
+      head: "abc",
+      branch: "feature/visible",
+      state: "available",
+      ownership: "aldunis",
+      recovery: "available",
+      originalPath: null,
+    },
+    {
+      path: "/repo/user-worktree",
+      head: "def",
+      branch: "feature/other",
+      state: "available",
+      ownership: "user",
+      recovery: "available",
+      originalPath: null,
+    },
+  ] satisfies RepositoryMetadata["worktrees"];
+
+  assert.deepEqual(
+    filterSelectableWorktrees(worktrees, "user", worktrees[0]!.path).map((item) => item.path),
+    [worktrees[0]!.path, worktrees[1]!.path],
+  );
+  assert.deepEqual(
+    filterSelectableWorktrees(worktrees, "other", worktrees[0]!.path).map((item) => item.path),
+    [worktrees[0]!.path, worktrees[1]!.path],
+  );
 });
