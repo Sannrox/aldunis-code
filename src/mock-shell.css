@@ -2113,6 +2113,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   min-height: 0 !important;
   overflow: hidden !important;
 }
+.file-browser-panel[hidden], .preview-panel[hidden] {
+  display: none !important;
+}
 .file-browser-body {
   display: grid !important;
   min-height: 0 !important;
