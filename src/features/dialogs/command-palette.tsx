@@ -7,6 +7,10 @@ export const CREATE_WORKTREE_ACTION_COPY = {
   label: "Create worktree",
   detail: "Create an isolated managed checkout for conversation work",
 } as const;
+export const PROVIDER_MANAGEMENT_ACTION_COPY = {
+  label: "Provider management",
+  detail: "Profiles, adapter package trust, and readiness diagnostics",
+} as const;
 
 export function commandPaletteThreadMatches(thread: ThreadMetadata, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
@@ -22,6 +26,7 @@ export function CommandPalette({
   onSearch,
   onPreferences,
   onProviderManagement,
+  onActivity = () => undefined,
   onConnections = () => undefined,
   onManageWorktrees,
   onAutomations,
@@ -35,6 +40,7 @@ export function CommandPalette({
   onSearch: () => void;
   onPreferences: () => void;
   onProviderManagement: () => void;
+  onActivity?: () => void;
   onConnections?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
@@ -81,9 +87,13 @@ export function CommandPalette({
           run: onPreferences,
         },
         {
-          label: "Provider management",
-          detail: "Profiles, adapter package trust, and readiness diagnostics",
+          ...PROVIDER_MANAGEMENT_ACTION_COPY,
           run: onProviderManagement,
+        },
+        {
+          label: "Activity",
+          detail: "Supervise attention, running, completed, and idle conversations",
+          run: onActivity,
         },
         {
           label: "Connections",
@@ -118,7 +128,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAutomations, onConnections, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
+    [hasRepository, onActivity, onAutomations, onConnections, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
   );
 
   useEffect(() => {

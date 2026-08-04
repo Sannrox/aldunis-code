@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import React from "react";
-import { commandPaletteThreadMatches } from "./command-palette";
+import {
+  commandPaletteThreadMatches,
+  PROVIDER_MANAGEMENT_ACTION_COPY,
+} from "./command-palette";
 import type { ThreadMetadata } from "../../types";
+
+test("command palette exposes one generic provider management action", () => {
+  assert.deepEqual(PROVIDER_MANAGEMENT_ACTION_COPY, {
+    label: "Provider management",
+    detail: "Profiles, adapter package trust, and readiness diagnostics",
+  });
+});
 
 const thread: ThreadMetadata = {
   id: "thread-1",

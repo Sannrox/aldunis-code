@@ -126,6 +126,7 @@ const tls = remoteMode === "lan" || managedNetworkBind
       key: await readFile(tlsKeyPath!),
     }
   : undefined;
+let publicUrl = configuredPublicUrl;
 const state = new LocalStateStore();
 const releaseWriterLease = await state.acquireWriterLease();
 const server = createLocalHost(
@@ -138,6 +139,10 @@ const server = createLocalHost(
   undefined,
   undefined,
   managedHost,
+  undefined,
+  undefined,
+  () => publicUrl,
+  host,
 );
 let tailscaleConfigured = false;
 
@@ -179,7 +184,6 @@ server.listen(port, host, async () => {
     console.log(`Aldunis Code is available at ${localUrl}`);
     return;
   }
-  let publicUrl = localUrl;
   if (remoteMode === "tailscale") {
     try {
       const before = await execFileAsync("tailscale", ["serve", "status", "--json"]);

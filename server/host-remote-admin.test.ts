@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
+import type { IncomingMessage } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createLocalHost } from "./host.ts";
+import { createLocalHost, isLocalControlRequest } from "./host.ts";
 import type { RemoteAuth } from "./remote-auth.ts";
 import { LocalStateStore } from "./state.ts";
 
-async function listen(remote = false) {
+async function listen(remote = false, publicOrigin?: string) {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-admin-"));
   let verifyCalls = 0;
   const remoteAuth = remote
@@ -33,7 +34,20 @@ async function listen(remote = false) {
         revoke: async (sessionId: string) => sessionId === "session-test",
       } as unknown as RemoteAuth
     : undefined;
-  const server = createLocalHost(directory, new LocalStateStore(directory), undefined, remoteAuth);
+  const server = createLocalHost(
+    directory,
+    new LocalStateStore(directory),
+    undefined,
+    remoteAuth,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    publicOrigin,
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
@@ -62,6 +76,27 @@ async function close(server: ReturnType<typeof createLocalHost>) {
   });
 }
 
+test("LAN same-host administration matches the configured private bind only", () => {
+  const local = {
+    headers: { host: "192.0.2.10:4174" },
+    socket: { remoteAddress: "192.0.2.10" },
+  } as unknown as IncomingMessage;
+  const otherClient = {
+    headers: { host: "192.0.2.10:4174" },
+    socket: { remoteAddress: "192.0.2.11" },
+  } as unknown as IncomingMessage;
+  const publicOrigin = {
+    headers: { host: "code.example.test:4174" },
+    socket: { remoteAddress: "192.0.2.10" },
+  } as unknown as IncomingMessage;
+  assert.equal(isLocalControlRequest(local, "192.0.2.10"), true);
+  assert.equal(isLocalControlRequest(otherClient, "192.0.2.10"), false);
+  assert.equal(
+    isLocalControlRequest(publicOrigin, "192.0.2.10", "https://code.example.test"),
+    true,
+  );
+});
+
 test("local Connections controls can inspect, pair, and revoke sessions", async () => {
   const fixture = await listen(true);
   try {
@@ -78,12 +113,28 @@ test("local Connections controls can inspect, pair, and revoke sessions", async 
         revokedAt: null,
       }],
     });
+    const ipv6Host = await post(fixture.url, "/api/remote/admin/status", {}, { host: "[::1]:4174" });
+    assert.equal(ipv6Host.status, 200);
     const pairing = await post(fixture.url, "/api/remote/admin/pair");
     assert.equal(pairing.status, 200);
     assert.match((await pairing.json()).pairingUrl, /#pair=one-time-credential$/);
     const revoked = await post(fixture.url, "/api/remote/admin/revoke", { sessionId: "session-test" });
     assert.deepEqual(await revoked.json(), { revoked: true });
     assert.equal(fixture.verifyCalls, 0);
+  } finally {
+    await close(fixture.server);
+  }
+});
+
+test("pairing links use the configured public origin", async () => {
+  const fixture = await listen(true, "https://code.example.test");
+  try {
+    const pairing = await post(fixture.url, "/api/remote/admin/pair");
+    assert.equal(pairing.status, 200);
+    assert.equal(
+      (await pairing.json()).pairingUrl,
+      "https://code.example.test/#pair=one-time-credential",
+    );
   } finally {
     await close(fixture.server);
   }

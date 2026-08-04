@@ -135,30 +135,62 @@ import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
+function normalizeAddress(address: string | undefined): string | undefined {
+  if (!address) return undefined;
+  return address
+    .replace(/^::ffff:/i, "")
+    .replace(/^\[(.*)\]$/, "$1");
+}
+
 function isLoopbackAddress(address: string | undefined): boolean {
-  if (!address) return false;
-  const normalized = address.replace(/^::ffff:/i, "");
+  const normalized = normalizeAddress(address);
+  if (!normalized) return false;
   return LOOPBACK_HOSTS.has(normalized);
 }
 
-function isLoopbackHostHeader(request: IncomingMessage): boolean {
+function requestHostName(request: IncomingMessage): string | undefined {
   const host = request.headers.host;
-  if (!host) return false;
+  if (!host) return undefined;
   try {
-    return isLoopbackAddress(new URL(`http://${host}`).hostname);
+    return normalizeAddress(new URL(`http://${host}`).hostname);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-function isLocalControlRequest(request: IncomingMessage): boolean {
+function isLoopbackHostHeader(request: IncomingMessage): boolean {
+  return isLoopbackAddress(requestHostName(request));
+}
+
+export function isLocalControlRequest(
+  request: IncomingMessage,
+  localBindHost?: string,
+  publicOrigin?: string,
+): boolean {
   const forwarded = request.headers["x-forwarded-for"];
   const forwardedAddresses = typeof forwarded === "string"
     ? forwarded.split(",").map((value) => value.trim()).filter(Boolean)
     : [];
-  return isLoopbackAddress(request.socket.remoteAddress)
-    && isLoopbackHostHeader(request)
-    && forwardedAddresses.every((address) => isLoopbackAddress(address));
+  if (!forwardedAddresses.every((address) => isLoopbackAddress(address))) return false;
+  if (isLoopbackAddress(request.socket.remoteAddress) && isLoopbackHostHeader(request)) return true;
+  const boundAddress = normalizeAddress(localBindHost);
+  let publicOriginHost: string | undefined;
+  if (publicOrigin) {
+    try {
+      publicOriginHost = normalizeAddress(new URL(publicOrigin).hostname);
+    } catch {
+      publicOriginHost = undefined;
+    }
+  }
+  const requestHost = requestHostName(request);
+  return Boolean(
+    boundAddress
+      && normalizeAddress(request.socket.remoteAddress) === boundAddress
+      && (
+        requestHost === boundAddress
+        || (!isLoopbackAddress(boundAddress) && requestHost === publicOriginHost)
+      ),
+  );
 }
 
 function adapterProfileSeed(adapter: {
@@ -518,6 +550,8 @@ async function handleApi(
   managedIdentity?: ManagedIdentity,
   browser?: SharedBrowserBroker | null,
   browserMcpPath?: string,
+  publicOrigin?: string | (() => string | undefined),
+  localBindHost?: string,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -973,13 +1007,22 @@ async function handleApi(
       }
       if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
       if (action === "pair") {
+        const configuredOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
+        if (publicOrigin !== undefined && !configuredOrigin) {
+          throw new RemoteAuthError("The public remote origin is not ready.", 503);
+        }
+        const origin = configuredOrigin
+          ? new URL(configuredOrigin).origin
+          : (() => {
+              const encrypted = "encrypted" in request.socket && request.socket.encrypted === true;
+              const protocol = encrypted ? "https" : "http";
+              const host = request.headers.host ?? "localhost";
+              return `${protocol}://${host}`;
+            })();
         const pairing = await remoteAuth.issuePairing();
-        const encrypted = "encrypted" in request.socket && request.socket.encrypted === true;
-        const protocol = encrypted ? "https" : "http";
-        const host = request.headers.host ?? "localhost";
         sendJson(response, 200, {
           ...pairing,
-          pairingUrl: `${protocol}://${host}/#pair=${pairing.credential}`,
+          pairingUrl: `${origin}/#pair=${pairing.credential}`,
         });
         return true;
       }
@@ -4160,6 +4203,8 @@ export function createLocalHost(
   managedHost?: ManagedHost,
   browserHost?: BrowserHost,
   browserMcpPath?: string,
+  publicOrigin?: string | (() => string | undefined),
+  localBindHost?: string,
 ) {
   const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
@@ -4422,7 +4467,8 @@ export function createLocalHost(
         )
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
-    const localControlRequest = isLocalControlRequest(request);
+    const configuredPublicOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
+    const localControlRequest = isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
     let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost
@@ -4488,6 +4534,8 @@ export function createLocalHost(
         managedIdentity,
         browser,
         browserMcpPath,
+        publicOrigin,
+        localBindHost,
       )
     ) return;
     await serveStatic(request, response, dist);

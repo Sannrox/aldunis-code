@@ -505,7 +505,10 @@ export function PreferencesDialog({
             )}
             {section === "Access" && (
               <AccessSettingsLinks
-                onOpenConnections={onOpenConnections}
+                onOpenConnections={() => {
+                  onClose();
+                  onOpenConnections();
+                }}
                 disabled={draftDirty}
               />
             )}
