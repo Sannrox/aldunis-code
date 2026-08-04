@@ -355,6 +355,17 @@ export function Conversation({
     voiceRecognitionRef.current = null;
     recognition?.abort?.();
   }, []);
+  useEffect(() => {
+    if (active) return;
+    const recognition = voiceRecognitionRef.current;
+    voiceRecognitionRef.current = null;
+    recognition?.abort?.();
+    voicePrefixRef.current = "";
+    voiceFinalTranscriptRef.current = "";
+    setVoiceInputInterim("");
+    setVoiceInputError(null);
+    setVoiceInputState(getVoiceRecognitionConstructor() ? "idle" : "unsupported");
+  }, [active]);
   /** Scroll container for the transcript; auto-follows when the operator holds the tail. */
   const threadRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
