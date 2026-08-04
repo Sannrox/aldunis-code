@@ -49,6 +49,26 @@ export interface VoiceRecognitionScope {
   webkitSpeechRecognition?: VoiceRecognitionConstructor;
 }
 
+export const VOICE_INPUT_SHORTCUT = "mod+shift+m" as const;
+export const VOICE_INPUT_SHORTCUT_LABEL = "⌘⇧M / Ctrl+Shift+M";
+
+export interface VoiceInputShortcutEvent {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  repeat?: boolean;
+}
+
+export function matchesVoiceInputShortcut(event: VoiceInputShortcutEvent): boolean {
+  return (event.metaKey || event.ctrlKey)
+    && event.shiftKey
+    && !event.altKey
+    && event.repeat !== true
+    && event.key.toLocaleLowerCase() === "m";
+}
+
 export function getVoiceRecognitionConstructor(
   scope: VoiceRecognitionScope | undefined = typeof window === "undefined"
     ? undefined
