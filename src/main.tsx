@@ -282,7 +282,13 @@ function App() {
           seen.add(root);
           const opened = await openRepository(root, { quiet: true });
           if (!active) return;
-          if (opened) return;
+          if (opened) {
+            // Quiet restore registers the repository on the host without
+            // refreshing the sidebar project registry. Keep the restored
+            // project visible before handing control back to the shell.
+            await loadSavedProjects();
+            return;
+          }
         }
       } catch {
         /* leave empty shell if history cannot be restored */
