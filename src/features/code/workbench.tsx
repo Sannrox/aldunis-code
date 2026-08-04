@@ -1142,6 +1142,11 @@ export function CodeWorkbench({
   };
   return (
     <>
+      <div
+        className="desktop-titlebar"
+        data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}
+        aria-hidden="true"
+      />
       <CodeSidebar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={toggleSidebar}

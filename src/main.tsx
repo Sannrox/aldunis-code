@@ -30,6 +30,11 @@ import {
   type ProductAvailability,
 } from "./lib/product-availability";
 
+const desktopPlatform = window.aldunisDesktop?.platform;
+if (desktopPlatform) {
+  document.documentElement.dataset.desktopShell = desktopPlatform === "darwin" ? "macos" : "native";
+}
+
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
 
 function readLastRepositoryRoot(): string | null {

@@ -10,6 +10,7 @@ import {
   selectedDirectoryPath,
 } from "./lifecycle.ts";
 import { nightlyVersion, previewTag } from "../scripts/preview-version.ts";
+import { windowChromeOptions } from "./window-chrome.ts";
 import { validateDesktopReleaseTag } from "../scripts/verify-desktop-release-tag.ts";
 
 test("packaged startup waits for a loopback backend on an ephemeral port", async () => {
@@ -39,6 +40,15 @@ test("native directory selection returns one path and cancellation returns no au
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }), "/project");
   assert.equal(selectedDirectoryPath({ canceled: true, filePaths: ["/project"] }), null);
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
+});
+
+test("macOS desktop chrome shares the shell with native traffic controls", () => {
+  assert.deepEqual(windowChromeOptions("darwin"), {
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 18 },
+  });
+  assert.deepEqual(windowChromeOptions("win32"), { titleBarStyle: "default" });
+  assert.deepEqual(windowChromeOptions("linux"), { titleBarStyle: "default" });
 });
 
 test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle", async () => {

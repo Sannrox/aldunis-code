@@ -17,6 +17,7 @@ import {
   UNREGISTER_BROWSER_VIEW_CHANNEL,
 } from "./channels.ts";
 import { SharedBrowserManager } from "./shared-browser.ts";
+import { windowChromeOptions } from "./window-chrome.ts";
 
 const applicationRoot = fileURLToPath(new URL("..", import.meta.url));
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -79,6 +80,7 @@ if (!gotSingleInstanceLock) {
       minWidth: 920,
       minHeight: 640,
       show: false,
+      ...windowChromeOptions(process.platform),
       webPreferences: {
         preload: join(applicationRoot, "dist-electron", "preload.cjs"),
         contextIsolation: true,

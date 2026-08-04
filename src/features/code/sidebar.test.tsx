@@ -45,6 +45,7 @@ test("new conversations wait for registered projects to restore", () => {
     /title="Restoring projects…" aria-label="New conversation" disabled=""/,
   );
   assert.match(html, /data-sidebar-state="expanded"/);
+  assert.match(html, /aldunis-brand-mark--compact/);
   assert.match(
     html,
     /data-sidebar-collapse-toggle[^>]*aria-keyshortcuts="Meta\+B Control\+B"[^>]*title="Collapse sidebar \(⌘B \/ Ctrl\+B\)"/,
