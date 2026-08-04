@@ -3,6 +3,7 @@ import type { Preferences } from "../../preferences";
 import { Button } from "../../components/ui";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { VOICE_INPUT_SHORTCUT_LABEL } from "../../lib/voice-input";
+import { shortcutLabel } from "../../lib/workspace-shortcuts";
 
 const SECTIONS = [
   "General",
@@ -32,6 +33,7 @@ export function preferencesHaveUnsavedChanges(
     || draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta
     || draft.showThinking !== saved.showThinking
     || draft.commandPaletteShortcut !== saved.commandPaletteShortcut
+    || draft.conversationSearchShortcut !== saved.conversationSearchShortcut
     || draft.managedWorktreeLimit !== saved.managedWorktreeLimit;
 }
 
@@ -285,7 +287,7 @@ export function PreferencesDialog({
             {section === "Worktrees" && "Managed checkout limits for Aldunis-created worktrees."}
             {section === "Approvals" && "How mutating tools ask for consent."}
             {section === "Access" && "Loopback and paired remote sessions."}
-            {section === "Keybindings" && "Command palette, product switch, sidebar, and composer shortcuts."}
+            {section === "Keybindings" && "Command palette, conversation search, product switch, sidebar, and composer shortcuts."}
             {section === "Diagnostics" && "Where to look when a provider will not start."}
             {section === "Archived" && "Review conversations hidden from the active sidebar."}
           </div>
@@ -319,6 +321,33 @@ export function PreferencesDialog({
                         </button>
                       ))}
                     </div>
+                  </div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <div className="fn">Conversation search</div>
+                    <div className="fd">Search bounded local thread metadata. Messages and repository contents stay excluded.</div>
+                  </div>
+                  <div className="fc">
+                    <div className="seg" role="group" aria-label="Conversation search shortcut">
+                      <button
+                        type="button"
+                        className={draft.conversationSearchShortcut === "mod+shift+f" ? "on" : ""}
+                        aria-pressed={draft.conversationSearchShortcut === "mod+shift+f"}
+                        onClick={() => update("conversationSearchShortcut", "mod+shift+f")}
+                      >
+                        ⌘⇧F
+                      </button>
+                      <button
+                        type="button"
+                        className={draft.conversationSearchShortcut === "mod+shift+o" ? "on" : ""}
+                        aria-pressed={draft.conversationSearchShortcut === "mod+shift+o"}
+                        onClick={() => update("conversationSearchShortcut", "mod+shift+o")}
+                      >
+                        ⌘⇧O
+                      </button>
+                    </div>
+                    <kbd>{shortcutLabel(draft.conversationSearchShortcut)}</kbd>
                   </div>
                 </div>
                 <div className="field">

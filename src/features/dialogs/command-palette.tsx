@@ -1,11 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
+import type { ThreadMetadata } from "../../types";
 import { OverlayDialog } from "./overlay-dialog";
 
 export const CREATE_WORKTREE_ACTION_COPY = {
   label: "Create worktree",
   detail: "Create an isolated managed checkout for conversation work",
 } as const;
+
+export function commandPaletteThreadMatches(thread: ThreadMetadata, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return false;
+  return [thread.title, thread.projectName, thread.worktree]
+    .some((value) => value.toLocaleLowerCase().includes(normalized));
+}
 
 export function CommandPalette({
   open,
@@ -17,6 +25,8 @@ export function CommandPalette({
   onConnections = () => undefined,
   onManageWorktrees,
   onAutomations,
+  threads = [],
+  onOpenConversation = () => undefined,
   hasRepository = false,
 }: {
   open: boolean;
@@ -28,6 +38,8 @@ export function CommandPalette({
   onConnections?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
+  threads?: ThreadMetadata[];
+  onOpenConversation?: (threadId: string) => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
   hasRepository?: boolean;
 }) {
@@ -91,6 +103,14 @@ export function CommandPalette({
               },
             ]
           : []),
+        ...threads
+          .filter((thread) => commandPaletteThreadMatches(thread, query))
+          .map((thread) => ({
+            id: `thread:${thread.id}`,
+            label: `Open: ${thread.title || "Untitled conversation"}`,
+            detail: `${thread.projectName} · ${thread.worktree}`,
+            run: () => onOpenConversation(thread.id),
+          })),
       ].filter((action) => {
         const q = query.toLocaleLowerCase();
         return (
@@ -98,7 +118,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAutomations, onConnections, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
+    [hasRepository, onAutomations, onConnections, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
   );
 
   useEffect(() => {
@@ -168,7 +188,7 @@ export function CommandPalette({
           {actions.length === 0 && <p>No matching actions.</p>}
           {actions.map((action, index) => (
             <button
-              key={action.label}
+              key={"id" in action ? action.id : action.label}
               type="button"
               id={`command-palette-action-${index}`}
               role="option"
