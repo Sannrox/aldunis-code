@@ -9,6 +9,7 @@ import {
   localApplicationUrl,
   selectedDirectoryPath,
 } from "./lifecycle.ts";
+import { nightlyVersion, previewTag } from "../scripts/preview-version.ts";
 import { validateDesktopReleaseTag } from "../scripts/verify-desktop-release-tag.ts";
 
 test("packaged startup waits for a loopback backend on an ephemeral port", async () => {
@@ -97,6 +98,38 @@ test("desktop release evidence is bound to the package version", () => {
     () => validateDesktopReleaseTag("0.1.0", "0.1.0"),
     /must exactly match package version/,
   );
+});
+
+test("preview versions are generated as dated semver prereleases", () => {
+  const version = nightlyVersion("0.1.0", "20260804", 17);
+  assert.equal(version, "0.1.0-nightly.20260804.17");
+  assert.equal(previewTag(version), "preview-v0.1.0-nightly.20260804.17");
+  assert.throws(
+    () => nightlyVersion("0.1.0-nightly.20260803.16", "20260804", 17),
+    /base package version is invalid/,
+  );
+  assert.throws(
+    () => nightlyVersion("0.1.0", "2026-08-04", 17),
+    /UTC build date is invalid/,
+  );
+});
+
+test("desktop distribution workflow keeps preview publication separate from stable tags", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/desktop-release-evidence.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /release_tag="preview-v\$\{version\}"/);
+  assert.match(workflow, /verify:desktop-release-tag/);
+  assert.match(workflow, /npm version --no-git-tag-version/);
+  assert.match(workflow, /-c\.mac\.bundleShortVersion="\$\{BASE_VERSION\}"/);
+  assert.match(workflow, /-c\.mac\.bundleVersion="\$\{BASE_VERSION\}"/);
+  assert.match(workflow, /--prerelease/);
+  assert.match(workflow, /gh release upload/);
+  assert.match(workflow, /--clobber/);
+  assert.match(workflow, /contents: write/);
 });
 
 test("native packages cannot overwrite the web build output", async () => {
