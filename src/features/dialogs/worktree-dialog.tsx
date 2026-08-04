@@ -16,7 +16,7 @@ export function WorktreeDialog({
   onChanged: (repository: RepositoryMetadata) => void;
 }) {
   const selected = repository?.worktrees.find((worktree) => worktree.path === selectedPath) ?? null;
-  const [base, setBase] = useState("main");
+  const [base, setBase] = useState(() => repository?.defaultBranch ?? "");
   const [branch, setBranch] = useState("");
   const [path, setPath] = useState("");
   const [plan, setPlan] = useState<WorktreeCreationPlan | WorktreeRemovalPlan | null>(null);
@@ -28,8 +28,8 @@ export function WorktreeDialog({
     setError(null);
     setBranch("");
     setPath("");
-    setBase(repository?.worktrees.find((worktree) => worktree.path === repository.root)?.branch ?? "main");
-  }, [repository?.root, selectedPath]);
+    setBase(repository?.defaultBranch ?? "");
+  }, [repository?.defaultBranch, repository?.root, selectedPath]);
   if (!repository) return null;
 
   const request = async (route: string, body: unknown) => {
@@ -130,19 +130,23 @@ export function WorktreeDialog({
           </>
         ) : (
           <form onSubmit={previewCreate}>
-            <label htmlFor="worktree-base">Base revision</label>
+            <label htmlFor="worktree-base">Default branch</label>
             <input
               id="worktree-base"
               name="worktree-base"
-              data-dialog-initial-focus
               value={base}
-              onChange={(event) => { setBase(event.target.value); setPlan(null); }}
+              readOnly
+              aria-readonly="true"
               disabled={busy}
             />
+            {!repository.defaultBranch && (
+              <p role="alert">The default branch could not be determined. Configure one remote HEAD or a conventional local default branch before creating a worktree.</p>
+            )}
             <label htmlFor="worktree-branch">New branch</label>
             <input
               id="worktree-branch"
               name="worktree-branch"
+              data-dialog-initial-focus
               value={branch}
               onChange={(event) => { setBranch(event.target.value); setPlan(null); }}
               placeholder="codex/26-isolated-worktree"
@@ -166,7 +170,7 @@ export function WorktreeDialog({
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={busy || !base.trim() || !branch.trim()}
+                  disabled={busy || !repository.defaultBranch || !branch.trim()}
                   aria-label={busy ? "Validating worktree creation" : "Preview worktree creation"}
                 >
                   {busy ? "Validating…" : "Preview creation"}
@@ -218,4 +222,3 @@ export function WorktreeDialog({
     </ModalSurface>
   );
 }
-

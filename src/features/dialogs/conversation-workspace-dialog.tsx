@@ -13,10 +13,10 @@ function responseError(body: unknown, fallback: string): string {
 
 export const CURRENT_WORKSPACE_RECOVERY_COPY = {
   label: "Use current workspace",
-  detail: "Managed worktrees require a clean repository; use the current workspace below to keep local changes.",
+  detail: "Managed worktrees require a clean index; use the current workspace below to keep staged local changes.",
 } as const;
 
-export const CLEAN_REPOSITORY_ERROR = "Start from a clean repository before creating an isolated worktree.";
+export const CLEAN_REPOSITORY_ERROR = "Stage or discard indexed changes before creating an isolated worktree.";
 
 export function isDirtyRepositoryError(message: string): boolean {
   return message === CLEAN_REPOSITORY_ERROR;
@@ -48,29 +48,25 @@ export function ConversationWorkspaceDialog({
   onUseCurrentWorkspace?: () => void;
 }) {
   const selectedWorktree = repository.worktrees.find((worktree) => worktree.path === repository.selectedWorktree);
-  const rootWorktree = repository.worktrees.find((worktree) => worktree.path === repository.root);
   const [dirtyRepository, setDirtyRepository] = useState(false);
   const canUseCurrentWorkspaceOption = canUseCurrentWorkspace(
     selectedWorktree,
     onUseCurrentWorkspace,
     dirtyRepository,
   );
-  const initialBase = selectedWorktree?.head ?? rootWorktree?.head ?? "HEAD";
-  const [base, setBase] = useState(initialBase);
+  const [base, setBase] = useState(repository.defaultBranch ?? "");
   const [branch, setBranch] = useState(() => `aldunis/chat-${conversationId.slice(0, 8)}`);
   const [plan, setPlan] = useState<WorktreeCreationPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const current = repository.worktrees.find((worktree) => worktree.path === repository.selectedWorktree);
-    const root = repository.worktrees.find((worktree) => worktree.path === repository.root);
-    setBase(current?.head ?? root?.head ?? "HEAD");
+    setBase(repository.defaultBranch ?? "");
     setBranch(`aldunis/chat-${conversationId.slice(0, 8)}`);
     setPlan(null);
     setError(null);
     setDirtyRepository(false);
-  }, [conversationId, repository.root, repository.selectedWorktree]);
+  }, [conversationId, repository.defaultBranch, repository.root, repository.selectedWorktree]);
 
   const preview = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -141,18 +137,17 @@ export function ConversationWorkspaceDialog({
         </p>
         {!plan ? (
           <form onSubmit={(event) => void preview(event)}>
-            <label htmlFor="conversation-workspace-base">Base revision</label>
+            <label htmlFor="conversation-workspace-base">Default branch</label>
             <input
               id="conversation-workspace-base"
               value={base}
-              onChange={(event) => {
-                setBase(event.target.value);
-                setPlan(null);
-                setDirtyRepository(false);
-              }}
+              readOnly
+              aria-readonly="true"
               disabled={busy}
-              data-dialog-initial-focus
             />
+            {!repository.defaultBranch && (
+              <p role="alert">The default branch could not be determined. Configure one remote HEAD or a conventional local default branch before creating a worktree.</p>
+            )}
             <label htmlFor="conversation-workspace-branch">New branch</label>
             <input
               id="conversation-workspace-branch"
@@ -163,6 +158,7 @@ export function ConversationWorkspaceDialog({
                 setDirtyRepository(false);
               }}
               disabled={busy}
+              data-dialog-initial-focus
             />
             <footer>
               <Button type="button" onClick={onClose} disabled={busy}>Use another workspace</Button>
@@ -174,7 +170,7 @@ export function ConversationWorkspaceDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !base.trim() || !branch.trim()}
+                disabled={busy || !repository.defaultBranch || !branch.trim()}
               >
                 {busy ? "Validating…" : "Preview creation"}
               </Button>

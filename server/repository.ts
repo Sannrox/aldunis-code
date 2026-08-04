@@ -30,6 +30,7 @@ export interface WorktreeMetadata {
 export interface RepositoryMetadata {
   name: string;
   root: string;
+  defaultBranch: string | null;
   selectedWorktree: string;
   worktrees: WorktreeMetadata[];
 }
@@ -77,6 +78,20 @@ async function git(
         : "The workspace checkpoint operation could not be completed.",
       409,
     );
+  }
+}
+
+async function optionalGit(worktree: string, args: string[]): Promise<string | null> {
+  try {
+    const result = await execFileAsync("git", ["-C", worktree, ...args], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const value = result.stdout.trim();
+    return value || null;
+  } catch {
+    return null;
   }
 }
 
@@ -519,6 +534,57 @@ export async function repositoryMainRoot(worktreePath: string): Promise<string> 
   }
 }
 
+/**
+ * Resolve the branch a new Aldunis worktree should start from.
+ *
+ * Configured remote HEADs are the strongest local signal for a repository's
+ * default branch. They must agree when more than one is present. Without one,
+ * use a conventional branch name; never infer the default from the currently
+ * checked-out branch.
+ *
+ * A null result is intentional: opening a repository remains available when
+ * its default branch cannot be determined, while managed worktree creation
+ * fails closed until the ambiguity is resolved.
+ */
+export async function repositoryDefaultBranch(worktreePath: string): Promise<string | null> {
+  const root = await canonicalizeRepositoryRoot(worktreePath);
+  const remotes = (await optionalGit(root, ["remote"]))?.split(/\r?\n/).filter(Boolean) ?? [];
+  const remoteHeads: Array<{ remote: string; branch: string; ref: string }> = [];
+  for (const remote of remotes) {
+    const remoteHead = await optionalGit(root, [
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      `refs/remotes/${remote}/HEAD`,
+    ]);
+    if (!remoteHead || !remoteHead.startsWith(`${remote}/`)) continue;
+    remoteHeads.push({
+      remote,
+      branch: remoteHead.slice(remote.length + 1),
+      ref: remoteHead,
+    });
+  }
+  const remoteBranches = new Set(remoteHeads.map((head) => head.branch));
+  if (remoteBranches.size > 1) {
+    return null;
+  }
+  if (remoteHeads.length > 0) {
+    const { branch, ref } = remoteHeads[0]!;
+    const localBranch = await optionalGit(root, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+    return localBranch === null ? ref : branch;
+  }
+
+  const localBranches = (await optionalGit(root, [
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads",
+  ]))?.split(/\r?\n/).filter(Boolean) ?? [];
+  for (const candidate of ["main", "master", "trunk"]) {
+    if (candidate && localBranches.includes(candidate)) return candidate;
+  }
+  return null;
+}
+
 export interface CollapsedProject {
   id: string;
   name: string;
@@ -641,6 +707,7 @@ export async function openRepository(input: string): Promise<RepositoryMetadata>
   return {
     name: mainRoot.split(sep).filter(Boolean).at(-1) ?? selected.split(sep).filter(Boolean).at(-1) ?? mainRoot,
     root: mainRoot,
+    defaultBranch: await repositoryDefaultBranch(mainRoot),
     selectedWorktree: selected,
     worktrees,
   };

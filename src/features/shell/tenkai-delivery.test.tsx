@@ -17,6 +17,7 @@ test("Tenkai delivery renders the staged local authority boundary", () => {
         projectId: "project-1",
         name: "widget",
         root: "/repo",
+        defaultBranch: "main",
         selectedWorktree: "/repo",
         worktrees: [],
       }}
