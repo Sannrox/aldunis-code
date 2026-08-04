@@ -30,7 +30,9 @@ import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_SIDEBAR_OPEN,
+  matchesSidebarToggleShortcut,
   readSidebarOpenPreference,
+  SIDEBAR_TOGGLE_SHORTCUT_LABEL,
   writeSidebarOpenPreference,
 } from "../../lib/sidebar-state";
 import { DomainPage } from "../shell/domain-page";
@@ -586,10 +588,7 @@ export function CodeWorkbench({
     const onKeyDown = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented
-        || !(event.metaKey || event.ctrlKey)
-        || event.shiftKey
-        || event.altKey
-        || event.key.toLowerCase() !== "b"
+        || !matchesSidebarToggleShortcut(event)
         || isSidebarShortcutCaptured(event.target)
       ) return;
       event.preventDefault();
@@ -1232,8 +1231,9 @@ export function CodeWorkbench({
           data-sidebar-open-toggle
           aria-controls="code-sidebar"
           aria-expanded={sidebarOpen}
+          aria-keyshortcuts="Meta+B Control+B"
           aria-label="Expand sidebar"
-          title="Expand sidebar (⌘/Ctrl+B)"
+          title={`Expand sidebar (${SIDEBAR_TOGGLE_SHORTCUT_LABEL})`}
           onClick={toggleSidebar}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">

@@ -81,11 +81,11 @@ bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
 
-The workbench sidebar can be collapsed from its header or with `Mod+B`. The
-preference is local to the current browser or desktop profile, and the
-collapsed state removes the sidebar from the layout while leaving the main
-conversation surface available. The same control is used in the web renderer
-and Electron desktop shell.
+The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
+macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
+browser or desktop profile, and the collapsed state removes the sidebar from
+the layout while leaving the main conversation surface available. The same
+control is used in the web renderer and Electron desktop shell.
 
 **Settling does not release the worktree.** Aldunis Code enforces a managed
 worktree limit (`server/worktrees.ts`), so settled conversations can continue
