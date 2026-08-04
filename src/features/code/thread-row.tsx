@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ConversationSummary } from "../../types";
 import type { ProviderId } from "../../types";
 import { providerAvatarInitials } from "../../lib/provider-readiness";
@@ -65,19 +66,73 @@ export function ThreadRow({
   ].filter(Boolean).join(", ");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuPopupRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const hasMenuActions = Boolean(onAction || (showBeside && onOpenBeside));
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    const trigger = menuTriggerRef.current;
+    const popup = menuPopupRef.current;
+    if (!trigger || !popup) return;
+
+    const updatePosition = () => {
+      const triggerRect = trigger.getBoundingClientRect();
+      const popupRect = popup.getBoundingClientRect();
+      const popupWidth = popup.offsetWidth || popupRect.width;
+      const popupHeight = popup.offsetHeight || popupRect.height;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const edge = 8;
+      const gap = 4;
+      const scrollContainer = trigger.closest<HTMLElement>(".list");
+      const scrollRect = scrollContainer?.getBoundingClientRect();
+      const visibleTop = Math.max(0, scrollRect?.top ?? 0);
+      const visibleBottom = Math.min(viewportHeight, scrollRect?.bottom ?? viewportHeight);
+      const hasTriggerGeometry = triggerRect.width > 0 || triggerRect.height > 0;
+      if (hasTriggerGeometry && (triggerRect.bottom <= visibleTop || triggerRect.top >= visibleBottom)) {
+        setMenuOpen(false);
+        return;
+      }
+      const maxLeft = Math.max(edge, viewportWidth - popupWidth - edge);
+      const left = Math.max(edge, Math.min(triggerRect.right - popupWidth, maxLeft));
+      const belowTop = triggerRect.bottom + gap;
+      const aboveTop = triggerRect.top - popupHeight - gap;
+      const maxTop = Math.max(edge, viewportHeight - popupHeight - edge);
+      const top = popupHeight > viewportHeight - edge * 2
+        ? edge
+        : popupHeight <= viewportHeight - triggerRect.bottom - edge - gap
+          ? Math.min(belowTop, maxTop)
+          : Math.max(edge, Math.min(aboveTop, maxTop));
+
+      setMenuPosition({ top, left });
+    };
+
+    const frame = window.requestAnimationFrame(updatePosition);
+    window.addEventListener("resize", updatePosition);
+    // Capture scroll events from the sidebar's nested scroll container as well
+    // as the document, keeping the fixed menu attached to its trigger.
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!menuOpen) return;
     const root = menuRef.current;
     if (!root) return;
-    const items = () => [...root.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const items = () => [...(menuPopupRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
     const frame = window.requestAnimationFrame(() => {
       items()[0]?.focus();
     });
     const onPointer = (event: MouseEvent) => {
-      if (!root.contains(event.target as Node)) setMenuOpen(false);
+      const target = event.target as Node;
+      if (!root.contains(target) && !menuPopupRef.current?.contains(target)) setMenuOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -172,23 +227,29 @@ export function ThreadRow({
             <button
               type="button"
               className="row-more"
+              ref={menuTriggerRef}
               aria-label={`More actions for "${conversation.title}" · ${listLabel}`}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-controls={menuOpen ? menuId : undefined}
               onClick={(event) => {
                 event.stopPropagation();
+                setMenuPosition(null);
                 setMenuOpen((open) => !open);
               }}
             >
               ⋮
             </button>
-            {menuOpen && (
+            {menuOpen && typeof document !== "undefined" && createPortal(
               <div
                 id={menuId}
-                className="row-menu-pop"
+                ref={menuPopupRef}
+                className="row-menu-pop row-menu-pop--portal"
                 role="menu"
                 aria-label={`Actions for ${conversation.title} · ${listLabel}`}
+                style={menuPosition
+                  ? { top: menuPosition.top, left: menuPosition.left }
+                  : { visibility: "hidden" }}
               >
                 {showBeside && onOpenBeside && (
                   <button
@@ -267,7 +328,8 @@ export function ThreadRow({
                     </button>
                   </>
                 )}
-              </div>
+              </div>,
+              document.body,
             )}
           </div>
         )}
