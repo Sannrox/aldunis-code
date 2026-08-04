@@ -38,8 +38,11 @@ const SUPPORTED_SHIKIGAMI_MAJOR = 1;
 const MIN_PATCH_FOR_HOST = 2;
 /** Native parked-run resume (--resume + --answer-file) shipped in v1.0.5. */
 const MIN_PATCH_FOR_RESUME = 5;
+/** Model catalog discovery was added to the Shikigami CLI in version 1.0.5. */
+const MODEL_CATALOG_MIN_PATCH = 5;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const RUN_TIMEOUT_MS = 30 * 60_000;
+const MODEL_CATALOG_TIMEOUT_MS = 15_000;
 const EVENT_PREFIX = "[shikigami] ";
 /** Cap matches shikigami hook timeout_ms max (120s). */
 const PRE_TOOL_HOOK_TIMEOUT_MS = 120_000;
@@ -142,6 +145,18 @@ export function assertSupportedShikigamiVersion(output: string): string {
     );
   }
   return `${match[1]}.${match[2]}.${match[3]}`;
+}
+
+/** Whether this Shikigami version supports the model catalog command. */
+export function supportsShikigamiModelCatalog(version: string): boolean {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  return major > SUPPORTED_SHIKIGAMI_MAJOR
+    || (major === SUPPORTED_SHIKIGAMI_MAJOR
+      && (minor > 0 || (minor === 0 && patch >= MODEL_CATALOG_MIN_PATCH)));
 }
 
 export function assertManagedShikigamiVersion(output: string): string {
@@ -373,6 +388,64 @@ export async function loadShikigamiConfig(options: {
 function nativeConfigHasGovernedProfile(config: JsonRecord): boolean {
   return stringSetting(config.profile, "name")?.toLowerCase() === "governed"
     && Object.keys(table(config.model)).length === 0;
+}
+
+/** Parse the stable JSON model catalog emitted by Shikigami. */
+export function parseShikigamiModelCatalog(output: string): ShikigamiModel[] {
+  let value: unknown;
+  try {
+    value = JSON.parse(output);
+  } catch {
+    return [];
+  }
+  const root = record(value);
+  const rows = root && Array.isArray(root.available_models)
+    ? root.available_models
+    : [];
+  const defaultModel = typeof root?.default_model === "string"
+    ? root.default_model.trim()
+    : "";
+  const seen = new Set<string>();
+  const models: ShikigamiModel[] = [];
+  for (const row of rows) {
+    const entry = record(row);
+    const id = stringSetting(entry, "canonical_model")
+      || stringSetting(entry, "upstream_model");
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      displayName: id === "auto" ? "Auto (Sekai-Chisei)" : id,
+      isDefault: defaultModel ? id === defaultModel : models.length === 0,
+    });
+  }
+  return models;
+}
+
+async function probeShikigamiModelCatalog(options: {
+  executable: string;
+  environment: NodeJS.ProcessEnv;
+  configPath?: string;
+  cwd?: string;
+  version: string;
+}): Promise<ShikigamiModel[]> {
+  if (!supportsShikigamiModelCatalog(options.version)) return [];
+  const args = options.configPath
+    ? ["--config", options.configPath, "doctor", "--models", "--json"]
+    : ["doctor", "--models", "--json"];
+  try {
+    const result = await execFileAsync(options.executable, args, {
+      encoding: "utf8",
+      timeout: MODEL_CATALOG_TIMEOUT_MS,
+      env: options.environment,
+      cwd: options.cwd,
+    });
+    return parseShikigamiModelCatalog(result.stdout);
+  } catch {
+    // Discovery is a readiness projection. Keep the configured model visible
+    // when the catalog command is unavailable or the CLI is older.
+    return [];
+  }
 }
 
 export function resolveModelAdapter(
@@ -634,13 +707,23 @@ export class ShikigamiAdapter {
       };
     }
     const { adapter, authenticated, modelId, apiKeyEnv } = resolved;
-    const models: ShikigamiModel[] = adapter === "scripted"
+    const discoveredModels = authenticated && (adapter === "plane" || modelId === "auto")
+      ? await probeShikigamiModelCatalog({
+        executable,
+        environment: env,
+        configPath: options.configPath,
+        cwd: options.cwd,
+        version,
+      })
+      : [];
+    const configuredModels: ShikigamiModel[] = adapter === "scripted"
       ? [{ id: "scripted", displayName: "Scripted (offline)", isDefault: true }]
       : [{
         id: modelId,
         displayName: adapter === "plane" ? modelId : modelId || "HTTP model",
         isDefault: true,
       }];
+    const models = discoveredModels.length > 0 ? discoveredModels : configuredModels;
     const detail = !authenticated && adapter === "http"
       ? `Set ${apiKeyEnv}, or force SHIKIGAMI_MODEL_ADAPTER=scripted.`
       : null;
