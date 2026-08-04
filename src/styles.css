@@ -2231,7 +2231,7 @@ select.ui-input {
   font: 11px var(--font-mono);
 }
 .new-chat-context {
-  width: min(700px, 100%);
+  width: min(680px, 100%);
   margin: 0 auto 12px;
   padding: 0 8px;
 }
@@ -2376,6 +2376,39 @@ select.ui-input {
 .new-chat-context-row--button:focus-visible {
   background: var(--accent);
   outline: none;
+}
+.new-chat-context-advanced {
+  border-radius: 8px;
+}
+.new-chat-context-advanced > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.new-chat-context-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.new-chat-context-advanced > summary:hover,
+.new-chat-context-advanced > summary:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+.new-chat-context-advanced-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 8px 6px 38px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+}
+.new-chat-context-advanced-body code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font: 10.5px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .new-chat-context-copy {
   display: grid;
@@ -2588,6 +2621,41 @@ select.ui-input {
   .new-chat-context-summary > svg:last-child {
     transition: none;
   }
+}
+.starter-prompts {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.starter-prompts-label {
+  color: var(--muted-foreground);
+  font: 10px var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.starter-prompts-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.starter-prompt {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.starter-prompt:hover,
+.starter-prompt:focus-visible {
+  border-color: var(--input);
+  background: var(--accent);
+  color: var(--foreground);
+  outline: none;
 }
 .conversation-workspace-dialog {
   padding: 4px 16px 16px;

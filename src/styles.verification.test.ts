@@ -552,6 +552,17 @@ test("sparse mobile empty state stays above the fixed composer", () => {
   );
 });
 
+test("narrow workbench uses a drawer sidebar with an explicit scrim", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  const drawerCss = shell.slice(shell.lastIndexOf("/* Narrow screens use the sidebar as a temporary navigation drawer"));
+  assert.match(drawerCss, /\.sidebar-scrim\s*\{\s*display:\s*none;\s*\}/);
+  assert.match(drawerCss, /\.app\s*\{\s*flex-direction:\s*row !important;\s*\}/);
+  assert.match(drawerCss, /\.sb \{[\s\S]*?position: fixed !important[\s\S]*?width: min\(86vw, 320px\) !important/);
+  assert.match(drawerCss, /\.sb\[data-sidebar-state="collapsed"\][\s\S]*?transform: translateX\(-105%\)/);
+  assert.match(drawerCss, /\.sidebar-scrim \{[\s\S]*?z-index: 35[\s\S]*?background: rgb\(0 0 0 \/ \.16\)/);
+});
+
 test("diff source lines scroll horizontally instead of wrapping", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");

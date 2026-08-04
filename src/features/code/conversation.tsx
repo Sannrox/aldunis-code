@@ -128,7 +128,7 @@ import {
 import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
-  return threadId ? `Reply to ${providerName}…` : "Describe the task you want to tackle…";
+  return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
 }
 
 /**
@@ -155,6 +155,44 @@ export function filterSelectableWorktrees(
     return [selected, ...matches];
   }
   return matches;
+}
+
+const STARTER_PROMPTS = [
+  { label: "Fix a bug", value: "Fix a bug in this repository" },
+  { label: "Review changes", value: "Review the current changes in this repository" },
+  { label: "Explain the codebase", value: "Explain the structure of this codebase" },
+] as const;
+
+const NEW_CONVERSATION_WORKSPACE_COPY: Record<WorkspaceMode, {
+  label: string;
+  summary: string;
+  detail: string;
+}> = {
+  shared: {
+    label: "Shared checkout",
+    summary: "Use the selected worktree",
+    detail: "Use the selected worktree for this conversation. Other conversations can share it.",
+  },
+  "aldunis-managed": {
+    label: "Dedicated worktree",
+    summary: "One isolated worktree for this chat",
+    detail: "Aldunis creates and binds a dedicated Git worktree after one approval.",
+  },
+  "provider-native": {
+    label: "Provider-owned workspace",
+    summary: "The provider owns the isolated workspace",
+    detail: "The selected provider creates and owns the workspace when this adapter supports it.",
+  },
+};
+
+export function formatHostLabel(hostname: string | undefined): string {
+  return !hostname
+    || hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "::1"
+    || hostname === "[::1]"
+    ? "Local Aldunis host"
+    : hostname;
 }
 
 type VoiceInputState = "idle" | "listening" | "unsupported" | "error";
@@ -1839,9 +1877,9 @@ export function Conversation({
     selectedProvider,
   ]);
   const modeCopy: Record<InteractionMode, { label: string; authority: string }> = {
-    ask: { label: "Ask", authority: "Read-only tools" },
-    plan: { label: "Plan", authority: "Planning; mutations blocked" },
-    build: { label: "Build", authority: "Mutations require approval" },
+    ask: { label: "Ask", authority: "Reads only" },
+    plan: { label: "Plan", authority: "Plans only; no changes" },
+    build: { label: "Build", authority: "Writes after approval" },
   };
   useEffect(() => {
     const trigger = getComposerTrigger(draft);
@@ -2440,10 +2478,35 @@ export function Conversation({
             ? <Button variant="primary" size="lg" onClick={() => onOpenProfiles(provider)}>Configure Claude</Button>
             : null,
         }
-      : {
-          title: "Describe the outcome",
-          detail: "Your prompt will run in the selected project and worktree.",
+    : !worktree
+      ? {
+          title: "Choose a worktree to continue",
+          detail: "Select an available worktree below, then start with the outcome you want.",
           action: null,
+        }
+      : {
+          title: "What should we build, fix, or review?",
+          detail: "Start with the outcome you want. Aldunis keeps the conversation bound to this worktree.",
+          action: (
+            <div className="starter-prompts" aria-label="Example prompts">
+              <span className="starter-prompts-label">Try a starting point</span>
+              <div className="starter-prompts-list">
+                {STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    type="button"
+                    className="starter-prompt"
+                    key={prompt.label}
+                    onClick={() => {
+                      setDraft(prompt.value);
+                      composerRef.current?.focus();
+                    }}
+                  >
+                    {prompt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ),
         };
   const stateCopy: Record<ProviderState, string> = {
     idle: repository ? "Ready" : "Open a repository to start",
@@ -2467,9 +2530,10 @@ export function Conversation({
     : !worktree
       ? { label: "Choose worktree", tone: "pending" }
       : { label: "Ready", tone: "ready" };
-  const hostLabel = typeof window !== "undefined" && window.location.hostname
-    ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
-    : "Local Aldunis host";
+  const newConversationWorkspaceCopy = NEW_CONVERSATION_WORKSPACE_COPY[workspaceMode];
+  const hostLabel = formatHostLabel(
+    typeof window !== "undefined" ? window.location.hostname : undefined,
+  );
   const workspaceSetupRequired = !repository || !worktree;
   const workspaceSetupVisible = workspaceSetupOpen || workspaceSetupRequired;
   const workspaceSummary = !repository
@@ -3154,17 +3218,19 @@ export function Conversation({
             >
               <span className="new-chat-context-summary-icon" aria-hidden="true"><Icon name="route" /></span>
               <span className="new-chat-context-summary-copy">
-                <span className="new-chat-context-eyebrow">Runs in</span>
+                <span className="new-chat-context-eyebrow">Workspace</span>
                 <strong title={workspaceSummary}>{workspaceSummary}</strong>
                 <small title={workspaceSummaryDetail}>{workspaceSummaryDetail}</small>
               </span>
-              <span
-                className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
-                aria-hidden="true"
-              >
-                <span />
-                {workspaceSetupStatus.label}
-              </span>
+              {workspaceSetupStatus.tone !== "ready" && (
+                <span
+                  className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
+                  aria-hidden="true"
+                >
+                  <span />
+                  {workspaceSetupStatus.label}
+                </span>
+              )}
               <Icon name="chevron" />
             </button>
             {workspaceSetupVisible && <div className="new-chat-context-body" id={`${pane}-new-chat-context-body`}>
@@ -3178,8 +3244,8 @@ export function Conversation({
                 <div className="new-chat-context-row new-chat-context-row--host" aria-label={`${hostLabel}, current Aldunis host`}>
                   <Icon name="computer" />
                   <span className="new-chat-context-copy">
-                    <strong>{hostLabel}</strong>
-                    <small>Current Aldunis host</small>
+                    <strong>Execution host</strong>
+                    <small>{hostLabel}</small>
                   </span>
                 </div>
                 <div className="new-chat-context-control" ref={projectMenuRef}>
@@ -3267,12 +3333,8 @@ export function Conversation({
                 >
                   <Icon name="code" />
                   <span className="new-chat-context-copy">
-                    <strong>{workspaceCopy.label}</strong>
-                    <small>{workspaceMode === "provider-native"
-                      ? "Provider-owned workspace"
-                      : workspaceMode === "shared"
-                        ? "Use the selected worktree for this chat"
-                        : "One Aldunis worktree for this chat"}</small>
+                    <strong>{newConversationWorkspaceCopy.label}</strong>
+                    <small>{newConversationWorkspaceCopy.summary}</small>
                   </span>
                   <Icon name="chevron" />
                 </button>
@@ -3287,9 +3349,10 @@ export function Conversation({
                       const selected = item === workspaceMode;
                       const native = item === "provider-native";
                       const available = !native || providerNativeWorkspaceAvailable;
+                      const itemCopy = NEW_CONVERSATION_WORKSPACE_COPY[item];
                       const detail = native && !available
-                        ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native workspace creation yet."
-                        : WORKSPACE_MODE_COPY[item].detail;
+                        ? "Provider-owned workspaces are not available for this provider yet."
+                        : itemCopy.detail;
                       return (
                         <button
                           type="button"
@@ -3297,7 +3360,7 @@ export function Conversation({
                           aria-selected={selected}
                           aria-disabled={!available}
                           disabled={!available}
-                          aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                          aria-label={`${itemCopy.label}: ${detail}${selected ? ", selected" : ""}`}
                           key={item}
                           data-workspace-option=""
                           data-workspace-mode={item}
@@ -3308,14 +3371,14 @@ export function Conversation({
                             selectWorkspaceMode(item, "menu");
                           }}
                         >
-                          <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
+                          <span className="n">{itemCopy.label}{selected ? " · selected" : ""}</span>
                           <span className="p">{detail}</span>
                         </button>
                       );
                     })}
                     {!providerNativeWorkspaceAvailable && (
                       <p className="new-chat-context-note" role="note">
-                        Native is shown for the second design, but the selected adapter does not expose it yet.
+                        Provider-owned workspaces are unavailable for this provider. A dedicated worktree is ready to use.
                       </p>
                     )}
                   </div>
@@ -3836,16 +3899,16 @@ export function Conversation({
                       (entry) => entry.id === option.id && entry.isDefault,
                     );
                     const detail = [
-                      option.id,
-                      isDiscoveryDefault ? "default" : null,
-                      selected ? "selected" : null,
-                    ].filter(Boolean).join(" · ");
+                      isDiscoveryDefault ? "Default model" : null,
+                      selected ? "Selected" : null,
+                    ].filter(Boolean).join(" · ") || "Available";
                     return (
                       <button
                         type="button"
                         role="option"
                         aria-selected={selected}
-                        aria-label={`${option.displayName}: ${detail}`}
+                        aria-label={`${option.displayName} (${option.id}): ${detail}`}
+                        title={option.id}
                         key={option.id}
                         data-model-option=""
                         data-model-id={option.id}
@@ -4035,11 +4098,12 @@ export function Conversation({
                   className="send"
                   onClick={() => void send()}
                   disabled={!draft.trim() || !worktree || !providerReady || runActive || !historyRestored}
-                  aria-label={`Send message, ${pane} pane`}
+                  aria-label={`${threadId ? "Send" : "Start"} conversation, ${pane} pane`}
                 >
                   <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
                     <path d="M12 19V5M5 12l7-7 7 7" />
                   </svg>
+                  <span className="send-label">{threadId ? "Send" : "Start"}</span>
                 </button>
               )}
           </div>
