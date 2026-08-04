@@ -901,7 +901,31 @@ html, body { height: 100%; }
 .sacts:focus-within { opacity: 1; }
 .srow:hover .w, .srow:hover .wt,
 .srow:focus-within .w, .srow:focus-within .wt { visibility: hidden; }
-.empty-list { padding: 8px 9px; color: var(--muted-foreground); font-size: 12.5px; line-height: 1.5; }
+.empty-list {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 8px 9px;
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.empty-list-action {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+.empty-list-action:hover:not(:disabled),
+.empty-list-action:focus-visible:not(:disabled) {
+  filter: brightness(1.08);
+  outline: none;
+}
+.empty-list-action:disabled { opacity: .48; cursor: not-allowed; }
 .glabel { display: flex; align-items: center; gap: 8px; }
 .glabel .n { margin-left: 6px; margin-right: 0; font-family: var(--font-mono); font-size: 11px; }
 .glabel-action {

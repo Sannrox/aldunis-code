@@ -542,11 +542,25 @@ export function CodeSidebar({
               })}
             </div>
             {active.length === 0 && attention.length === 0 && projects.length > 0 && (
-              <p className="empty-list">
-                {showingArchived
-                  ? "No archived conversations."
-                  : "No open threads. Start a new one — it stays in this project."}
-              </p>
+              <div className="empty-list">
+                <span>
+                  {showingArchived
+                    ? "No archived conversations."
+                    : "No open threads in this project."}
+                </span>
+                {!showingArchived && (
+                  <button
+                    type="button"
+                    className="empty-list-action"
+                    title={repositoryRestoring ? "Restoring projects…" : "New conversation"}
+                    aria-label={repositoryRestoring ? "Restoring projects…" : "New conversation"}
+                    disabled={repositoryRestoring}
+                    onClick={repositoryRestoring ? undefined : onNewConversation}
+                  >
+                    {repositoryRestoring ? "Restoring projects…" : "New conversation"}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
