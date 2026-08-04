@@ -28,6 +28,11 @@ import {
 import { Icon } from "../../components/icon";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
+import {
+  DEFAULT_SIDEBAR_OPEN,
+  readSidebarOpenPreference,
+  writeSidebarOpenPreference,
+} from "../../lib/sidebar-state";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
@@ -53,6 +58,31 @@ function paneConversationLabel(
 
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
+
+function readInitialSidebarOpen(): boolean {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_OPEN;
+  try {
+    return readSidebarOpenPreference(window.localStorage);
+  } catch {
+    return DEFAULT_SIDEBAR_OPEN;
+  }
+}
+
+function persistSidebarOpen(open: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    writeSidebarOpenPreference(window.localStorage, open);
+  } catch {
+    /* Ignore unavailable browser storage. */
+  }
+}
+
+function isSidebarShortcutCaptured(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable
+    || target.closest("[data-keybinding-capture]") !== null
+    || target.matches("input, textarea, select");
+}
 
 export function isThreadStatusEvent(value: unknown): value is {
   threadId: string;
@@ -545,6 +575,43 @@ export function CodeWorkbench({
   managedModel?: string;
   managedAccount?: ManagedAccount | null;
 }) {
+  const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarOpen);
+  const sidebarOpenButtonReference = useRef<HTMLButtonElement>(null);
+  const previousSidebarOpenReference = useRef(sidebarOpen);
+  const toggleSidebar = useCallback(() => setSidebarOpen((open) => !open), []);
+  useEffect(() => {
+    persistSidebarOpen(sidebarOpen);
+  }, [sidebarOpen]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || !(event.metaKey || event.ctrlKey)
+        || event.shiftKey
+        || event.altKey
+        || event.key.toLowerCase() !== "b"
+        || isSidebarShortcutCaptured(event.target)
+      ) return;
+      event.preventDefault();
+      event.stopPropagation();
+      toggleSidebar();
+    };
+    // Capture before focused editors consume Mod+B for formatting or browser actions.
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [toggleSidebar]);
+  useEffect(() => {
+    const wasOpen = previousSidebarOpenReference.current;
+    previousSidebarOpenReference.current = sidebarOpen;
+    if (wasOpen === sidebarOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      const selector = sidebarOpen
+        ? "[data-sidebar-collapse-toggle]"
+        : "[data-sidebar-open-toggle]";
+      document.querySelector<HTMLElement>(selector)?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sidebarOpen]);
   const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
   useEffect(() => {
     setChiseiCorrelationId(null);
@@ -1077,6 +1144,8 @@ export function CodeWorkbench({
   return (
     <>
       <CodeSidebar
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={toggleSidebar}
         product={product}
         onProductChange={onProductChange}
         productAvailability={productAvailability}
@@ -1155,7 +1224,25 @@ export function CodeWorkbench({
         managedAccount={managedAccount}
         onSettings={onSettings}
       />
-      <main className="main">
+      {!sidebarOpen && (
+        <button
+          ref={sidebarOpenButtonReference}
+          type="button"
+          className="sidebar-toggle sidebar-toggle--open"
+          data-sidebar-open-toggle
+          aria-controls="code-sidebar"
+          aria-expanded={sidebarOpen}
+          aria-label="Expand sidebar"
+          title="Expand sidebar (⌘/Ctrl+B)"
+          onClick={toggleSidebar}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m9 6 6 6-6 6" />
+            <path d="M19 5v14" />
+          </svg>
+        </button>
+      )}
+      <main className="main" data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}>
       {product !== "code" ? (
         <DomainPage
           product={product as Exclude<import("../../types").Product, "code">}
