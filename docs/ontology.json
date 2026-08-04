@@ -882,7 +882,7 @@
     {
       "subject": "ChiseiObservationReadback",
       "source": "Sekai Chisei sample-observation readback contract",
-      "locator": "contracts/chisei-operation-read.proto; server/chisei-client.ts#sampleObservation; server/host.ts#/api/integrations/chisei/observations/detail",
+      "locator": "contracts/chisei.proto; server/chisei-client.ts#sampleObservation; server/host.ts#/api/integrations/chisei/observations/detail",
       "confidence": 1.0
     },
     {

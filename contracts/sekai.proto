@@ -1,6 +1,10 @@
 syntax = "proto3";
 package sekai;
 
+// Minimal read-only compatibility snapshot from
+// Sannrox/sekai-chisei proto/sekai.proto at 82602ccc28d225686b0ec9a1f72b9002042495ce0.
+// Keep field numbers and wire names aligned with the upstream contract.
+
 message ActionInstance {
   string instance_id = 1;
   string namespace = 2;
@@ -25,13 +29,16 @@ message GetActionInstanceRequest {
   string namespace = 2;
   string idempotency_key = 3;
 }
+
 message GetActionInstanceResponse { ActionInstance instance = 1; }
+
 message ListActionInstancesRequest {
   string namespace = 1;
   string type_id = 2;
   string status = 3;
   uint32 limit = 4;
 }
+
 message ListActionInstancesResponse { repeated ActionInstance instances = 1; }
 
 message ActionEffect {
@@ -70,6 +77,7 @@ message ListActionEffectsRequest {
   string status = 4;
   uint32 limit = 5;
 }
+
 message ListActionEffectsResponse { repeated ActionEffect effects = 1; }
 
 service SekaiService {

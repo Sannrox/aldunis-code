@@ -11,3 +11,7 @@ coverage
 .env
 .env.*
 *.log
+
+# The pinned Chisei SDK is vendored as built runtime output.
+!vendor/sekai-chisei-sdk/dist/
+!vendor/sekai-chisei-sdk/dist/**

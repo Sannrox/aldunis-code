@@ -1,13 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  credentials,
-  loadPackageDefinition,
-  Metadata,
-  type Client,
-  type ServiceError,
-} from "@grpc/grpc-js";
-import { loadSync } from "@grpc/proto-loader";
+  SdkError,
+  SekaiChiseiClient,
+} from "@sannrox/sekai-chisei-sdk";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_ACTIONS = 50;
@@ -15,6 +11,8 @@ const MAX_EFFECTS = 50;
 const CACHE_TTL_MS = 30_000;
 const MAX_CACHE_ENTRIES = 100;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const CHISEI_PRINCIPAL = "aldunis-code";
+const CHISEI_PROTO_ROOT = fileURLToPath(new URL("../contracts/", import.meta.url));
 
 export interface ChiseiActionProjection {
   instanceId: string;
@@ -67,19 +65,34 @@ export interface ChiseiActionListProjection {
   warning: string | null;
 }
 
-type RpcCallback = (error: ServiceError | null, response?: unknown) => void;
-type RpcClient = Client & Record<string, (
-  request: Record<string, unknown>,
-  metadata: Metadata,
-  options: { deadline: Date },
-  callback: RpcCallback,
-) => void>;
+export interface ChiseiSdkClient {
+  raw: {
+    unary<T = unknown>(
+      service: "sekai" | "chisei",
+      method: string,
+      request: Record<string, unknown>,
+      options?: {
+        namespace?: string;
+        operationId?: string;
+        requestId?: string;
+        timeoutMs?: number;
+      },
+    ): Promise<T>;
+  };
+  close(): void;
+}
 
-type ClientFactory = (
-  service: "sekai" | "chisei",
-  endpoint: string,
-  secure: boolean,
-) => RpcClient;
+export interface ChiseiSdkFactoryConfig {
+  target: string;
+  token?: string;
+  principal: string;
+  namespace: string;
+  protoRoot: string;
+}
+
+export type ChiseiSdkFactory = (
+  config: ChiseiSdkFactoryConfig,
+) => Promise<ChiseiSdkClient>;
 
 export class ChiseiClientError extends Error {
   constructor(
@@ -117,41 +130,23 @@ function configuredEndpoint(
   }
   const hostname = url.hostname.replace(/^\[|\]$/g, "").toLocaleLowerCase();
   return {
-    target: url.host,
+    target: raw,
     secure: url.protocol === "https:",
     loopback: hostname === "127.0.0.1" || hostname === "::1",
   };
 }
 
-function defaultClientFactory(
-  service: "sekai" | "chisei",
-  endpoint: string,
-  secure: boolean,
-): RpcClient {
-  const proto = service === "sekai"
-    ? "../contracts/sekai-action-read.proto"
-    : "../contracts/chisei-operation-read.proto";
-  const definition = loadSync(fileURLToPath(new URL(proto, import.meta.url)), {
-    keepCase: false,
-    longs: String,
-    enums: String,
-    defaults: false,
-    oneofs: true,
-  });
-  const loaded = loadPackageDefinition(definition) as unknown as Record<
-    string,
-    Record<string, new (target: string, credentials: ReturnType<typeof credentials.createInsecure>) => RpcClient>
-  >;
-  const packageName = service === "sekai" ? "sekai" : "chisei";
-  const constructorName = service === "sekai" ? "SekaiService" : "ChiseiService";
-  const Constructor = loaded[packageName]?.[constructorName];
-  if (!Constructor) {
-    throw new ChiseiClientError("The Chisei read contract is unavailable.", 502, "incompatible");
-  }
-  return new Constructor(
-    endpoint,
-    secure ? credentials.createSsl() : credentials.createInsecure(),
-  );
+const defaultSdkFactory: ChiseiSdkFactory = async (config) => SekaiChiseiClient.connect({
+  target: config.target,
+  token: config.token,
+  principal: config.principal,
+  namespace: config.namespace,
+  defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
+  protoRoot: config.protoRoot,
+});
+
+function responseField(value: Record<string, unknown>, snakeCase: string, camelCase: string): unknown {
+  return value[snakeCase] === undefined ? value[camelCase] : value[snakeCase];
 }
 
 function boundedText(value: unknown, field: string, max: number): string {
@@ -184,19 +179,30 @@ function actionProjection(value: unknown, expectedNamespace: string): ChiseiActi
     throw new ChiseiClientError("Chisei returned an incompatible Action.", 502, "incompatible");
   }
   const item = value as Record<string, unknown>;
-  const namespace = boundedText(item.namespace, "Action namespace", 200);
+  const namespace = boundedText(responseField(item, "namespace", "namespace"), "Action namespace", 200);
   if (namespace !== expectedNamespace) {
     throw new ChiseiClientError("Chisei returned an Action outside the configured namespace.", 502, "incompatible");
   }
   return {
-    instanceId: boundedText(item.instanceId, "Action id", 200),
+    instanceId: boundedText(responseField(item, "instance_id", "instanceId"), "Action id", 200),
     namespace,
-    typeId: boundedText(item.typeId, "Action type", 200),
-    version: boundedText(item.version, "Action version", 100),
-    operationId: optionalBoundedText(item.operationId, "operation id", 200),
-    status: boundedText(item.status, "Action status", 50),
-    createdAt: timestamp(item.createdAtMs, "Action creation time")!,
-    decidedAt: timestamp(item.decidedAtMs, "Action decision time", true),
+    typeId: boundedText(responseField(item, "type_id", "typeId"), "Action type", 200),
+    version: boundedText(responseField(item, "version", "version"), "Action version", 100),
+    operationId: optionalBoundedText(
+      responseField(item, "operation_id", "operationId"),
+      "operation id",
+      200,
+    ),
+    status: boundedText(responseField(item, "status", "status"), "Action status", 50),
+    createdAt: timestamp(
+      responseField(item, "created_at_ms", "createdAtMs"),
+      "Action creation time",
+    )!,
+    decidedAt: timestamp(
+      responseField(item, "decided_at_ms", "decidedAtMs"),
+      "Action decision time",
+      true,
+    ),
   };
 }
 
@@ -209,21 +215,32 @@ function effectProjection(
   }
   const item = value as Record<string, unknown>;
   if (
-    boundedText(item.namespace, "effect namespace", 200) !== action.namespace
-    || boundedText(item.instanceId, "effect Action id", 200) !== action.instanceId
-    || boundedText(item.operationId, "effect operation id", 200) !== action.operationId
+    boundedText(responseField(item, "namespace", "namespace"), "effect namespace", 200) !== action.namespace
+    || boundedText(responseField(item, "instance_id", "instanceId"), "effect Action id", 200) !== action.instanceId
+    || boundedText(responseField(item, "operation_id", "operationId"), "effect operation id", 200) !== action.operationId
   ) {
     throw new ChiseiClientError("Chisei returned an effect outside the selected Action.", 502, "incompatible");
   }
   return {
-    effectId: boundedText(item.effectId, "effect id", 200),
+    effectId: boundedText(responseField(item, "effect_id", "effectId"), "effect id", 200),
     instanceId: action.instanceId,
     operationId: action.operationId,
-    kind: boundedText(item.kind, "effect kind", 100),
-    status: boundedText(item.status, "effect status", 50),
-    lifecycleState: boundedText(item.lifecycleState ?? item.status, "effect lifecycle", 50),
-    createdAt: timestamp(item.createdAtMs, "effect creation time")!,
-    updatedAt: timestamp(item.updatedAtMs, "effect update time")!,
+    kind: boundedText(responseField(item, "kind", "kind"), "effect kind", 100),
+    status: boundedText(responseField(item, "status", "status"), "effect status", 50),
+    lifecycleState: boundedText(
+      responseField(item, "lifecycle_state", "lifecycleState")
+        ?? responseField(item, "status", "status"),
+      "effect lifecycle",
+      50,
+    ),
+    createdAt: timestamp(
+      responseField(item, "created_at_ms", "createdAtMs"),
+      "effect creation time",
+    )!,
+    updatedAt: timestamp(
+      responseField(item, "updated_at_ms", "updatedAtMs"),
+      "effect update time",
+    )!,
   };
 }
 
@@ -247,7 +264,7 @@ export class ChiseiProjectionClient {
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
-    private readonly factory: ClientFactory = defaultClientFactory,
+    private readonly factory: ChiseiSdkFactory = defaultSdkFactory,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -255,6 +272,7 @@ export class ChiseiProjectionClient {
     service: "sekai" | "chisei",
     method: string,
     request: Record<string, unknown>,
+    context: { namespace: string; operationId?: string },
   ): Promise<Record<string, unknown>> {
     const endpoint = configuredEndpoint(this.env);
     const token = this.env.ALDUNIS_CHISEI_TOKEN?.trim();
@@ -265,44 +283,54 @@ export class ChiseiProjectionClient {
         "unconfigured",
       );
     }
-    const client = this.factory(service, endpoint.target, endpoint.secure);
-    const metadata = new Metadata();
-    if (token) metadata.set("authorization", `Bearer ${token}`);
+    let client: ChiseiSdkClient | undefined;
     try {
-      return await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const rpc = client[method];
-        if (typeof rpc !== "function") {
-          reject(new ChiseiClientError("The Chisei read contract is unavailable.", 502, "incompatible"));
-          return;
-        }
-        rpc.call(
-          client,
-          request,
-          metadata,
-          { deadline: new Date(this.now() + DEFAULT_TIMEOUT_MS) },
-          (error, response) => {
-            if (error) reject(error);
-            else if (!response || typeof response !== "object" || Array.isArray(response)) {
-              reject(new ChiseiClientError("Chisei returned an incompatible response.", 502, "incompatible"));
-            } else resolve(response as Record<string, unknown>);
-          },
-        );
+      client = await this.factory({
+        target: endpoint.target,
+        token,
+        principal: CHISEI_PRINCIPAL,
+        namespace: context.namespace,
+        protoRoot: CHISEI_PROTO_ROOT,
       });
+      const response = await client.raw.unary<Record<string, unknown>>(
+        service,
+        method,
+        request,
+        {
+          namespace: context.namespace,
+          operationId: context.operationId,
+          requestId: randomUUID(),
+          timeoutMs: DEFAULT_TIMEOUT_MS,
+        },
+      );
+      if (!response || typeof response !== "object" || Array.isArray(response)) {
+        throw new ChiseiClientError("Chisei returned an incompatible response.", 502, "incompatible");
+      }
+      return response;
     } catch (error) {
       if (error instanceof ChiseiClientError) throw error;
-      const code = (error as { code?: number }).code;
-      if (code === 16 || code === 7) {
+      const code = error instanceof SdkError
+        ? error.code
+        : (error as { code?: string | number }).code;
+      if (code === "unauthenticated" || code === "permission_denied" || code === 16 || code === 7) {
         throw new ChiseiClientError("Chisei denied this projection.", 403, "unauthorized");
       }
-      if (code === 5) {
+      if (code === "not_found" || code === 5) {
         throw new ChiseiClientError("The Chisei projection was not found.", 404, "not_found");
       }
-      if (code === 12 || code === 3) {
+      if (
+        code === "invalid_argument"
+        || code === "failed_precondition"
+        || code === "unimplemented"
+        || code === 12
+        || code === 3
+        || (error instanceof Error && /contract|proto|service definition/i.test(error.message))
+      ) {
         throw new ChiseiClientError("The configured Chisei contract is incompatible.", 502, "incompatible");
       }
       throw new ChiseiClientError("Chisei is unavailable.", 503, "unavailable");
     } finally {
-      client.close();
+      client?.close();
     }
   }
 
@@ -318,12 +346,12 @@ export class ChiseiProjectionClient {
     }
     const existing = this.#cache.get(cacheKey);
     try {
-      const response = await this.#call("sekai", "listActionInstances", {
+      const response = await this.#call("sekai", "ListActionInstances", {
         namespace,
-        typeId: filters.typeId ?? "",
+        type_id: filters.typeId ?? "",
         status: filters.status ?? "",
         limit,
-      });
+      }, { namespace });
       if (!Array.isArray(response.instances) || response.instances.length > limit) {
         throw new ChiseiClientError("Chisei returned an incompatible Action list.", 502, "incompatible");
       }
@@ -363,11 +391,11 @@ export class ChiseiProjectionClient {
   }
 
   async actionDetail(namespace: string, instanceId: string): Promise<ChiseiActionDetailProjection> {
-    const actionResponse = await this.#call("sekai", "getActionInstance", {
-      instanceId,
+    const actionResponse = await this.#call("sekai", "GetActionInstance", {
+      instance_id: instanceId,
       namespace,
-      idempotencyKey: "",
-    });
+      idempotency_key: "",
+    }, { namespace });
     const action = actionProjection(actionResponse.instance, namespace);
     if (action.instanceId !== instanceId) {
       throw new ChiseiClientError("Chisei returned a different Action.", 502, "incompatible");
@@ -376,26 +404,26 @@ export class ChiseiProjectionClient {
       return { action, effects: [], receipt: null };
     }
     const [effectResponse, receiptResponse] = await Promise.all([
-      this.#call("sekai", "listActionEffects", {
-        instanceId,
+      this.#call("sekai", "ListActionEffects", {
+        instance_id: instanceId,
         namespace,
         kind: "",
         status: "",
         limit: MAX_EFFECTS,
-      }),
-      this.#call("chisei", "getOperationReceipt", {
-        operationId: action.operationId,
-        requestId: randomUUID(),
-        callerScope: "aldunis-code",
+      }, { namespace }),
+      this.#call("chisei", "GetOperationReceipt", {
+        operation_id: action.operationId,
+        request_id: randomUUID(),
+        caller_scope: "aldunis-code",
         attempt: 1,
-      }),
+      }, { namespace, operationId: action.operationId }),
     ]);
     if (!Array.isArray(effectResponse.effects) || effectResponse.effects.length > MAX_EFFECTS) {
       throw new ChiseiClientError("Chisei returned an incompatible effect list.", 502, "incompatible");
     }
-    const missing = receiptResponse.missingSurfaces;
+    const missing = responseField(receiptResponse, "missing_surfaces", "missingSurfaces");
     if (
-      typeof receiptResponse.complete !== "boolean"
+      typeof responseField(receiptResponse, "complete", "complete") !== "boolean"
       || !Array.isArray(missing)
       || missing.length > 50
       || missing.some((item) => typeof item !== "string" || item.length > 200)
@@ -407,9 +435,9 @@ export class ChiseiProjectionClient {
       effects: effectResponse.effects.map((item) => effectProjection(item, action)),
       receipt: {
         operationId: action.operationId,
-        complete: receiptResponse.complete,
+        complete: responseField(receiptResponse, "complete", "complete") as boolean,
         missingSurfaces: missing as string[],
-        eventCount: eventCount(receiptResponse.receiptJson),
+        eventCount: eventCount(responseField(receiptResponse, "receipt_json", "receiptJson")),
       },
     };
   }
@@ -420,15 +448,16 @@ export class ChiseiProjectionClient {
     ) {
       throw new ChiseiClientError("The Chisei operation identity is incompatible.", 502, "incompatible");
     }
-    const response = await this.#call("chisei", "getOperationReceipt", {
-      operationId,
-      requestId: randomUUID(),
-      callerScope: "aldunis-code",
+    const response = await this.#call("chisei", "GetOperationReceipt", {
+      operation_id: operationId,
+      request_id: randomUUID(),
+      caller_scope: "aldunis-code",
       attempt: 1,
-    });
-    const missing = response.missingSurfaces;
+    }, { namespace: "", operationId });
+    const missing = responseField(response, "missing_surfaces", "missingSurfaces");
+    const complete = responseField(response, "complete", "complete");
     if (
-      typeof response.complete !== "boolean"
+      typeof complete !== "boolean"
       || !Array.isArray(missing)
       || missing.length > 50
       || missing.some((item) => typeof item !== "string" || item.length > 200)
@@ -437,9 +466,9 @@ export class ChiseiProjectionClient {
     }
     return {
       operationId,
-      complete: response.complete,
+      complete,
       missingSurfaces: missing as string[],
-      eventCount: eventCount(response.receiptJson),
+      eventCount: eventCount(responseField(response, "receipt_json", "receiptJson")),
     };
   }
 
@@ -461,10 +490,10 @@ export class ChiseiProjectionClient {
     }
     let response: Record<string, unknown>;
     try {
-      response = await this.#call("chisei", "getSampleObservation", {
-        requestId,
+      response = await this.#call("chisei", "GetSampleObservation", {
+        request_id: requestId,
         namespace,
-      });
+      }, { namespace });
     } catch (error) {
       if (error instanceof ChiseiClientError && error.kind === "not_found") return null;
       throw error;
@@ -474,12 +503,24 @@ export class ChiseiProjectionClient {
       throw new ChiseiClientError("Chisei returned an incompatible observation projection.", 502, "incompatible");
     }
     const observation = value as Record<string, unknown>;
-    const returnedRequestId = boundedText(observation.requestId, "observation request id", 512);
-    const returnedNamespace = boundedText(observation.namespace, "observation namespace", 200);
+    const returnedRequestId = boundedText(
+      responseField(observation, "request_id", "requestId"),
+      "observation request id",
+      512,
+    );
+    const returnedNamespace = boundedText(
+      responseField(observation, "namespace", "namespace"),
+      "observation namespace",
+      200,
+    );
     if (returnedRequestId !== requestId || returnedNamespace !== namespace) {
       throw new ChiseiClientError("Chisei returned an observation outside the requested identity.", 502, "incompatible");
     }
-    const observationDigest = boundedText(observation.observationDigest, "observation digest", 71);
+    const observationDigest = boundedText(
+      responseField(observation, "observation_digest", "observationDigest"),
+      "observation digest",
+      71,
+    );
     if (!SHA256.test(observationDigest)) {
       throw new ChiseiClientError("Chisei returned an incompatible observation digest.", 502, "incompatible");
     }
@@ -487,9 +528,15 @@ export class ChiseiProjectionClient {
       requestId: returnedRequestId,
       namespace: returnedNamespace,
       observationDigest,
-      state: boundedText(observation.state, "observation state", 50),
-      observedAt: timestamp(observation.observedAt, "observation time")!,
-      readAt: timestamp(observation.readAt, "observation read time")!,
+      state: boundedText(responseField(observation, "state", "state"), "observation state", 50),
+      observedAt: timestamp(
+        responseField(observation, "observed_at", "observedAt"),
+        "observation time",
+      )!,
+      readAt: timestamp(
+        responseField(observation, "read_at", "readAt"),
+        "observation read time",
+      )!,
     };
   }
 }

@@ -69,7 +69,7 @@ The Chisei managed-plane follow-up was merged as [Chisei #488](https://github.co
 [`Dockerfile.managed`](../Dockerfile.managed) and [`.github/workflows/managed-image.yml`](../.github/workflows/managed-image.yml) implement the selected boundary:
 
 1. Resolve Shikigami from the exact digest-pinned OCI reference as a named build stage.
-2. Build the Code web application from a digest-pinned Node 22 Linux base, then copy the runtime packages, `dist`, server source, runtime-imported source modules, package metadata, contracts, provider adapters, and `git` into the final image.
+2. Build the Code web application from a digest-pinned Node 22 Linux base, then copy the runtime packages, `dist`, server source, runtime-imported source modules, package metadata, contracts, vendored SDK package, provider adapters, and `git` into the final image.
 3. Copy `/usr/local/bin/shikigami` from the pinned build stage and label the final image with the exact Shikigami image reference and source revision.
 4. Build a `linux/amd64` smoke image and run the embedded CLI with network disabled, a read-only root, dropped capabilities, `no-new-privileges`, and resource limits. Only a passing smoke job can publish the managed image.
 5. Push the final image only to GHCR and record its immutable manifest digest for Platform to validate with its Compose configuration and managed health/smoke checks.

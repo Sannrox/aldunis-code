@@ -1,0 +1,42 @@
+syntax = "proto3";
+package chisei;
+
+// Minimal read-only compatibility snapshot from
+// Sannrox/sekai-chisei proto/chisei.proto at 82602ccc28d225686b0ec9a1f72b9002042495ce0.
+// Keep field numbers and wire names aligned with the upstream contract.
+
+message GetSampleObservationRequest {
+  string request_id = 1;
+  string namespace = 2;
+}
+
+message SampleObservationReadback {
+  string request_id = 1;
+  string namespace = 2;
+  string observation_digest = 3;
+  string state = 4;
+  int64 observed_at = 5;
+  int64 read_at = 6;
+}
+
+message GetSampleObservationResponse {
+  SampleObservationReadback observation = 1;
+}
+
+message GetOperationReceiptRequest {
+  string operation_id = 1;
+  string request_id = 2;
+  string caller_scope = 3;
+  uint32 attempt = 4;
+}
+
+message GetOperationReceiptResponse {
+  string receipt_json = 1;
+  bool complete = 2;
+  repeated string missing_surfaces = 3;
+}
+
+service ChiseiService {
+  rpc GetSampleObservation(GetSampleObservationRequest) returns (GetSampleObservationResponse);
+  rpc GetOperationReceipt(GetOperationReceiptRequest) returns (GetOperationReceiptResponse);
+}
