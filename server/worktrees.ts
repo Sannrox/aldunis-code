@@ -17,6 +17,7 @@ import {
   canonicalizeRepositoryRoot,
   classifyWorktree,
   discoverWorktrees,
+  repositoryDefaultBranch,
   RepositoryError,
   type WorktreeMetadata,
 } from "./repository.ts";
@@ -192,6 +193,18 @@ async function assertNoGitLocks(root: string): Promise<void> {
   }
 }
 
+export function hasStagedChanges(status: string): boolean {
+  const entries = status.split("\0");
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) continue;
+    const indexStatus = entry[0];
+    if (indexStatus !== " " && indexStatus !== "?") return true;
+    if (entry[1] === "R" || entry[1] === "C") index += 1;
+  }
+  return false;
+}
+
 async function validateRepositoryForCreation(root: string, base: string, branch: string): Promise<string> {
   await assertNoGitLocks(root);
   const currentBranch = (await git(
@@ -205,9 +218,9 @@ async function validateRepositoryForCreation(root: string, base: string, branch:
       409,
     );
   }
-  const dirty = await git(root, ["status", "--porcelain=v1", "-z"], "The repository state could not be inspected.");
-  if (dirty.length > 0) {
-    throw new RepositoryError("Start from a clean repository before creating an isolated worktree.", 409);
+  const status = await git(root, ["status", "--porcelain=v1", "-z"], "The repository state could not be inspected.");
+  if (hasStagedChanges(status)) {
+    throw new RepositoryError("Stage or discard indexed changes before creating an isolated worktree.", 409);
   }
   const modes = await git(root, ["ls-files", "--stage"], "Repository files could not be inspected.");
   if (modes.split("\n").some((line) => line.startsWith("160000 "))) {
@@ -331,8 +344,14 @@ export class WorktreeManager {
   }): Promise<WorktreeCreationPlan> {
     const repository = await canonicalizeRepositoryRoot(input.repository);
     const branch = input.branch.trim();
-    const base = input.base.trim();
-    if (!branch || !base) throw new RepositoryError("A base revision and new branch are required.");
+    if (!branch) throw new RepositoryError("A new branch is required.");
+    const base = await repositoryDefaultBranch(repository);
+    if (!base) {
+      throw new RepositoryError(
+        "The repository default branch could not be determined. Configure a single remote HEAD or use a conventional default branch.",
+        409,
+      );
+    }
     const registry = await this.store.load();
     const managed = registry.records.filter((record) => !record.removedAt && !record.removalPendingAt);
     if (input.limit !== null && managed.length >= input.limit) {

@@ -58,6 +58,7 @@ test("the selected worktree resolves the project record that owns delivery autho
         projectId: "main-project",
         name: "Aldunis",
         root: "/tmp/aldunis",
+        defaultBranch: "main",
         selectedWorktree: "/tmp/aldunis-worktree",
         worktrees: [],
       }}

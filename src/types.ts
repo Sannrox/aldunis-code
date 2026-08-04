@@ -16,6 +16,7 @@ export interface RepositoryMetadata {
   projectId: string;
   name: string;
   root: string;
+  defaultBranch: string | null;
   managedRepositoryId?: string;
   selectedWorktree: string;
   worktrees: Array<{
