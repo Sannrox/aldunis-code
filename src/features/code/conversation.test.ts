@@ -4,9 +4,23 @@ import {
   appendProviderEvent,
   filterSelectableWorktrees,
   formatHostLabel,
+  providerProfileDisplayName,
   readyComposerPlaceholder,
 } from "./conversation";
-import type { ProviderEvent, RepositoryMetadata } from "../../types";
+import type { ClaudeProfile, ProviderEvent, RepositoryMetadata } from "../../types";
+
+const profiles = [
+  { id: "work", name: "Work", provider: "claude-code" },
+  { id: "personal", name: "Personal", provider: "claude-code" },
+  { id: "shiki", name: "Shikigami", provider: "shikigami" },
+] as ClaudeProfile[];
+
+test("provider profile labels stay bound to the selected provider", () => {
+  assert.equal(providerProfileDisplayName(profiles, "claude-code", "work"), "Work");
+  assert.equal(providerProfileDisplayName(profiles, "claude-code", "shiki"), null);
+  assert.equal(providerProfileDisplayName(profiles, "shikigami", "shiki"), "Shikigami");
+  assert.equal(providerProfileDisplayName(profiles, "codex-cli", "work"), null);
+});
 
 test("ready composer copy distinguishes new work from an existing conversation", () => {
   assert.equal(

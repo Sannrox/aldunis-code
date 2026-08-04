@@ -2854,6 +2854,14 @@ select.ui-input {
   white-space: nowrap;
 }
 .composer-run-settings > .composer-provider { min-width: 0; }
+.composer-provider-profile-chip {
+  min-width: 0;
+  max-width: 13rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .provider-error { color: var(--destructive-foreground); font-size: 13px; margin-top: 8px; }
 .provider-error p { margin: 0 0 6px; }
 .provider-error-park {
