@@ -25,6 +25,10 @@ import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
 import { ActivityDialog } from "./features/dialogs/activity-dialog";
 import {
+  isKeybindingCaptured,
+  matchesModifierShortcut,
+} from "./lib/workspace-shortcuts";
+import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
   readProductAvailabilityResponse,
@@ -186,19 +190,20 @@ function App() {
   }, [preferences]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const modifier = event.metaKey || event.ctrlKey;
-      const matches = preferences.commandPaletteShortcut === "mod+k"
-        ? modifier && !event.shiftKey && event.key.toLocaleLowerCase() === "k"
-        : modifier && event.shiftKey && event.key.toLocaleLowerCase() === "p";
-      if (matches) {
+      if (event.defaultPrevented || isKeybindingCaptured(event.target)) return;
+      if (matchesModifierShortcut(event, preferences.commandPaletteShortcut)) {
         event.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if (matchesModifierShortcut(event, preferences.conversationSearchShortcut)) {
+        event.preventDefault();
+        setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [preferences.commandPaletteShortcut]);
+  }, [preferences.commandPaletteShortcut, preferences.conversationSearchShortcut]);
   const showRepositoryDialog = () => {
     setRepositoryError(null);
     setRepositoryDialog(true);
@@ -416,6 +421,12 @@ function App() {
         onClose={() => setPaletteOpen(false)}
         onOpenRepository={showRepositoryDialog}
         onSearch={() => setSearchOpen(true)}
+        threads={threads}
+        onOpenConversation={(threadId) => {
+          window.dispatchEvent(
+            new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
+          );
+        }}
         onPreferences={() => setPreferencesOpen(true)}
         onProviderManagement={() => {
           if (hostCapabilities.managed) return;

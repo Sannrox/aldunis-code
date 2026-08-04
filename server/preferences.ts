@@ -10,6 +10,7 @@ export interface Preferences {
   zoom: 0.8 | 0.9 | 1 | 1.1 | 1.2;
   reducedMotion: "system" | "reduce" | "no-preference";
   commandPaletteShortcut: "mod+k" | "mod+shift+p";
+  conversationSearchShortcut: "mod+shift+f" | "mod+shift+o";
   managedWorktreeLimit: number | null;
   orchestrationThreadsBeta: boolean;
   showThinking: boolean;
@@ -22,6 +23,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   zoom: 1,
   reducedMotion: "system",
   commandPaletteShortcut: "mod+k",
+  conversationSearchShortcut: "mod+shift+f",
   managedWorktreeLimit: 10,
   orchestrationThreadsBeta: false,
   showThinking: false,
@@ -46,6 +48,10 @@ function parsePreferences(value: unknown): Preferences {
     || !["system", "reduce", "no-preference"].includes(input.reducedMotion as string)
     || !["mod+k", "mod+shift+p"].includes(input.commandPaletteShortcut as string)
     || (
+      input.conversationSearchShortcut !== undefined
+      && !["mod+shift+f", "mod+shift+o"].includes(input.conversationSearchShortcut as string)
+    )
+    || (
       input.orchestrationThreadsBeta !== undefined
       && typeof input.orchestrationThreadsBeta !== "boolean"
     )
@@ -67,6 +73,9 @@ function parsePreferences(value: unknown): Preferences {
   }
   return {
     ...(input as unknown as Omit<Preferences, "managedWorktreeLimit" | "orchestrationThreadsBeta" | "showThinking">),
+    conversationSearchShortcut: input.conversationSearchShortcut === undefined
+      ? DEFAULT_PREFERENCES.conversationSearchShortcut
+      : input.conversationSearchShortcut as Preferences["conversationSearchShortcut"],
     managedWorktreeLimit: input.managedWorktreeLimit === undefined
       ? DEFAULT_PREFERENCES.managedWorktreeLimit
       : input.managedWorktreeLimit as number | null,

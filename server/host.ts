@@ -47,7 +47,7 @@ import {
   formatRevisionContext,
   MAX_ANNOTATION_TEXT,
 } from "./annotations.ts";
-import { DeliveryBroker, inspectDelivery, type DeliveryAction } from "./delivery.ts";
+import { DeliveryBroker, draftPullRequest, inspectDelivery, type DeliveryAction } from "./delivery.ts";
 import {
   ReleaseDeliveryBroker,
   ReleaseDeliveryStore,
@@ -3741,6 +3741,23 @@ async function handleApi(
       }
       const context = await selectedWorktree(body.root, body.worktree);
       sendJson(response, 200, await inspectDelivery(context.root, context.worktree));
+      return true;
+    }
+    if (route === "/api/delivery/pr-draft") {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        base?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.base !== "string"
+      ) {
+        throw new RepositoryError("A repository, worktree, and base branch are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, await draftPullRequest(context.root, context.worktree, body.base));
       return true;
     }
     if (route === "/api/release-delivery/inspect") {

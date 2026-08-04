@@ -1973,6 +1973,16 @@ select.ui-input {
 .delivery-form select, .delivery-form input, .delivery-form textarea {
   border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--foreground); padding: 8px;
 }
+.delivery-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.delivery-draft-actions small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
 .prepare-delivery {
   min-height: 32px;
   margin: 0 16px 10px;
