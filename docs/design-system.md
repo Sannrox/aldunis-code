@@ -94,6 +94,11 @@ to consume that finite local resource.
 The interface therefore makes the cost visible rather than changing the
 semantics:
 
+The post-turn completion notice is a compact elevated popover anchored to the
+composer. It stays close to the next lifecycle decision without taking over
+the conversation transcript; the worktree path is truncated visually but
+remains available as the control's title text.
+
 - A worktree meter in the shelf, `n / limit`.
 - A marker on each settled row still holding a worktree.
 - A line in the completion card stating that settling keeps the worktree and
