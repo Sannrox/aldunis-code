@@ -159,13 +159,16 @@ code{font-family:var(--font-mono)}
 .appr-f{display:flex;align-items:center;gap:7px;padding:11px 14px;border-top:1px solid var(--border);background:var(--muted)}
 
 /* settle prompt at end of a finished thread */
-.done{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:14px}
-.done .h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.done .ttl{font-size:13.5px;font-weight:500}
-.done p{font-size:13px;color:var(--muted-foreground);margin-bottom:12px}
-.done .acts{display:flex;align-items:center;gap:7px}
+.done{position:absolute;left:50%;bottom:calc(100% + 8px);z-index:5;width:min(620px,calc(100% - 48px));transform:translateX(-50%);border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-popover);padding:12px 14px;min-width:0}
+.done .h{display:flex;align-items:center;gap:8px;margin-bottom:2px;flex-wrap:wrap}
+.done .ttl{font-size:13px;font-weight:600}
+.done-copy{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 6px;margin:8px 0 12px;color:var(--muted-foreground);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.done-copy-label{flex:0 0 auto;color:var(--foreground);font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.done-copy code{flex:0 1 360px;min-width:0;max-width:100%;overflow:hidden;border:1px solid var(--border);border-radius:5px;background:var(--muted);color:var(--foreground);padding:2px 5px;text-overflow:ellipsis;white-space:nowrap;font:11px/1.3 var(--font-mono)}
+.done-copy>span:last-child{flex:1 1 180px;min-width:0}
+.done .acts{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
 
-.cwrap{padding:0 24px 20px}
+.cwrap{position:relative;padding:0 24px 20px}
 .cbox{max-width:700px;margin:0 auto;border:1px solid var(--input);border-radius:var(--radius);background:var(--card);padding:12px 14px}
 .cph{font-size:14.5px;color:var(--muted-foreground);margin-bottom:12px}
 .crow{display:flex;align-items:center;gap:6px}
@@ -491,21 +494,23 @@ code{font-family:var(--font-mono)}
           <div class="tool"><span>Test</span><code>npm test</code><span class="r" style="color:var(--emerald)">133 passed</span></div>
         </div>
 
-        <div class="done">
-          <div class="h"><span class="pill completed"><span class="dot"></span>Completed</span>
-            <span class="ttl">Nothing left to do here</span></div>
-          <p>6 files · +212 −34 · worktree <code>feat/diff-annotations</code> is still checked out.</p>
-          <div class="acts">
-            <button class="btn btn-default btn-sm" onclick="settleActive()">Settle thread</button>
-            <button class="btn btn-outline btn-sm">Settle and release worktree</button>
-            <button class="btn btn-ghost btn-sm">Keep open</button>
-          </div>
-          <p style="margin:10px 0 0;font-size:12px">Settling keeps the worktree. You're using <b style="color:var(--amber);font-weight:500">6 of 8</b>.</p>
-        </div>
       </div>
     </div></div>
 
-    <div class="cwrap"><div class="cbox">
+    <div class="cwrap">
+      <div class="done" role="status">
+        <div class="h"><span class="pill completed"><span class="dot"></span>Completed</span>
+          <span class="ttl">Workspace still in use</span></div>
+        <p class="done-copy"><span class="done-copy-label">Worktree</span>
+          <code title="feat/diff-annotations">feat/diff-annotations</code>
+          <span>is still checked out. Settling keeps the worktree.</span></p>
+        <div class="acts">
+          <button class="btn btn-default btn-sm" onclick="settleActive()">Settle thread</button>
+          <button class="btn btn-outline btn-sm" title="Settle and release worktree">Settle &amp; release</button>
+          <button class="btn btn-ghost btn-sm">Keep open</button>
+        </div>
+      </div>
+      <div class="cbox">
       <div class="cph">Reply to Claude Code…</div>
       <div class="crow">
         <button class="cc"><span class="pv">CC</span>claude-code · sonnet
@@ -523,7 +528,8 @@ code{font-family:var(--font-mono)}
         <button class="send">
           <svg class="ic ic-lg" viewBox="0 0 24 24" style="stroke-width:2"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
       </div>
-    </div></div>
+      </div>
+    </div>
     </div>
 
     <aside class="rv hide" id="rv">

@@ -461,6 +461,17 @@ test("completion settle actions wrap in narrow dual-pane columns", () => {
   assert.match(shell, /\.done \.acts\s*\{[^}]*flex-wrap:\s*wrap[^}]*min-width:\s*0/s);
 });
 
+test("completion notice floats above the composer as a compact popover", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.cwrap\s*\{[^}]*position:\s*relative/s);
+  assert.match(
+    shell,
+    /\.done\s*\{[^}]*position:\s*absolute[^}]*bottom:\s*calc\(100% \+ 8px\)[^}]*width:\s*min\(620px,calc\(100% - 48px\)\)/s,
+  );
+  assert.match(shell, /\.done-copy code\s*\{[^}]*text-overflow:\s*ellipsis/s);
+});
+
 test("conversation prose wraps long unbroken prompts", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
