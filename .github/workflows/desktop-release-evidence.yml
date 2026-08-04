@@ -1,24 +1,94 @@
-name: Desktop release evidence
+name: Desktop release and preview evidence
 
 on:
   push:
     tags:
       - "v*"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'push' && github.ref || 'preview' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  prepare:
     runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.metadata.outputs.channel }}
+      base_version: ${{ steps.metadata.outputs.base_version }}
+      version: ${{ steps.metadata.outputs.version }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      source_ref: ${{ steps.metadata.outputs.source_ref }}
+      artifact_prefix: ${{ steps.metadata.outputs.artifact_prefix }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'main' }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run verify:desktop-release-tag -- "${GITHUB_REF_NAME}"
+      - name: Resolve release identity
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref="$(git rev-parse HEAD)"
+          base_version="$(node -p 'require("./package.json").version')"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/v* ]]; then
+            channel="stable"
+            version="${base_version}"
+            release_tag="${GITHUB_REF_NAME}"
+            artifact_prefix="desktop"
+          else
+            channel="preview"
+            utc_date="$(date -u +%Y%m%d)"
+            version="$(npm run --silent preview:version -- "${base_version}" "${utc_date}" "${GITHUB_RUN_NUMBER}")"
+            release_tag="preview-v${version}"
+            artifact_prefix="desktop-preview"
+          fi
+          {
+            echo "channel=${channel}"
+            echo "base_version=${base_version}"
+            echo "version=${version}"
+            echo "release_tag=${release_tag}"
+            echo "source_ref=${source_ref}"
+            echo "artifact_prefix=${artifact_prefix}"
+          } >> "${GITHUB_OUTPUT}"
+
+  validate:
+    needs: prepare
+    outputs:
+      channel: ${{ needs.prepare.outputs.channel }}
+      base_version: ${{ needs.prepare.outputs.base_version }}
+      version: ${{ needs.prepare.outputs.version }}
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify stable release tag
+        if: needs.prepare.outputs.channel == 'stable'
+        run: npm run verify:desktop-release-tag -- "${{ needs.prepare.outputs.release_tag }}"
+      - name: Set preview package version
+        if: needs.prepare.outputs.channel == 'preview'
+        env:
+          PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - run: npm run check
       - run: npm test
       - run: npm run build
@@ -32,6 +102,14 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      BASE_VERSION: ${{ needs.validate.outputs.base_version }}
+      CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,19 +118,18 @@ jobs:
             arch: arm64
           - runner: macos-15-intel
             arch: x64
-    env:
-      CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Set preview package version
+        if: needs.validate.outputs.channel == 'preview'
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - name: Install App Store Connect API key
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
@@ -70,6 +147,16 @@ jobs:
           --publish never
           -c.forceCodeSigning=true
           -c.mac.notarize=true
+          -c.mac.bundleShortVersion="${BASE_VERSION}"
+          -c.mac.bundleVersion="${BASE_VERSION}"
+      - name: Give preview DMG a unique architecture name
+        if: needs.validate.outputs.channel == 'preview'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dmg_path in release/*.dmg; do
+            mv "${dmg_path}" "${dmg_path%.dmg}-${{ matrix.arch }}.dmg"
+          done
       - name: Notarize and staple disk image
         shell: bash
         run: |
@@ -101,7 +188,7 @@ jobs:
           subject-path: release/*.dmg
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-${{ matrix.arch }}
+          name: ${{ needs.validate.outputs.artifact_prefix }}-macos-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             release/*.dmg
@@ -117,15 +204,22 @@ jobs:
       id-token: write
       attestations: write
     env:
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Set preview package version
+        if: needs.validate.outputs.channel == 'preview'
+        shell: pwsh
+        run: npm version --no-git-tag-version $env:PACKAGE_VERSION
       - run: npm run build
       - name: Build signed installer
         run: npx electron-builder --win nsis --x64 --publish never -c.forceCodeSigning=true
@@ -154,7 +248,7 @@ jobs:
           subject-path: release/*.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-x64
+          name: ${{ needs.validate.outputs.artifact_prefix }}-windows-x64
           if-no-files-found: error
           path: |
             release/*.exe
@@ -168,13 +262,20 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Set preview package version
+        if: needs.validate.outputs.channel == 'preview'
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - run: npm run build
       - name: Build native packages
         run: npx electron-builder --linux AppImage deb --x64 --publish never
@@ -189,10 +290,72 @@ jobs:
             release/*.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-linux-x64
+          name: ${{ needs.validate.outputs.artifact_prefix }}-linux-x64
           if-no-files-found: error
           path: |
             release/*.AppImage
             release/*.deb
             release/SHA256SUMS-linux-x64.txt
             release/verification-linux-x64.txt
+
+  publish-preview:
+    if: needs.validate.outputs.channel == 'preview'
+    needs:
+      - validate
+      - macos
+      - windows
+      - linux
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+      SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.validate.outputs.artifact_prefix }}-*
+          path: release
+          merge-multiple: true
+      - name: Publish preview prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg channel "preview" \
+            --arg version "${PACKAGE_VERSION}" \
+            --arg tag "${RELEASE_TAG}" \
+            --arg source_commit "${SOURCE_REF}" \
+            '{channel: $channel, version: $version, tag: $tag, source_commit: $source_commit}' \
+            > release/aldunis-code-preview.json
+          mapfile -t assets < <(find release -type f \( \
+            -name '*.dmg' -o \
+            -name '*.exe' -o \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name 'SHA256SUMS-*' -o \
+            -name 'verification-*' -o \
+            -name 'aldunis-code-preview.json' \
+          \) -print | sort)
+          test "${#assets[@]}" -gt 0
+          notes=$'Opt-in nightly preview build. This prerelease is for manual dogfooding; it does not publish update metadata or promote a Tenkai channel.\n\nSource commit: '"${SOURCE_REF}"
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Aldunis Code Preview ${PACKAGE_VERSION}" \
+              --prerelease \
+              --notes "${notes}"
+          else
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${SOURCE_REF}" \
+              --title "Aldunis Code Preview ${PACKAGE_VERSION}" \
+              --prerelease \
+              --notes "${notes}"
+          fi

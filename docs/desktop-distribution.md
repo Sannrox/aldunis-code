@@ -46,25 +46,40 @@ delete event history; an in-product delete/reset action is required.
 
 ## Signing, provenance, and updates
 
-Release automation must build each platform on its native, pinned runner from a
-protected tag. Signing keys live only in the CI platform's protected secret or
-hardware-backed signing service and are unavailable to pull-request builds.
+Release automation must build stable packages on each platform's native, pinned
+runner from a protected tag. Opt-in preview packages use the same native jobs
+from the selected `main` commit. Signing keys live only in the CI platform's
+protected secret or hardware-backed signing service and are unavailable to
+pull-request builds.
 Every artifact receives a SHA-256 checksum and a signed SLSA provenance
 attestation tied to the source commit and workflow identity. macOS artifacts
 must pass `codesign`, Gatekeeper assessment, notarization, and stapling;
 Windows artifacts must pass signature verification on a clean VM.
 
 The repository-side evidence producer is
-`.github/workflows/desktop-release-evidence.yml`. It runs only for a `v*` tag,
-fails unless the tag exactly equals `v` plus the `package.json` version, and
-does not create a GitHub release or publish update metadata. Its outputs are
-inputs to the Tenkai-owned release record:
+`.github/workflows/desktop-release-evidence.yml`. Stable runs happen only for a
+`v*` tag and fail unless the tag exactly equals `v` plus the `package.json`
+version. Scheduled or manually dispatched runs select `main`, derive a version
+such as `0.1.0-nightly.20260804.123`, and create a GitHub prerelease tagged
+`preview-v0.1.0-nightly.20260804.123` after every native artifact job succeeds.
+The macOS app keeps that prerelease identity in its package metadata while the
+workflow supplies the numeric base version for Apple's bundle version fields.
+Rerunning the same workflow repairs an existing preview release by replacing
+its assets, so a transient upload failure remains recoverable.
+That GitHub prerelease is a manually downloaded transport projection only: it
+does not publish update metadata, create a Tenkai channel record, or promote a
+Tenkai release. Stable outputs remain inputs to the Tenkai-owned release
+record:
 
 | Job | Protected environment | Evidence |
 | --- | --- | --- |
 | macOS Intel and Apple silicon | `desktop-macos-signing` | signed and notarized DMG, SHA-256 checksum, `codesign`, Gatekeeper, and stapling results, GitHub artifact attestation |
 | Windows x64 | `desktop-windows-signing` | signed NSIS installer, SHA-256 checksum, Authenticode result and signer subject, GitHub artifact attestation |
 | Linux x64 | none | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations |
+
+Preview packages use the same signing, notarization, checksum, and attestation
+checks as stable packages. A missing protected signing environment therefore
+fails the preview workflow rather than producing a weaker public artifact.
 
 Repository administrators must configure tag protection and require reviewers
 on both signing environments. The workflow expects these environment secrets:
@@ -81,11 +96,19 @@ workflow run, checksums, attestations, and lifecycle test record to the Tenkai
 release candidate. Tenkai remains authoritative for promotion, environments,
 rollback, and recovery.
 
-There are two channels: `stable` and opt-in `preview`. Update metadata is
-signed independently from package hosting. The client accepts only a valid
-signature for its selected channel and never downgrades automatically. Update
-checks may be added only after those controls and clean-machine packaging tests
-exist; this PR intentionally contains no auto-updater.
+There are two channels: `stable` and opt-in `preview`; nightly is the preview
+cadence, not a third release authority. Update metadata is signed independently
+from package hosting. The client accepts only a valid signature for its
+selected channel and never downgrades automatically. Update checks may be
+added only after those controls and clean-machine packaging tests exist; this
+workflow intentionally contains no auto-updater.
+
+Preview uses the same `com.aldunis.code` application identity and local-data
+root as stable. Installing preview is therefore an explicit opt-in replacement
+of the installed build, not a side-by-side installation or an automatic
+channel switch. Manual channel switching and downgrade instructions remain a
+separate packaging decision until clean-machine upgrade, rollback, and data
+migration tests exist.
 
 Rollback means publishing a newly signed higher version containing the last
 known-good code. Previously issued artifacts and update metadata remain
@@ -97,8 +120,8 @@ immutable. If a signing key or release workflow is compromised:
 4. Rotate signing and update-metadata keys through reviewed recovery access.
 5. Rebuild from a verified commit on clean runners and publish a higher version.
 
-The repository can now produce signed native build evidence, but public
-promotion remains fail-closed until a credentialed tag run succeeds and its
-install, upgrade, rollback, and clean-uninstall evidence is attached to the
-Tenkai release candidate. Local non-release packages remain dogfooding
-artifacts, not public releases.
+The repository can now produce signed native build evidence for stable tags and
+opt-in nightly previews, but stable public promotion remains fail-closed until
+a credentialed tag run succeeds and its install, upgrade, rollback, and
+clean-uninstall evidence is attached to the Tenkai release candidate. Local
+non-release packages remain dogfooding artifacts, not public releases.

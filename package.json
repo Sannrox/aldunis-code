@@ -19,6 +19,7 @@
     "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
     "verify:desktop-release-tag": "tsx scripts/verify-desktop-release-tag.ts",
+    "preview:version": "tsx scripts/preview-version.ts",
     "build:web": "tsc -b && vite build",
     "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs && esbuild server/browser-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-electron/browser-mcp.mjs",
     "build:cli": "esbuild server/main.ts --bundle --platform=node --format=esm --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-cli/aldunis-code.js --banner:js='#!/usr/bin/env node' && esbuild server/permission-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-cli/permission-mcp.mjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-cli/shikigami-permission-hook.mjs",
