@@ -6,6 +6,10 @@ export const CREATE_WORKTREE_ACTION_COPY = {
   label: "Create worktree",
   detail: "Create an isolated managed checkout for conversation work",
 } as const;
+export const PROVIDER_MANAGEMENT_ACTION_COPY = {
+  label: "Provider management",
+  detail: "Profiles, adapter package trust, and readiness diagnostics",
+} as const;
 
 export function CommandPalette({
   open,
@@ -14,6 +18,7 @@ export function CommandPalette({
   onSearch,
   onPreferences,
   onProviderManagement,
+  onActivity = () => undefined,
   onManageWorktrees,
   onAutomations,
   hasRepository = false,
@@ -24,6 +29,7 @@ export function CommandPalette({
   onSearch: () => void;
   onPreferences: () => void;
   onProviderManagement: () => void;
+  onActivity?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
@@ -67,9 +73,13 @@ export function CommandPalette({
           run: onPreferences,
         },
         {
-          label: "Provider management",
-          detail: "Profiles, adapter package trust, and readiness diagnostics",
+          ...PROVIDER_MANAGEMENT_ACTION_COPY,
           run: onProviderManagement,
+        },
+        {
+          label: "Activity",
+          detail: "Supervise attention, running, completed, and idle conversations",
+          run: onActivity,
         },
         {
           label: "Automations",
@@ -91,7 +101,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
+    [hasRepository, onActivity, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
   );
 
   useEffect(() => {

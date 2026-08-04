@@ -1153,8 +1153,16 @@ export function CodeWorkbench({
     setSecondaryId(candidate);
     setActivePane("secondary");
   };
-  const openConversation = useCallback((id: string) => {
-    const thread = conversations.find((item) => item.id === id);
+  const openConversation = useCallback((id: string, selectedConversation?: ConversationSummary) => {
+    const thread = conversations.find((item) => item.id === id)
+      ?? (selectedConversation?.id === id ? selectedConversation : undefined);
+    if (selectedConversation?.id === id) {
+      setConversations((current) => {
+        const existing = current.findIndex((item) => item.id === id);
+        if (existing < 0) return [selectedConversation, ...current];
+        return current.map((item, index) => index === existing ? { ...item, ...selectedConversation } : item);
+      });
+    }
     // Activate the thread's repository for runs/tools, but do not change the
     // project chip filter — inbox "All" must stay on All when clicking a chat.
     if (thread) {
@@ -1187,8 +1195,14 @@ export function CodeWorkbench({
   // Thread search lives outside the workbench shell; open hits via shared event.
   useEffect(() => {
     const onOpenFromSearch = (event: Event) => {
-      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
-      if (typeof threadId === "string" && threadId.length > 0) openConversation(threadId);
+      const detail = (event as CustomEvent<{
+        threadId?: string;
+        conversation?: ConversationSummary;
+      }>).detail;
+      const threadId = detail?.threadId;
+      if (typeof threadId === "string" && threadId.length > 0) {
+        openConversation(threadId, detail.conversation?.id === threadId ? detail.conversation : undefined);
+      }
     };
     window.addEventListener("aldunis:open-conversation", onOpenFromSearch);
     return () => window.removeEventListener("aldunis:open-conversation", onOpenFromSearch);
