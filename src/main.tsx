@@ -23,6 +23,7 @@ import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
+import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
@@ -74,6 +75,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [productAvailability, setProductAvailability] = useState<ProductAvailability>(
@@ -419,6 +421,7 @@ function App() {
           if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
+        onConnections={() => setConnectionsOpen(true)}
         onAutomations={() => setAutomationsOpen(true)}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
@@ -445,6 +448,7 @@ function App() {
           if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
+        onOpenConnections={() => setConnectionsOpen(true)}
         onOpenArchivedThreads={() => {
           setPreferencesOpen(false);
           window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
@@ -456,6 +460,10 @@ function App() {
           setPreferencesRecovered(false);
           setPreferencesOpen(false);
         }}
+      />
+      <ConnectionsDialog
+        open={connectionsOpen}
+        onClose={() => setConnectionsOpen(false)}
       />
     </div>
   );

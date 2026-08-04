@@ -99,6 +99,38 @@ export function ArchivedSettingsLinks({
   );
 }
 
+export function AccessSettingsLinks({
+  onOpenConnections,
+  disabled = false,
+}: {
+  onOpenConnections: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="provider-settings-links">
+      <p className="preference-note">
+        Remote and iPad access use loopback-host controls for pairing and revocation. Paired devices
+        can use a session, but cannot administer access.
+      </p>
+      <div>
+        <Button
+          type="button"
+          variant="primary"
+          onClick={onOpenConnections}
+          disabled={disabled}
+        >
+          Open Connections
+        </Button>
+      </div>
+      {disabled && (
+        <p className="preference-note" role="status">
+          Save or cancel your preference changes before opening Connections.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -119,6 +151,7 @@ export function PreferencesDialog({
   onClose,
   onSave,
   onOpenProviderManagement,
+  onOpenConnections = () => undefined,
   onOpenArchivedThreads,
 }: {
   open: boolean;
@@ -127,6 +160,7 @@ export function PreferencesDialog({
   onClose: () => void;
   onSave: (preferences: Preferences) => Promise<void>;
   onOpenProviderManagement: () => void;
+  onOpenConnections?: () => void;
   onOpenArchivedThreads: () => void;
 }) {
   const [draft, setDraft] = useState(preferences);
@@ -441,10 +475,10 @@ export function PreferencesDialog({
               </p>
             )}
             {section === "Access" && (
-              <p className="preference-note">
-                Remote and iPad access are loopback or paired remote sessions only. Credentials and
-                provider transcripts never leave this machine except through an explicit provider run.
-              </p>
+              <AccessSettingsLinks
+                onOpenConnections={onOpenConnections}
+                disabled={draftDirty}
+              />
             )}
             {section === "Keybindings" && (
               <>

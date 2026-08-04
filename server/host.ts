@@ -135,6 +135,32 @@ import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  const normalized = address.replace(/^::ffff:/i, "");
+  return LOOPBACK_HOSTS.has(normalized);
+}
+
+function isLoopbackHostHeader(request: IncomingMessage): boolean {
+  const host = request.headers.host;
+  if (!host) return false;
+  try {
+    return isLoopbackAddress(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalControlRequest(request: IncomingMessage): boolean {
+  const forwarded = request.headers["x-forwarded-for"];
+  const forwardedAddresses = typeof forwarded === "string"
+    ? forwarded.split(",").map((value) => value.trim()).filter(Boolean)
+    : [];
+  return isLoopbackAddress(request.socket.remoteAddress)
+    && isLoopbackHostHeader(request)
+    && forwardedAddresses.every((address) => isLoopbackAddress(address));
+}
+
 function adapterProfileSeed(adapter: {
   manifest: {
     id: string;
@@ -485,6 +511,7 @@ async function handleApi(
   chisei: ChiseiProjectionClient,
   remoteRequest: boolean,
   internalRequest: boolean,
+  localControlRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
   managedHost?: ManagedHost,
@@ -928,6 +955,39 @@ async function handleApi(
       } else {
         sendJson(response, 200, await adapters.setEnabled(id, action === "enable"));
       }
+      return true;
+    }
+    const remoteAdminAction = route.match(/^\/api\/remote\/admin\/(status|pair|revoke)$/);
+    if (remoteAdminAction) {
+      if (!localControlRequest || managedHost) {
+        throw new RemoteAuthError("Remote access administration is available only from the local host.", 403);
+      }
+      const action = remoteAdminAction[1];
+      if (action === "status") {
+        sendJson(response, 200, {
+          remoteEnabled: Boolean(remoteAuth),
+          descriptor: remoteAuth ? await remoteAuth.descriptor() : null,
+          sessions: remoteAuth ? await remoteAuth.listSessions() : [],
+        });
+        return true;
+      }
+      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
+      if (action === "pair") {
+        const pairing = await remoteAuth.issuePairing();
+        const encrypted = "encrypted" in request.socket && request.socket.encrypted === true;
+        const protocol = encrypted ? "https" : "http";
+        const host = request.headers.host ?? "localhost";
+        sendJson(response, 200, {
+          ...pairing,
+          pairingUrl: `${protocol}://${host}/#pair=${pairing.credential}`,
+        });
+        return true;
+      }
+      const body = await readJson(request) as { sessionId?: unknown };
+      if (typeof body.sessionId !== "string" || !body.sessionId.trim()) {
+        throw new RemoteAuthError("A remote session is required.", 400);
+      }
+      sendJson(response, 200, { revoked: await remoteAuth.revoke(body.sessionId) });
       return true;
     }
     if (route === "/api/remote/pair") {
@@ -4345,6 +4405,7 @@ export function createLocalHost(
         )
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    const localControlRequest = isLocalControlRequest(request);
     let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost
@@ -4366,6 +4427,7 @@ export function createLocalHost(
       && route.startsWith("/api/")
       && route !== "/api/remote/pair"
       && route !== "/api/remote/descriptor"
+      && !(localControlRequest && route.startsWith("/api/remote/admin/"))
     ) {
       try {
         await remoteAuth.verify(request, await bufferRequest(request));
@@ -4402,6 +4464,7 @@ export function createLocalHost(
         chisei,
         Boolean(remoteAuth) && !internalRequest,
         internalRequest,
+        localControlRequest,
         remoteAuth,
         internalPermissionCallback?.url,
         managedHost,
