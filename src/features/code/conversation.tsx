@@ -131,6 +131,19 @@ export function readyComposerPlaceholder(providerName: string, threadId: string 
   return threadId ? `Reply to ${providerName}…` : "Describe the task you want to tackle…";
 }
 
+export function providerProfileDisplayName(
+  profiles: ClaudeProfile[],
+  provider: ProviderId,
+  profileId: string,
+): string | null {
+  if (provider !== "claude-code" && provider !== "shikigami") return null;
+  const profile = profiles.find((candidate) => candidate.id === profileId);
+  if (!profile) return null;
+  if (provider === "claude-code" && profile.provider && profile.provider !== "claude-code") return null;
+  if (provider === "shikigami" && profile.provider !== "shikigami") return null;
+  return profile.name;
+}
+
 /**
  * Keep the native worktree select usable when a repository exposes many
  * branches. The selected worktree remains visible while filtering so typing
@@ -589,6 +602,7 @@ export function Conversation({
   const providerLabel = providerListLabel(provider);
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
   const providerChipName = formatProviderChipName(provider, selectedProvider);
+  const selectedProfileName = providerProfileDisplayName(profiles, provider, profileId);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
@@ -663,7 +677,9 @@ export function Conversation({
   const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
-      setProfileId((current) => current || defaultClaudeProfileId);
+      setProfileId((current) => claudeProfiles.some((profile) => profile.id === current)
+        ? current
+        : defaultClaudeProfileId);
       // T3-style: pin a concrete alias (Sonnet), not a synthetic "default" token.
       setModel(resolveDefaultProviderModel("claude-code", undefined));
       setReasoningEffort("medium");
@@ -3675,6 +3691,11 @@ export function Conversation({
                   {providerAvatarInitials(provider, providerLabel)}
                 </span>
                 {providerChipName}
+                {selectedProfileName && (
+                  <span className="composer-provider-profile-chip" title={`Profile: ${selectedProfileName}`}>
+                    · {selectedProfileName}
+                  </span>
+                )}
                 {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
               </button>
               {providerMenuOpen && canSwitchProvider && (
@@ -3744,6 +3765,22 @@ export function Conversation({
                       </button>
                     );
                   })}
+                  {provider === "claude-code" && claudeProfiles.length > 1 && (
+                    <div className="composer-provider-profile">
+                      <label htmlFor="composer-claude-profile">Claude Code profile
+                        <select
+                          id="composer-claude-profile"
+                          value={profileId}
+                          aria-label="Claude Code profile"
+                          onChange={(event) => setProfileId(event.target.value)}
+                        >
+                          {claudeProfiles.map((profile) => (
+                            <option value={profile.id} key={profile.id}>{profile.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
                   {provider === "shikigami" && shikigamiProfiles.length > 1 && (
                     <div className="composer-provider-profile">
                       <label htmlFor="composer-shikigami-profile">Shikigami profile
