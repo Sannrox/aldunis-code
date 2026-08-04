@@ -88,8 +88,10 @@ the layout while leaving the main conversation surface available. A visible
 expand button remains in the shell so the sidebar can be reopened by pointer;
 on macOS it explicitly opts out of the titlebar drag region. The compact
 header mark crops the supplied tile frame so the brand glyph does not acquire a
-stray border at small sizes. The same control is used in the web renderer and
-Electron desktop shell.
+stray border at small sizes. On narrow screens the same sidebar becomes a
+temporary navigation drawer with a scrim, so the conversation and composer
+retain the viewport. The same control is used in the web renderer and Electron
+desktop shell, with desktop and drawer preferences stored independently.
 
 **Settling does not release the worktree.** Aldunis Code enforces a managed
 worktree limit (`server/worktrees.ts`), so settled conversations can continue

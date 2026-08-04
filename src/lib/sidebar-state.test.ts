@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DEFAULT_MOBILE_SIDEBAR_OPEN,
   DEFAULT_SIDEBAR_OPEN,
+  MOBILE_SIDEBAR_OPEN_STORAGE_KEY,
   matchesSidebarToggleShortcut,
   readSidebarOpenPreference,
   resolveSidebarOpenPreference,
@@ -54,4 +56,22 @@ test("sidebar preference fails open when storage is unavailable", () => {
   assert.equal(readSidebarOpenPreference({
     getItem: () => { throw new Error("storage unavailable"); },
   }), DEFAULT_SIDEBAR_OPEN);
+});
+
+test("mobile sidebar preference is independent and closed by default", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+  assert.equal(
+    readSidebarOpenPreference(storage, MOBILE_SIDEBAR_OPEN_STORAGE_KEY, DEFAULT_MOBILE_SIDEBAR_OPEN),
+    false,
+  );
+  writeSidebarOpenPreference(storage, true, MOBILE_SIDEBAR_OPEN_STORAGE_KEY);
+  assert.equal(values.get(MOBILE_SIDEBAR_OPEN_STORAGE_KEY), "true");
+  assert.equal(
+    readSidebarOpenPreference(storage, MOBILE_SIDEBAR_OPEN_STORAGE_KEY, DEFAULT_MOBILE_SIDEBAR_OPEN),
+    true,
+  );
 });

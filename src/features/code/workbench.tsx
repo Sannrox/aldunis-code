@@ -29,9 +29,12 @@ import { Icon } from "../../components/icon";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
+  DEFAULT_MOBILE_SIDEBAR_OPEN,
   DEFAULT_SIDEBAR_OPEN,
+  MOBILE_SIDEBAR_OPEN_STORAGE_KEY,
   matchesSidebarToggleShortcut,
   readSidebarOpenPreference,
+  SIDEBAR_OPEN_STORAGE_KEY,
   SIDEBAR_TOGGLE_SHORTCUT_LABEL,
   writeSidebarOpenPreference,
 } from "../../lib/sidebar-state";
@@ -60,20 +63,36 @@ function paneConversationLabel(
 
 
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
+const SIDEBAR_MOBILE_MEDIA_QUERY = "(max-width: 680px)";
+
+function readNarrowViewport(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia(SIDEBAR_MOBILE_MEDIA_QUERY).matches;
+}
 
 function readInitialSidebarOpen(): boolean {
   if (typeof window === "undefined") return DEFAULT_SIDEBAR_OPEN;
   try {
-    return readSidebarOpenPreference(window.localStorage);
+    const narrowViewport = readNarrowViewport();
+    return readSidebarOpenPreference(
+      window.localStorage,
+      narrowViewport ? MOBILE_SIDEBAR_OPEN_STORAGE_KEY : SIDEBAR_OPEN_STORAGE_KEY,
+      narrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN,
+    );
   } catch {
-    return DEFAULT_SIDEBAR_OPEN;
+    return readNarrowViewport() ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN;
   }
 }
 
-function persistSidebarOpen(open: boolean): void {
+function persistSidebarOpen(open: boolean, narrowViewport: boolean): void {
   if (typeof window === "undefined") return;
   try {
-    writeSidebarOpenPreference(window.localStorage, open);
+    writeSidebarOpenPreference(
+      window.localStorage,
+      open,
+      narrowViewport ? MOBILE_SIDEBAR_OPEN_STORAGE_KEY : SIDEBAR_OPEN_STORAGE_KEY,
+    );
   } catch {
     /* Ignore unavailable browser storage. */
   }
@@ -577,20 +596,68 @@ export function CodeWorkbench({
   managedModel?: string;
   managedAccount?: ManagedAccount | null;
 }) {
+  const [narrowViewport, setNarrowViewport] = useState(readNarrowViewport);
   const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarOpen);
   const sidebarOpenButtonReference = useRef<HTMLButtonElement>(null);
+  const mainReference = useRef<HTMLElement>(null);
+  const sidebarOpenReference = useRef(sidebarOpen);
+  const sidebarFocusSourceReference = useRef<
+    "user" | "responsive" | "navigation" | "dialog"
+  >("user");
+  const narrowViewportReference = useRef(narrowViewport);
   const previousSidebarOpenReference = useRef(sidebarOpen);
-  const toggleSidebar = useCallback(() => setSidebarOpen((open) => !open), []);
+  const updateSidebarOpen = useCallback((
+    open: boolean,
+    source: "user" | "responsive" | "navigation" | "dialog",
+  ) => {
+    if (sidebarOpenReference.current === open) return;
+    sidebarOpenReference.current = open;
+    sidebarFocusSourceReference.current = source;
+    setSidebarOpen(open);
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    updateSidebarOpen(!sidebarOpenReference.current, "user");
+  }, [updateSidebarOpen]);
+  const closeSidebar = useCallback(() => {
+    updateSidebarOpen(false, "user");
+  }, [updateSidebarOpen]);
   useEffect(() => {
-    persistSidebarOpen(sidebarOpen);
-  }, [sidebarOpen]);
+    persistSidebarOpen(sidebarOpen, narrowViewport);
+  }, [narrowViewport, sidebarOpen]);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const onResize = () => {
+      const nextNarrowViewport = readNarrowViewport();
+      if (nextNarrowViewport === narrowViewportReference.current) return;
+      narrowViewportReference.current = nextNarrowViewport;
+      setNarrowViewport(nextNarrowViewport);
+      let nextSidebarOpen: boolean;
+      try {
+        nextSidebarOpen = readSidebarOpenPreference(
+          window.localStorage,
+          nextNarrowViewport ? MOBILE_SIDEBAR_OPEN_STORAGE_KEY : SIDEBAR_OPEN_STORAGE_KEY,
+          nextNarrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN,
+        );
+      } catch {
+        nextSidebarOpen = nextNarrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN;
+      }
+      const sidebarStateChanged = sidebarOpenReference.current !== nextSidebarOpen;
+      updateSidebarOpen(nextSidebarOpen, "responsive");
+      /*
+       * The focus effect below restores focus only for explicit user changes.
+       * Breakpoint changes should never pull focus out of the active editor.
+       */
+      if (!sidebarStateChanged) {
+        sidebarFocusSourceReference.current = "user";
+      }
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateSidebarOpen]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented
-        || !matchesSidebarToggleShortcut(event)
-        || isSidebarShortcutCaptured(event.target)
-      ) return;
+      if (event.defaultPrevented) return;
+      if (!matchesSidebarToggleShortcut(event) || isSidebarShortcutCaptured(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       toggleSidebar();
@@ -602,8 +669,14 @@ export function CodeWorkbench({
   useEffect(() => {
     const wasOpen = previousSidebarOpenReference.current;
     previousSidebarOpenReference.current = sidebarOpen;
-    if (wasOpen === sidebarOpen) return;
+    const focusSource = sidebarFocusSourceReference.current;
+    sidebarFocusSourceReference.current = "user";
+    if (wasOpen === sidebarOpen || focusSource === "responsive" || focusSource === "dialog") return;
     const frame = window.requestAnimationFrame(() => {
+      if (focusSource === "navigation") {
+        mainReference.current?.focus({ preventScroll: true });
+        return;
+      }
       const selector = sidebarOpen
         ? "[data-sidebar-collapse-toggle]"
         : "[data-sidebar-open-toggle]";
@@ -1140,6 +1213,12 @@ export function CodeWorkbench({
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
   };
+  const closeSidebarAfterMobileNavigation = useCallback(() => {
+    if (narrowViewport) updateSidebarOpen(false, "navigation");
+  }, [narrowViewport, updateSidebarOpen]);
+  const closeSidebarBeforeMobileDialog = useCallback(() => {
+    if (narrowViewport) updateSidebarOpen(false, "dialog");
+  }, [narrowViewport, updateSidebarOpen]);
   return (
     <>
       <div
@@ -1150,33 +1229,59 @@ export function CodeWorkbench({
       <CodeSidebar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={toggleSidebar}
+        onRequestClose={narrowViewport ? closeSidebar : undefined}
         product={product}
-        onProductChange={onProductChange}
+        onProductChange={(nextProduct) => {
+          onProductChange(nextProduct);
+          closeSidebarAfterMobileNavigation();
+        }}
         productAvailability={productAvailability}
         repository={repository}
         repositoryRestoring={repositoryRestoring}
         projects={projects}
         projectFilter={projectFilter}
-        onProjectFilterChange={setProjectFilter}
-        onAddProject={onAddProject}
-        onSelectProject={onSelectProject}
+        onProjectFilterChange={(filter) => {
+          setProjectFilter(filter);
+          if (filter === "all") closeSidebarAfterMobileNavigation();
+        }}
+        onAddProject={() => {
+          onAddProject();
+          closeSidebarBeforeMobileDialog();
+        }}
+        onSelectProject={(projectId) => {
+          onSelectProject(projectId);
+          closeSidebarAfterMobileNavigation();
+        }}
         changes={changes}
         onShowChanges={() => {
           void refresh();
           if (activePane === "secondary") setSecondaryChangesSignal((value) => value + 1);
           else setPrimaryChangesSignal((value) => value + 1);
+          closeSidebarAfterMobileNavigation();
         }}
-        onBrowseFiles={() => (
-          activePane === "secondary"
-            ? setSecondaryFilesSignal((value) => value + 1)
-            : setPrimaryFilesSignal((value) => value + 1)
-        )}
+        onBrowseFiles={() => {
+          if (activePane === "secondary") setSecondaryFilesSignal((value) => value + 1);
+          else setPrimaryFilesSignal((value) => value + 1);
+          closeSidebarAfterMobileNavigation();
+        }}
+        onOpenPalette={() => {
+          onOpenPalette();
+          closeSidebarBeforeMobileDialog();
+        }}
         conversations={listedConversations}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
-        onOpenConversation={openConversation}
-        onOpenBeside={openBeside}
+        onOpenConversation={(id) => {
+          openConversation(id);
+          closeSidebarAfterMobileNavigation();
+        }}
+        onOpenBeside={(id) => {
+          openBeside(id);
+          closeSidebarAfterMobileNavigation();
+        }}
         onNewConversation={() => {
+          if (!repository && projects.length === 0) closeSidebarBeforeMobileDialog();
+          else closeSidebarAfterMobileNavigation();
           // New thread uses the active/filter project for runs — never opens a path tree,
           // and never rewrites the chip filter (especially "All").
           if (projectFilter !== "all") {
@@ -1200,9 +1305,14 @@ export function CodeWorkbench({
           }
           setActivePane("primary");
         }}
-        onOpenPalette={onOpenPalette}
-        onSelectWorktree={onSelectWorktree}
-        onManageWorktrees={onManageWorktrees}
+        onSelectWorktree={(path) => {
+          onSelectWorktree(path);
+          closeSidebarAfterMobileNavigation();
+        }}
+        onManageWorktrees={(path) => {
+          onManageWorktrees(path);
+          closeSidebarBeforeMobileDialog();
+        }}
         showingArchived={showingArchived}
         onToggleArchived={() => setShowingArchived((value) => !value)}
         onConversationAction={(conversation, action) => { void manageConversation(conversation, action); }}
@@ -1226,8 +1336,19 @@ export function CodeWorkbench({
         worktreeLimit={worktreeLimit}
         managedWorktreeCount={managedWorktreeCount}
         managedAccount={managedAccount}
-        onSettings={onSettings}
+        onSettings={() => {
+          onSettings();
+          closeSidebarBeforeMobileDialog();
+        }}
       />
+      {sidebarOpen && (
+        <button
+          type="button"
+          className="sidebar-scrim"
+          aria-label="Close navigation"
+          onClick={closeSidebar}
+        />
+      )}
       {!sidebarOpen && (
         <button
           ref={sidebarOpenButtonReference}
@@ -1247,7 +1368,13 @@ export function CodeWorkbench({
           </svg>
         </button>
       )}
-      <main className="main" data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}>
+      <main
+        ref={mainReference}
+        className="main"
+        data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}
+        inert={narrowViewport && sidebarOpen}
+        tabIndex={-1}
+      >
       {product !== "code" ? (
         <DomainPage
           product={product as Exclude<import("../../types").Product, "code">}

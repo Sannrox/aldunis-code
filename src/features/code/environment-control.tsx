@@ -53,6 +53,21 @@ function EnvironmentMenuRow({
   );
 }
 
+function EnvironmentMenuGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="environment-menu-group" role="group" aria-label={label}>
+      <div className="environment-menu-group__label">{label}</div>
+      {children}
+    </div>
+  );
+}
+
 export function EnvironmentControl({
   repository,
   pane,
@@ -121,8 +136,8 @@ export function EnvironmentControl({
         data-workspace-panel="changes"
         disabled={!repository}
         tabIndex={tabIndex}
-        title={repository ? "Open environment actions" : "Open a repository to manage its environment"}
-        aria-label={repository ? `Environment, ${pane} pane` : `Environment unavailable: open a repository, ${pane} pane`}
+        title={repository ? "Review changes and workspace actions" : "Choose a project to review changes"}
+        aria-label={repository ? `Review changes and workspace actions, ${pane} pane` : `Review unavailable: choose a project, ${pane} pane`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-pressed={active}
@@ -130,7 +145,7 @@ export function EnvironmentControl({
         onClick={() => setOpen((current) => !current)}
       >
         <Icon name="route" />
-        <span className="environment-trigger__label">Environment</span>
+        <span className="environment-trigger__label">Review</span>
         <span className={`workspace-panel-count ${changesError ? "error" : ""}`}>
           {changesLoading ? "…" : changesCount}
         </span>
@@ -140,47 +155,53 @@ export function EnvironmentControl({
         <div
           className="environment-menu"
           role="menu"
-          aria-label={`Environment actions, ${pane} pane`}
+          aria-label={`Review changes and workspace actions, ${pane} pane`}
         >
           <div className="environment-menu__header">
             <div>
-              <span className="environment-menu__eyebrow">Environment</span>
+              <span className="environment-menu__eyebrow">Review &amp; deliver</span>
               <strong title={repository?.selectedWorktree}>{worktreeLabel}</strong>
             </div>
             <span className="environment-menu__scope">{repository?.name ?? "Repository required"}</span>
           </div>
           <div className="environment-menu__divider" />
-          <EnvironmentMenuRow
-            icon="diff"
-            label="Changes"
-            detail={changesDetail}
-            trailing={(
-              <span className="environment-menu__delta" aria-label={`${additions} additions, ${deletions} deletions`}>
-                <b>+{additions}</b> <b>−{deletions}</b>
-              </span>
-            )}
-            onClick={() => run(() => onOpenChanges("review"))}
-          />
-          <EnvironmentMenuRow
-            icon="branch"
-            label="Worktree"
-            detail={worktreeLabel}
-            trailing={<Icon name="chevron" />}
-            onClick={() => run(onManageWorktrees)}
-          />
-          <EnvironmentMenuRow
-            icon="branch"
-            label="Create branch"
-            detail="Open a new isolated worktree"
-            onClick={() => run(onManageWorktrees)}
-          />
-          <EnvironmentMenuRow
-            icon="rocket"
-            label="Commit or push"
-            detail={canDeliver ? "Review and prepare delivery" : "No changes to deliver yet"}
-            disabled={!canDeliver}
-            onClick={() => run(() => onOpenChanges("deliver"))}
-          />
+          <EnvironmentMenuGroup label="Changes">
+            <EnvironmentMenuRow
+              icon="diff"
+              label="Review changes"
+              detail={changesDetail}
+              trailing={(
+                <span className="environment-menu__delta" aria-label={`${additions} additions, ${deletions} deletions`}>
+                  <b>+{additions}</b> <b>−{deletions}</b>
+                </span>
+              )}
+              onClick={() => run(() => onOpenChanges("review"))}
+            />
+          </EnvironmentMenuGroup>
+          <EnvironmentMenuGroup label="Workspace">
+            <EnvironmentMenuRow
+              icon="branch"
+              label="Manage worktree"
+              detail={worktreeLabel}
+              trailing={<Icon name="chevron" />}
+              onClick={() => run(onManageWorktrees)}
+            />
+            <EnvironmentMenuRow
+              icon="branch"
+              label="Create isolated worktree"
+              detail="Start a new branch from this repository"
+              onClick={() => run(onManageWorktrees)}
+            />
+          </EnvironmentMenuGroup>
+          <EnvironmentMenuGroup label="Delivery">
+            <EnvironmentMenuRow
+              icon="rocket"
+              label="Prepare delivery"
+              detail={canDeliver ? "Review changes before commit or push" : "No changes ready to deliver"}
+              disabled={!canDeliver}
+              onClick={() => run(() => onOpenChanges("deliver"))}
+            />
+          </EnvironmentMenuGroup>
         </div>
       )}
     </div>

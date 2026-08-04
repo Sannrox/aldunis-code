@@ -189,8 +189,13 @@ code{font-family:var(--font-mono)}
 /* main */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
 .topbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-height:var(--conv-topbar-height,52px);height:auto;flex:0 0 auto;padding:8px 16px;border-bottom:1px solid var(--border)}
-.crumb{font-size:13px;color:var(--muted-foreground);min-width:0;flex:1 1 140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.crumb b{color:var(--foreground);font-weight:500}
+.crumb{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 180px;overflow:hidden;color:var(--muted-foreground);font-size:13px}
+.crumb-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb b{color:var(--foreground);font-weight:550}
+.crumb-meta{display:flex;min-width:0;align-items:center;gap:4px;overflow:hidden}
+.crumb-chip{display:inline-flex;min-width:0;max-width:150px;align-items:center;padding:3px 7px;border:1px solid var(--border);border-radius:999px;background:var(--muted);color:var(--muted-foreground);font:10px var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crumb-chip--branch{color:var(--foreground)}
+.crumb-chip--secondary{max-width:130px;color:var(--muted-foreground);opacity:.78}
 .tb-r{margin-left:auto;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-end;gap:4px;min-width:0;max-width:100%}
 .workspace-panel-selector{display:flex;align-items:center;gap:3px;min-width:0;padding:2px;border:1px solid var(--border);border-radius:8px;background:var(--muted)}
 .workspace-panel-label{padding:0 5px;color:var(--muted-foreground);font:10px var(--font-mono);letter-spacing:.05em;text-transform:uppercase}
@@ -211,6 +216,8 @@ code{font-family:var(--font-mono)}
 .environment-menu__header strong{overflow:hidden;color:var(--foreground);font-size:13px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
 .environment-menu__scope{max-width:120px;overflow:hidden;color:var(--muted-foreground);font:10px var(--font-mono);text-overflow:ellipsis;white-space:nowrap}
 .environment-menu__divider{height:1px;margin:0 8px 4px;background:var(--border)}
+.environment-menu-group + .environment-menu-group{margin-top:5px;padding-top:5px;border-top:1px solid var(--border)}
+.environment-menu-group__label{padding:4px 8px 3px;color:var(--muted-foreground);font:600 9.5px var(--font-mono);letter-spacing:.09em;text-transform:uppercase}
 .environment-menu-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:9px;width:100%;min-height:52px;padding:8px;border:0;border-radius:8px;background:transparent;color:var(--foreground);text-align:left;cursor:pointer}
 .environment-menu-row:not(:disabled):hover,.environment-menu-row:not(:disabled):focus-visible{background:var(--accent);outline:none}
 .environment-menu-row:disabled{opacity:.48;cursor:not-allowed}
@@ -2776,4 +2783,156 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
   .composer-run-settings { flex: 1 1 100%; order: 2; }
   .composer-run-settings-label { display: none; }
   .crow .send { order: 3; }
+}
+
+/* Narrow screens use the sidebar as a temporary navigation drawer so the
+   conversation and composer keep the viewport instead of being pushed below
+   a full-height project list. */
+.sidebar-scrim {
+  display: none;
+}
+@media (max-width: 680px) {
+  .app {
+    flex-direction: row !important;
+  }
+  .sb {
+    position: fixed !important;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(86vw, 320px) !important;
+    max-width: min(86vw, 320px);
+    height: 100dvh !important;
+    max-height: none !important;
+    flex: 0 0 auto !important;
+    border-right: 1px solid var(--border) !important;
+    border-bottom: 0 !important;
+    box-shadow: 18px 0 48px rgb(0 0 0 / .16);
+    transform: translateX(0);
+    transition: transform .18s ease, opacity .16s ease;
+  }
+  .sb[data-sidebar-state="collapsed"] {
+    width: min(86vw, 320px) !important;
+    flex-basis: auto !important;
+    height: 100dvh !important;
+    max-height: none !important;
+    min-height: 100dvh !important;
+    border-right-color: transparent !important;
+    border-bottom-color: transparent !important;
+    transform: translateX(-105%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sidebar-scrim {
+    display: block;
+    position: fixed;
+    inset: 0 0 0 min(86vw, 320px);
+    z-index: 35;
+    width: auto;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: rgb(0 0 0 / .16);
+    cursor: pointer;
+  }
+  .main {
+    width: 100%;
+    min-width: 0;
+  }
+  .topbar {
+    gap: 7px 8px !important;
+    padding: 8px 12px !important;
+  }
+  .crumb {
+    width: 100%;
+    flex: 1 1 100%;
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  .crumb-meta {
+    flex: 1 1 auto;
+  }
+  .crumb-chip {
+    max-width: 120px;
+  }
+  .crumb-chip--secondary {
+    display: none;
+  }
+  .tb-r {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+  .workspace-panel-selector {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: visible;
+  }
+  .workspace-panel-selector > .btn {
+    padding-inline: 7px !important;
+  }
+  .new-chat-context {
+    padding-inline: 0;
+    margin-bottom: 10px;
+  }
+  .new-chat-context-summary {
+    min-height: 60px;
+    padding-inline: 10px;
+  }
+  .new-chat-context-summary-copy small {
+    overflow: visible;
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .new-chat-context-status {
+    max-width: 88px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .new-chat-context-row {
+    min-height: 48px;
+  }
+  .new-chat-context-copy small {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+  .cwrap {
+    padding-inline: 12px !important;
+  }
+  .cbox textarea {
+    min-height: 56px;
+    font-size: 16px;
+  }
+  .environment-trigger__label {
+    display: inline;
+  }
+  .environment-menu {
+    position: fixed;
+    top: 72px;
+    right: 12px;
+    width: min(330px, calc(100vw - 24px));
+    max-height: calc(100dvh - 84px);
+    overflow-y: auto;
+  }
+}
+@media (max-width: 420px) {
+  .crumb-chip {
+    max-width: 98px;
+  }
+  .environment-trigger__label {
+    display: none;
+  }
+  .tb-r .btn,
+  .tb-r .btn-ghost {
+    padding-inline: 7px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb {
+    transition: none;
+  }
+  .sidebar-scrim {
+    transition: none;
+  }
 }
