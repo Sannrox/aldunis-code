@@ -27,6 +27,7 @@ export function CommandPalette({
   onPreferences,
   onProviderManagement,
   onActivity = () => undefined,
+  onConnections = () => undefined,
   onManageWorktrees,
   onAutomations,
   threads = [],
@@ -40,6 +41,7 @@ export function CommandPalette({
   onPreferences: () => void;
   onProviderManagement: () => void;
   onActivity?: () => void;
+  onConnections?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
   threads?: ThreadMetadata[];
@@ -94,6 +96,11 @@ export function CommandPalette({
           run: onActivity,
         },
         {
+          label: "Connections",
+          detail: "Pair devices and revoke local remote sessions",
+          run: onConnections,
+        },
+        {
           label: "Automations",
           detail: "Schedule interval or cron prompts into existing conversations",
           run: onAutomations,
@@ -121,7 +128,7 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onActivity, onAutomations, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
+    [hasRepository, onActivity, onAutomations, onConnections, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
   );
 
   useEffect(() => {

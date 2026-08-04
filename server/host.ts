@@ -135,6 +135,64 @@ import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
+function normalizeAddress(address: string | undefined): string | undefined {
+  if (!address) return undefined;
+  return address
+    .replace(/^::ffff:/i, "")
+    .replace(/^\[(.*)\]$/, "$1");
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  const normalized = normalizeAddress(address);
+  if (!normalized) return false;
+  return LOOPBACK_HOSTS.has(normalized);
+}
+
+function requestHostName(request: IncomingMessage): string | undefined {
+  const host = request.headers.host;
+  if (!host) return undefined;
+  try {
+    return normalizeAddress(new URL(`http://${host}`).hostname);
+  } catch {
+    return undefined;
+  }
+}
+
+function isLoopbackHostHeader(request: IncomingMessage): boolean {
+  return isLoopbackAddress(requestHostName(request));
+}
+
+export function isLocalControlRequest(
+  request: IncomingMessage,
+  localBindHost?: string,
+  publicOrigin?: string,
+): boolean {
+  const forwarded = request.headers["x-forwarded-for"];
+  const forwardedAddresses = typeof forwarded === "string"
+    ? forwarded.split(",").map((value) => value.trim()).filter(Boolean)
+    : [];
+  if (!forwardedAddresses.every((address) => isLoopbackAddress(address))) return false;
+  if (isLoopbackAddress(request.socket.remoteAddress) && isLoopbackHostHeader(request)) return true;
+  const boundAddress = normalizeAddress(localBindHost);
+  let publicOriginHost: string | undefined;
+  if (publicOrigin) {
+    try {
+      publicOriginHost = normalizeAddress(new URL(publicOrigin).hostname);
+    } catch {
+      publicOriginHost = undefined;
+    }
+  }
+  const requestHost = requestHostName(request);
+  return Boolean(
+    boundAddress
+      && normalizeAddress(request.socket.remoteAddress) === boundAddress
+      && (
+        requestHost === boundAddress
+        || (!isLoopbackAddress(boundAddress) && requestHost === publicOriginHost)
+      ),
+  );
+}
+
 function adapterProfileSeed(adapter: {
   manifest: {
     id: string;
@@ -485,12 +543,15 @@ async function handleApi(
   chisei: ChiseiProjectionClient,
   remoteRequest: boolean,
   internalRequest: boolean,
+  localControlRequest: boolean,
   remoteAuth?: RemoteAuth,
   internalApprovalUrl?: Promise<string>,
   managedHost?: ManagedHost,
   managedIdentity?: ManagedIdentity,
   browser?: SharedBrowserBroker | null,
   browserMcpPath?: string,
+  publicOrigin?: string | (() => string | undefined),
+  localBindHost?: string,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
@@ -928,6 +989,48 @@ async function handleApi(
       } else {
         sendJson(response, 200, await adapters.setEnabled(id, action === "enable"));
       }
+      return true;
+    }
+    const remoteAdminAction = route.match(/^\/api\/remote\/admin\/(status|pair|revoke)$/);
+    if (remoteAdminAction) {
+      if (!localControlRequest || managedHost) {
+        throw new RemoteAuthError("Remote access administration is available only from the local host.", 403);
+      }
+      const action = remoteAdminAction[1];
+      if (action === "status") {
+        sendJson(response, 200, {
+          remoteEnabled: Boolean(remoteAuth),
+          descriptor: remoteAuth ? await remoteAuth.descriptor() : null,
+          sessions: remoteAuth ? await remoteAuth.listSessions() : [],
+        });
+        return true;
+      }
+      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
+      if (action === "pair") {
+        const configuredOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
+        if (publicOrigin !== undefined && !configuredOrigin) {
+          throw new RemoteAuthError("The public remote origin is not ready.", 503);
+        }
+        const origin = configuredOrigin
+          ? new URL(configuredOrigin).origin
+          : (() => {
+              const encrypted = "encrypted" in request.socket && request.socket.encrypted === true;
+              const protocol = encrypted ? "https" : "http";
+              const host = request.headers.host ?? "localhost";
+              return `${protocol}://${host}`;
+            })();
+        const pairing = await remoteAuth.issuePairing();
+        sendJson(response, 200, {
+          ...pairing,
+          pairingUrl: `${origin}/#pair=${pairing.credential}`,
+        });
+        return true;
+      }
+      const body = await readJson(request) as { sessionId?: unknown };
+      if (typeof body.sessionId !== "string" || !body.sessionId.trim()) {
+        throw new RemoteAuthError("A remote session is required.", 400);
+      }
+      sendJson(response, 200, { revoked: await remoteAuth.revoke(body.sessionId) });
       return true;
     }
     if (route === "/api/remote/pair") {
@@ -4100,6 +4203,8 @@ export function createLocalHost(
   managedHost?: ManagedHost,
   browserHost?: BrowserHost,
   browserMcpPath?: string,
+  publicOrigin?: string | (() => string | undefined),
+  localBindHost?: string,
 ) {
   const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
@@ -4362,6 +4467,8 @@ export function createLocalHost(
         )
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    const configuredPublicOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
+    const localControlRequest = isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
     let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost
@@ -4383,6 +4490,7 @@ export function createLocalHost(
       && route.startsWith("/api/")
       && route !== "/api/remote/pair"
       && route !== "/api/remote/descriptor"
+      && !(localControlRequest && route.startsWith("/api/remote/admin/"))
     ) {
       try {
         await remoteAuth.verify(request, await bufferRequest(request));
@@ -4419,12 +4527,15 @@ export function createLocalHost(
         chisei,
         Boolean(remoteAuth) && !internalRequest,
         internalRequest,
+        localControlRequest,
         remoteAuth,
         internalPermissionCallback?.url,
         managedHost,
         managedIdentity,
         browser,
         browserMcpPath,
+        publicOrigin,
+        localBindHost,
       )
     ) return;
     await serveStatic(request, response, dist);
