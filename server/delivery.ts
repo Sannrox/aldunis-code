@@ -2,10 +2,12 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { RepositoryError } from "./repository.ts";
+import type { PullRequestDraft } from "../src/types.ts";
 
 const execFileAsync = promisify(execFile);
 const PLAN_TTL_MS = 5 * 60_000;
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const MAX_DRAFT_PATHS = 40;
 
 export type DeliveryAction = "stage" | "commit" | "push" | "pull_request";
 
@@ -199,6 +201,80 @@ export async function inspectDelivery(repository: string, worktree: string): Pro
     staged: [...staged].sort(),
     unstaged: [...unstaged].sort(),
   };
+}
+
+function markdownCode(value: string): string {
+  return value.replaceAll("`", "\\`");
+}
+
+function branchTitle(branch: string): string {
+  const words = branch.split(/[\/_-]+/).filter(Boolean);
+  const withoutPrefix = words.length > 1 && [
+    "bugfix",
+    "chore",
+    "codex",
+    "feature",
+    "fix",
+    "refactor",
+    "research",
+  ].includes(words[0]!.toLocaleLowerCase())
+    ? words.slice(1)
+    : words;
+  const label = withoutPrefix
+    .map((word) => /^\d+$/.test(word) ? word : `${word[0]!.toLocaleUpperCase()}${word.slice(1)}`)
+    .join(" ")
+    .trim();
+  return label || "branch changes";
+}
+
+function boundedPath(path: string): string {
+  const normalized = path.length > 240 ? `${path.slice(0, 237)}…` : path;
+  return markdownCode(normalized);
+}
+
+export function pullRequestDraft(context: DeliveryContext, baseInput: unknown): PullRequestDraft {
+  if (!context.branch) {
+    throw new RepositoryError("Detached HEAD cannot produce a pull-request draft.", 409);
+  }
+  const base = assertText(baseInput, "A base branch", 240);
+  const paths = [...new Set([...context.staged, ...context.unstaged])].sort();
+  const changedFiles = paths.slice(0, MAX_DRAFT_PATHS);
+  const omittedFiles = Math.max(0, paths.length - changedFiles.length);
+  const title = `Update ${branchTitle(context.branch)}`.slice(0, 120).trim();
+  const pathLines = changedFiles.length > 0
+    ? changedFiles.map((path) => `- \`${boundedPath(path)}\``)
+    : ["- No changed paths detected; inspect the branch before publishing."];
+  if (omittedFiles > 0) {
+    pathLines.push(`- …and ${omittedFiles} more changed path${omittedFiles === 1 ? "" : "s"}.`);
+  }
+  const body = [
+    "## Summary",
+    `- Prepare ${markdownCode(branchTitle(context.branch).toLocaleLowerCase())} for review.`,
+    "",
+    "## Review surface",
+    `- Head: \`${markdownCode(context.branch)}\``,
+    `- Base: \`${markdownCode(base)}\``,
+    `- Changed paths: ${paths.length}`,
+    "",
+    "## Changed paths",
+    ...pathLines,
+  ].join("\n").slice(0, 12_000);
+  return {
+    title,
+    body,
+    branch: context.branch,
+    base,
+    changedFiles,
+    omittedFiles,
+  };
+}
+
+export async function draftPullRequest(
+  repository: string,
+  worktree: string,
+  baseInput: unknown,
+): Promise<PullRequestDraft> {
+  return pullRequestDraft(await inspectDelivery(repository, worktree), baseInput);
 }
 
 export class DeliveryBroker {
