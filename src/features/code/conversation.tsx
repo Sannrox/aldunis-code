@@ -2743,59 +2743,6 @@ export function Conversation({
                 .map((correlation) => (
                   <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
                 ))}
-              {providerState === "completed" && threadId && !completionDismissed && (
-                <div className="done" role="status">
-                  <div className="h">
-                    <span className="pill completed"><span className="dot" />Completed</span>
-                    <span className="ttl">Nothing left to do here</span>
-                  </div>
-                  <p>
-                    Worktree{" "}
-                    <code title={worktree?.path ?? conversation?.worktree ?? undefined}>
-                      {worktree?.path ?? conversation?.worktree}
-                    </code>{" "}
-                    is still checked out. Settling keeps the worktree.
-                  </p>
-                  <div className="acts">
-                    <button
-                      type="button"
-                      className="btn btn-default btn-sm"
-                      aria-label={`Settle thread, ${pane} pane`}
-                      onClick={() => {
-                        void (async () => {
-                          const response = await fetch("/api/state/conversations/settle", {
-                            method: "POST",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({ threadId }),
-                          });
-                          if (!response.ok) return;
-                          setCompletionDismissed(true);
-                          // Refresh sidebar so the thread moves into Settled.
-                          onConversationAvailable?.(threadId);
-                        })().catch(() => undefined);
-                      }}
-                    >
-                      Settle thread
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-sm"
-                      aria-label={`Settle and release worktree, ${pane} pane`}
-                      onClick={() => setReleaseWorktreeOpen(true)}
-                    >
-                      Settle and release worktree
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      aria-label={`Keep conversation open, ${pane} pane`}
-                      onClick={() => setCompletionDismissed(true)}
-                    >
-                      Keep open
-                    </button>
-                  </div>
-                </div>
-              )}
               {approvals.map((approval) => (
                 <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`${pane} pane approval required: ${approval.scope.summary}`}>
                   <header>
@@ -3024,6 +2971,60 @@ export function Conversation({
       )}
       </div>
       <div className="cwrap">
+        {providerState === "completed" && threadId && !completionDismissed && (
+          <div className="done" role="status">
+            <div className="h">
+              <span className="pill completed"><span className="dot" />Completed</span>
+              <span className="ttl">Workspace still in use</span>
+            </div>
+            <p className="done-copy">
+              <span className="done-copy-label">Worktree</span>
+              <code title={worktree?.path ?? conversation?.worktree ?? undefined}>
+                {worktree?.path ?? conversation?.worktree}
+              </code>
+              <span>is still checked out. Settling keeps the worktree.</span>
+            </p>
+            <div className="acts">
+              <button
+                type="button"
+                className="btn btn-default btn-sm"
+                aria-label={`Settle thread, ${pane} pane`}
+                onClick={() => {
+                  void (async () => {
+                    const response = await fetch("/api/state/conversations/settle", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ threadId }),
+                    });
+                    if (!response.ok) return;
+                    setCompletionDismissed(true);
+                    // Refresh sidebar so the thread moves into Settled.
+                    onConversationAvailable?.(threadId);
+                  })().catch(() => undefined);
+                }}
+              >
+                Settle thread
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                aria-label={`Settle and release worktree, ${pane} pane`}
+                title="Settle and release worktree"
+                onClick={() => setReleaseWorktreeOpen(true)}
+              >
+                Settle &amp; release
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                aria-label={`Keep conversation open, ${pane} pane`}
+                onClick={() => setCompletionDismissed(true)}
+              >
+                Keep open
+              </button>
+            </div>
+          </div>
+        )}
         {canPickWorkspace && (
           <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
             <span className="new-chat-context-eyebrow">Work on</span>

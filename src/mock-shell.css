@@ -229,15 +229,61 @@ code{font-family:var(--font-mono)}
 .dl.del{background:color-mix(in srgb,var(--destructive) 10%,transparent)}.dl.del .dt{color:var(--destructive-foreground)}
 .appr-f{display:flex;align-items:center;gap:7px;padding:11px 14px;border-top:1px solid var(--border);background:var(--muted)}
 
-/* settle prompt at end of a finished thread */
-.done{margin-top:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);padding:14px;min-width:0}
-.done .h{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap}
-.done .ttl{font-size:13.5px;font-weight:500}
-.done p{font-size:13px;color:var(--muted-foreground);margin-bottom:12px;overflow-wrap:anywhere}
+/* Finished-thread prompt: a compact decision popover anchored to the composer. */
+.done{
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 8px);
+  z-index:5;
+  width:min(620px,calc(100% - 48px));
+  transform:translateX(-50%);
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:var(--popover);
+  box-shadow:var(--shadow-popover);
+  padding:12px 14px;
+  min-width:0;
+}
+.done .h{display:flex;align-items:center;gap:8px;margin-bottom:2px;flex-wrap:wrap}
+.done .ttl{font-size:13px;font-weight:600}
+.done-copy{
+  display:flex;
+  align-items:baseline;
+  flex-wrap:wrap;
+  gap:4px 6px;
+  margin:8px 0 12px;
+  color:var(--muted-foreground);
+  font-size:12px;
+  line-height:1.45;
+  overflow-wrap:anywhere;
+}
+.done-copy-label{
+  flex:0 0 auto;
+  color:var(--foreground);
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.done-copy code{
+  flex:0 1 360px;
+  min-width:0;
+  max-width:100%;
+  overflow:hidden;
+  border:1px solid var(--border);
+  border-radius:5px;
+  background:var(--muted-bg);
+  color:var(--foreground);
+  padding:2px 5px;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font:11px/1.3 var(--font-mono);
+}
+.done-copy > span:last-child{flex:1 1 180px;min-width:0}
 /* Wrap actions in narrow dual-pane columns so settle controls stay in-bounds. */
 .done .acts{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}
 
-.cwrap{padding:0 24px 20px}
+.cwrap{position:relative;padding:0 24px 20px}
 .cbox{max-width:700px;margin:0 auto;border:1px solid var(--input);border-radius:var(--radius);background:var(--card);padding:12px 14px}
 .cph{font-size:14.5px;color:var(--muted-foreground);margin-bottom:12px}
 .crow{display:flex;align-items:center;gap:6px}
