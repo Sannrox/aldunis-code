@@ -2736,3 +2736,44 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
 @media (prefers-reduced-motion: reduce) {
   .sb { transition: none; }
 }
+
+/* Product-design pass: keep setup, run configuration, and attention states
+   legible as one hierarchy in the shipped shell. */
+.sw h2 {
+  margin-bottom: 5px;
+  font: 400 1.9rem/1.15 var(--font-display);
+  letter-spacing: -.02em;
+}
+
+/* At tablet/compact desktop widths, review is a full-width lower sheet. A
+   side dock beside a conversation column under ~600px is not actionable. */
+@media (min-width: 681px) and (max-width: 1100px) {
+  .split.with-review { flex-direction: column !important; }
+  .split.with-review > .conv {
+    min-width: 0 !important;
+    min-height: 260px !important;
+    flex: 1 1 auto !important;
+  }
+  .split.with-review > .review-dock,
+  .split.with-review > .rv {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    min-height: 220px !important;
+    max-height: 48% !important;
+    flex: 0 1 min(420px, 48%) !important;
+    border-top: 1px solid var(--border) !important;
+    border-left: 0 !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .new-chat-context-stepper { margin-inline: 0; gap: 4px; font-size: 9px; }
+  .new-chat-context-stepper-line { min-width: 5px; }
+  .new-chat-context-step b { width: 16px; height: 16px; }
+  .new-chat-worktree-filter-label { display: none; }
+  .new-chat-worktree-tools { padding-inline: 4px; }
+  .composer-run-settings { flex: 1 1 100%; order: 2; }
+  .composer-run-settings-label { display: none; }
+  .crow .send { order: 3; }
+}

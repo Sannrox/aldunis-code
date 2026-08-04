@@ -131,6 +131,32 @@ export function readyComposerPlaceholder(providerName: string, threadId: string 
   return threadId ? `Reply to ${providerName}…` : "Describe what you want to work on…";
 }
 
+/**
+ * Keep the native worktree select usable when a repository exposes many
+ * branches. The selected worktree remains visible while filtering so typing
+ * cannot make the controlled select appear to lose its value.
+ */
+export function filterSelectableWorktrees(
+  worktrees: RepositoryMetadata["worktrees"],
+  query: string,
+  selectedPath: string | null,
+): RepositoryMetadata["worktrees"] {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return worktrees;
+  const matches = worktrees.filter((item) => (
+    `${item.branch ?? "Detached HEAD"} ${item.path} ${item.ownership}`
+      .toLocaleLowerCase()
+      .includes(normalized)
+  ));
+  const selected = selectedPath
+    ? worktrees.find((item) => item.path === selectedPath)
+    : undefined;
+  if (selected && !matches.some((item) => item.path === selected.path)) {
+    return [selected, ...matches];
+  }
+  return matches;
+}
+
 type VoiceInputState = "idle" | "listening" | "unsupported" | "error";
 
 export function appendProviderEvent(current: ProviderEvent[], next: ProviderEvent): ProviderEvent[] {
@@ -567,6 +593,7 @@ export function Conversation({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [worktreeFilter, setWorktreeFilter] = useState("");
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
@@ -629,6 +656,9 @@ export function Conversation({
     && !threadId
     && !runId
     && !managedMode;
+  useEffect(() => {
+    setWorktreeFilter("");
+  }, [repository?.projectId]);
   const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
@@ -2362,8 +2392,8 @@ export function Conversation({
   const accessLabel = mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
   const emptyState = !repository
     ? {
-        title: "Choose a project to begin",
-        detail: "Choose a project below to set the workspace before starting a provider conversation.",
+        title: "Start with your workspace",
+        detail: "Choose a project, choose a worktree, then describe the outcome below.",
         // The Work on card already owns the project-selection action. Keeping one
         // path here prevents two competing repository CTAs in the first-run state.
         action: null,
@@ -2410,8 +2440,8 @@ export function Conversation({
             : null,
         }
       : {
-          title: "What do you want to work on?",
-          detail: "Describe the outcome in the composer. Aldunis Code will keep the conversation bound to this worktree.",
+          title: "Describe the outcome",
+          detail: "Your prompt will run in the selected project and worktree.",
           action: null,
         };
   const stateCopy: Record<ProviderState, string> = {
@@ -2439,9 +2469,29 @@ export function Conversation({
   const hostLabel = typeof window !== "undefined" && window.location.hostname
     ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
     : "Local Aldunis host";
-  const selectableWorktrees = repository?.worktrees.filter((item) => (
+  const selectableWorktrees = useMemo(() => repository?.worktrees.filter((item) => (
     item.state === "available" || item.state === "detached"
-  )) ?? [];
+  )) ?? [], [repository?.worktrees]);
+  const filteredSelectableWorktrees = useMemo(
+    () => filterSelectableWorktrees(
+      selectableWorktrees,
+      worktreeFilter,
+      repository?.selectedWorktree ?? null,
+    ),
+    [repository?.selectedWorktree, selectableWorktrees, worktreeFilter],
+  );
+  const managedSelectableWorktrees = filteredSelectableWorktrees.filter((item) => item.ownership === "aldunis");
+  const userSelectableWorktrees = filteredSelectableWorktrees.filter((item) => item.ownership === "user");
+  const worktreeFilterHasNoMatches = worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
+  const selectedWorktreePath = repository?.selectedWorktree ?? "";
+  const worktreeSelectValue = filteredSelectableWorktrees.some((item) => item.path === selectedWorktreePath)
+    ? selectedWorktreePath
+    : "";
+  const setupSteps = [
+    { label: "Project", complete: Boolean(repository), active: !repository },
+    { label: "Worktree", complete: Boolean(worktree), active: Boolean(repository) && !worktree },
+    { label: "Prompt", complete: Boolean(worktree && draft.trim()), active: Boolean(worktree && !draft.trim()) },
+  ];
   const renderTimeline = (
     events: ProviderEvent[],
     keyPrefix: string,
@@ -2546,6 +2596,7 @@ export function Conversation({
           className="crumb"
           title={[
             conversation?.title ?? "New conversation",
+            repository?.name ?? null,
             worktree ? conversationBranch : null,
             repository ? providerListLabel(provider) : null,
             repository ? workspaceCopy.shortLabel : null,
@@ -2554,11 +2605,8 @@ export function Conversation({
           ].filter(Boolean).join(" · ")}
         >
           <b>{conversation?.title ?? "New conversation"}</b>
+          {repository && <> · {repository.name}</>}
           {worktree && <> · {conversationBranch}</>}
-          {repository && <> · {providerListLabel(provider)}</>}
-          {repository && <> · {workspaceCopy.shortLabel}</>}
-          {effectiveModel !== "default" && <> · {modelChipLabel}</>}
-          {showReasoningEffort && <> · {reasoningEffort}</>}
         </div>
         <div className="tb-r">
           {latestPlan && (
@@ -2689,7 +2737,10 @@ export function Conversation({
         <div className="wrap">
         {conversationEmpty
           ? (
-            <section className="conversation-empty sparse" aria-labelledby={`${pane}-empty-title`}>
+            <section
+              className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""}`}
+              aria-labelledby={`${pane}-empty-title`}
+            >
               <span>
                 {conversation && !historyRestored
                   ? "Restoring"
@@ -3070,8 +3121,8 @@ export function Conversation({
           <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
             <div className="new-chat-context-header">
               <div className="new-chat-context-heading">
-                <span className="new-chat-context-eyebrow">Work on</span>
-                <p>Set the project and workspace for this conversation.</p>
+                <span className="new-chat-context-eyebrow">Start here</span>
+                <p>Choose a project, worktree, then describe the outcome.</p>
               </div>
               <span
                 className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
@@ -3080,6 +3131,23 @@ export function Conversation({
                 <span aria-hidden="true" />
                 {workspaceSetupStatus.label}
               </span>
+            </div>
+            <div
+              className="new-chat-context-stepper"
+              aria-label={`Conversation setup steps. Current status: ${workspaceSetupStatus.label}`}
+            >
+              {setupSteps.map((step, index) => (
+                <React.Fragment key={step.label}>
+                  {index > 0 && <span className="new-chat-context-stepper-line" aria-hidden="true" />}
+                  <span
+                    className={`new-chat-context-step ${step.complete ? "complete" : ""} ${step.active ? "active" : ""}`}
+                    aria-current={step.active ? "step" : undefined}
+                  >
+                    <b>{index + 1}</b>
+                    {step.label}
+                  </span>
+                </React.Fragment>
+              ))}
             </div>
             <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
             <div className="new-chat-context-rows">
@@ -3229,29 +3297,66 @@ export function Conversation({
                   </div>
                 )}
               </div>
-              <label className="new-chat-context-row new-chat-context-row--select">
-                <Icon name="branch" />
-                <span className="new-chat-context-copy">
-                  <strong>{worktree?.branch ?? (worktree ? "Detached HEAD" : "Choose a worktree")}</strong>
-                  <small title={worktree?.path}>{worktree?.path ?? "Select an available branch"}</small>
-                </span>
-                <Icon name="chevron" />
-                <select
-                  aria-label="Choose the conversation worktree"
-                  value={repository?.selectedWorktree ?? ""}
-                  disabled={selectableWorktrees.length === 0}
-                  onChange={(event) => {
-                    if (event.target.value) onSelectWorktree(event.target.value);
-                  }}
-                >
-                  {selectableWorktrees.length === 0 && <option value="">No available worktree</option>}
-                  {selectableWorktrees.map((item) => (
-                    <option value={item.path} key={item.path}>
-                      {item.branch ?? "Detached HEAD"}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="new-chat-context-worktree-picker" role="group" aria-label="Choose the conversation worktree">
+                {selectableWorktrees.length > 1 && (
+                  <div className="new-chat-worktree-tools">
+                    <label htmlFor={`${pane}-worktree-filter`} className="new-chat-worktree-filter-label">
+                      Filter branches
+                    </label>
+                    <input
+                      id={`${pane}-worktree-filter`}
+                      type="search"
+                      value={worktreeFilter}
+                      onChange={(event) => setWorktreeFilter(event.target.value)}
+                      placeholder="Filter branches…"
+                      aria-controls={`${pane}-worktree-select`}
+                    />
+                    <span className="new-chat-worktree-count" aria-live="polite">
+                      {worktreeFilterHasNoMatches
+                        ? "No matches"
+                        : `${filteredSelectableWorktrees.length} available`}
+                    </span>
+                  </div>
+                )}
+                <label className="new-chat-context-row new-chat-context-row--select">
+                  <Icon name="branch" />
+                  <span className="new-chat-context-copy">
+                    <strong>{worktree?.branch ?? (worktree ? "Detached HEAD" : "Choose a worktree")}</strong>
+                    <small title={worktree?.path}>{worktree?.path ?? "Select an available branch"}</small>
+                  </span>
+                  <Icon name="chevron" />
+                  <select
+                    id={`${pane}-worktree-select`}
+                    aria-label="Choose the conversation worktree"
+                    value={worktreeSelectValue}
+                    disabled={selectableWorktrees.length === 0 || worktreeFilterHasNoMatches}
+                    onChange={(event) => {
+                      if (event.target.value) onSelectWorktree(event.target.value);
+                    }}
+                  >
+                    {selectableWorktrees.length === 0 && <option value="">No available worktree</option>}
+                    {worktreeFilterHasNoMatches && <option value="">No matching worktree</option>}
+                    {managedSelectableWorktrees.length > 0 && (
+                      <optgroup label="Aldunis worktrees">
+                        {managedSelectableWorktrees.map((item) => (
+                          <option value={item.path} key={item.path}>
+                            {item.branch ?? "Detached HEAD"}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {userSelectableWorktrees.length > 0 && (
+                      <optgroup label="Existing worktrees">
+                        {userSelectableWorktrees.map((item) => (
+                          <option value={item.path} key={item.path}>
+                            {item.branch ?? "Detached HEAD"}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </label>
+              </div>
             </div>
           </section>
         )}
@@ -3487,6 +3592,8 @@ export function Conversation({
                 <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
               </svg>
             </button>
+            <div className="composer-run-settings" role="group" aria-label="Run settings">
+              <span className="composer-run-settings-label">Run settings</span>
             <div className="composer-provider" ref={providerMenuRef}>
               <button
                 type="button"
@@ -3634,6 +3741,9 @@ export function Conversation({
                       </label>
                     </div>
                   )}
+                  <div className="composer-menu-section composer-menu-section--separator" role="presentation">
+                    Provider setup
+                  </div>
                   <button
                     type="button"
                     role="option"
@@ -3885,8 +3995,9 @@ export function Conversation({
                     );
                   })}
                 </div>
-              )}
-            </div>}
+                )}
+              </div>}
+            </div>
             {runId
               ? (
                 <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel, ${pane} pane`}>

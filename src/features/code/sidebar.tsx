@@ -244,7 +244,11 @@ export function CodeSidebar({
     ? "Restoring projects…"
     : selectedProject?.name ?? "All projects";
   const projectFilterDetail = selectedProject?.root
-    ?? (projects.length === 0 ? "Add a project to start" : `${projects.length} project${projects.length === 1 ? "" : "s"}`);
+    ?? (projects.length === 0
+      ? "Add a project to start"
+      : repository
+        ? `Current: ${repository.name} · ${projects.length} project${projects.length === 1 ? "" : "s"}`
+        : `${projects.length} project${projects.length === 1 ? "" : "s"}`);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -385,11 +389,15 @@ export function CodeSidebar({
               aria-haspopup="listbox"
               aria-expanded={projectMenuOpen}
               aria-label={`Project filter: ${projectFilterLabel}${
+                projectFilter === "all" && repository
+                  ? `, current project ${repository.name}`
+                  : ""
+              }${
                 attention.length > 0
                   ? `, ${attention.length} conversation${attention.length === 1 ? "" : "s"} need attention`
                   : ""
               }`}
-              title={selectedProject?.root}
+              title={selectedProject?.root ?? repository?.root}
             >
               <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -459,7 +467,10 @@ export function CodeSidebar({
             {attention.length > 0 && (
               <div className="attention-group" role="group" aria-labelledby={attentionHeadingId}>
                 <div className="glabel attention-label" id={attentionHeadingId} aria-live="polite">
-                  <span>Needs attention</span>
+                  <span className="attention-label-copy">
+                    <span>Needs attention</span>
+                    <small>Approval, input, or failure</small>
+                  </span>
                   <span className="n">{attention.length}</span>
                 </div>
                 {attention.map((conversation) => {
