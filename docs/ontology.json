@@ -27,11 +27,15 @@
     },
     {
       "name": "CollapsibleCodeSidebar",
-      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and keyboard access to reopen."
+      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and a fixed Mod+B keybinding to toggle it."
     },
     {
       "name": "SidebarOpenPreference",
       "description": "A local browser or desktop-profile presentation preference recording whether the Aldunis Code sidebar should start expanded; it grants no repository, provider, permission, or contract authority."
+    },
+    {
+      "name": "SidebarToggleKeybinding",
+      "description": "The fixed Mod+B presentation keybinding that toggles the Aldunis Code sidebar without changing conversation, repository, provider, permission, or contract state."
     },
     {
       "name": "ConversationAutomation",
@@ -504,6 +508,16 @@
         "min": 0,
         "max": 1
       }
+    },
+    {
+      "name": "exposes_sidebar_toggle_keybinding",
+      "description": "Exposes the fixed Mod+B presentation keybinding for collapsing or reopening the shared Code sidebar without granting authority over local work or provider actions.",
+      "domain": "CollapsibleCodeSidebar",
+      "range": "SidebarToggleKeybinding",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
     }
   ],
   "provenance": [
@@ -574,9 +588,21 @@
       "confidence": 1.0
     },
     {
+      "subject": "SidebarToggleKeybinding",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/features/dialogs/preferences-dialog.tsx; docs/design-system.md",
+      "confidence": 1.0
+    },
+    {
       "subject": "persists_sidebar_open_preference",
       "source": "Aldunis Code sidebar presentation boundary",
       "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_sidebar_toggle_keybinding",
+      "source": "Aldunis Code sidebar presentation boundary",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/features/dialogs/preferences-dialog.tsx",
       "confidence": 1.0
     },
     {

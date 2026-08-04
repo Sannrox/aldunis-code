@@ -17,6 +17,7 @@ import {
 } from "../../lib/product-availability";
 import { AldunisBrandMark } from "../../components/brand-mark";
 import { ManagedAccountPanel } from "./managed-account-panel";
+import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 
 export type ProjectFilter = "all" | string;
 
@@ -299,8 +300,9 @@ export function CodeSidebar({
             data-sidebar-collapse-toggle
             aria-controls="code-sidebar"
             aria-expanded={sidebarOpen}
+            aria-keyshortcuts="Meta+B Control+B"
             aria-label="Collapse sidebar"
-            title="Collapse sidebar (⌘/Ctrl+B)"
+            title={`Collapse sidebar (${SIDEBAR_TOGGLE_SHORTCUT_LABEL})`}
             onClick={onToggleSidebar}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">

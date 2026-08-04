@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Preferences } from "../../preferences";
 import { Button } from "../../components/ui";
+import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 
 const SECTIONS = [
   "General",
@@ -249,7 +250,7 @@ export function PreferencesDialog({
             {section === "Worktrees" && "Managed checkout limits for Aldunis-created worktrees."}
             {section === "Approvals" && "How mutating tools ask for consent."}
             {section === "Access" && "Loopback and paired remote sessions."}
-            {section === "Keybindings" && "Command palette and product switch shortcuts."}
+            {section === "Keybindings" && "Command palette, product switch, sidebar, and composer shortcuts."}
             {section === "Diagnostics" && "Where to look when a provider will not start."}
             {section === "Archived" && "Review conversations hidden from the active sidebar."}
           </div>
@@ -471,6 +472,13 @@ export function PreferencesDialog({
                       </button>
                     </div>
                   </div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <div className="fn">Sidebar</div>
+                    <div className="fd">Collapse or reopen the workbench sidebar.</div>
+                  </div>
+                  <div className="fc"><kbd>{SIDEBAR_TOGGLE_SHORTCUT_LABEL}</kbd></div>
                 </div>
                 <p className="search-scope">
                   Product switch: ⌘1–4 (with Ctrl on Windows/Linux).
