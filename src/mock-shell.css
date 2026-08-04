@@ -115,6 +115,7 @@ code{font-family:var(--font-mono)}
 .settle:focus-visible,.row-more:focus-visible,
 .row:focus-within .settle,.row:focus-within .row-more,
 .row-menu:focus-within .row-more{opacity:1}
+.row-more[aria-expanded="true"]{opacity:1}
 .settle:hover,.row-more:hover{color:var(--foreground);background:var(--accent)}
 .row-menu{position:relative}
 .row-menu-pop{
@@ -128,6 +129,7 @@ code{font-family:var(--font-mono)}
 }
 .row-menu-pop > button:hover,.row-menu-pop > button:focus-visible{background:var(--accent);outline:none}
 .row-menu-pop > button.danger{color:var(--destructive-foreground)}
+.row-menu-pop--portal{position:fixed;right:auto;top:0;left:0;z-index:60;max-height:calc(100vh - 16px);overflow-y:auto}
 
 /* settled shelf */
 .shelf{border-top:1px solid var(--border);padding:6px 8px 8px}

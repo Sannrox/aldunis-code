@@ -40,6 +40,7 @@ test("beside is available from the thread-row menu and invokes its action", asyn
   });
 
   const container = dom.window.document.createElement("div");
+  container.className = "list";
   dom.window.document.body.append(container);
   const root = createRoot(container);
   let besideCalls = 0;
@@ -62,12 +63,58 @@ test("beside is available from the thread-row menu and invokes its action", asyn
     const trigger = container.querySelector<HTMLButtonElement>(".row-more");
     assert.ok(trigger);
     assert.equal(trigger.textContent?.trim(), "⋮");
+    let triggerRect = {
+      top: 430,
+      bottom: 458,
+      left: 100,
+      right: 128,
+      width: 28,
+      height: 28,
+    } as DOMRect;
+    Object.defineProperty(trigger, "getBoundingClientRect", {
+      configurable: true,
+      value: () => triggerRect,
+    });
+    Object.defineProperty(container, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 0, bottom: 480, left: 0, right: 272, width: 272, height: 480 } as DOMRect),
+    });
 
     await act(async () => {
       trigger.click();
     });
 
-    const beside = [...container.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    const popup = dom.window.document.querySelector<HTMLElement>(".row-menu-pop");
+    assert.ok(popup);
+    assert.equal(popup.parentElement, dom.window.document.body);
+    assert.match(popup.className, /row-menu-pop--portal/);
+
+    triggerRect = {
+      top: -100,
+      bottom: -72,
+      left: 100,
+      right: 128,
+      width: 28,
+      height: 28,
+    } as DOMRect;
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("scroll"));
+    });
+    assert.equal(dom.window.document.querySelector(".row-menu-pop"), null);
+
+    triggerRect = {
+      top: 430,
+      bottom: 458,
+      left: 100,
+      right: 128,
+      width: 28,
+      height: 28,
+    } as DOMRect;
+    await act(async () => {
+      trigger.click();
+    });
+
+    const beside = [...dom.window.document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
       .find((item) => item.textContent?.trim() === "Beside");
     assert.ok(beside);
 
@@ -76,7 +123,7 @@ test("beside is available from the thread-row menu and invokes its action", asyn
     });
 
     assert.equal(besideCalls, 1);
-    assert.equal(container.querySelector(".row-menu-pop"), null);
+    assert.equal(dom.window.document.querySelector(".row-menu-pop"), null);
   } finally {
     await act(async () => {
       root.unmount();
