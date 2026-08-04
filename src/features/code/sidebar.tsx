@@ -31,6 +31,8 @@ const PRODUCTS: Array<{ id: Product; label: string; detail: string; mark: string
  * 1:1 sidebar structure from workbench-mock.html, wired to live data.
  */
 export function CodeSidebar({
+  sidebarOpen = true,
+  onToggleSidebar = () => undefined,
   product,
   onProductChange,
   productAvailability = DEFAULT_PRODUCT_AVAILABILITY,
@@ -64,6 +66,8 @@ export function CodeSidebar({
   managedAccount,
   onSettings,
 }: {
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
   product: Product;
   onProductChange: (product: Product) => void;
   /** Which planes may be selected; unconfigured planes stay visible but disabled. */
@@ -113,6 +117,13 @@ export function CodeSidebar({
   const settledShelfId = useId();
   const attentionHeadingId = useId();
   const activeHeadingId = useId();
+
+  useEffect(() => {
+    if (!sidebarOpen) {
+      setProductOpen(false);
+      setProjectMenuOpen(false);
+    }
+  }, [sidebarOpen]);
 
   const { attention, active, settled } = useMemo(
     () => groupSidebarConversations(conversations, showingArchived),
@@ -256,7 +267,14 @@ export function CodeSidebar({
   const brandName = product === "code" ? "Aldunis Code" : `Aldunis ${current.label}`;
 
   return (
-    <aside className="sb" aria-label="Workbench sidebar">
+    <aside
+      id="code-sidebar"
+      className="sb"
+      data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}
+      aria-hidden={!sidebarOpen}
+      inert={!sidebarOpen}
+      aria-label="Workbench sidebar"
+    >
       <div className="sb-hd" ref={brandRef}>
         <button
           type="button"
@@ -274,6 +292,23 @@ export function CodeSidebar({
             <path d="m6 9 6 6 6-6" />
           </svg>
         </button>
+        {sidebarOpen && (
+          <button
+            type="button"
+            className="sidebar-toggle sidebar-toggle--collapse"
+            data-sidebar-collapse-toggle
+            aria-controls="code-sidebar"
+            aria-expanded={sidebarOpen}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar (⌘/Ctrl+B)"
+            onClick={onToggleSidebar}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M15 6 9 12l6 6" />
+              <path d="M5 5v14" />
+            </svg>
+          </button>
+        )}
         {productOpen && (
           <div className="pswitch" role="menu" aria-label="Products">
             {PRODUCTS.map((item, index) => {

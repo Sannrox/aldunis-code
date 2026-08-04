@@ -26,6 +26,14 @@
       "description": "The local workbench UI and host boundary for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations."
     },
     {
+      "name": "CollapsibleCodeSidebar",
+      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and keyboard access to reopen."
+    },
+    {
+      "name": "SidebarOpenPreference",
+      "description": "A local browser or desktop-profile presentation preference recording whether the Aldunis Code sidebar should start expanded; it grants no repository, provider, permission, or contract authority."
+    },
+    {
       "name": "ConversationAutomation",
       "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation while preserving the conversation, worktree, provider, and explicit approval boundaries."
     },
@@ -486,6 +494,16 @@
       "description": "Exports one integrity-bounded correlation envelope from the current local session projection.",
       "domain": "CapabilityLinkedDeliverySession",
       "range": "DeliveryCorrelationReceipt"
+    },
+    {
+      "name": "persists_sidebar_open_preference",
+      "description": "Stores the shared Code sidebar's expanded or collapsed presentation state in the local browser or desktop profile without changing conversation or host state.",
+      "domain": "CollapsibleCodeSidebar",
+      "range": "SidebarOpenPreference",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
     }
   ],
   "provenance": [
@@ -541,6 +559,24 @@
       "subject": "ConversationLifecycleControl",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/workbench.tsx:manageConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CollapsibleCodeSidebar",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/mock-shell.css; docs/design-system.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SidebarOpenPreference",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "persists_sidebar_open_preference",
+      "source": "Aldunis Code sidebar presentation boundary",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
       "confidence": 1.0
     },
     {

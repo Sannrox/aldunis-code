@@ -44,4 +44,48 @@ test("new conversations wait for registered projects to restore", () => {
     html,
     /title="Restoring projects…" aria-label="New conversation" disabled=""/,
   );
+  assert.match(html, /data-sidebar-state="expanded"/);
+  assert.match(html, /data-sidebar-collapse-toggle[^>]*aria-label="Collapse sidebar"/);
+});
+
+test("collapsed sidebar exposes a hidden state for the shared shell", () => {
+  const html = renderToStaticMarkup(
+    <CodeSidebar
+      sidebarOpen={false}
+      product="code"
+      onProductChange={() => undefined}
+      repository={null}
+      projects={[]}
+      projectFilter="all"
+      onProjectFilterChange={() => undefined}
+      onAddProject={() => undefined}
+      onSelectProject={() => undefined}
+      changes={[]}
+      onShowChanges={() => undefined}
+      onBrowseFiles={() => undefined}
+      onOpenPalette={() => undefined}
+      conversations={[]}
+      primaryConversationId={null}
+      secondaryConversationId={null}
+      onOpenConversation={() => undefined}
+      onOpenBeside={() => undefined}
+      onNewConversation={() => undefined}
+      onSelectWorktree={() => undefined}
+      onManageWorktrees={() => undefined}
+      showingArchived={false}
+      onToggleArchived={() => undefined}
+      onConversationAction={() => undefined}
+      onSettle={() => undefined}
+      onUnsettle={() => undefined}
+      onReleaseWorktree={() => undefined}
+      worktreeLimit={4}
+      managedWorktreeCount={0}
+      onSettings={() => undefined}
+    />,
+  );
+
+  assert.match(html, /data-sidebar-state="collapsed"/);
+  assert.match(html, /aria-hidden="true"/);
+  assert.match(html, /inert=""/);
+  assert.doesNotMatch(html, /data-sidebar-collapse-toggle/);
 });
