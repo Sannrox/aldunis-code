@@ -84,8 +84,12 @@ list. Settling is a sidebar state and nothing more.
 The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
 macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
 browser or desktop profile, and the collapsed state removes the sidebar from
-the layout while leaving the main conversation surface available. The same
-control is used in the web renderer and Electron desktop shell.
+the layout while leaving the main conversation surface available. A visible
+expand button remains in the shell so the sidebar can be reopened by pointer;
+on macOS it explicitly opts out of the titlebar drag region. The compact
+header mark crops the supplied tile frame so the brand glyph does not acquire a
+stray border at small sizes. The same control is used in the web renderer and
+Electron desktop shell.
 
 **Settling does not release the worktree.** Aldunis Code enforces a managed
 worktree limit (`server/worktrees.ts`), so settled conversations can continue
@@ -105,6 +109,15 @@ remains available as the control's title text.
   how many remain, so the choice is made before settling rather than
   discovered at the limit.
 - `Settle and release worktree` as a separate action.
+
+On macOS, the Electron client uses the native hidden-inset titlebar with an
+explicit traffic-light position (`x: 16px`, `y: 18px`). The renderer reserves a
+separate 52px native-titlebar row, then starts the ordinary app headers below
+it; the sidebar header uses a 12px content inset and is not itself a drag
+surface. The renderer row carries the compact sidebar affordance and the
+aligned sidebar boundary. The sidebar collapse/expand control opts out of the
+drag region, so the two tiers read as one continuous shell. Browser clients and
+other desktop platforms keep their normal single-row window chrome.
 
 Releasing a worktree never deletes the conversation.
 

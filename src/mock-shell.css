@@ -57,6 +57,8 @@ code{font-family:var(--font-mono)}
   font:500 16px var(--font-display, Georgia, serif);overflow:hidden}
 .aldunis-brand-mark{display:block;width:100%;height:100%}
 .aldunis-brand-mark img{display:block;width:100%;height:100%;object-fit:cover}
+.aldunis-brand-mark--compact{overflow:hidden}
+.aldunis-brand-mark--compact img{transform:scale(1.16)}
 .aldunis-brand-mark__dark{display:none!important}
 [data-theme="dark"] .aldunis-brand-mark__light{display:none!important}
 [data-theme="dark"] .aldunis-brand-mark__dark{display:block!important}
@@ -324,7 +326,7 @@ code{font-family:var(--font-mono)}
 /* product switcher on the brand mark */
 .sb-hd{position:relative}
 .brandbtn{display:flex;align-items:center;gap:9px;padding:3px;margin:-3px;border-radius:9px}
-.brandbtn:hover{background:var(--accent)}
+.brandbtn:hover{background:transparent}
 .pswitch{position:absolute;left:6px;top:40px;z-index:60;width:250px;background:var(--popover);border:1px solid var(--border);
   border-radius:var(--radius);box-shadow:var(--shadow-popover);overflow:hidden;padding:4px}
 .pi2{display:flex;align-items:center;gap:10px;width:100%;padding:7px 8px;border-radius:8px}
@@ -2574,6 +2576,73 @@ html[data-theme="dark"], html[data-theme="dark"] body {
 
 /* Shared desktop/web sidebar control. The renderer is also used by Electron,
    so the state and affordances intentionally live in the web shell. */
+.desktop-titlebar{display:none}
+/* macOS Electron uses a hidden-inset native titlebar. Keep a distinct, quiet
+   renderer row for the native controls, then start the app header beneath it.
+   Browser clients and other desktop platforms keep the normal single-row shell. */
+html[data-desktop-shell="macos"] {
+  --desktop-shell-titlebar-height: 52px;
+  --desktop-shell-content-left: 12px;
+  --desktop-shell-sidebar-width: 272px;
+}
+html[data-desktop-shell="macos"] .desktop-titlebar {
+  position:absolute;
+  inset:0 0 auto;
+  z-index:40;
+  display:block;
+  height:var(--desktop-shell-titlebar-height);
+  background:var(--background);
+  border-bottom:0;
+  -webkit-app-region: drag;
+}
+html[data-desktop-shell="macos"] .desktop-titlebar::after {
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:var(--desktop-shell-sidebar-width);
+  border-left:1px solid var(--border);
+  pointer-events:none;
+}
+html[data-desktop-shell="macos"] .desktop-titlebar[data-sidebar-state="collapsed"]::after {
+  display:none;
+}
+html[data-desktop-shell="macos"] .sb,
+html[data-desktop-shell="macos"] .main {
+  padding-top:var(--desktop-shell-titlebar-height);
+}
+html[data-desktop-shell="macos"] .sb-hd {
+  height: var(--desktop-shell-titlebar-height);
+  min-height: var(--desktop-shell-titlebar-height);
+  padding: 0 var(--desktop-shell-content-left);
+}
+html[data-desktop-shell="macos"] .sb-hd .brandbtn {
+  gap: 7px;
+}
+html[data-desktop-shell="macos"] .sb-name {
+  white-space: nowrap;
+}
+html[data-desktop-shell="macos"] .sidebar-toggle--open {
+  top: 12px;
+  left: 100px;
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  z-index: 50;
+  pointer-events: auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  -webkit-app-region: no-drag;
+}
+html[data-desktop-shell="macos"] .sb-hd .sidebar-toggle--collapse {
+  position:absolute;
+  top:calc(-1 * var(--desktop-shell-titlebar-height) + 12px);
+  left:100px;
+  right:auto;
+  z-index:50;
+  -webkit-app-region:no-drag;
+}
 .sb {
   overflow: hidden;
   transition: width .2s ease, flex-basis .2s ease, opacity .16s ease;
@@ -2631,8 +2700,14 @@ html[data-theme="dark"], html[data-theme="dark"] body {
 .main[data-sidebar-state="collapsed"] .topbar {
   padding-left: 56px !important;
 }
+html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] .topbar {
+  padding-left: 16px !important;
+}
 .main[data-sidebar-state="collapsed"] > .domain-page {
   padding-top: 68px;
+}
+html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain-page {
+  padding-top: 0;
 }
 @media (max-width: 680px) {
   .sb[data-sidebar-state="collapsed"] {

@@ -286,7 +286,7 @@ export function CodeSidebar({
           aria-label={`Product: ${current.label}`}
         >
           <div className="logo" aria-hidden="true">
-            {product === "code" ? <AldunisBrandMark /> : current.mark}
+            {product === "code" ? <AldunisBrandMark className="aldunis-brand-mark--compact" /> : current.mark}
           </div>
           <div className="sb-name">{brandName}</div>
           <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
@@ -337,7 +337,7 @@ export function CodeSidebar({
                   }}
                 >
                   <span className="m2" aria-hidden="true">
-                    {item.id === "code" ? <AldunisBrandMark /> : item.mark}
+                    {item.id === "code" ? <AldunisBrandMark className="aldunis-brand-mark--compact" /> : item.mark}
                   </span>
                   <span className="b2">
                     <span className="n2">{item.label}</span>

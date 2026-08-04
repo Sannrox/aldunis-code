@@ -8,6 +8,7 @@ import {
 } from "./channels.ts";
 
 contextBridge.exposeInMainWorld("aldunisDesktop", {
+  platform: process.platform,
   chooseDirectory: (): Promise<string | null> => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL),
   registerBrowserView: (sessionId: string, webContentsId: number, origin: string): Promise<boolean> => (
     ipcRenderer.invoke(REGISTER_BROWSER_VIEW_CHANNEL, { sessionId, webContentsId, origin })

@@ -58,6 +58,9 @@ test("styles must not load remote Google Fonts (local-first)", () => {
 test("Aldunis brand mark follows the resolved application theme", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
+  assert.match(shell, /\.aldunis-brand-mark--compact\s*\{[^}]*overflow:\s*hidden/s);
+  assert.match(shell, /\.aldunis-brand-mark--compact img\s*\{[^}]*transform:\s*scale\(1\.16\)/s);
+  assert.match(shell, /\.brandbtn:hover\s*\{[^}]*background:\s*transparent/s);
   assert.match(shell, /\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*none/s);
   assert.match(
     shell,
@@ -67,6 +70,21 @@ test("Aldunis brand mark follows the resolved application theme", () => {
     shell,
     /\[data-theme="dark"\]\s+\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*block/s,
   );
+});
+
+test("macOS desktop shell integrates the native titlebar without swallowing controls", () => {
+  assert.match(shellCss, /\.desktop-titlebar\s*\{[^}]*display:\s*none/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.desktop-titlebar\s*\{[^}]*position:\s*absolute[^}]*display:\s*block[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*-webkit-app-region:\s*drag/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.desktop-titlebar::after\s*\{[^}]*left:\s*var\(--desktop-shell-sidebar-width\)[^}]*border-left:\s*1px solid var\(--border\)/s);
+  assert.doesNotMatch(shellCss, /\.desktop-titlebar__history/);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb,\s*html\[data-desktop-shell="macos"\] \.main\s*\{[^}]*padding-top:\s*var\(--desktop-shell-titlebar-height\)/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sidebar-toggle--open\s*\{[^}]*top:\s*12px[^}]*left:\s*100px[^}]*width:\s*36px[^}]*height:\s*36px[^}]*pointer-events:\s*auto[^}]*background:\s*transparent[^}]*-webkit-app-region:\s*no-drag/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-hd \.sidebar-toggle--collapse\s*\{[^}]*position:\s*absolute[^}]*top:\s*calc\(-1 \* var\(--desktop-shell-titlebar-height\) \+ 12px\)[^}]*left:\s*100px[^}]*right:\s*auto[^}]*-webkit-app-region:\s*no-drag/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\]\s*\{[^}]*--desktop-shell-titlebar-height:\s*52px[^}]*--desktop-shell-content-left:\s*12px[^}]*--desktop-shell-sidebar-width:\s*272px/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-hd\s*\{[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*padding:\s*0 var\(--desktop-shell-content-left\)/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-name\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] \.topbar\s*\{[^}]*padding-left:\s*16px\s*!important/s);
+  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] > \.domain-page\s*\{[^}]*padding-top:\s*0/s);
 });
 
 test("conversation overlays are contained by .conv (not review dock)", () => {

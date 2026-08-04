@@ -2,6 +2,7 @@
 
 interface Window {
   aldunisDesktop?: {
+    platform: string;
     chooseDirectory: () => Promise<string | null>;
     registerBrowserView: (sessionId: string, webContentsId: number, origin: string) => Promise<boolean>;
     unregisterBrowserView: (sessionId: string, webContentsId: number) => Promise<void>;
