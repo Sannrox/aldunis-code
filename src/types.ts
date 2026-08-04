@@ -424,6 +424,14 @@ export interface DeliveryPlan {
   details: string[];
   expiresAt: string;
 }
+export interface PullRequestDraft {
+  title: string;
+  body: string;
+  branch: string;
+  base: string;
+  changedFiles: string[];
+  omittedFiles: number;
+}
 
 export type ReleaseWorkflowAction =
   | "prepare"

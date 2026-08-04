@@ -1,5 +1,5 @@
 import React, { FormEvent, useEffect, useRef, useState } from "react";
-import type { ChangedFile, FileDiff, DiffAnnotation, DeliveryContext, DeliveryPlan, DeliveryAction, ConversationSummary, RepositoryMetadata } from "../../types";
+import type { ChangedFile, FileDiff, DiffAnnotation, DeliveryContext, DeliveryPlan, DeliveryAction, ConversationSummary, PullRequestDraft, RepositoryMetadata } from "../../types";
 import { Button, CloseButton, NestedDialogSurface, handleNestedEscape } from "../../components/ui";
 
 export type ChangesPanelMode = "review" | "deliver";
@@ -58,6 +58,30 @@ export function ChangesPanel({
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [deliveryBusy, setDeliveryBusy] = useState(false);
   const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const generatePullRequestDraft = async () => {
+    setDeliveryBusy(true);
+    setDeliveryError(null);
+    try {
+      const response = await fetch("/api/delivery/pr-draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          base,
+        }),
+      });
+      const result = await response.json() as PullRequestDraft | { error?: string };
+      if (!response.ok) throw new Error("error" in result ? result.error : "The pull-request draft could not be generated.");
+      const draft = result as PullRequestDraft;
+      setTitle(draft.title);
+      setBody(draft.body);
+    } catch (cause) {
+      setDeliveryError(cause instanceof Error ? cause.message : "The pull-request draft could not be generated.");
+    } finally {
+      setDeliveryBusy(false);
+    }
+  };
   const inspectDelivery = async () => {
     setDeliveryLoading(true);
     try {
@@ -669,6 +693,18 @@ export function ChangesPanel({
                     onChange={(event) => setBase(event.target.value)}
                   />
                 </label>
+                <div className="delivery-draft-actions">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void generatePullRequestDraft()}
+                    disabled={deliveryBusy || deliveryLoading || !delivery || delivery.detached || !base.trim()}
+                    aria-label={`Generate local pull-request draft, ${pane} pane`}
+                  >
+                    {deliveryBusy ? "Generating…" : "Generate draft"}
+                  </Button>
+                  <small>Uses branch and changed-path metadata only.</small>
+                </div>
                 <label htmlFor={`${pane}-delivery-pr-title`}>Title
                   <input
                     id={`${pane}-delivery-pr-title`}

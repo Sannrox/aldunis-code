@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { DeliveryBroker, inspectDelivery, sanitizeDiagnostic } from "./delivery.ts";
+import { DeliveryBroker, inspectDelivery, pullRequestDraft, sanitizeDiagnostic } from "./delivery.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,6 +37,25 @@ test("inspection exposes branch, remote, upstream, and staged state without muta
   assert.deepEqual(context.staged, []);
   assert.deepEqual(context.unstaged, ["reviewed.txt", "unrelated.txt"]);
   assert.equal(context.remotes[0]?.name, "upstream");
+});
+
+test("pull-request drafts use only bounded branch and changed-path metadata", async () => {
+  const { root } = await fixture();
+  const draft = pullRequestDraft(await inspectDelivery(root, root), "main");
+  assert.equal(draft.title, "Update Reviewed Delivery");
+  assert.equal(draft.base, "main");
+  assert.deepEqual(draft.changedFiles, ["reviewed.txt", "unrelated.txt"]);
+  assert.match(draft.body, /reviewed\.txt/);
+  assert.match(draft.body, /unrelated\.txt/);
+  assert.doesNotMatch(draft.body, /user work|after/);
+  assert.equal(draft.omittedFiles, 0);
+});
+
+test("pull-request drafts reject detached branches and invalid bases", async () => {
+  const { root } = await fixture(true);
+  const context = await inspectDelivery(root, root);
+  assert.throws(() => pullRequestDraft(context, "main"), /Detached HEAD/);
+  assert.throws(() => pullRequestDraft({ ...context, branch: "codex/example" }, ""), /base branch is required/);
 });
 
 test("stage plans preserve unrelated changes and approvals are single-use", async () => {
