@@ -1,17 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendProviderEvent, filterSelectableWorktrees, readyComposerPlaceholder } from "./conversation";
+import {
+  appendProviderEvent,
+  filterSelectableWorktrees,
+  formatHostLabel,
+  readyComposerPlaceholder,
+} from "./conversation";
 import type { ProviderEvent, RepositoryMetadata } from "../../types";
 
 test("ready composer copy distinguishes new work from an existing conversation", () => {
   assert.equal(
     readyComposerPlaceholder("Codex CLI", null),
-    "Describe the task you want to tackle…",
+    "What should we build, fix, or review?",
   );
   assert.equal(
     readyComposerPlaceholder("Codex CLI", "thread-1"),
     "Reply to Codex CLI…",
   );
+});
+
+test("host copy keeps loopback details human-readable", () => {
+  assert.equal(formatHostLabel("127.0.0.1"), "Local Aldunis host");
+  assert.equal(formatHostLabel("localhost"), "Local Aldunis host");
+  assert.equal(formatHostLabel("code.example.test"), "code.example.test");
 });
 
 test("provider browser observations replace the prior transient frame", () => {

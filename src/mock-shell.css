@@ -2936,3 +2936,77 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
     transition: none;
   }
 }
+
+/* First-run hierarchy and responsive composer refinements. Keep the primary
+   action explicit on spacious layouts, then return to the icon-only control
+   before the toolbar becomes crowded. */
+.conversation-empty.sparse {
+  max-width: 720px !important;
+  margin-inline: auto !important;
+  padding-inline: 16px !important;
+}
+.conversation-empty.sparse h2 {
+  max-width: 30ch;
+  font-size: 20px !important;
+  letter-spacing: -.015em;
+}
+.conversation-empty.sparse p {
+  max-width: 52ch;
+}
+.send {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto !important;
+  width: auto !important;
+  min-width: 30px;
+  padding-inline: 9px;
+  border: 1px solid transparent !important;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.send:not(:disabled):hover {
+  filter: brightness(.94);
+}
+.send:not(:disabled):focus-visible {
+  filter: brightness(.94);
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.send-label { line-height: 1; }
+@media (max-width: 680px) {
+  .send {
+    width: 30px !important;
+    min-width: 30px;
+    padding-inline: 0;
+  }
+  .send-label { display: none; }
+  .conversation-empty.sparse h2 { font-size: 18px !important; }
+}
+
+.conversation-empty.sparse .starter-prompt {
+  margin-top: 0 !important;
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+  color: var(--muted-foreground) !important;
+  font-size: 11.5px;
+  font-weight: 400;
+}
+.conversation-empty.sparse .starter-prompt:hover,
+.conversation-empty.sparse .starter-prompt:focus-visible {
+  background: var(--accent) !important;
+  border-color: var(--input) !important;
+  color: var(--foreground) !important;
+}
+
+@media (any-pointer: coarse) {
+  .send {
+    width: 44px !important;
+    min-width: 44px;
+    flex: 0 0 44px !important;
+    padding-inline: 0;
+  }
+  .send-label { display: none; }
+}

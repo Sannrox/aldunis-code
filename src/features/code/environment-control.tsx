@@ -3,6 +3,24 @@ import type { RepositoryMetadata } from "../../types";
 import { Icon } from "../../components/icon";
 import type { ChangesPanelMode } from "../changes/changes-panel";
 
+function formatChangeCount(value: number): string {
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(absolute >= 10_000_000_000 ? 0 : 1)}B`;
+  }
+  if (absolute >= 1_000_000) {
+    const rounded = Number((absolute / 1_000_000).toFixed(absolute >= 10_000_000 ? 0 : 1));
+    if (rounded >= 1_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    return `${value < 0 ? "-" : ""}${rounded}M`;
+  }
+  if (absolute >= 1_000) {
+    const rounded = Number((absolute / 1_000).toFixed(absolute >= 10_000 ? 0 : 1));
+    if (rounded >= 1_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    return `${value < 0 ? "-" : ""}${rounded}k`;
+  }
+  return String(value);
+}
+
 export type EnvironmentControlProps = {
   repository: RepositoryMetadata | null;
   pane: "primary" | "secondary";
@@ -171,8 +189,12 @@ export function EnvironmentControl({
               label="Review changes"
               detail={changesDetail}
               trailing={(
-                <span className="environment-menu__delta" aria-label={`${additions} additions, ${deletions} deletions`}>
-                  <b>+{additions}</b> <b>−{deletions}</b>
+                <span
+                  className="environment-menu__delta"
+                  aria-label={`${additions} additions, ${deletions} deletions`}
+                  title={`${additions} additions, ${deletions} deletions`}
+                >
+                  <b>+{formatChangeCount(additions)}</b> <b>−{formatChangeCount(deletions)}</b>
                 </span>
               )}
               onClick={() => run(() => onOpenChanges("review"))}
