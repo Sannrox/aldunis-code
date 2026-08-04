@@ -1,78 +1,120 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Metadata } from "@grpc/grpc-js";
+import { fileURLToPath } from "node:url";
+import {
+  SDK_CONTRACT_VERSION,
+  SdkError,
+  SekaiChiseiClient,
+} from "@sannrox/sekai-chisei-sdk";
 import {
   ChiseiClientError,
   ChiseiProjectionClient,
+  type ChiseiSdkClient,
+  type ChiseiSdkFactoryConfig,
 } from "./chisei-client.ts";
+
+type FixtureOptions = {
+  namespace?: string;
+  operationId?: string;
+  requestId?: string;
+  timeoutMs?: number;
+};
 
 type Handler = (
   request: Record<string, unknown>,
-  metadata: Metadata,
-  callback: (error: ({ code?: number } & Error) | null, response?: unknown) => void,
-) => void;
+  options: FixtureOptions,
+) => unknown | Promise<unknown>;
 
-function fixtureClient(handlers: Record<string, Handler>) {
+function fixtureClient(handlers: Record<string, Handler>): ChiseiSdkClient {
   return {
-    close() {},
-    ...Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [
-      name,
-      (
+    raw: {
+      async unary<T = unknown>(
+        service: "sekai" | "chisei",
+        method: string,
         request: Record<string, unknown>,
-        metadata: Metadata,
-        _options: { deadline: Date },
-        callback: (error: ({ code?: number } & Error) | null, response?: unknown) => void,
-      ) => handler(request, metadata, callback),
-    ])),
+        options = {},
+      ): Promise<T> {
+        const handler = handlers[`${service}.${method}`] ?? handlers[method];
+        if (!handler) throw new SdkError("unimplemented", `missing fixture RPC ${service}.${method}`);
+        return await handler(request, options) as T;
+      },
+    },
+    close() {},
+  };
+}
+
+function fixtureFactory(
+  handlers: Record<string, Handler>,
+  onConfig?: (config: ChiseiSdkFactoryConfig) => void,
+) {
+  return async (config: ChiseiSdkFactoryConfig) => {
+    onConfig?.(config);
+    return fixtureClient(handlers);
   };
 }
 
 const action = {
-  instanceId: "instance-1",
+  instance_id: "instance-1",
   namespace: "team/project",
-  typeId: "review",
+  type_id: "review",
   version: "1",
-  operationId: "operation-1",
+  operation_id: "operation-1",
   status: "admitted",
-  createdAtMs: "1000",
-  decidedAtMs: "1100",
+  created_at_ms: "1000",
+  decided_at_ms: "1100",
 };
 
-test("ChiseiProjectionClient returns only bounded Action projection fields with server auth", async () => {
-  let authorization: string[] = [];
+test("vendored SDK loads the pinned minimal Chisei read contract", async () => {
+  assert.equal(SDK_CONTRACT_VERSION, "sekai.sdk-core-loop/v1");
+  const client = await SekaiChiseiClient.connect({
+    target: "http://127.0.0.1:50051",
+    principal: "aldunis-code",
+    protoRoot: fileURLToPath(new URL("../contracts/", import.meta.url)),
+  });
+  client.close();
+});
+
+test("ChiseiProjectionClient uses the server-owned SDK context and bounded Action projection", async () => {
+  let config: ChiseiSdkFactoryConfig | undefined;
+  let call: { request: Record<string, unknown>; options: FixtureOptions } | undefined;
   const client = new ChiseiProjectionClient(
     {
       ALDUNIS_CHISEI_ENDPOINT: "https://plane.example:50051",
       ALDUNIS_CHISEI_TOKEN: "secret-token",
     },
-    ((service: string, endpoint: string, secure: boolean) => {
-      assert.equal(service, "sekai");
-      assert.equal(endpoint, "plane.example:50051");
-      assert.equal(secure, true);
-      return fixtureClient({
-        listActionInstances(request, metadata, callback) {
-          assert.deepEqual(request, {
-            namespace: "team/project",
-            typeId: "",
-            status: "",
-            limit: 25,
-          });
-          authorization = metadata.get("authorization") as string[];
-          callback(null, {
-            instances: [{
-              ...action,
-              parametersJson: "{\"secret\":\"not projected\"}",
-              principal: "not-projected",
-            }],
-          });
-        },
-      }) as never;
-    }) as never,
+    fixtureFactory({
+      "sekai.ListActionInstances": (request, options) => {
+        call = { request, options };
+        return {
+          instances: [{
+            ...action,
+            parameters_json: "{\"secret\":\"not projected\"}",
+            principal: "not-projected",
+          }],
+        };
+      },
+    }, (received) => { config = received; }),
     () => 2_000,
   );
   const result = await client.listActions("project-1", "team/project");
+  assert.deepEqual(config, {
+    target: "https://plane.example:50051",
+    token: "secret-token",
+    principal: "aldunis-code",
+    namespace: "team/project",
+    protoRoot: config?.protoRoot,
+  });
+  assert.ok(config?.protoRoot.endsWith("/contracts/"));
+  assert.deepEqual(call?.request, {
+    namespace: "team/project",
+    type_id: "",
+    status: "",
+    limit: 25,
+  });
+  assert.equal(call?.options.namespace, "team/project");
+  assert.equal(call?.options.timeoutMs, 5_000);
+  assert.match(call?.options.requestId ?? "", /^[0-9a-f-]{36}$/);
   assert.equal(result.state, "live");
-  assert.deepEqual(authorization, ["Bearer secret-token"]);
   assert.deepEqual(result.actions, [{
     instanceId: "instance-1",
     namespace: "team/project",
@@ -86,17 +128,17 @@ test("ChiseiProjectionClient returns only bounded Action projection fields with 
   assert.doesNotMatch(JSON.stringify(result), /secret|principal/);
 });
 
-test("ChiseiProjectionClient rejects non-loopback HTTP before creating a client", async () => {
+test("ChiseiProjectionClient rejects non-loopback HTTP before creating an SDK client", async () => {
   let factoryCalled = false;
   const client = new ChiseiProjectionClient(
     {
       ALDUNIS_CHISEI_ENDPOINT: "http://plane.example:50051",
       ALDUNIS_CHISEI_TOKEN: "secret-token",
     },
-    (() => {
+    async () => {
       factoryCalled = true;
-      return fixtureClient({}) as never;
-    }) as never,
+      return fixtureClient({});
+    },
   );
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
@@ -111,10 +153,10 @@ test("ChiseiProjectionClient rejects non-loopback HTTP without a bearer token", 
   let factoryCalled = false;
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://plane.example:50051" },
-    (() => {
+    async () => {
       factoryCalled = true;
-      return fixtureClient({}) as never;
-    }) as never,
+      return fixtureClient({});
+    },
   );
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
@@ -128,13 +170,13 @@ test("ChiseiProjectionClient serves only recent in-memory data when the plane be
   let now = 10_000;
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      listActionInstances(_request, _metadata, callback) {
+    fixtureFactory({
+      "sekai.ListActionInstances": () => {
         calls += 1;
-        if (calls === 1) callback(null, { instances: [action] });
-        else callback(Object.assign(new Error("down"), { code: 14 }));
+        if (calls === 1) return { instances: [action] };
+        throw new SdkError("unavailable", "plane down");
       },
-    }) as never) as never,
+    }),
     () => now,
   );
   assert.equal((await client.listActions("project-1", "team/project")).state, "live");
@@ -149,14 +191,14 @@ test("ChiseiProjectionClient serves only recent in-memory data when the plane be
   );
 });
 
-test("ChiseiProjectionClient fails closed on auth and namespace drift", async () => {
+test("ChiseiProjectionClient fails closed on SDK authorization errors and namespace drift", async () => {
   const unauthorized = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      listActionInstances(_request, _metadata, callback) {
-        callback(Object.assign(new Error("denied"), { code: 7 }));
+    fixtureFactory({
+      "sekai.ListActionInstances": () => {
+        throw new SdkError("permission_denied", "denied");
       },
-    }) as never) as never,
+    }),
   );
   await assert.rejects(
     () => unauthorized.listActions("project-1", "team/project"),
@@ -167,11 +209,11 @@ test("ChiseiProjectionClient fails closed on auth and namespace drift", async ()
 
   const drifted = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      listActionInstances(_request, _metadata, callback) {
-        callback(null, { instances: [{ ...action, namespace: "other/project" }] });
-      },
-    }) as never) as never,
+    fixtureFactory({
+      "sekai.ListActionInstances": () => ({
+        instances: [{ ...action, namespace: "other/project" }],
+      }),
+    }),
   );
   await assert.rejects(
     () => drifted.listActions("project-1", "team/project"),
@@ -182,13 +224,11 @@ test("ChiseiProjectionClient fails closed on auth and namespace drift", async ()
 test("ChiseiProjectionClient rejects timestamps outside the JavaScript date range", async () => {
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      listActionInstances(_request, _metadata, callback) {
-        callback(null, {
-          instances: [{ ...action, createdAtMs: String(Number.MAX_SAFE_INTEGER) }],
-        });
-      },
-    }) as never) as never,
+    fixtureFactory({
+      "sekai.ListActionInstances": () => ({
+        instances: [{ ...action, created_at_ms: String(Number.MAX_SAFE_INTEGER) }],
+      }),
+    }),
   );
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
@@ -201,63 +241,61 @@ test("ChiseiProjectionClient rejects timestamps outside the JavaScript date rang
 test("ChiseiProjectionClient joins effect and receipt detail without returning raw receipt content", async () => {
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    ((service: string) => fixtureClient(service === "sekai" ? {
-      getActionInstance(request, _metadata, callback) {
+    fixtureFactory({
+      "sekai.GetActionInstance": (request) => {
         assert.equal(request.namespace, "team/project");
-        callback(null, { instance: action });
+        return { instance: action };
       },
-      listActionEffects(request, _metadata, callback) {
+      "sekai.ListActionEffects": (request) => {
         assert.equal(request.namespace, "team/project");
-        callback(null, {
+        return {
           effects: [{
-            effectId: "effect-1",
-            instanceId: action.instanceId,
+            effect_id: "effect-1",
+            instance_id: action.instance_id,
             namespace: action.namespace,
-            operationId: action.operationId,
+            operation_id: action.operation_id,
             kind: "runtime_dispatch",
             status: "completed",
-            lifecycleState: "completed",
-            createdAtMs: "1200",
-            updatedAtMs: "1300",
-            payloadJson: "{\"task\":\"not projected\"}",
+            lifecycle_state: "completed",
+            created_at_ms: "1200",
+            updated_at_ms: "1300",
+            payload_json: "{\"task\":\"not projected\"}",
           }],
-        });
+        };
       },
-    } : {
-      getOperationReceipt(_request, _metadata, callback) {
-        callback(null, {
-          receiptJson: "{\"events\":[{\"prompt\":\"not projected\"},{\"kind\":\"complete\"}]}",
+      "chisei.GetOperationReceipt": (_request, options) => {
+        assert.equal(options.operationId, "operation-1");
+        return {
+          receipt_json: "{\"events\":[{\"prompt\":\"not projected\"},{\"kind\":\"complete\"}]}",
           complete: true,
-          missingSurfaces: [],
-        });
+          missing_surfaces: [],
+        };
       },
-    }) as never) as never,
+    }),
   );
   const result = await client.actionDetail("team/project", "instance-1");
   assert.equal(result.effects[0].kind, "runtime_dispatch");
-  assert.equal(result.receipt.eventCount, 2);
+  assert.equal(result.receipt?.eventCount, 2);
   assert.doesNotMatch(JSON.stringify(result), /task|prompt|not projected/);
 });
 
-test("ChiseiProjectionClient projects denied Actions without an operation", async () => {
+test("ChiseiProjectionClient does not read effects or receipts for denied Actions", async () => {
   let secondaryLookup = false;
-  const denied = { ...action, operationId: "", status: "denied" };
+  const denied = { ...action, operation_id: "", status: "denied" };
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    ((service: string) => {
-      if (service === "chisei") secondaryLookup = true;
-      return fixtureClient({
-        listActionInstances(_request, _metadata, callback) {
-          callback(null, { instances: [denied] });
-        },
-        getActionInstance(_request, _metadata, callback) {
-          callback(null, { instance: denied });
-        },
-        listActionEffects() {
-          secondaryLookup = true;
-        },
-      }) as never;
-    }) as never,
+    fixtureFactory({
+      "sekai.ListActionInstances": () => ({ instances: [denied] }),
+      "sekai.GetActionInstance": () => ({ instance: denied }),
+      "sekai.ListActionEffects": () => {
+        secondaryLookup = true;
+        return { effects: [] };
+      },
+      "chisei.GetOperationReceipt": () => {
+        secondaryLookup = true;
+        return {};
+      },
+    }),
   );
   const list = await client.listActions("project-1", "team/project");
   assert.equal(list.actions[0].operationId, null);
@@ -269,18 +307,21 @@ test("ChiseiProjectionClient projects denied Actions without an operation", asyn
 
 test("ChiseiProjectionClient exposes a bounded operation receipt projection", async () => {
   const operationId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  let request: Record<string, unknown> | undefined;
+  let options: FixtureOptions | undefined;
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      getOperationReceipt(request, _metadata, callback) {
-        assert.equal(request.operationId, operationId);
-        callback(null, {
-          receiptJson: "{\"events\":[{},{}],\"prompt\":\"not projected\"}",
+    fixtureFactory({
+      "chisei.GetOperationReceipt": (received, receivedOptions) => {
+        request = received;
+        options = receivedOptions;
+        return {
+          receipt_json: "{\"events\":[{},{}],\"prompt\":\"not projected\"}",
           complete: true,
-          missingSurfaces: [],
-        });
+          missing_surfaces: [],
+        };
       },
-    }) as never) as never,
+    }),
   );
   assert.deepEqual(await client.operationReceipt(operationId), {
     operationId,
@@ -288,30 +329,34 @@ test("ChiseiProjectionClient exposes a bounded operation receipt projection", as
     missingSurfaces: [],
     eventCount: 2,
   });
+  assert.equal(request?.operation_id, operationId);
+  assert.equal(request?.caller_scope, "aldunis-code");
+  assert.equal(request?.attempt, 1);
+  assert.equal(options?.operationId, operationId);
 });
 
 test("ChiseiProjectionClient reads only the authenticated sample-observation projection", async () => {
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      getSampleObservation(request, _metadata, callback) {
+    fixtureFactory({
+      "chisei.GetSampleObservation": (request) => {
         assert.deepEqual(request, {
-          requestId: "tenkai:outcome:v2:event-1",
+          request_id: "tenkai:outcome:v2:event-1",
           namespace: "team/project",
         });
-        callback(null, {
+        return {
           observation: {
-            requestId: request.requestId,
+            request_id: request.request_id,
             namespace: request.namespace,
-            observationDigest: `sha256:${"a".repeat(64)}`,
+            observation_digest: `sha256:${"a".repeat(64)}`,
             state: "recorded",
-            observedAt: "1000",
-            readAt: "2000",
-            outputContent: "must not cross the boundary",
+            observed_at: "1000",
+            read_at: "2000",
+            output_content: "must not cross the boundary",
           },
-        });
+        };
       },
-    }) as never) as never,
+    }),
   );
   assert.deepEqual(await client.sampleObservation("team/project", "tenkai:outcome:v2:event-1"), {
     requestId: "tenkai:outcome:v2:event-1",
@@ -326,11 +371,11 @@ test("ChiseiProjectionClient reads only the authenticated sample-observation pro
 test("ChiseiProjectionClient turns a missing sample observation into an explicit absence", async () => {
   const client = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
-    (() => fixtureClient({
-      getSampleObservation(_request, _metadata, callback) {
-        callback(Object.assign(new Error("not found"), { code: 5 }));
+    fixtureFactory({
+      "chisei.GetSampleObservation": () => {
+        throw new SdkError("not_found", "not found");
       },
-    }) as never) as never,
+    }),
   );
   assert.equal(await client.sampleObservation("team/project", "event-1"), null);
 });

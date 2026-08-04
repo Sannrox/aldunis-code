@@ -13,6 +13,7 @@ want to change it.
 | [providers.md](providers.md) | Claude, Codex, Shikigami, reviewed ACP adapters |
 | [automations.md](automations.md) | Timer-only scheduled prompts |
 | [local-delivery.md](local-delivery.md) | Clean candidate → Chisei evidence → Tenkai local release |
+| [chisei-sdk.md](chisei-sdk.md) | Pinned server-side Chisei SDK and projection compatibility surface |
 | [local-data.md](local-data.md) | State directory, history, preferences, secrets |
 | [remote-workbench.md](remote-workbench.md) | Authenticated remote access (Tailscale / LAN) |
 | [managed-image-compatibility.md](managed-image-compatibility.md) | Managed hosted image requirements and current blockers |

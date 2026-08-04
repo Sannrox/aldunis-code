@@ -13,3 +13,7 @@ coverage/
 vite.config.js
 vite.config.d.ts
 knowledge.db
+
+# The pinned Chisei SDK is vendored as built runtime output.
+!vendor/sekai-chisei-sdk/dist/
+!vendor/sekai-chisei-sdk/dist/**

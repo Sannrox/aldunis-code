@@ -36,7 +36,9 @@ caller select authority and would blur the product boundary.
 The browser can inspect Chisei state without gaining namespace or credential
 authority. A local namespace binding is durable but contains no remote content.
 The gRPC read contract is vendored as a minimal compatibility surface and must
-be updated deliberately when the upstream wire contract changes.
+be updated deliberately when the upstream wire contract changes. The Node host
+uses the pinned `@sannrox/sekai-chisei-sdk` facade for transport, metadata,
+deadlines, and typed errors; see [the SDK compatibility reference](../chisei-sdk.md).
 
 ## Non-goals
 
