@@ -11,7 +11,12 @@ test("new conversations wait for registered projects to restore", () => {
       onProductChange={() => undefined}
       repository={null}
       repositoryRestoring
-      projects={[]}
+      projects={[{
+        id: "project-1",
+        name: "Aldunis Code",
+        root: "/workspace/aldunis-code",
+        openedAt: "2026-08-04T00:00:00.000Z",
+      }]}
       projectFilter="all"
       onProjectFilterChange={() => undefined}
       onAddProject={() => undefined}
@@ -43,6 +48,10 @@ test("new conversations wait for registered projects to restore", () => {
   assert.match(
     html,
     /title="Restoring projects…" aria-label="New conversation" disabled=""/,
+  );
+  assert.match(
+    html,
+    /class="empty-list-action" title="Restoring projects…" aria-label="Restoring projects…" disabled="">Restoring projects…<\/button>/,
   );
   assert.match(html, /data-sidebar-state="expanded"/);
   assert.match(html, /aldunis-brand-mark--compact/);
@@ -92,4 +101,48 @@ test("collapsed sidebar exposes a hidden state for the shared shell", () => {
   assert.match(html, /aria-hidden="true"/);
   assert.match(html, /inert=""/);
   assert.doesNotMatch(html, /data-sidebar-collapse-toggle/);
+});
+
+test("empty project inbox offers a discoverable new conversation action", () => {
+  const html = renderToStaticMarkup(
+    <CodeSidebar
+      product="code"
+      onProductChange={() => undefined}
+      repository={null}
+      projects={[{
+        id: "project-1",
+        name: "Aldunis Code",
+        root: "/workspace/aldunis-code",
+        openedAt: "2026-08-04T00:00:00.000Z",
+      }]}
+      projectFilter="all"
+      onProjectFilterChange={() => undefined}
+      onAddProject={() => undefined}
+      onSelectProject={() => undefined}
+      changes={[]}
+      onShowChanges={() => undefined}
+      onBrowseFiles={() => undefined}
+      onOpenPalette={() => undefined}
+      conversations={[]}
+      primaryConversationId={null}
+      secondaryConversationId={null}
+      onOpenConversation={() => undefined}
+      onOpenBeside={() => undefined}
+      onNewConversation={() => undefined}
+      onSelectWorktree={() => undefined}
+      onManageWorktrees={() => undefined}
+      showingArchived={false}
+      onToggleArchived={() => undefined}
+      onConversationAction={() => undefined}
+      onSettle={() => undefined}
+      onUnsettle={() => undefined}
+      onReleaseWorktree={() => undefined}
+      worktreeLimit={4}
+      managedWorktreeCount={0}
+      onSettings={() => undefined}
+    />,
+  );
+
+  assert.match(html, /class="empty-list-action"/);
+  assert.match(html, />New conversation<\/button>/);
 });
