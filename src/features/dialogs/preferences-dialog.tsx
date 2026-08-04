@@ -303,7 +303,7 @@ export function PreferencesDialog({
                 <div className="field">
                   <div className="fl">
                     <div className="fn">Theme</div>
-                    <div className="fd">System follows your operating system setting.</div>
+                    <div className="fd">Changes apply when you save. System follows your operating system setting.</div>
                   </div>
                   <div className="fc">
                     <div className="seg" role="group" aria-label="Theme">
