@@ -10,8 +10,9 @@ import type {
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
-import { ChangesPanel } from "../changes/changes-panel";
+import { ChangesPanel, type ChangesPanelMode } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
+import { EnvironmentControl } from "./environment-control";
 import {
   PreviewPanel,
   type PreviewPanelStatus,
@@ -1100,6 +1101,10 @@ export function Conversation({
   const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const [changesMode, setChangesMode] = useState<ChangesPanelMode>("review");
+  const changesAdded = changes.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const changesRemoved = changes.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  const canDeliverChanges = Boolean(repository && changes.length > 0 && !changesLoading && !changesError);
   const [workspacePanelFocus, setWorkspacePanelFocus] =
     useState<WorkspacePanelDestination | null>(null);
   const availableWorkspacePanels = repository ? WORKSPACE_PANEL_DESTINATIONS : [];
@@ -1127,6 +1132,15 @@ export function Conversation({
     if (next === "preview") setPreviewMounted(true);
     if (next === "changes" && activePanel !== "changes") onRefreshChanges();
     onPanelChange(next);
+  };
+  const openChanges = (mode: ChangesPanelMode) => {
+    setChangesMode(mode);
+    if (activePanel === "changes") {
+      setWorkspacePanelFocus("changes");
+      onRefreshChanges();
+      return;
+    }
+    activateWorkspacePanel("changes");
   };
   const closeWorkspacePanel = (
     destination: WorkspacePanelDestination,
@@ -2348,9 +2362,11 @@ export function Conversation({
   const accessLabel = mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
   const emptyState = !repository
     ? {
-        title: "Open a repository to begin",
-        detail: "Choose an explicit local root before starting a provider conversation.",
-        action: <Button variant="primary" size="lg" onClick={onOpenRepository}>Open repository</Button>,
+        title: "Choose a project to begin",
+        detail: "Choose a project below to set the workspace before starting a provider conversation.",
+        // The Work on card already owns the project-selection action. Keeping one
+        // path here prevents two competing repository CTAs in the first-run state.
+        action: null,
       }
     : conversationWorktreeMissing
       ? {
@@ -2415,6 +2431,11 @@ export function Conversation({
     detail: modeCopy[mode].authority,
   };
   const workspaceCopy = WORKSPACE_MODE_COPY[workspaceMode];
+  const workspaceSetupStatus = !repository
+    ? { label: "Choose project", tone: "pending" }
+    : !worktree
+      ? { label: "Choose worktree", tone: "pending" }
+      : { label: "Ready to start", tone: "ready" };
   const hostLabel = typeof window !== "undefined" && window.location.hostname
     ? window.location.hostname === "localhost" ? "Local Aldunis host" : window.location.hostname
     : "Local Aldunis host";
@@ -2607,34 +2628,22 @@ export function Conversation({
                 </span>
               )}
             </button>
-            <button
-              ref={changesPanelTriggerRef}
-              type="button"
-              className={`btn btn-ghost btn-sm ${activePanel === "changes" ? "on" : ""}`}
-              data-workspace-panel="changes"
-              disabled={!repository}
+            <EnvironmentControl
+              repository={repository}
+              pane={pane}
+              changesCount={changes.length}
+              additions={changesAdded}
+              deletions={changesRemoved}
+              changesLoading={changesLoading}
+              changesError={changesError}
+              canDeliver={canDeliverChanges}
+              active={activePanel === "changes"}
               tabIndex={workspacePanelStop === "changes" ? 0 : -1}
-              title={repository ? "Review changed files" : "Open a repository to review changes"}
-              aria-label={[
-                repository ? `${changes.length} changes` : "Changes unavailable: open a repository",
-                changesLoading ? "loading" : null,
-                changesError ? "error" : null,
-                `${pane} pane`,
-              ].filter(Boolean).join(", ")}
-              aria-pressed={activePanel === "changes"}
+              triggerRef={changesPanelTriggerRef}
               onKeyDown={(event) => moveWorkspacePanel(event, "changes")}
-              onClick={() => activateWorkspacePanel("changes")}
-            >
-              <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M15 3v18" />
-              </svg>
-              Changes
-              <span className={`workspace-panel-count ${changesError ? "error" : ""}`}>
-                {changesLoading ? "…" : changes.length}
-              </span>
-              {changesError && <span className="workspace-panel-status error">error</span>}
-            </button>
+              onOpenChanges={openChanges}
+              onManageWorktrees={onManageWorktrees}
+            />
           </div>
           {pane === "primary" && showOpenBeside && (
             <button
@@ -3059,7 +3068,19 @@ export function Conversation({
         )}
         {canPickWorkspace && (
           <section className="new-chat-context" aria-labelledby={`${pane}-new-chat-context-title`}>
-            <span className="new-chat-context-eyebrow">Work on</span>
+            <div className="new-chat-context-header">
+              <div className="new-chat-context-heading">
+                <span className="new-chat-context-eyebrow">Work on</span>
+                <p>Set the project and workspace for this conversation.</p>
+              </div>
+              <span
+                className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
+                aria-label={`Workspace setup: ${workspaceSetupStatus.label}`}
+              >
+                <span aria-hidden="true" />
+                {workspaceSetupStatus.label}
+              </span>
+            </div>
             <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
             <div className="new-chat-context-rows">
               <div className="new-chat-context-row" aria-label={`${hostLabel}, current Aldunis host`}>
@@ -3933,6 +3954,8 @@ export function Conversation({
             onClose={() => closeWorkspacePanel("changes")}
             onRefresh={onRefreshChanges}
             canSendRevision={historyRestored && !runActive && providerReady}
+            mode={changesMode}
+            onModeChange={setChangesMode}
             onSendRevision={(prompt) => {
               closeWorkspacePanel("changes", false);
               void send(prompt);
