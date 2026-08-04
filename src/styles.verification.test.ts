@@ -82,6 +82,13 @@ test("conversation overlays are contained by .conv (not review dock)", () => {
   );
 });
 
+test("hidden workspace overlays stay hidden under the shell overrides", () => {
+  assert.match(
+    shellCss,
+    /\.file-browser-panel\[hidden\],\s*\.preview-panel\[hidden\]\s*\{[^}]*display:\s*none\s*!important/s,
+  );
+});
+
 test("floating preview escapes the conversation overlay without losing bounds", () => {
   assert.match(
     css,
