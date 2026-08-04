@@ -140,6 +140,10 @@ system speech implementation may apply its own service and privacy policy. An
 unsupported browser, blocked microphone, missing device, or unavailable speech
 service is shown inline and leaves ordinary text input available.
 
+The active conversation pane can also toggle dictation with `⌘⇧M` on macOS or
+`Ctrl+Shift+M` on Windows/Linux. The shortcut is ignored while a modal dialog is
+open and does not repeat while the key is held.
+
 ## Settings
 
 Anything not touched during work belongs in Settings, not in the chrome.

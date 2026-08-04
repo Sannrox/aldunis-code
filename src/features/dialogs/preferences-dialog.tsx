@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Preferences } from "../../preferences";
 import { Button } from "../../components/ui";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
+import { VOICE_INPUT_SHORTCUT_LABEL } from "../../lib/voice-input";
 
 const SECTIONS = [
   "General",
@@ -479,6 +480,13 @@ export function PreferencesDialog({
                     <div className="fd">Collapse or reopen the workbench sidebar.</div>
                   </div>
                   <div className="fc"><kbd>{SIDEBAR_TOGGLE_SHORTCUT_LABEL}</kbd></div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <div className="fn">Voice input</div>
+                    <div className="fd">Toggle dictation in the active conversation pane.</div>
+                  </div>
+                  <div className="fc"><kbd>{VOICE_INPUT_SHORTCUT_LABEL}</kbd></div>
                 </div>
                 <p className="search-scope">
                   Product switch: ⌘1–4 (with Ctrl on Windows/Linux).

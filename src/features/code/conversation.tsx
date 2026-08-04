@@ -57,6 +57,8 @@ import {
   collectVoiceTranscript,
   composeVoiceDraft,
   getVoiceRecognitionConstructor,
+  matchesVoiceInputShortcut,
+  VOICE_INPUT_SHORTCUT_LABEL,
   voiceInputErrorMessage,
   type VoiceRecognition,
 } from "../../lib/voice-input";
@@ -1706,6 +1708,25 @@ export function Conversation({
         && selectedProvider.enabled !== false
         && selectedProvider.authenticated !== false,
       );
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || !matchesVoiceInputShortcut(event)
+        || document.querySelector('[role="dialog"][aria-modal="true"]')
+        || !worktree
+        || !providerReady
+        || runActive
+        || !historyRestored
+      ) return;
+      event.preventDefault();
+      if (voiceRecognitionRef.current) stopVoiceInput();
+      else startVoiceInput();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active, draft, historyRestored, providerReady, runActive, worktree]);
   const providerReadinessMessage = !providersLoaded
     ? "Checking provider…"
     : providerReady
@@ -3408,6 +3429,7 @@ export function Conversation({
               type="button"
               className={`voice-input-toggle ${voiceInputState === "listening" ? "is-listening" : ""} ${voiceInputState === "error" ? "is-error" : ""}`}
               aria-pressed={voiceInputState === "listening"}
+              aria-keyshortcuts="Meta+Shift+M Control+Shift+M"
               aria-label={voiceInputState === "listening"
                 ? "Stop voice input"
                 : voiceInputState === "unsupported"
@@ -3416,12 +3438,12 @@ export function Conversation({
                 ? "Try voice input again"
                 : "Start voice input"}
               title={voiceInputState === "listening"
-                ? "Stop voice input"
+                ? `Stop voice input (${VOICE_INPUT_SHORTCUT_LABEL})`
                 : voiceInputState === "unsupported"
                 ? "Voice input is not available in this browser"
                 : voiceInputState === "error"
-                ? "Try voice input again"
-                : "Start voice input"}
+                ? `Try voice input again (${VOICE_INPUT_SHORTCUT_LABEL})`
+                : `Start voice input (${VOICE_INPUT_SHORTCUT_LABEL})`}
               disabled={!worktree || !providerReady || runActive || !historyRestored}
               onClick={() => {
                 if (voiceInputState === "listening") stopVoiceInput();
