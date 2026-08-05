@@ -4,8 +4,14 @@ import { fileURLToPath } from "node:url";
 import { createLocalHost } from "../server/host.ts";
 import { LocalStateStore } from "../server/state.ts";
 import {
+  RemoteEnvironmentManager,
+  RemoteEnvironmentStore,
+  type RemoteEnvironmentInput,
+} from "./remote-environments.ts";
+import {
   closeServer,
   DESKTOP_PROTOCOL,
+  isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
   selectedDirectoryPath,
@@ -13,8 +19,17 @@ import {
 import {
   BROWSER_PICTURE_IN_PICTURE_CHANNEL,
   CHOOSE_DIRECTORY_CHANNEL,
+  DESKTOP_CAPABILITIES_CHANNEL,
   REGISTER_BROWSER_VIEW_CHANNEL,
+  REMOTE_ENVIRONMENT_CONFIRM_CHANNEL,
+  REMOTE_ENVIRONMENT_CONNECT_CHANNEL,
+  REMOTE_ENVIRONMENT_DISCONNECT_CHANNEL,
+  REMOTE_ENVIRONMENT_LOCAL_CHANNEL,
+  REMOTE_ENVIRONMENT_REMOVE_CHANNEL,
+  REMOTE_ENVIRONMENT_SAVE_CHANNEL,
+  REMOTE_ENVIRONMENTS_LIST_CHANNEL,
   UNREGISTER_BROWSER_VIEW_CHANNEL,
+  type DesktopCapabilities,
 } from "./channels.ts";
 import { SharedBrowserManager } from "./shared-browser.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
@@ -24,6 +39,11 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 let window: BrowserWindow | null = null;
 let backend: ReturnType<typeof createLocalHost> | null = null;
 let browserManager: SharedBrowserManager | null = null;
+let remoteEnvironments: RemoteEnvironmentManager | null = null;
+let localApplicationUrl: string | null = null;
+let activeRemoteEnvironmentId: string | null = null;
+let activeRemoteApplicationOrigin: string | null = null;
+let approvedOrigins: Set<string> | null = null;
 let releaseWriterLease: (() => Promise<void>) | null = null;
 let shuttingDown = false;
 
@@ -59,6 +79,18 @@ if (!gotSingleInstanceLock) {
     releaseWriterLease = await state.acquireWriterLease();
     const browser = new SharedBrowserManager(join(applicationRoot, "dist-electron", "preload.cjs"));
     browserManager = browser;
+    remoteEnvironments = new RemoteEnvironmentManager(
+      new RemoteEnvironmentStore(join(app.getPath("userData"), "remote-environments.v1.json")),
+      (id) => {
+        if (activeRemoteEnvironmentId !== id || !window || !localApplicationUrl || shuttingDown) return;
+        if (activeRemoteApplicationOrigin) approvedOrigins?.delete(activeRemoteApplicationOrigin);
+        activeRemoteEnvironmentId = null;
+        activeRemoteApplicationOrigin = null;
+        void window.loadURL(localApplicationUrl).catch((error: unknown) => {
+          console.error("The local workbench could not be restored after the SSH connection closed.", error);
+        });
+      },
+    );
     backend = createLocalHost(
       join(applicationRoot, "dist"),
       state,
@@ -72,8 +104,8 @@ if (!gotSingleInstanceLock) {
       browser,
       join(applicationRoot, "dist-electron", "browser-mcp.mjs"),
     );
-    const applicationUrl = await listenOnLoopback(backend);
-    const applicationOrigin = new URL(applicationUrl).origin;
+    localApplicationUrl = await listenOnLoopback(backend);
+    approvedOrigins = new Set([new URL(localApplicationUrl).origin]);
     window = new BrowserWindow({
       width: 1440,
       height: 960,
@@ -90,9 +122,47 @@ if (!gotSingleInstanceLock) {
       },
     });
     browser.bindOwnerWindow(window);
+    const isOwnerWindow = (event: Electron.IpcMainInvokeEvent): boolean => (
+      Boolean(window && event.sender === window.webContents)
+    );
+    const isLocalApplicationWindow = (event: Electron.IpcMainInvokeEvent): boolean => (
+      isOwnerWindow(event)
+      && Boolean(window && event.senderFrame === window.webContents.mainFrame)
+      && isLocalApplicationOrigin(event.senderFrame.url, localApplicationUrl)
+    );
+    const isActiveRemoteApplicationWindow = (event: Electron.IpcMainInvokeEvent): boolean => (
+      isOwnerWindow(event)
+      && Boolean(window && event.senderFrame === window.webContents.mainFrame)
+      && isLocalApplicationOrigin(event.senderFrame.url, activeRemoteApplicationOrigin)
+    );
+    ipcMain.removeHandler(DESKTOP_CAPABILITIES_CHANNEL);
+    ipcMain.handle(DESKTOP_CAPABILITIES_CHANNEL, (event): DesktopCapabilities => {
+      if (isLocalApplicationWindow(event)) {
+        return {
+          localApplication: true,
+          directoryPicker: true,
+          sharedBrowser: true,
+          remoteConnectionControls: true,
+        };
+      }
+      if (isActiveRemoteApplicationWindow(event)) {
+        return {
+          localApplication: false,
+          directoryPicker: false,
+          sharedBrowser: false,
+          remoteConnectionControls: true,
+        };
+      }
+      return {
+        localApplication: false,
+        directoryPicker: false,
+        sharedBrowser: false,
+        remoteConnectionControls: false,
+      };
+    });
     ipcMain.removeHandler(CHOOSE_DIRECTORY_CHANNEL);
     ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
-      if (!window || event.sender !== window.webContents) return null;
+      if (!isLocalApplicationWindow(event) || !window) return null;
       const result = await dialog.showOpenDialog(window, {
         properties: ["openDirectory", "createDirectory"],
       });
@@ -100,7 +170,7 @@ if (!gotSingleInstanceLock) {
     });
     ipcMain.removeHandler(REGISTER_BROWSER_VIEW_CHANNEL);
     ipcMain.handle(REGISTER_BROWSER_VIEW_CHANNEL, (event, value: unknown) => {
-      if (!window || event.sender !== window.webContents || typeof value !== "object" || value === null) return false;
+      if (!isLocalApplicationWindow(event) || !window || typeof value !== "object" || value === null) return false;
       const input = value as Record<string, unknown>;
       if (
         typeof input.sessionId !== "string"
@@ -115,7 +185,7 @@ if (!gotSingleInstanceLock) {
     });
     ipcMain.removeHandler(UNREGISTER_BROWSER_VIEW_CHANNEL);
     ipcMain.handle(UNREGISTER_BROWSER_VIEW_CHANNEL, (event, value: unknown) => {
-      if (!window || event.sender !== window.webContents || typeof value !== "object" || value === null) return null;
+      if (!isLocalApplicationWindow(event) || !window || typeof value !== "object" || value === null) return null;
       const input = value as Record<string, unknown>;
       if (typeof input.sessionId === "string" && typeof input.webContentsId === "number") {
         browser.unregisterView(input.sessionId, input.webContentsId);
@@ -124,7 +194,7 @@ if (!gotSingleInstanceLock) {
     });
     ipcMain.removeHandler(BROWSER_PICTURE_IN_PICTURE_CHANNEL);
     ipcMain.handle(BROWSER_PICTURE_IN_PICTURE_CHANNEL, async (event, value: unknown) => {
-      if (!window || event.sender !== window.webContents || typeof value !== "object" || value === null) return false;
+      if (!isLocalApplicationWindow(event) || !window || typeof value !== "object" || value === null) return false;
       const input = value as Record<string, unknown>;
       if (typeof input.sessionId !== "string" || typeof input.open !== "boolean") return false;
       try {
@@ -134,19 +204,116 @@ if (!gotSingleInstanceLock) {
         return false;
       }
     });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENTS_LIST_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENTS_LIST_CHANNEL, async (event) => {
+      if (!isLocalApplicationWindow(event) || !remoteEnvironments) return [];
+      return remoteEnvironments.list();
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_SAVE_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_SAVE_CHANNEL, async (event, input: unknown) => {
+      if (!isLocalApplicationWindow(event) || !remoteEnvironments) throw new Error("The desktop window is unavailable.");
+      if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("A remote environment is required.");
+      return remoteEnvironments.save(input as RemoteEnvironmentInput);
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_REMOVE_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_REMOVE_CHANNEL, async (event, id: unknown) => {
+      if (!isLocalApplicationWindow(event) || !remoteEnvironments || typeof id !== "string") return;
+      await remoteEnvironments.remove(id);
+      if (activeRemoteEnvironmentId === id && localApplicationUrl) {
+        const previousRemoteOrigin = activeRemoteApplicationOrigin;
+        activeRemoteEnvironmentId = null;
+        activeRemoteApplicationOrigin = null;
+        if (previousRemoteOrigin) approvedOrigins?.delete(previousRemoteOrigin);
+        await window?.loadURL(localApplicationUrl);
+      }
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_CONNECT_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_CONNECT_CHANNEL, async (event, value: unknown) => {
+      if (!isLocalApplicationWindow(event) || !remoteEnvironments || !window) throw new Error("The desktop window is unavailable.");
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("A remote environment id is required.");
+      const input = value as { id?: unknown; pairingUrl?: unknown; forcePair?: unknown };
+      if (typeof input.id !== "string") throw new Error("A remote environment id is required.");
+      const previousEnvironmentId = activeRemoteEnvironmentId;
+      const previousRemoteOrigin = activeRemoteApplicationOrigin;
+      const previousUrl = window.webContents.getURL() || localApplicationUrl;
+      const target = await remoteEnvironments.connect(
+        input.id,
+        typeof input.pairingUrl === "string" ? input.pairingUrl : null,
+        input.forcePair === true,
+      );
+      const targetOrigin = new URL(target.url).origin;
+      approvedOrigins?.add(targetOrigin);
+      activeRemoteEnvironmentId = target.id;
+      activeRemoteApplicationOrigin = targetOrigin;
+      try {
+        await window.loadURL(target.url);
+      } catch (error) {
+        activeRemoteEnvironmentId = previousEnvironmentId;
+        activeRemoteApplicationOrigin = previousRemoteOrigin;
+        if (target.id !== previousEnvironmentId) await remoteEnvironments.disconnect(target.id);
+        if (targetOrigin !== previousRemoteOrigin && targetOrigin !== new URL(localApplicationUrl).origin) {
+          approvedOrigins?.delete(targetOrigin);
+        }
+        try {
+          await window.loadURL(previousUrl || localApplicationUrl);
+        } catch {
+          // Preserve the original navigation diagnostic for the caller.
+        }
+        throw error instanceof Error ? error : new Error("The remote workbench could not be loaded.");
+      }
+      if (previousEnvironmentId && previousEnvironmentId !== target.id) {
+        await remoteEnvironments.disconnect(previousEnvironmentId);
+        if (previousRemoteOrigin && previousRemoteOrigin !== targetOrigin) approvedOrigins?.delete(previousRemoteOrigin);
+      }
+      return target;
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_DISCONNECT_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_DISCONNECT_CHANNEL, async (event, id: unknown) => {
+      if (!remoteEnvironments || typeof id !== "string") return;
+      const canDisconnect = isLocalApplicationWindow(event)
+        || (isActiveRemoteApplicationWindow(event) && id === activeRemoteEnvironmentId);
+      if (!canDisconnect) return;
+      await remoteEnvironments.disconnect(id);
+      if (activeRemoteEnvironmentId === id && localApplicationUrl) {
+        const previousRemoteOrigin = activeRemoteApplicationOrigin;
+        activeRemoteEnvironmentId = null;
+        activeRemoteApplicationOrigin = null;
+        if (previousRemoteOrigin) approvedOrigins?.delete(previousRemoteOrigin);
+        await window?.loadURL(localApplicationUrl);
+      }
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_LOCAL_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_LOCAL_CHANNEL, async (event) => {
+      if (
+        (!isLocalApplicationWindow(event) && !isActiveRemoteApplicationWindow(event))
+        || !remoteEnvironments
+        || !localApplicationUrl
+      ) return;
+      await remoteEnvironments.close();
+      if (activeRemoteApplicationOrigin) approvedOrigins?.delete(activeRemoteApplicationOrigin);
+      activeRemoteEnvironmentId = null;
+      activeRemoteApplicationOrigin = null;
+      await window?.loadURL(localApplicationUrl);
+    });
+    ipcMain.removeHandler(REMOTE_ENVIRONMENT_CONFIRM_CHANNEL);
+    ipcMain.handle(REMOTE_ENVIRONMENT_CONFIRM_CHANNEL, async (event) => {
+      if (!isActiveRemoteApplicationWindow(event) || !remoteEnvironments || !activeRemoteEnvironmentId) return false;
+      await remoteEnvironments.confirmPairing(activeRemoteEnvironmentId);
+      return true;
+    });
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("https://")) void shell.openExternal(url);
       return { action: "deny" };
     });
     window.webContents.on("will-navigate", (event, url) => {
       try {
-        if (new URL(url).origin !== applicationOrigin) event.preventDefault();
+        if (!approvedOrigins?.has(new URL(url).origin)) event.preventDefault();
       } catch {
         event.preventDefault();
       }
     });
     window.once("ready-to-show", showWindow);
-    await window.loadURL(applicationUrl);
+    await window.loadURL(localApplicationUrl);
     const initialDeepLink = process.argv.find(isSupportedDeepLink);
     if (initialDeepLink) handleDeepLink(initialDeepLink);
   }).catch((error: unknown) => {
@@ -161,6 +328,7 @@ if (!gotSingleInstanceLock) {
     event.preventDefault();
     shuttingDown = true;
     void closeServer(backend)
+      .then(() => remoteEnvironments?.close())
       .then(() => releaseWriterLease?.())
       .finally(() => {
         browserManager?.closeAll();

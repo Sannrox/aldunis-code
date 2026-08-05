@@ -13,9 +13,9 @@ function proof(
   body: Buffer,
   nonce = randomUUID(),
   timestamp = Date.now(),
+  origin = "https://aldunis.test",
 ): IncomingMessage {
   const path = "/api/state/load";
-  const origin = "https://aldunis.test";
   const payload = [
     "POST",
     origin,
@@ -104,6 +104,27 @@ test("persisted remote state stores digests and public keys, never raw credentia
   assert.equal(stored.includes(session.sessionToken), false);
   assert.equal(stored.includes('"d"'), false);
   assert.match(stored, /Persistence test/);
+});
+
+test("SSH remote authentication permits only the loopback HTTP origin", async () => {
+  const auth = new RemoteAuth(await mkdtemp(join(tmpdir(), "aldunis-remote-auth-")), {
+    allowLoopbackHttp: true,
+  });
+  const pairing = await auth.issuePairing();
+  const keys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const session = await auth.pair({
+    credential: pairing.credential,
+    label: "SSH desktop",
+    publicKey: keys.publicKey.export({ format: "jwk" }),
+  });
+  const body = Buffer.from("{}");
+  const request = proof(session, keys.privateKey, body, randomUUID(), Date.now(), "http://127.0.0.1:49152");
+  request.headers.host = "127.0.0.1:49152";
+  assert.equal((await auth.verify(request, body)).label, "SSH desktop");
+
+  const publicRequest = proof(session, keys.privateKey, body, randomUUID(), Date.now(), "http://192.168.1.10:49152");
+  publicRequest.headers.host = "192.168.1.10:49152";
+  await assert.rejects(() => auth.verify(publicRequest, body), /another origin/);
 });
 
 test("a running host observes pairing and revocation changes from another process", async () => {

@@ -171,6 +171,29 @@ npm run cli -- auth pairing revoke --session <session-id>
 The older `npm run host -- --remote-auth ...` forms remain available for
 existing scripts.
 
+### Desktop remote workbenches
+
+In the Electron desktop, open **Settings → Access → Connections**. The
+**Remote workbenches** section supports:
+
+- **SSH launch / local forward** — enter an SSH alias or `user@host`. The
+  desktop starts `aldunis-code serve --remote ssh` on the remote host, forwards
+  a local ephemeral port to the remote loopback backend, and pairs the desktop
+  with a one-time device grant.
+- **Existing HTTPS endpoint** — enter the backend origin and its one-time
+  pairing URL. HTTPS is required for non-loopback endpoints.
+
+Saved records contain no SSH private keys, provider credentials, or pairing
+credentials. The remote host remains authoritative for repositories,
+worktrees, provider processes, and conversations. Use **Use local host** to
+return to the desktop's loopback backend.
+
+The desktop-managed SSH backend defaults to remote port **4177**, leaving the
+development UI on **4174** and the split development host on **4175**. The
+desktop chooses and remembers a preferred local forwarding port. For
+comparison, T3 Code's remote guide uses backend port **3773**; that port is only
+relevant to T3 Code and does not make a remote host an Aldunis backend.
+
 Details: [remote-workbench.md](remote-workbench.md).
 
 ## Enterprise-managed mode (operator deployment)

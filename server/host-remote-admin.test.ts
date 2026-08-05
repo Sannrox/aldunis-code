@@ -9,7 +9,7 @@ import { createLocalHost, isLocalControlRequest } from "./host.ts";
 import type { RemoteAuth } from "./remote-auth.ts";
 import { LocalStateStore } from "./state.ts";
 
-async function listen(remote = false, publicOrigin?: string) {
+async function listen(remote = false, publicOrigin?: string, allowLocalControl = true) {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-admin-"));
   let verifyCalls = 0;
   const remoteAuth = remote
@@ -47,6 +47,8 @@ async function listen(remote = false, publicOrigin?: string) {
     undefined,
     undefined,
     publicOrigin,
+    undefined,
+    allowLocalControl,
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
@@ -148,6 +150,17 @@ test("Connections administration fails closed for forwarded requests", async () 
       "x-forwarded-host": "remote.example",
     });
     assert.equal(forwarded.status, 403);
+    assert.equal(fixture.verifyCalls, 1);
+  } finally {
+    await close(fixture.server);
+  }
+});
+
+test("SSH remote mode does not expose local Connections administration through its forward", async () => {
+  const fixture = await listen(true, undefined, false);
+  try {
+    const status = await post(fixture.url, "/api/remote/admin/status");
+    assert.equal(status.status, 403);
     assert.equal(fixture.verifyCalls, 1);
   } finally {
     await close(fixture.server);

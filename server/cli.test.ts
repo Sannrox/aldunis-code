@@ -36,6 +36,16 @@ test("auth pairing commands have T3-style nested routing and aliases", () => {
   });
 });
 
+test("SSH remote serving is an explicit loopback-authenticated host mode", () => {
+  assert.deepEqual(parseCliArgs(["serve", "--remote", "ssh", "--port", "4177"]), {
+    kind: "run",
+    command: "serve",
+    options: { remote: "ssh", port: "4177" },
+  });
+  assert.match(formatCliHelp(), /--remote <lan\|tailscale\|ssh>/);
+  assert.match(formatCliHelp(), /SSH remote default: 4177/);
+});
+
 test("the CLI build emits provider approval helpers beside the host bundle", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
     scripts?: { "build:cli"?: string };

@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
   closeServer,
+  isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
   localApplicationUrl,
@@ -28,6 +29,14 @@ test("packaged startup waits for a loopback backend on an ephemeral port", async
 test("backend readiness rejects non-TCP and unavailable addresses", () => {
   assert.throws(() => localApplicationUrl(null), /did not provide a TCP address/);
   assert.throws(() => localApplicationUrl("/tmp/aldunis.sock"), /did not provide a TCP address/);
+});
+
+test("desktop connection IPC accepts only the local application origin", () => {
+  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4174/settings", "http://127.0.0.1:4174"), true);
+  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4177/", "http://127.0.0.1:4174"), false);
+  assert.equal(isLocalApplicationOrigin("https://code.example.test/", "http://127.0.0.1:4174"), false);
+  assert.equal(isLocalApplicationOrigin("about:blank", "http://127.0.0.1:4174"), false);
+  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4174/", null), false);
 });
 
 test("deep links accept only the registered application protocol", () => {
