@@ -715,6 +715,7 @@ export function CodeWorkbench({
   });
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
+  const [primaryChangesThreadId, setPrimaryChangesThreadId] = useState<string | null>(null);
   const [primaryChangesMode, setPrimaryChangesMode] = useState<"review" | "deliver">("review");
   const [primaryFilesSignal, setPrimaryFilesSignal] = useState(0);
   const [secondaryChangesSignal, setSecondaryChangesSignal] = useState(0);
@@ -908,12 +909,18 @@ export function CodeWorkbench({
       ...(projects.find((project) => project.id === repository.projectId)?.memberIds ?? []),
     ]);
     if (!activeProjectIds.has(primary.projectId)) return;
-    if (!repository.worktrees.some((worktree) => worktree.path === primary.worktree)) {
+    const selectedWorktree = repository.worktrees.find((worktree) => worktree.path === primary.worktree);
+    if (
+      !selectedWorktree
+      || selectedWorktree.recovery !== "available"
+      || (selectedWorktree.state !== "available" && selectedWorktree.state !== "detached")
+    ) {
       setPendingWorkspaceAction(null);
       setLifecycleError("The conversation worktree is no longer available. Open the conversation to inspect its recovery state.");
       return;
     }
     setPendingWorkspaceAction(null);
+    setPrimaryChangesThreadId(primary.id);
     setPrimaryChangesMode(pendingWorkspaceAction.mode);
     setPrimaryChangesSignal((value) => value + 1);
   }, [pendingWorkspaceAction, primary, primaryId, projects, repository]);
@@ -1178,6 +1185,8 @@ export function CodeWorkbench({
   };
   const openConversation = useCallback((id: string, selectedConversation?: ConversationSummary) => {
     setPendingWorkspaceAction(null);
+    setPrimaryChangesSignal(0);
+    setPrimaryChangesThreadId(null);
     const thread = conversations.find((item) => item.id === id)
       ?? (selectedConversation?.id === id ? selectedConversation : undefined);
     if (selectedConversation?.id === id) {
@@ -1216,6 +1225,10 @@ export function CodeWorkbench({
       body: JSON.stringify({ threadId: id }),
     }).catch(() => undefined);
   }, [conversations, onSelectProject, projects, repository?.projectId]);
+  const consumePrimaryChangesRequest = useCallback((signal: number) => {
+    setPrimaryChangesSignal((current) => current === signal ? 0 : current);
+    setPrimaryChangesThreadId((current) => current === primaryId ? null : current);
+  }, [primaryId]);
   // Thread search lives outside the workbench shell; open hits via shared event.
   useEffect(() => {
     const onOpenFromSearch = (event: Event) => {
@@ -1528,7 +1541,7 @@ export function CodeWorkbench({
                     onChanged={refreshStateProjection}
                   />
                 )}
-                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} projects={projects} onAddProject={onAddProject} onSelectProject={onSelectProject} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} initialPrompt={initialRepairPrompt} initialProvider={initialRepairPrompt ? "shikigami" : undefined} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onRepositoryChanged={onRepositoryChanged} onSelectWorktree={onSelectWorktree} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showChangesMode={primaryChangesMode} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
+                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} projects={projects} onAddProject={onAddProject} onSelectProject={onSelectProject} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} initialPrompt={initialRepairPrompt} initialProvider={initialRepairPrompt ? "shikigami" : undefined} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onRepositoryChanged={onRepositoryChanged} onSelectWorktree={onSelectWorktree} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showChangesThreadId={primaryChangesThreadId} onChangesRequestConsumed={consumePrimaryChangesRequest} showChangesMode={primaryChangesMode} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
                   if (primarySelectionReference.current === primarySelectionKey) {
                     primarySelectionReference.current = id;
                     setPrimaryId(id);

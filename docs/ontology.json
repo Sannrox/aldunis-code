@@ -74,6 +74,10 @@
       "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
     },
     {
+      "name": "ConversationActivityInbox",
+      "description": "A derived, read-only cross-project Code workbench projection that groups bounded conversation metadata by operator attention, running, completed, and idle state and offers explicit open or changes-review navigation without provider, approval, execution, or remote mutation authority."
+    },
+    {
       "name": "LocalConversation",
       "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
       "properties": [
@@ -234,6 +238,16 @@
       "description": "Records each scheduled slot or explicit manual request as one idempotent fire identity with bounded outcome and recovery state.",
       "domain": "ConversationAutomation",
       "range": "ConversationAutomationFire"
+    },
+    {
+      "name": "projects_conversation_activity",
+      "description": "Projects bounded local conversation metadata into a cross-project activity inbox without copying conversation content or granting new execution authority.",
+      "domain": "ConversationActivityInbox",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
     },
     {
       "name": "exposes_host_commands",
@@ -645,6 +659,18 @@
       "subject": "ThreadSearch",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/dialogs/thread-search-dialog.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationActivityInbox",
+      "source": "GitHub Issue Sannrox/aldunis-code#511",
+      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx; src/main.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_conversation_activity",
+      "source": "Aldunis Code cross-project activity projection",
+      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx",
       "confidence": 1.0
     },
     {

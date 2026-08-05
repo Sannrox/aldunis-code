@@ -24,6 +24,8 @@ export function PaneConversation({
   onRepositoryChanged,
   onSelectWorktree,
   showChangesSignal,
+  showChangesThreadId,
+  onChangesRequestConsumed,
   showChangesMode = "review",
   showFilesSignal,
   onManageWorktrees,
@@ -51,6 +53,8 @@ export function PaneConversation({
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   onSelectWorktree: (path: string) => void;
   showChangesSignal: number;
+  showChangesThreadId?: string | null;
+  onChangesRequestConsumed?: (signal: number) => void;
   showChangesMode?: ChangesPanelMode;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
@@ -93,11 +97,12 @@ export function PaneConversation({
     void refreshChanges();
   }, [repository?.root, repository?.selectedWorktree, conversation?.id]);
   useEffect(() => {
-    if (showChangesSignal > 0) {
+    if (showChangesSignal > 0 && (!showChangesThreadId || conversation?.id === showChangesThreadId)) {
       setActivePanel("changes");
       void refreshChanges();
+      onChangesRequestConsumed?.(showChangesSignal);
     }
-  }, [showChangesSignal]);
+  }, [conversation?.id, onChangesRequestConsumed, showChangesSignal, showChangesThreadId]);
   useEffect(() => {
     if (showFilesSignal > 0) setActivePanel("files");
   }, [showFilesSignal]);
