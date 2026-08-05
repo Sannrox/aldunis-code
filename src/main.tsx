@@ -23,7 +23,7 @@ import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
-import { ActivityDialog } from "./features/dialogs/activity-dialog";
+import { ActivityDialog, type ActivitySelectionAction } from "./features/dialogs/activity-dialog";
 import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
 import {
   isKeybindingCaptured,
@@ -478,10 +478,14 @@ function App() {
       <ActivityDialog
         open={activityOpen}
         onClose={() => setActivityOpen(false)}
-        onSelect={(conversation) => {
+        onSelect={(conversation, action: ActivitySelectionAction) => {
           window.dispatchEvent(
             new CustomEvent("aldunis:open-conversation", {
-              detail: { threadId: conversation.id, conversation },
+              detail: {
+                threadId: conversation.id,
+                conversation,
+                action,
+              },
             }),
           );
         }}

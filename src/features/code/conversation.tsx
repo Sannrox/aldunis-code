@@ -276,6 +276,8 @@ export function Conversation({
   activePanel,
   onPanelChange,
   onRefreshChanges,
+  openChangesSignal = 0,
+  openChangesMode = "review",
   profiles,
   onOpenProfiles,
   managedMode = false,
@@ -307,6 +309,8 @@ export function Conversation({
   activePanel: WorkspacePanel;
   onPanelChange: (panel: WorkspacePanel) => void;
   onRefreshChanges: () => void;
+  openChangesSignal?: number;
+  openChangesMode?: ChangesPanelMode;
   profiles: ClaudeProfile[];
   onOpenProfiles: (provider?: ProviderId) => void;
   managedMode?: boolean;
@@ -1227,6 +1231,10 @@ export function Conversation({
     }
     activateWorkspacePanel("changes");
   };
+  useEffect(() => {
+    if (openChangesSignal <= 0) return;
+    setChangesMode(openChangesMode);
+  }, [openChangesMode, openChangesSignal]);
   const closeWorkspacePanel = (
     destination: WorkspacePanelDestination,
     restoreFocus = true,

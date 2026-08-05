@@ -835,24 +835,34 @@ select.ui-input {
   line-height: 1.45;
 }
 .activity-error { margin: 0; color: var(--destructive-foreground); font-size: 12px; }
-.activity-counts {
+.activity-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.activity-counts span {
+.activity-filter {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 5px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
+  background: transparent;
   color: var(--muted-foreground);
+  cursor: pointer;
   font: 11px var(--font-mono);
 }
-.activity-counts span.attention { color: var(--amber); }
-.activity-counts span.running { color: var(--blue, var(--foreground)); }
-.activity-counts span.completed { color: var(--emerald); }
+.activity-filter:hover,
+.activity-filter:focus-visible,
+.activity-filter[aria-pressed="true"] {
+  border-color: var(--ring);
+  background: var(--accent);
+  color: var(--foreground);
+  outline: none;
+}
+.activity-filter.attention { color: var(--amber); }
+.activity-filter.running { color: var(--blue, var(--foreground)); }
+.activity-filter.completed { color: var(--emerald); }
 .activity-list {
   display: grid;
   gap: 5px;
@@ -860,8 +870,10 @@ select.ui-input {
   padding: 0;
   list-style: none;
 }
+.activity-item { min-width: 0; }
 .activity-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   width: 100%;
   min-width: 0;
   align-items: center;
@@ -872,7 +884,6 @@ select.ui-input {
   background: var(--card);
   color: var(--foreground);
   text-align: left;
-  cursor: pointer;
 }
 .connections-error { color: var(--destructive-foreground) !important; }
 .connections-summary {
@@ -889,8 +900,7 @@ select.ui-input {
   border-radius: 8px;
   background: var(--card);
 }
-.activity-row:hover,
-.activity-row:focus-visible { border-color: var(--ring); background: var(--accent); outline: none; }
+.activity-row:hover { border-color: var(--ring); background: var(--accent); }
 .activity-status {
   flex: 0 0 auto;
   min-width: 88px;
@@ -905,10 +915,21 @@ select.ui-input {
 .activity-copy strong,
 .activity-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-copy small { color: var(--muted-foreground); font-size: 11px; }
-.activity-chevron { flex: 0 0 auto; color: var(--muted-foreground); }
+.activity-next-action { color: var(--muted-foreground); font-size: 11px; }
+.activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
 @media (max-width: 560px) {
   .activity-header { flex-direction: column; }
-  .activity-status { min-width: 72px; }
+  .activity-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .activity-status { min-width: 0; }
+  .activity-actions { justify-content: flex-start; }
 }
 .connections-summary span,
 .connections-sessions small {

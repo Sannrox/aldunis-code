@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import type { WorkspacePanel } from "../../lib/workspace-panel";
 import type { SavedProject } from "../dialogs/repository-dialog";
+import type { ChangesPanelMode } from "../changes/changes-panel";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
 
@@ -23,6 +24,7 @@ export function PaneConversation({
   onRepositoryChanged,
   onSelectWorktree,
   showChangesSignal,
+  showChangesMode = "review",
   showFilesSignal,
   onManageWorktrees,
   managedMode = false,
@@ -49,6 +51,7 @@ export function PaneConversation({
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   onSelectWorktree: (path: string) => void;
   showChangesSignal: number;
+  showChangesMode?: ChangesPanelMode;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
   managedMode?: boolean;
@@ -126,6 +129,8 @@ export function PaneConversation({
       activePanel={activePanel}
       onPanelChange={setActivePanel}
       onRefreshChanges={refreshChanges}
+      openChangesSignal={showChangesSignal}
+      openChangesMode={showChangesMode}
       profiles={profiles}
       onOpenProfiles={onOpenProfiles}
       managedMode={managedMode}
