@@ -562,6 +562,24 @@ test("sparse mobile empty state stays above the fixed composer", () => {
   );
 });
 
+test("narrow empty-state copy cannot create a horizontal thread scrollbar", () => {
+  assert.match(shellCss, /\.thread\s*\{[^}]*overflow-x:\s*hidden\s*!important/s);
+  assert.match(shellCss, /\.conversation-empty p\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(
+    shellCss,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.split\.with-review\s*>\s*\.conv\.conv--blocked\s*>\s*\.cwrap\s*\{[^}]*display:\s*none\s*!important/s,
+  );
+  assert.match(
+    shellCss,
+    /\.split\.with-review\s*>\s*\.conv\.conv--blocked\s*\+\s*\.review-dock,[\s\S]*?\.split\.with-review\s*>\s*\.conv\.conv--blocked\s*\+\s*\.rv\s*\{[^}]*flex:\s*0\s+1\s+min\(43vh,\s*48%\)/s,
+  );
+});
+
+test("disabled product destinations remain readable while unavailable", () => {
+  assert.match(shellCss, /\.pi2\.dis,\.pi2:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s);
+  assert.match(shellCss, /\.brand-switch__menu button\.dis,.brand-switch__menu button:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s);
+});
+
 test("narrow workbench uses a drawer sidebar with an explicit scrim", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
