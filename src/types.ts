@@ -663,11 +663,15 @@ export interface TurnCheckpoint {
   completedIndexIdentity: string | null;
   state: CheckpointState;
   message: string | null;
+  /** Metadata-only summary of the completed turn's tree diff. */
+  files?: CheckpointFile[];
 }
 export interface CheckpointFile {
   path: string;
   state: "added" | "modified" | "deleted" | "renamed" | "binary";
   previousPath: string | null;
+  additions: number | null;
+  deletions: number | null;
 }
 export type IconName =
   | "code"

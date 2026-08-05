@@ -1601,6 +1601,13 @@ test("checkpoint states rebuild and are removed with their conversation", async 
     completedIndexIdentity: "completed-index",
     completedHead: "baseline-head",
     state: "completed",
+    files: [{
+      path: "created.txt",
+      state: "added",
+      previousPath: null,
+      additions: 2,
+      deletions: 0,
+    }],
   });
   await store.saveCheckpoint({
     ...(await store.load()).checkpoints[0],
@@ -1616,6 +1623,13 @@ test("checkpoint states rebuild and are removed with their conversation", async 
   assert.equal(rebuilt.checkpoints.length, 2);
   assert.equal(rebuilt.checkpoints[0].state, "completed");
   assert.equal(rebuilt.checkpoints[0].baselineIdentity, "baseline-tree");
+  assert.deepEqual(rebuilt.checkpoints[0].files, [{
+    path: "created.txt",
+    state: "added",
+    previousPath: null,
+    additions: 2,
+    deletions: 0,
+  }]);
   assert.equal(rebuilt.checkpoints[1].state, "completed");
 
   await store.deleteProject("project-1");

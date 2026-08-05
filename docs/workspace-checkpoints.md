@@ -34,6 +34,14 @@ otherwise every ordinary project would report checkpoints as unavailable. Do
 not rely on rewind to undo agent writes into ignored paths. A completed
 checkpoint can include ordinary non-ignored files created by the agent.
 
+Completed checkpoints also retain a metadata-only changed-file summary: path,
+change state, rename source when applicable, and line counts. The conversation
+renders that summary inline on the assistant turn. `Review turn` reads the
+diff between the checkpoint's baseline and completed tree identities, so the
+historical view remains stable even if a later turn or the operator changes the
+current worktree. Historical turn review is read-only; staging, delivery, and
+new comments remain scoped to the current worktree review.
+
 If a turn changes `HEAD`, its checkpoint is unavailable. Rewind restores a
 workspace and index; it never rewrites commits or branch history. Project
 deletion and retention return a retryable conflict while an affected turn is

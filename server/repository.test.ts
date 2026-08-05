@@ -15,6 +15,7 @@ import {
   deleteCheckpointReferences,
   rewindCheckpoint,
 } from "./repository.ts";
+import { readCheckpointFileDiff } from "./changes.ts";
 import { assertLoopbackHost } from "./host.ts";
 
 const execFileAsync = promisify(execFile);
@@ -145,6 +146,26 @@ test("stable checkpoint identities produce diffs and rewind only the exact works
     "show-ref",
     checkpointReference("abc-123", "completed"),
   ]));
+});
+
+test("checkpoint file diffs stay bound to the completed turn after later workspace edits", async () => {
+  const root = await gitFixture();
+  const baseline = await captureCheckpoint(root, false);
+  await writeFile(join(root, "tracked.txt"), "completed\n");
+  const completed = await captureCheckpoint(root, true);
+  await writeFile(join(root, "tracked.txt"), "later operator edit\n");
+
+  const diff = await readCheckpointFileDiff(
+    root,
+    baseline.identity,
+    completed.identity,
+    "tracked.txt",
+  );
+  assert.equal(diff.state, "modified");
+  assert.equal(diff.additions, 1);
+  assert.equal(diff.deletions, 1);
+  assert.match(diff.patch ?? "", /\+completed/);
+  assert.doesNotMatch(diff.patch ?? "", /later operator edit/);
 });
 
 test("checkpoint capture and rewind fail safely for unrelated or concurrent work", async () => {

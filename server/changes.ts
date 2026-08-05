@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { RepositoryError } from "./repository.ts";
+import { checkpointDiff, RepositoryError, type CheckpointFile } from "./repository.ts";
 
 const execFileAsync = promisify(execFile);
 export const MAX_DIFF_BYTES = 256 * 1024;
@@ -259,6 +259,44 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
     return finalizeDiff(change, patch, null);
   }
   const result = await git(worktree, ["diff", "--no-ext-diff", "--unified=3", "HEAD", "--", path], MAX_DIFF_BYTES * 2);
+  return finalizeDiff(
+    change,
+    result.stdout || null,
+    result.stdout ? null : "No textual diff is available.",
+  );
+}
+
+/**
+ * Read a stable diff between two checkpoint trees. Unlike readFileDiff, this
+ * never compares against the mutable current worktree, so historical turn
+ * review remains meaningful after later turns or operator edits.
+ */
+export async function readCheckpointFileDiff(
+  worktree: string,
+  fromIdentity: string,
+  toIdentity: string,
+  requestedPath: string,
+  summary?: CheckpointFile[],
+): Promise<FileDiff> {
+  const path = safeRelativePath(worktree, requestedPath);
+  const files = summary ?? await checkpointDiff(worktree, fromIdentity, toIdentity);
+  const checkpointFile = files.find((file) => file.path === path);
+  if (!checkpointFile) throw new RepositoryError("The selected file is not part of this turn.", 404);
+  const change: ChangedFile = {
+    path: checkpointFile.path,
+    previousPath: checkpointFile.previousPath,
+    state: checkpointFile.state,
+    additions: checkpointFile.additions ?? null,
+    deletions: checkpointFile.deletions ?? null,
+  };
+  if (change.state === "binary") {
+    return finalizeDiff(change, null, "Binary content is not rendered.");
+  }
+  const result = await git(
+    worktree,
+    ["diff", "--no-ext-diff", "--unified=3", fromIdentity, toIdentity, "--", path],
+    MAX_DIFF_BYTES * 2,
+  );
   return finalizeDiff(
     change,
     result.stdout || null,

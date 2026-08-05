@@ -17,6 +17,9 @@ export function ChangesPanel({
   canSendRevision,
   mode,
   onModeChange,
+  checkpointId = null,
+  readOnly = false,
+  panelTitle = "Changes",
 }: {
   repository: RepositoryMetadata;
   threadId: string | null;
@@ -32,9 +35,14 @@ export function ChangesPanel({
   /** Review and delivery share the dock, but never compete for the same primary action. */
   mode?: ChangesPanelMode;
   onModeChange?: (mode: ChangesPanelMode) => void;
+  /** When set, review is read from this completed turn checkpoint instead of the current worktree. */
+  checkpointId?: string | null;
+  /** Historical checkpoint review cannot stage, publish, or bind comments to the mutable worktree. */
+  readOnly?: boolean;
+  panelTitle?: string;
 }) {
   const [uncontrolledMode, setUncontrolledMode] = useState<ChangesPanelMode>("review");
-  const panelMode = mode ?? uncontrolledMode;
+  const panelMode = readOnly ? "review" : mode ?? uncontrolledMode;
   const [selected, setSelected] = useState<string | null>(files[0]?.path ?? null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [diffError, setDiffError] = useState<string | null>(null);
@@ -196,7 +204,7 @@ export function ChangesPanel({
     let active = true;
     setDiff(null);
     setDiffError(null);
-    void fetch("/api/changes/diff", {
+    void fetch(checkpointId ? `/api/checkpoints/${checkpointId}/diff` : "/api/changes/diff", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -212,9 +220,9 @@ export function ChangesPanel({
       if (active) setDiffError(cause instanceof Error ? cause.message : "Diff could not be read.");
     });
     return () => { active = false; };
-  }, [repository, selected]);
+  }, [checkpointId, repository, selected]);
   const loadAnnotations = async () => {
-    if (!threadId) {
+    if (readOnly || !threadId) {
       setAnnotations([]);
       return;
     }
@@ -239,9 +247,17 @@ export function ChangesPanel({
     void loadAnnotations().catch((cause) => {
       setAnnotationError(cause instanceof Error ? cause.message : "Annotations could not be loaded.");
     });
-  }, [threadId, repository.root, repository.selectedWorktree]);
+  }, [readOnly, threadId, repository.root, repository.selectedWorktree]);
+  useEffect(() => {
+    if (!readOnly) return;
+    setCommentLineIndex(undefined);
+    setCommentText("");
+    setSelectedAnnotationIds([]);
+    setRevisionPreview(null);
+    setAnnotationError(null);
+  }, [checkpointId, readOnly]);
   const saveAnnotation = async () => {
-    if (!threadId || !selected || !diff || commentLineIndex === undefined || !commentText.trim()) return;
+    if (readOnly || !threadId || !selected || !diff || commentLineIndex === undefined || !commentText.trim()) return;
     setAnnotationBusy(true);
     setAnnotationError(null);
     try {
@@ -271,7 +287,7 @@ export function ChangesPanel({
     }
   };
   const setResolution = async (annotation: DiffAnnotation) => {
-    if (!threadId) return;
+    if (readOnly || !threadId) return;
     setAnnotationBusy(true);
     setAnnotationError(null);
     try {
@@ -295,7 +311,7 @@ export function ChangesPanel({
     }
   };
   const previewRevision = async () => {
-    if (!threadId || selectedAnnotationIds.length === 0) return;
+    if (readOnly || !threadId || selectedAnnotationIds.length === 0) return;
     setAnnotationBusy(true);
     setAnnotationError(null);
     try {
@@ -324,6 +340,7 @@ export function ChangesPanel({
   const added = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const removed = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const changeMode = (next: ChangesPanelMode) => {
+    if (readOnly) return;
     if (next === panelMode) return;
     if (next === "deliver") {
       setCommentLineIndex(undefined);
@@ -338,10 +355,10 @@ export function ChangesPanel({
 
   // Embedded in the conversation review dock (mock .rv) — not a portal modal.
   return (
-    <div className="changes-panel rv-panel" aria-label={`Changes for ${pane} conversation`}>
+    <div className="changes-panel rv-panel" aria-label={`${panelTitle} for ${pane} conversation`}>
       <div className="rv-h changes-panel-header">
         <div className="changes-panel-heading">
-          <span className="rv-t">Changes</span>
+          <span className="rv-t">{panelTitle}</span>
           <span className="rv-s">
             {files.length} files
             {(added > 0 || removed > 0) && (
@@ -349,7 +366,7 @@ export function ChangesPanel({
             )}
           </span>
         </div>
-        <div className="changes-panel-tabs" role="tablist" aria-label={`Change workspace, ${pane} pane`}>
+        {!readOnly && <div className="changes-panel-tabs" role="tablist" aria-label={`Change workspace, ${pane} pane`}>
           <button
             type="button"
             role="tab"
@@ -372,7 +389,7 @@ export function ChangesPanel({
           >
             Deliver
           </button>
-        </div>
+        </div>}
         <Button
           size="sm"
           className="btn btn-ghost btn-xs changes-panel-refresh"
@@ -390,7 +407,7 @@ export function ChangesPanel({
           {!loading && !error && files.length === 0 && <p className="changes-note">The active worktree is clean.</p>}
           {files.map((file) => (
             <div className={selected === file.path ? "changed-file active" : "changed-file"} key={file.path}>
-              {panelMode === "deliver" && (
+              {!readOnly && panelMode === "deliver" && (
                 <label className="changed-file-select">
                   <input
                     type="checkbox"
@@ -438,7 +455,7 @@ export function ChangesPanel({
           id={`${pane}-changes-review-panel`}
           className="diff-view"
           role="tabpanel"
-          aria-labelledby={`${pane}-changes-review-tab`}
+          aria-labelledby={!readOnly ? `${pane}-changes-review-tab` : undefined}
           hidden={panelMode !== "review"}
           tabIndex={0}
           aria-label={selected ? `Diff for ${selected}, ${pane} pane` : `File diff, ${pane} pane`}
@@ -446,7 +463,7 @@ export function ChangesPanel({
           {diffError && <p className="changes-error" role="alert">{diffError}</p>}
           {selected && !diff && !diffError && <p className="changes-note">Loading structured diff…</p>}
           {diff?.message && <div className={`diff-placeholder ${diff.state}`}><strong>{diff.state}</strong><p>{diff.message}</p></div>}
-          {diff && threadId && (
+          {diff && threadId && !readOnly && (
             <button
               type="button"
               className="file-comment-button"
@@ -458,7 +475,7 @@ export function ChangesPanel({
           )}
           {diff?.patch && <pre>{diff.lines.map((line) => (
             <span className={line.side} key={line.index}>
-              {line.side !== "metadata" && threadId
+              {line.side !== "metadata" && threadId && !readOnly
                 ? <button
                     type="button"
                     className="diff-comment-button"
@@ -469,8 +486,8 @@ export function ChangesPanel({
               <code>{line.content || " "}</code>
             </span>
           ))}</pre>}
-          {!threadId && <p className="changes-note">Send the first conversation turn before saving review comments.</p>}
-          {commentLineIndex !== undefined && diff && (
+          {!readOnly && !threadId && <p className="changes-note">Send the first conversation turn before saving review comments.</p>}
+          {!readOnly && commentLineIndex !== undefined && diff && (
             <section className="annotation-composer" aria-label={`New local diff comment, ${pane} pane`}>
               <strong>{commentLineIndex === null
                 ? `Comment on ${diff.path}`
@@ -516,7 +533,7 @@ export function ChangesPanel({
             </section>
           )}
         </div>
-        <section
+        {!readOnly && <section
           className="annotations-panel"
           role="tabpanel"
           aria-labelledby={`${pane}-changes-review-tab`}
@@ -587,7 +604,12 @@ export function ChangesPanel({
           >
             Preview revision request
           </Button>
-        </section>
+        </section>}
+        {readOnly && panelMode === "review" && (
+          <p className="changes-note checkpoint-review-note">
+            Historical turn diff. Comments and delivery apply to the current worktree.
+          </p>
+        )}
         {panelMode === "review" && revisionPreview && (
           <section
             ref={revisionPreviewRef}

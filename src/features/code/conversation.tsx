@@ -255,6 +255,65 @@ export function GovernanceCorrelationSummary({
   );
 }
 
+function TurnChangesCard({
+  checkpoint,
+  pane,
+  onOpen,
+}: {
+  checkpoint?: TurnCheckpoint | null;
+  pane: "primary" | "secondary";
+  onOpen: (checkpoint: TurnCheckpoint) => void;
+}) {
+  if (
+    (checkpoint?.state !== "completed" && checkpoint?.state !== "superseded")
+    || !checkpoint.files?.length
+  ) return null;
+  const files = checkpoint.files;
+  const additions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const deletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
+  const visibleFiles = files.slice(0, 8);
+  const hasLineStats = files.some((file) => (
+    typeof file.additions === "number" || typeof file.deletions === "number"
+  ));
+  return (
+    <section className="turn-changes-card" aria-label={`Changed files from this turn, ${pane} pane`}>
+      <header>
+        <div>
+          <strong>Changed files</strong>
+          <small>
+            {files.length} {files.length === 1 ? "file" : "files"}
+            {hasLineStats && <> · <b className="ok">+{additions}</b> <b className="bad">−{deletions}</b></>}
+          </small>
+        </div>
+        <button
+          type="button"
+          className="turn-changes-open"
+          onClick={() => onOpen(checkpoint)}
+          aria-label={`Review ${files.length} changed files from this turn, ${pane} pane`}
+        >
+          Review turn
+        </button>
+      </header>
+      <ul>
+        {visibleFiles.map((file) => (
+          <li key={`${file.path}-${file.previousPath ?? ""}`}>
+            <span className={`change-state ${file.state}`}>{file.state}</span>
+            <span title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}>
+              {file.previousPath ? `${file.previousPath} → ` : ""}{file.path}
+            </span>
+            {hasLineStats && <small>
+              {file.additions == null ? "—" : `+${file.additions}`} {file.deletions == null ? "—" : `−${file.deletions}`}
+            </small>}
+          </li>
+        ))}
+        {files.length > visibleFiles.length && (
+          <li className="turn-changes-more">+{files.length - visibleFiles.length} more files</li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
 export function Conversation({
   repository,
   conversation,
@@ -461,6 +520,7 @@ export function Conversation({
     assistantAt?: string;
     state: RestoredTurnStatus;
     contextReceipt?: ContextReceipt;
+    checkpoint?: TurnCheckpoint;
   }>>([]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
@@ -1201,6 +1261,10 @@ export function Conversation({
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const [changesMode, setChangesMode] = useState<ChangesPanelMode>("review");
+  const [turnChangesReview, setTurnChangesReview] = useState<{
+    checkpointId: string;
+    files: ChangedFile[];
+  } | null>(null);
   const changesAdded = changes.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const changesRemoved = changes.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const canDeliverChanges = Boolean(repository && changes.length > 0 && !changesLoading && !changesError);
@@ -1233,6 +1297,7 @@ export function Conversation({
     onPanelChange(next);
   };
   const openChanges = (mode: ChangesPanelMode) => {
+    setTurnChangesReview(null);
     setChangesMode(mode);
     if (activePanel === "changes") {
       setWorkspacePanelFocus("changes");
@@ -1241,8 +1306,26 @@ export function Conversation({
     }
     activateWorkspacePanel("changes");
   };
+  const openTurnChanges = (turnCheckpoint: TurnCheckpoint) => {
+    if (
+      turnCheckpoint.state !== "completed"
+      && turnCheckpoint.state !== "superseded"
+    ) return;
+    if (!turnCheckpoint.files?.length) return;
+    setTurnChangesReview({
+      checkpointId: turnCheckpoint.id,
+      files: turnCheckpoint.files,
+    });
+    setChangesMode("review");
+    if (activePanel === "changes") {
+      setWorkspacePanelFocus("changes");
+      return;
+    }
+    activateWorkspacePanel("changes");
+  };
   useEffect(() => {
     if (openChangesSignal <= 0) return;
+    setTurnChangesReview(null);
     setChangesMode(openChangesMode);
   }, [openChangesMode, openChangesSignal]);
   const closeWorkspacePanel = (
@@ -1250,6 +1333,7 @@ export function Conversation({
     restoreFocus = true,
   ) => {
     if (activePanel !== destination) return;
+    if (destination === "changes") setTurnChangesReview(null);
     onPanelChange("none");
     if (restoreFocus) {
       window.requestAnimationFrame(() => workspacePanelTrigger(destination)?.focus());
@@ -1359,6 +1443,7 @@ export function Conversation({
       return;
     }
     setCheckpoint(null);
+    setTurnChangesReview(null);
     setCompletionDismissed(false);
     setAssistantTurnAt(null);
     setRewindPreview(null);
@@ -1454,6 +1539,7 @@ export function Conversation({
           governance: "sekai-chisei";
           createdAt: string;
         }>;
+        checkpoints?: TurnCheckpoint[];
       };
       if (!active) return;
       const thread = conversation
@@ -1612,6 +1698,7 @@ export function Conversation({
           assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
           state: turn.status,
           contextReceipt: projection.contextReceipts?.find((receipt) => receipt.turnId === turn.id),
+          checkpoint: projection.checkpoints?.find((checkpoint) => checkpoint.turnId === turn.id),
         }];
       });
       const currentTurn = restoredTurns.at(-1);
@@ -1619,6 +1706,7 @@ export function Conversation({
       setMessages(userMessages);
       setProviderEvents(currentTurn?.events ?? []);
       setCurrentContextReceipt(currentTurn?.contextReceipt ?? null);
+      setCheckpoint(currentTurn?.checkpoint ?? null);
       const lastAssistantAt = history
         .filter((message) => message.role === "assistant" && message.createdAt)
         .at(-1)
@@ -2016,6 +2104,7 @@ export function Conversation({
           assistantAt: assistantTurnAt ?? undefined,
           state: providerState === "cancelled" ? "cancelled" : providerState,
           contextReceipt: currentContextReceipt ?? undefined,
+          checkpoint: checkpoint ?? undefined,
         },
       ]);
     }
@@ -2904,6 +2993,11 @@ export function Conversation({
                 `archived-${index}`,
                 turn.state === "interrupted" || turn.state === "cancelled" ? "cancelled" : "running",
               )}
+              <TurnChangesCard
+                checkpoint={turn.checkpoint}
+                pane={pane}
+                onOpen={openTurnChanges}
+              />
               {renderArchivedFailure(turn.events)}
               {turn.events
                 .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
@@ -2952,6 +3046,7 @@ export function Conversation({
                 "current",
                 providerState === "cancelled" ? "cancelled" : "running",
               )}
+              <TurnChangesCard checkpoint={checkpoint} pane={pane} onOpen={openTurnChanges} />
               {providerEvents
                 .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
                   event.kind === "governance_correlation"
@@ -4211,14 +4306,17 @@ export function Conversation({
             repository={repository}
             threadId={threadId}
             pane={pane}
-            files={changes}
-            loading={changesLoading}
-            error={changesError}
+            files={turnChangesReview?.files ?? changes}
+            loading={turnChangesReview ? false : changesLoading}
+            error={turnChangesReview ? null : changesError}
             onClose={() => closeWorkspacePanel("changes")}
             onRefresh={onRefreshChanges}
             canSendRevision={historyRestored && !runActive && providerReady}
             mode={changesMode}
             onModeChange={setChangesMode}
+            checkpointId={turnChangesReview?.checkpointId ?? null}
+            readOnly={turnChangesReview !== null}
+            panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
             onSendRevision={(prompt) => {
               closeWorkspacePanel("changes", false);
               void send(prompt);

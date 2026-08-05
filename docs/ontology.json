@@ -96,6 +96,10 @@
       ]
     },
     {
+      "name": "TurnChangeSummary",
+      "description": "A persisted metadata-only summary of one completed Aldunis Code turn's checkpoint diff, including changed paths, states, rename sources, and line counts; it exposes no source content and grants no mutation or delivery authority."
+    },
+    {
       "name": "ConstrainedWebPreview",
       "description": "A loopback-only Aldunis Code preview session that starts one selected worktree's declared development command after scoped approval and renders it in a sandboxed iframe with browser permissions denied."
     },
@@ -244,6 +248,16 @@
       "description": "Projects bounded local conversation metadata into a cross-project activity inbox without copying conversation content or granting new execution authority.",
       "domain": "ConversationActivityInbox",
       "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "renders_turn_change_summary",
+      "description": "Renders a completed turn's checkpoint-owned changed-file summary inline in the conversation and opens its immutable historical diff for review without changing the current worktree.",
+      "domain": "ConversationComposer",
+      "range": "TurnChangeSummary",
       "cardinality": {
         "min": 0,
         "max": null
@@ -569,6 +583,18 @@
       "subject": "ConversationComposer",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "TurnChangeSummary",
+      "source": "Aldunis Code checkpoint and turn-review contract",
+      "locator": "server/state.ts#TurnCheckpoint.files; server/host.ts#/api/checkpoints/:id/diff; src/features/code/conversation.tsx#TurnChangesCard",
+      "confidence": 1.0
+    },
+    {
+      "subject": "renders_turn_change_summary",
+      "source": "Aldunis Code checkpoint and turn-review contract",
+      "locator": "src/features/code/conversation.tsx#TurnChangesCard; src/features/changes/changes-panel.tsx#checkpointId",
       "confidence": 1.0
     },
     {
