@@ -77,6 +77,7 @@ import {
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
   scrollThreadToBottom,
+  shouldPinThreadToBottom,
 } from "../../lib/thread-auto-follow";
 import {
   loadFreshLocalStateProjection,
@@ -2397,7 +2398,11 @@ export function Conversation({
     failure ? "failed" : "ok",
   ].join(":");
   useLayoutEffect(() => {
-    if (!followingRef.current) return;
+    const thread = threadRef.current;
+    if (!thread || !shouldPinThreadToBottom(
+      followingRef.current,
+      !thread.querySelector(".conversation-empty"),
+    )) return;
     pinThreadToBottom();
   }, [threadFollowContentKey, pinThreadToBottom]);
   useEffect(() => {
@@ -2406,7 +2411,10 @@ export function Conversation({
     const content = thread.querySelector(".wrap");
     if (!(content instanceof HTMLElement)) return;
     const observer = new ResizeObserver(() => {
-      if (!followingRef.current) return;
+      if (!shouldPinThreadToBottom(
+        followingRef.current,
+        !content.querySelector(".conversation-empty"),
+      )) return;
       pinThreadToBottom();
     });
     observer.observe(content);
