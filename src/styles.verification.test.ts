@@ -44,6 +44,16 @@ test("ui primitive classes are defined against the stylesheet", () => {
   }
 });
 
+test("activity actions keep keyboard focus and stack in narrow dialogs", () => {
+  assert.match(css, /\.activity-filter\s*\{[^}]*cursor:\s*pointer/s);
+  assert.match(css, /\.activity-filter:focus-visible[^}]*outline:\s*none/s);
+  assert.match(css, /\.activity-actions\s*\{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(
+    css,
+    /@media\s*\(max-width:\s*560px\)[\s\S]*?\.activity-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s,
+  );
+});
+
 test("icon buttons resist flex shrink in tight headers", () => {
   // Close controls in review-dock headers were crushed to ~13px under flex-shrink.
   assert.match(css, /\.ui-button--icon\s*\{[^}]*min-width:\s*32px[^}]*flex:\s*0\s+0\s+32px/s);

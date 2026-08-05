@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useRef, useState } from "react";
 import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
 import type { WorkspacePanel } from "../../lib/workspace-panel";
 import type { SavedProject } from "../dialogs/repository-dialog";
+import type { ChangesPanelMode } from "../changes/changes-panel";
 import { Conversation } from "./conversation";
 import { MissingConversation } from "./missing-conversation";
 
@@ -23,6 +24,9 @@ export function PaneConversation({
   onRepositoryChanged,
   onSelectWorktree,
   showChangesSignal,
+  showChangesThreadId,
+  onChangesRequestConsumed,
+  showChangesMode = "review",
   showFilesSignal,
   onManageWorktrees,
   managedMode = false,
@@ -49,6 +53,9 @@ export function PaneConversation({
   onRepositoryChanged?: (repository: RepositoryMetadata) => void;
   onSelectWorktree: (path: string) => void;
   showChangesSignal: number;
+  showChangesThreadId?: string | null;
+  onChangesRequestConsumed?: (signal: number) => void;
+  showChangesMode?: ChangesPanelMode;
   showFilesSignal: number;
   onManageWorktrees: (path?: string) => void;
   managedMode?: boolean;
@@ -90,11 +97,12 @@ export function PaneConversation({
     void refreshChanges();
   }, [repository?.root, repository?.selectedWorktree, conversation?.id]);
   useEffect(() => {
-    if (showChangesSignal > 0) {
+    if (showChangesSignal > 0 && (!showChangesThreadId || conversation?.id === showChangesThreadId)) {
       setActivePanel("changes");
       void refreshChanges();
+      onChangesRequestConsumed?.(showChangesSignal);
     }
-  }, [showChangesSignal]);
+  }, [conversation?.id, onChangesRequestConsumed, showChangesSignal, showChangesThreadId]);
   useEffect(() => {
     if (showFilesSignal > 0) setActivePanel("files");
   }, [showFilesSignal]);
@@ -126,6 +134,8 @@ export function PaneConversation({
       activePanel={activePanel}
       onPanelChange={setActivePanel}
       onRefreshChanges={refreshChanges}
+      openChangesSignal={showChangesSignal}
+      openChangesMode={showChangesMode}
       profiles={profiles}
       onOpenProfiles={onOpenProfiles}
       managedMode={managedMode}

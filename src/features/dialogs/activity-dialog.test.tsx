@@ -3,7 +3,12 @@ import test from "node:test";
 import {
   activityBucket,
   activityCounts,
+  activityFilterCount,
+  activityFilterLabel,
+  activityNextActionLabel,
   activityStatusLabel,
+  activityWorktreeLabel,
+  filterActivity,
   sortActivity,
 } from "./activity-dialog";
 import type { ConversationSummary } from "../../types";
@@ -39,4 +44,25 @@ test("activity groups expose attention, running, completed, and idle work", () =
 test("activity sorting puts attention before running and settled work", () => {
   const items = [conversation("done", "completed"), conversation("running", "running"), conversation("failed", "failed")];
   assert.deepEqual(sortActivity(items).map((item) => item.id), ["failed", "running", "done"]);
+});
+
+test("activity filters preserve the full list while narrowing by status", () => {
+  const items = [
+    conversation("approval", "pending_approval"),
+    conversation("running", "running"),
+    conversation("idle", "idle"),
+  ];
+  assert.deepEqual(filterActivity(items, "all").map(({ id }) => id), ["approval", "running", "idle"]);
+  assert.deepEqual(filterActivity(items, "attention").map(({ id }) => id), ["approval"]);
+  assert.equal(activityFilterCount(items, "running"), 1);
+  assert.equal(activityFilterLabel("completed"), "Completed");
+});
+
+test("activity rows explain the next bounded operator action", () => {
+  assert.equal(activityNextActionLabel(conversation("approval", "pending_approval")), "Resolve approval");
+  assert.equal(activityNextActionLabel(conversation("input", "awaiting_input")), "Answer input");
+  assert.equal(activityNextActionLabel(conversation("failed", "failed")), "Inspect failure");
+  assert.equal(activityNextActionLabel(conversation("idle", "idle")), "Resume conversation");
+  assert.equal(activityWorktreeLabel("/Users/example/project/.worktrees/feature"), "feature");
+  assert.equal(activityWorktreeLabel(""), "selected worktree");
 });
