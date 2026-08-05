@@ -955,9 +955,92 @@ select.ui-input {
   font-size: 13px;
 }
 .connections-pairing,
-.connections-sessions {
+.connections-sessions,
+.connections-environments {
   display: grid;
   gap: 9px;
+}
+.connections-environment-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.connections-environment-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.connections-environment-list li > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+.connections-environment-list strong,
+.connections-environment-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connections-environment-list small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.connections-environment-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.connections-environment-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.connections-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.connections-environment-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.connections-environment-form label span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: normal;
+}
+.connections-environment-form input,
+.connections-environment-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 12px var(--font-mono);
+}
+.connections-form-hint {
+  font-size: 11px !important;
+}
+.connections-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 .connections-grant {
   display: grid;
@@ -1005,6 +1088,9 @@ select.ui-input {
 @media (max-width: 560px) {
   .connections-summary { grid-template-columns: 1fr; }
   .connections-grant { grid-template-columns: 1fr; }
+  .connections-environment-list li { align-items: flex-start; flex-direction: column; }
+  .connections-environment-actions { justify-content: flex-start; }
+  .connections-form-grid { grid-template-columns: 1fr; }
 }
 .automations-dialog-body {
   min-height: 0;

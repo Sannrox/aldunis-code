@@ -4264,6 +4264,7 @@ export function createLocalHost(
   browserMcpPath?: string,
   publicOrigin?: string | (() => string | undefined),
   localBindHost?: string,
+  allowLocalControl = true,
 ) {
   const internalPermissionCallback = remoteAuth || managedHost
     ? createInternalPermissionCallback(permissions)
@@ -4527,7 +4528,8 @@ export function createLocalHost(
       )
       && request.headers["x-aldunis-internal-request"] === internalRequestToken;
     const configuredPublicOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
-    const localControlRequest = isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
+    const localControlRequest = allowLocalControl
+      && isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
     let managedIdentity: ManagedIdentity | undefined;
     if (
       managedHost

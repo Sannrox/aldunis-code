@@ -5,12 +5,14 @@
 ```sh
 lsof -nP -iTCP:4174 -sTCP:LISTEN
 lsof -nP -iTCP:4175 -sTCP:LISTEN
+lsof -nP -iTCP:4177 -sTCP:LISTEN
+lsof -nP -iTCP:4178 -sTCP:LISTEN
 ```
 
 Stop the conflicting process or choose another port:
 
 ```sh
-npm run cli -- serve --port 4176
+npm run cli -- serve --port 4178
 ```
 
 ## “Refusing non-loopback bind”

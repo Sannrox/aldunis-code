@@ -4,17 +4,22 @@
 
 Aldunis Code remains loopback-only by default. Maintainer direction recorded
 on issue #32 accepts one proof-key-bound application authentication protocol
-over two explicitly launched transports:
+over explicitly launched transports:
 
 - Tailscale Serve HTTPS/WSS is the recommended iPad and remote transport.
 - A specifically selected private LAN address may be exposed only through an
   HTTPS listener with explicitly supplied certificate and key files.
+- The desktop can launch an SSH-backed remote workbench through a loopback
+  forward. The remote host remains loopback-bound and uses the same proof-key
+  pairing protocol.
 
-Neither mode changes the normal local listener. Remote startup creates a
+None of these transports changes the normal local listener. Remote startup creates a
 separate authenticated server, and plaintext browser access fails
-closed. Pairing creation, device listing, and revocation remain local host CLI
-operations; remote device sessions cannot administer access. Desktop-managed
-SSH may later reuse the same application protocol.
+closed. Pairing creation, device listing, and revocation remain local-host
+controls. In SSH mode the desktop invokes the remote auth CLI through the
+already host-verified SSH identity; the browser-visible forward is never
+granted local administration, and remote device sessions cannot administer
+access.
 
 The remote host remains part of Aldunis Code, not a new hosted service. A
 separate network service boundary is justified only if Aldunis later needs
@@ -27,7 +32,7 @@ response design.
 | Model | Reachability and transport | Authentication and browser behavior | Recommendation |
 | --- | --- | --- | --- |
 | Loopback-only | The UI and host run on one device. No network listener exists. | Existing same-device boundary; origin checks and application permissions still apply. | Keep as the default and recovery path. It cannot reach a remote repository. |
-| SSH-forwarded loopback | The remote host binds to `127.0.0.1`; an explicit SSH local forward exposes it on an ephemeral loopback port on the client. | Application-level client authentication is still required. | Future transport over the shared protocol. Reuse existing SSH host verification and credentials. |
+| SSH-forwarded loopback | The remote host binds to `127.0.0.1`; the desktop launches or reuses it and exposes it on a saved, preferred local port through an explicit SSH forward. | SSH host verification plus loopback-only proof-key application authentication. | Implemented desktop transport. Reuse the user's SSH configuration and credentials. |
 | Tailscale Serve | The authenticated server remains on loopback while Tailscale provides a Tailnet-reachable HTTPS/WSS endpoint. | Tailnet controls reachability and TLS transport; proof-key-bound Aldunis sessions control application authority. | Recommended initial iPad and remote transport. |
 | Private LAN endpoint | The authenticated HTTPS server binds to one selected private address using explicitly supplied certificate and key files. | TLS provides confidentiality and a secure browser context; application authentication, exact origin checks, expiry, and revocation remain required. | Explicit trusted-LAN mode only; never bind implicitly to all interfaces or fall back to plaintext. |
 | Public HTTPS endpoint | The host or a gateway is Internet-reachable with TLS and a stable name. | Requires trusted certificates, `https`/`wss`, strict origin validation, rate limits, proof-of-possession credentials, tenant-safe routing, and an operated revocation plane. | No-go for the workbench host. Revisit only behind a separately owned gateway or relay with a complete service threat model. |
@@ -118,6 +123,38 @@ mis-forwarded port, a malicious browser origin, or a compromised remote host.
 The application protocol therefore requires device proof, authorization, and
 strict browser-origin checks even inside the tunnel.
 
+### Desktop-managed environments
+
+The Electron desktop exposes **Settings → Connections → Remote workbenches**.
+It stores a named environment with either an HTTPS origin or an SSH target.
+The desktop record contains only the display name, origin/SSH alias, remote
+backend port, executable name, pairing state, and preferred local port. It
+never stores an SSH private key, provider credential, or pairing credential.
+
+For an SSH environment, the desktop:
+
+1. launches the fixed remote command
+   `aldunis-code serve --remote ssh --host 127.0.0.1 --port <remote-port>`;
+2. opens a local forward equivalent to
+   `127.0.0.1:<local-port> -> 127.0.0.1:<remote-port>`;
+3. probes `/api/remote/descriptor` through that forward;
+4. invokes `aldunis-code auth pairing create` through the host-verified SSH
+   connection when a new device proof is needed; and
+5. loads the forwarded origin in the desktop renderer.
+
+The desktop-managed SSH backend defaults to remote port **4177**, keeping the
+development UI on **4174** and the split development host on **4175**. The
+client-side forward uses an operating-system allocated port on first use and
+remembers that port as a preference so the browser origin remains stable across
+reconnects when it is available. The [T3 Code remote guide][] documents backend
+port **3773**; T3 Code is not an Aldunis-compatible backend and must not be
+selected as an Aldunis executable.
+
+SSH launches use an argument vector, `BatchMode=yes`, the user's normal
+`known_hosts` verification, `ExitOnForwardFailure=yes`, and no shell-supplied
+extra arguments. Password-prompt-only SSH configurations fail with a visible
+diagnostic; configure an SSH key or agent before using the desktop flow.
+
 If a future HTTPS transport is approved, require TLS 1.3 with normal hostname
 validation, `wss` for streaming, no bearer credentials in URLs, and no
 mutation in TLS 0-RTT. TLS 1.3 does not guarantee non-replay for early data,
@@ -203,16 +240,17 @@ membership as application authority, or weaken proof-key-bound remote
 sessions.**
 
 The accepted direction on issue #32 fixes the initial transport, pairing,
-device-key, revocation, and approval boundary. Follow-up work may add:
+device-key, revocation, and approval boundary. The desktop-managed SSH
+environment path is now implemented on top of that boundary. Remaining
+follow-up work may add:
 
 1. a versioned authenticated remote-workbench protocol and adversarial
    fixtures, without a network listener;
 2. remote host instance identity, one-time pairing, device grants, revocation,
    and recovery commands;
-3. an inspectable SSH-forward launcher using existing SSH configuration;
-4. desktop remote-project UX, approval context, reconnect reconciliation, and
-   accessibility evidence;
-5. signed remote-host packaging, compatibility testing, update guidance, and
+3. bilateral host-key/device confirmation UI, richer approval context, and
+   reconnect reconciliation evidence;
+4. signed remote-host packaging, compatibility testing, update guidance, and
    rollback evidence.
 
 Every later transport must reuse the application protocol rather than
@@ -224,3 +262,4 @@ weakening it.
 [RFC 8446]: https://www.rfc-editor.org/rfc/rfc8446
 [RFC 9449]: https://www.rfc-editor.org/rfc/rfc9449
 [MDN mixed content]: https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Mixed_content
+[T3 Code remote guide]: https://github.com/pingdotgg/t3code/blob/main/REMOTE.md

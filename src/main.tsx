@@ -499,7 +499,16 @@ function App() {
 }
 
 void initializeRemoteAuthentication()
-  .then(() => createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>))
+  .then(async (remoteEnabled) => {
+    if (remoteEnabled && window.aldunisDesktop) {
+      const confirmed = await window.aldunisDesktop.confirmRemoteEnvironmentPairing();
+      if (!confirmed) throw new Error("The desktop could not confirm the remote pairing.");
+    }
+    if (window.aldunisDesktop) {
+      window.aldunisDesktopCapabilities = await window.aldunisDesktop.getCapabilities();
+    }
+    createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+  })
   .catch((error: unknown) => {
     const root = document.getElementById("root")!;
     root.innerHTML = "";

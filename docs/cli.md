@@ -44,8 +44,8 @@ The auth group accepts the shorter aliases `auth pair`, `auth list`, and
 
 ```text
 --host <address>            Bind address (default: 127.0.0.1)
---port <number>             Port (default: 4174)
---remote <lan|tailscale>    Enable authenticated remote access
+--port <number>             Port (default: 4174; SSH remote default: 4177)
+--remote <lan|tailscale|ssh> Enable authenticated remote access
 --public-url <origin>       Certificate-matched HTTPS origin for LAN mode
 --tls-cert <path>           PEM certificate for LAN mode
 --tls-key <path>            PEM private key for LAN mode
@@ -53,7 +53,11 @@ The auth group accepts the shorter aliases `auth pair`, `auth list`, and
 
 LAN mode requires a private bind address, an HTTPS public origin, and both TLS
 files. Tailscale mode keeps the host bound to loopback and configures Tailscale
-Serve. These checks are enforced by the host, not only by help text.
+Serve. SSH mode keeps the host bound to loopback, enables proof-key pairing over
+an SSH local forward, and is intended for the desktop-managed environment
+flow. SSH mode defaults to port 4177 so it does not collide with the Vite
+development UI on 4174 or the split development host on 4175. These checks are
+enforced by the host, not only by help text.
 
 ## Compatibility
 

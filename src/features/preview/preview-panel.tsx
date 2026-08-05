@@ -67,7 +67,7 @@ export function PreviewPanel({
   const sharedBrowser = browserSession;
   const hasSharedBrowser = Boolean(sharedBrowser);
   const hasAgentObservation = !hasSharedBrowser && Boolean(agentObservation);
-  const desktopBrowserAvailable = Boolean(window.aldunisDesktop && conversationId);
+  const desktopBrowserAvailable = Boolean(window.aldunisDesktopCapabilities?.sharedBrowser && conversationId);
   const request = async () => {
     setError(null);
     setReference(null);
@@ -222,7 +222,7 @@ export function PreviewPanel({
     });
   };
   const togglePictureInPicture = async () => {
-    if (!browserSession || !window.aldunisDesktop) return;
+    if (!browserSession || !window.aldunisDesktopCapabilities?.sharedBrowser || !window.aldunisDesktop) return;
     setError(null);
     const next = !pictureInPicture;
     const opened = await window.aldunisDesktop.setBrowserPictureInPicture(browserSession.id, next);

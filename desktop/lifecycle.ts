@@ -17,6 +17,15 @@ export function localApplicationUrl(address: AddressInfo | string | null): strin
   return `http://127.0.0.1:${address.port}`;
 }
 
+export function isLocalApplicationOrigin(frameUrl: string, applicationUrl: string | null): boolean {
+  if (!applicationUrl) return false;
+  try {
+    return new URL(frameUrl).origin === new URL(applicationUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 export function isSupportedDeepLink(value: string): boolean {
   try {
     const url = new URL(value);

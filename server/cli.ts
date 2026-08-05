@@ -4,7 +4,7 @@ export type AuthPairingAction = "create" | "list" | "revoke";
 export interface HostCommandOptions {
   host?: string;
   port?: string;
-  remote?: "lan" | "tailscale";
+  remote?: "lan" | "tailscale" | "ssh";
   publicUrl?: string;
   tlsCert?: string;
   tlsKey?: string;
@@ -95,8 +95,8 @@ function parseHostOptions(
       usageError(`Unknown option: ${token}`);
     }
     const parsed = requiredValue(args, index, name, inlineValue);
-    if (option === "remote" && parsed.value !== "lan" && parsed.value !== "tailscale") {
-      usageError(`--remote must be either 'lan' or 'tailscale', not '${parsed.value}'.`);
+    if (option === "remote" && parsed.value !== "lan" && parsed.value !== "tailscale" && parsed.value !== "ssh") {
+      usageError(`--remote must be either 'lan', 'tailscale', or 'ssh', not '${parsed.value}'.`);
     }
     if (option === "remote") {
       options.remote = parsed.value as HostCommandOptions["remote"];
@@ -259,8 +259,8 @@ Commands:
 
 Host options:
   --host <address>              Bind address (default: 127.0.0.1).
-  --port <number>               Port (default: 4174).
-  --remote <lan|tailscale>      Enable authenticated remote access.
+  --port <number>               Port (default: 4174; SSH remote default: 4177).
+  --remote <lan|tailscale|ssh>  Enable authenticated remote access.
   --public-url <https-origin>   Certificate-matched LAN origin.
   --tls-cert <path>             PEM certificate for LAN mode.
   --tls-key <path>              PEM private key for LAN mode.

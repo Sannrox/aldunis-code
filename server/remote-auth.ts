@@ -86,14 +86,16 @@ function isP256PublicKey(value: unknown): value is JsonWebKey {
 export class RemoteAuth {
   readonly #path: string;
   readonly #lockPath: string;
+  readonly #allowLoopbackHttp: boolean;
   #state: RemoteAuthState | null = null;
   #writeQueue: Promise<void> = Promise.resolve();
   #mutationQueue: Promise<void> = Promise.resolve();
   readonly #replay = new Map<string, number>();
 
-  constructor(readonly directory: string) {
+  constructor(readonly directory: string, options: { allowLoopbackHttp?: boolean } = {}) {
     this.#path = join(directory, "remote-auth.v1.json");
     this.#lockPath = join(directory, "remote-auth.v1.lock");
+    this.#allowLoopbackHttp = options.allowLoopbackHttp === true;
   }
 
   async #load(): Promise<RemoteAuthState> {
@@ -270,9 +272,21 @@ export class RemoteAuth {
     } catch {
       throw new RemoteAuthError("The remote device proof origin is invalid.");
     }
+    const requestHost = request.headers.host ?? "";
+    const originHostname = origin.hostname.replace(/^\[(.*)\]$/, "$1");
+    let requestHostname = "";
+    try {
+      requestHostname = new URL(`http://${requestHost}`).hostname.replace(/^\[(.*)\]$/, "$1");
+    } catch {
+      requestHostname = "";
+    }
+    const loopbackHttp = this.#allowLoopbackHttp
+      && origin.protocol === "http:"
+      && (originHostname === "127.0.0.1" || originHostname === "::1" || originHostname === "localhost")
+      && (requestHostname === "127.0.0.1" || requestHostname === "::1" || requestHostname === "localhost");
     if (
-      origin.protocol !== "https:"
-      || origin.host !== request.headers.host
+      (!loopbackHttp && origin.protocol !== "https:")
+      || origin.host !== requestHost
       || (typeof request.headers.origin === "string" && request.headers.origin !== signedOrigin)
     ) {
       throw new RemoteAuthError("The remote device proof targets another origin.");

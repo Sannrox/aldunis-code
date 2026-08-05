@@ -49,9 +49,20 @@ routes remain available without claiming Chisei coverage.
 Remote workbench access is not an exception to the loopback default. The
 [remote workbench recommendation](remote-workbench.md) permits a separate,
 explicitly launched authenticated server on either a selected private LAN
-HTTPS listener with explicitly supplied key material or loopback behind Tailscale
-Serve. Proof-key-bound revocable device sessions supply application authority. Direct public HTTP, ambient
-private-network trust, and a public workbench listener are not approved.
+HTTPS listener with explicitly supplied key material, loopback behind Tailscale
+Serve, or loopback behind a desktop-managed SSH forward. Proof-key-bound
+revocable device sessions supply application authority. Direct public HTTP,
+ambient private-network trust, and a public workbench listener are not approved.
+
+The Electron desktop stores named remote-environment metadata locally and may
+launch the fixed `aldunis-code serve --remote ssh` command on a user-selected
+SSH target. It asks the same host-verified SSH identity to run
+`aldunis-code auth pairing create`, forwards an ephemeral client port to the
+remote loopback port, and loads the remote renderer only after the origin is
+explicitly approved. SSH-mode HTTP never treats the browser-visible forward as
+local administration; pairing and session administration stay on the remote
+shell/CLI boundary. SSH and provider private keys remain outside Code's
+persisted state.
 
 Enterprise-managed hosted mode is a separate, explicitly selected startup
 profile. The gateway supplies a short-lived, audience- and tenant-bound

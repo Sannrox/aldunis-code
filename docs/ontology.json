@@ -14,6 +14,18 @@
       "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
     },
     {
+      "name": "DesktopRemoteEnvironmentManager",
+      "description": "The Electron main-process boundary that stores named remote-environment metadata, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
+    },
+    {
+      "name": "RemoteEnvironment",
+      "description": "A local desktop metadata record for one named HTTPS or SSH Aldunis Code workbench environment. It stores only the origin or SSH target, remote backend port, fixed executable name, preferred local forwarding port, and pairing-state hint; it is not repository, provider, or execution authority."
+    },
+    {
+      "name": "SshRemoteWorkbenchTransport",
+      "description": "The desktop-managed transport that runs an explicit loopback-bound Aldunis Code SSH remote mode and forwards an allocated client loopback port to the remote backend while retaining proof-key application authentication."
+    },
+    {
       "name": "ConversationComposer",
       "description": "The desktop conversation input surface that accepts typed or transient browser speech transcript text while selecting a provider, model, interaction mode, and explicit tool scope."
     },
@@ -278,6 +290,36 @@
       "description": "The CLI exposes nested remote pairing commands for creating, listing, and revoking sessions before host startup.",
       "domain": "AldunisCodeCli",
       "range": "RemoteAuthCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "manages_remote_environments",
+      "description": "The Electron desktop manages saved remote-environment metadata and connection lifecycle without taking ownership of the remote repository or provider state.",
+      "domain": "DesktopRemoteEnvironmentManager",
+      "range": "RemoteEnvironment",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "uses_ssh_remote_workbench_transport",
+      "description": "A desktop remote-environment manager may use the fixed SSH loopback transport for one saved environment.",
+      "domain": "DesktopRemoteEnvironmentManager",
+      "range": "SshRemoteWorkbenchTransport",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "connects_remote_environment",
+      "description": "The SSH transport connects one saved remote environment through an explicit local port forward and proof-key pairing flow.",
+      "domain": "SshRemoteWorkbenchTransport",
+      "range": "RemoteEnvironment",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -565,6 +607,42 @@
       "subject": "RemoteAuthCommand",
       "source": "Aldunis Code CLI command contract",
       "locator": "server/cli.ts#parseAuth; server/main.ts#RemoteAuth",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopRemoteEnvironmentManager",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/main.ts#REMOTE_ENVIRONMENT_CONNECT_CHANNEL; desktop/remote-environments.ts#RemoteEnvironmentManager",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteEnvironment",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentRecord; docs/remote-workbench.md#Desktop-managed environments",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SshRemoteWorkbenchTransport",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#buildSshForwardArguments; server/cli.ts#HostCommandOptions; docs/remote-workbench.md#Desktop-managed environments",
+      "confidence": 1.0
+    },
+    {
+      "subject": "manages_remote_environments",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/main.ts#REMOTE_ENVIRONMENTS_LIST_CHANNEL; desktop/main.ts#REMOTE_ENVIRONMENT_SAVE_CHANNEL",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_ssh_remote_workbench_transport",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentManager.connect",
+      "confidence": 1.0
+    },
+    {
+      "subject": "connects_remote_environment",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentManager.connect",
       "confidence": 1.0
     },
     {

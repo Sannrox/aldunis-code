@@ -141,9 +141,10 @@ async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {})
   return response;
 }
 
-export async function initializeRemoteAuthentication(): Promise<void> {
+export async function initializeRemoteAuthentication(): Promise<boolean> {
   await pairFromFragment();
   const descriptorResponse = await nativeFetch("/api/remote/descriptor", { method: "POST" });
+  let remoteEnabled = false;
   if (descriptorResponse.ok) {
     const descriptor = await descriptorResponse.json() as {
       protocolVersion?: unknown;
@@ -151,6 +152,7 @@ export async function initializeRemoteAuthentication(): Promise<void> {
     };
     // Local loopback hosts report remoteEnabled:false and need no pairing.
     if (descriptor.remoteEnabled !== false) {
+      remoteEnabled = true;
       if (descriptor.protocolVersion !== 1) {
         throw new Error("This Aldunis host uses an incompatible remote protocol.");
       }
@@ -160,4 +162,5 @@ export async function initializeRemoteAuthentication(): Promise<void> {
     }
   }
   window.fetch = authorizedFetch;
+  return remoteEnabled;
 }
