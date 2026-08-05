@@ -77,6 +77,7 @@ import {
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
   scrollThreadToBottom,
+  shouldPinThreadToBottom,
 } from "../../lib/thread-auto-follow";
 import {
   loadFreshLocalStateProjection,
@@ -129,10 +130,6 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
-}
-
-export function shouldAutoFollowThread(following: boolean, conversationEmpty: boolean): boolean {
-  return following && !conversationEmpty;
 }
 
 export function providerProfileDisplayName(
@@ -2432,7 +2429,7 @@ export function Conversation({
       resetThreadToTop();
       return;
     }
-    if (!shouldAutoFollowThread(followingRef.current, conversationEmpty)) return;
+    if (!shouldPinThreadToBottom(followingRef.current, !conversationEmpty)) return;
     pinThreadToBottom();
   }, [activePanel, conversationEmpty, pinThreadToBottom, resetThreadToTop, threadFollowContentKey]);
   useEffect(() => {
@@ -2445,7 +2442,7 @@ export function Conversation({
         resetThreadToTop();
         return;
       }
-      if (!shouldAutoFollowThread(followingRef.current, conversationEmpty)) return;
+      if (!shouldPinThreadToBottom(followingRef.current, !conversationEmpty)) return;
       pinThreadToBottom();
     });
     observer.observe(content);
