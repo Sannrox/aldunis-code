@@ -131,6 +131,10 @@ export function readyComposerPlaceholder(providerName: string, threadId: string 
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
 }
 
+export function shouldAutoFollowThread(following: boolean, conversationEmpty: boolean): boolean {
+  return following && !conversationEmpty;
+}
+
 export function providerProfileDisplayName(
   profiles: ClaudeProfile[],
   provider: ProviderId,
@@ -516,6 +520,15 @@ export function Conversation({
     if (!thread) return;
     ignoreThreadScrollRef.current = true;
     scrollThreadToBottom(thread);
+    queueMicrotask(() => {
+      ignoreThreadScrollRef.current = false;
+    });
+  }, []);
+  const resetThreadToTop = useCallback(() => {
+    const thread = threadRef.current;
+    if (!thread || thread.scrollTop === 0) return;
+    ignoreThreadScrollRef.current = true;
+    thread.scrollTop = 0;
     queueMicrotask(() => {
       ignoreThreadScrollRef.current = false;
     });
@@ -2380,6 +2393,24 @@ export function Conversation({
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
+  const hasAssistantContent = Boolean(assistantText.trim())
+    || (showThinking && Boolean(thinkingText.trim()))
+    || latestPlan != null
+    || toolEvents.length > 0
+    || approvals.length > 0
+    || inputs.length > 0
+    || failure != null;
+  // Avoid empty assistant shells after restore (header-only with no body).
+  // runActive covers starting/streaming/waiting_for_approval/cancelling.
+  const showAssistantTurn = hasAssistantContent
+    || runActive
+    || (providerState === "completed" && Boolean(threadId))
+    || providerState === "failed"
+    || providerState === "cancelled";
+  const conversationEmpty = messages.length === 0
+    && !showAssistantTurn
+    && providerState === "idle"
+    && !draft.trim();
   // Content signature: when this changes while following, pin the viewport to the tail.
   const threadFollowContentKey = [
     conversation?.id ?? "new",
@@ -2397,21 +2428,30 @@ export function Conversation({
     failure ? "failed" : "ok",
   ].join(":");
   useLayoutEffect(() => {
-    if (!followingRef.current) return;
+    if (conversationEmpty) {
+      resetThreadToTop();
+      return;
+    }
+    if (!shouldAutoFollowThread(followingRef.current, conversationEmpty)) return;
     pinThreadToBottom();
-  }, [threadFollowContentKey, pinThreadToBottom]);
+  }, [activePanel, conversationEmpty, pinThreadToBottom, resetThreadToTop, threadFollowContentKey]);
   useEffect(() => {
     const thread = threadRef.current;
     if (!thread) return;
     const content = thread.querySelector(".wrap");
     if (!(content instanceof HTMLElement)) return;
     const observer = new ResizeObserver(() => {
-      if (!followingRef.current) return;
+      if (conversationEmpty) {
+        resetThreadToTop();
+        return;
+      }
+      if (!shouldAutoFollowThread(followingRef.current, conversationEmpty)) return;
       pinThreadToBottom();
     });
     observer.observe(content);
+    observer.observe(thread);
     return () => observer.disconnect();
-  }, [pinThreadToBottom, conversation?.id, historyRestored]);
+  }, [conversationEmpty, pinThreadToBottom, resetThreadToTop, conversation?.id, historyRestored]);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const failureNeedsConfiguration = failure
     ? providerFailureNeedsConfiguration(failure.message)
@@ -2428,25 +2468,6 @@ export function Conversation({
     failureNeedsConfiguration,
     configurationVerifiedAfterFailure,
   );
-  const hasAssistantContent = Boolean(assistantText.trim())
-    || (showThinking && Boolean(thinkingText.trim()))
-    || latestPlan != null
-    || toolEvents.length > 0
-    || approvals.length > 0
-    || inputs.length > 0
-    || failure != null;
-  // Avoid empty assistant shells after restore (header-only with no body).
-  // runActive covers starting/streaming/waiting_for_approval/cancelling.
-  const showAssistantTurn = hasAssistantContent
-    || runActive
-    || (providerState === "completed" && Boolean(threadId))
-    || providerState === "failed"
-    || providerState === "cancelled"
-    || Boolean(failureView);
-  const conversationEmpty = messages.length === 0
-    && !showAssistantTurn
-    && providerState === "idle"
-    && !draft.trim();
   const conversationWorktreeMissing = Boolean(
     conversation?.worktree
     && repository
@@ -2832,7 +2853,7 @@ export function Conversation({
         </div>
       </div>
       <div className={`split ${activePanel === "changes" ? "with-review" : ""}`}>
-      <div className="conv">
+      <div className={`conv ${conversationWorktreeMissing ? "conv--blocked" : ""}`.trim()}>
       <div className="thread-shell">
       <div
         className="thread"
@@ -2844,7 +2865,7 @@ export function Conversation({
         {conversationEmpty
           ? (
             <section
-              className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""}`}
+              className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""} ${conversationWorktreeMissing ? "conversation-empty--blocked" : ""}`.trim()}
               aria-labelledby={`${pane}-empty-title`}
             >
               <span>

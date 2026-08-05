@@ -6,6 +6,7 @@ import {
   formatHostLabel,
   providerProfileDisplayName,
   readyComposerPlaceholder,
+  shouldAutoFollowThread,
 } from "./conversation";
 import type { ClaudeProfile, ProviderEvent, RepositoryMetadata } from "../../types";
 
@@ -31,6 +32,12 @@ test("ready composer copy distinguishes new work from an existing conversation",
     readyComposerPlaceholder("Codex CLI", "thread-1"),
     "Reply to Codex CLI…",
   );
+});
+
+test("empty conversation states stay at the top instead of auto-following their copy", () => {
+  assert.equal(shouldAutoFollowThread(true, true), false);
+  assert.equal(shouldAutoFollowThread(true, false), true);
+  assert.equal(shouldAutoFollowThread(false, false), false);
 });
 
 test("host copy keeps loopback details human-readable", () => {
