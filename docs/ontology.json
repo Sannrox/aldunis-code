@@ -239,7 +239,11 @@
     },
     {
       "name": "AldunisDesktopAutoUpdater",
-      "description": "The packaged Electron main-process updater for Aldunis Code stable releases. It owns a fixed update feed and explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and preserves the local host shutdown boundary before installation."
+      "description": "The packaged Electron main-process updater for Aldunis Code stable and nightly releases. It derives a fixed update feed from the packaged channel, enables prerelease checks only for nightly builds, exposes explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and preserves the local host shutdown boundary before installation."
+    },
+    {
+      "name": "DesktopUpdateChannel",
+      "description": "The packaged desktop update stream selected by the application version: stable releases use the latest feed, while dated nightly releases use the nightly prerelease feed."
     }
   ],
   "relations": [
@@ -590,6 +594,16 @@
       "range": "SidebarToggleKeybinding",
       "cardinality": {
         "min": 0,
+      "max": 1
+      }
+    },
+    {
+      "name": "selects_desktop_update_channel",
+      "description": "The packaged updater selects exactly one stable or nightly feed from the installed desktop release identity without switching channels or granting downgrade authority.",
+      "domain": "AldunisDesktopAutoUpdater",
+      "range": "DesktopUpdateChannel",
+      "cardinality": {
+        "min": 1,
         "max": 1
       }
     }
@@ -844,7 +858,19 @@
     {
       "subject": "AldunisDesktopAutoUpdater",
       "source": "Aldunis Code desktop update lifecycle",
-      "locator": "desktop/updater.ts; desktop/main.ts; desktop/preload.ts; desktop/update-contract.ts; docs/desktop-distribution.md",
+      "locator": "desktop/updater.ts; desktop/main.ts; desktop/preload.ts; desktop/update-contract.ts; .github/workflows/desktop-release-evidence.yml; docs/desktop-distribution.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopUpdateChannel",
+      "source": "Aldunis Code desktop release channel contract",
+      "locator": "desktop/update-contract.ts; desktop/updater.ts; scripts/preview-version.ts; .github/workflows/desktop-release-evidence.yml",
+      "confidence": 1.0
+    },
+    {
+      "subject": "selects_desktop_update_channel",
+      "source": "Aldunis Code desktop release channel contract",
+      "locator": "desktop/updater.ts; desktop/main.ts; docs/desktop-distribution.md",
       "confidence": 1.0
     },
     {

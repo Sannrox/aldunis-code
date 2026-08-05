@@ -4,11 +4,13 @@ import {
   DesktopUpdater,
   type DesktopUpdaterEngine,
   getDesktopUpdateDisabledReason,
+  resolveDesktopUpdateChannel,
 } from "./updater.ts";
 
 type EventListener = (...args: any[]) => void;
 
 class FakeUpdaterEngine implements DesktopUpdaterEngine {
+  channel: string | null = null;
   autoDownload = true;
   autoInstallOnAppQuit = true;
   allowDowngrade = true;
@@ -106,12 +108,28 @@ test("desktop updater keeps checks explicit and exposes an available update", as
   assert.equal(engine.autoInstallOnAppQuit, false);
   assert.equal(engine.allowDowngrade, false);
   assert.equal(engine.allowPrerelease, false);
+  assert.equal(engine.channel, "latest");
 
   const state = await updater.checkForUpdate();
   assert.equal(state.phase, "available");
   assert.equal(state.availableVersion, "0.2.0");
   assert.ok(states.includes("checking"));
   assert.ok(states.includes("available"));
+});
+
+test("nightly desktop builds select the nightly prerelease feed", () => {
+  const engine = new FakeUpdaterEngine();
+  const { updater } = createUpdater(engine, {
+    currentVersion: "0.1.0-nightly.20260805.17",
+  });
+
+  assert.equal(resolveDesktopUpdateChannel("0.1.0"), "stable");
+  assert.equal(resolveDesktopUpdateChannel("0.1.0-nightly.20260805.17"), "nightly");
+
+  updater.start();
+  assert.equal(updater.getState().channel, "nightly");
+  assert.equal(engine.channel, "nightly");
+  assert.equal(engine.allowPrerelease, true);
 });
 
 test("desktop updater reports download progress and installs only after preparation", async () => {

@@ -1,4 +1,4 @@
-export type DesktopUpdateChannel = "stable";
+export type DesktopUpdateChannel = "stable" | "nightly";
 
 export type DesktopUpdateDisabledReason =
   | "development"

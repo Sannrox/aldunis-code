@@ -62,3 +62,17 @@ test("desktop update settings offers restart only after download", () => {
   assert.match(html, /Restart to update/);
   assert.doesNotMatch(html, /Download update/);
 });
+
+test("desktop update settings identifies the nightly channel", () => {
+  const html = renderToStaticMarkup(
+    <DesktopUpdateSettings
+      snapshot={{ ...available, channel: "nightly" }}
+      onCheck={() => undefined}
+      onDownload={() => undefined}
+      onInstall={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Nightly channel/);
+  assert.match(html, /signed nightly builds/);
+});

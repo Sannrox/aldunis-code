@@ -16,12 +16,14 @@ export function nightlyVersion(baseVersion: string, utcDate: string, runNumber: 
   return `${base}-nightly.${date}.${run}`;
 }
 
-export function previewTag(version: string): string {
+export function nightlyTag(version: string): string {
   if (!/^\d+\.\d+\.\d+-nightly\.\d{8}\.[1-9]\d*$/u.test(version)) {
-    throw new Error("The preview version is invalid.");
+    throw new Error("The nightly version is invalid.");
   }
-  return `preview-v${version}`;
+  return `v${version}`;
 }
+
+export const previewTag = nightlyTag;
 
 async function main(): Promise<void> {
   const [baseVersion, utcDate, runNumber] = process.argv.slice(2);

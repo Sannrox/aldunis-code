@@ -10,7 +10,7 @@ import {
   localApplicationUrl,
   selectedDirectoryPath,
 } from "./lifecycle.ts";
-import { nightlyVersion, previewTag } from "../scripts/preview-version.ts";
+import { nightlyTag, nightlyVersion } from "../scripts/preview-version.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
 import { validateDesktopReleaseTag } from "../scripts/verify-desktop-release-tag.ts";
 
@@ -120,10 +120,10 @@ test("desktop release evidence is bound to the package version", () => {
   );
 });
 
-test("preview versions are generated as dated semver prereleases", () => {
+test("nightly versions are generated as dated semver prereleases", () => {
   const version = nightlyVersion("0.1.0", "20260804", 17);
   assert.equal(version, "0.1.0-nightly.20260804.17");
-  assert.equal(previewTag(version), "preview-v0.1.0-nightly.20260804.17");
+  assert.equal(nightlyTag(version), "v0.1.0-nightly.20260804.17");
   assert.throws(
     () => nightlyVersion("0.1.0-nightly.20260803.16", "20260804", 17),
     /base package version is invalid/,
@@ -134,14 +134,15 @@ test("preview versions are generated as dated semver prereleases", () => {
   );
 });
 
-test("desktop distribution workflow keeps preview publication separate from stable tags", async () => {
+test("desktop distribution workflow keeps nightly publication separate from stable tags", async () => {
   const workflow = await readFile(
     new URL("../.github/workflows/desktop-release-evidence.yml", import.meta.url),
     "utf8",
   );
   assert.match(workflow, /schedule:/);
   assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /release_tag="preview-v\$\{version\}"/);
+  assert.match(workflow, /Unsupported desktop release tag/);
+  assert.match(workflow, /release_tag="v\$\{version\}"/);
   assert.match(workflow, /verify:desktop-release-tag/);
   assert.match(workflow, /npm version --no-git-tag-version/);
   assert.match(workflow, /-c\.mac\.bundleShortVersion="\$\{BASE_VERSION\}"/);
@@ -151,25 +152,39 @@ test("desktop distribution workflow keeps preview publication separate from stab
   assert.match(workflow, /--clobber/);
   assert.match(workflow, /contents: write/);
   assert.match(workflow, /publish-stable:/);
-  assert.match(workflow, /latest-mac-\$\{\{ matrix\.arch \}\}\.yml/);
+  assert.match(workflow, /publish-nightly:/);
+  assert.match(workflow, /nightly\.yml/);
+  assert.match(workflow, /-c\.publish\.channel=/);
+  assert.match(workflow, /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/);
   assert.match(workflow, /latest-linux\.yml/);
   assert.match(workflow, /latest\.yml/);
   assert.match(workflow, /merge:desktop-update-manifest/);
   assert.match(workflow, /-name '\*\.zip'/);
 });
 
-test("desktop packaging config produces stable updater metadata and macOS zip artifacts", async () => {
+test("desktop packaging config produces channel updater metadata and macOS zip artifacts", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
     dependencies?: { [name: string]: string };
     scripts?: { "build:desktop-main"?: string };
     repository?: { type?: string; url?: string };
-    build?: { linux?: { maintainer?: string }; mac?: { target?: string[] } };
+    build?: {
+      detectUpdateChannel?: boolean;
+      publish?: { provider?: string; owner?: string; repo?: string };
+      linux?: { maintainer?: string };
+      mac?: { target?: string[] };
+    };
   };
 
   assert.equal(packageJson.dependencies?.["electron-updater"], "6.6.2");
   assert.match(packageJson.scripts?.["build:desktop-main"] ?? "", /external:electron-updater/);
   assert.equal(packageJson.build?.linux?.maintainer, "Sannrox");
   assert.deepEqual(packageJson.build?.mac?.target, ["dmg", "zip"]);
+  assert.equal(packageJson.build?.detectUpdateChannel, true);
+  assert.deepEqual(packageJson.build?.publish, {
+    provider: "github",
+    owner: "Sannrox",
+    repo: "aldunis-code",
+  });
   assert.deepEqual(packageJson.repository, {
     type: "git",
     url: "https://github.com/Sannrox/aldunis-code.git",

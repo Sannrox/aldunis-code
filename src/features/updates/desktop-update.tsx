@@ -13,6 +13,12 @@ function updateVersion(snapshot: DesktopUpdateSnapshot): string {
   return snapshot.availableVersion ? `Version ${snapshot.availableVersion}` : "A new version";
 }
 
+function channelDescription(channel: DesktopUpdateSnapshot["channel"]): string {
+  return channel === "nightly"
+    ? "Nightly channel · follows signed nightly builds."
+    : "Stable channel · follows signed stable releases.";
+}
+
 function disabledMessage(reason: DesktopUpdateSnapshot["disabledReason"]): string {
   switch (reason) {
     case "development":
@@ -115,11 +121,17 @@ export function DesktopUpdateSettings({
     return <p className="preference-note">Desktop update status is unavailable.</p>;
   }
   if (snapshot.phase === "disabled") {
-    return <p className="preference-note">{disabledMessage(snapshot.disabledReason)}</p>;
+    return (
+      <>
+        <p className="preference-note">{channelDescription(snapshot.channel)}</p>
+        <p className="preference-note">{disabledMessage(snapshot.disabledReason)}</p>
+      </>
+    );
   }
 
   return (
     <div className="desktop-update-settings">
+      <p className="preference-note">{channelDescription(snapshot.channel)}</p>
       <div className="desktop-update-settings-status" role="status" aria-live="polite">
         <strong>
           {snapshot.phase === "error"

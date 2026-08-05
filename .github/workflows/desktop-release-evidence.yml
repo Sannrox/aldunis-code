@@ -1,4 +1,4 @@
-name: Desktop release and preview evidence
+name: Desktop release and nightly evidence
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: desktop-release-${{ github.event_name == 'push' && github.ref || 'preview' }}
+  group: desktop-release-${{ github.event_name == 'push' && github.ref || 'nightly' }}
   cancel-in-progress: false
 
 permissions:
@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       channel: ${{ steps.metadata.outputs.channel }}
+      update_channel: ${{ steps.metadata.outputs.update_channel }}
       base_version: ${{ steps.metadata.outputs.base_version }}
       version: ${{ steps.metadata.outputs.version }}
       release_tag: ${{ steps.metadata.outputs.release_tag }}
@@ -41,20 +42,27 @@ jobs:
           set -euo pipefail
           source_ref="$(git rev-parse HEAD)"
           base_version="$(node -p 'require("./package.json").version')"
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/v* ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Unsupported desktop release tag: ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
             channel="stable"
+            update_channel="latest"
             version="${base_version}"
             release_tag="${GITHUB_REF_NAME}"
             artifact_prefix="desktop"
           else
-            channel="preview"
+            channel="nightly"
+            update_channel="nightly"
             utc_date="$(date -u +%Y%m%d)"
             version="$(npm run --silent preview:version -- "${base_version}" "${utc_date}" "${GITHUB_RUN_NUMBER}")"
-            release_tag="preview-v${version}"
-            artifact_prefix="desktop-preview"
+            release_tag="v${version}"
+            artifact_prefix="desktop-nightly"
           fi
           {
             echo "channel=${channel}"
+            echo "update_channel=${update_channel}"
             echo "base_version=${base_version}"
             echo "version=${version}"
             echo "release_tag=${release_tag}"
@@ -66,6 +74,7 @@ jobs:
     needs: prepare
     outputs:
       channel: ${{ needs.prepare.outputs.channel }}
+      update_channel: ${{ needs.prepare.outputs.update_channel }}
       base_version: ${{ needs.prepare.outputs.base_version }}
       version: ${{ needs.prepare.outputs.version }}
       release_tag: ${{ needs.prepare.outputs.release_tag }}
@@ -84,8 +93,8 @@ jobs:
       - name: Verify stable release tag
         if: needs.prepare.outputs.channel == 'stable'
         run: npm run verify:desktop-release-tag -- "${{ needs.prepare.outputs.release_tag }}"
-      - name: Set preview package version
-        if: needs.prepare.outputs.channel == 'preview'
+      - name: Set nightly package version
+        if: needs.prepare.outputs.channel == 'nightly'
         env:
           PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
         run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
@@ -105,6 +114,7 @@ jobs:
     env:
       PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
       BASE_VERSION: ${{ needs.validate.outputs.base_version }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
       CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -127,8 +137,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Set preview package version
-        if: needs.validate.outputs.channel == 'preview'
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
         run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - name: Install App Store Connect API key
         env:
@@ -145,6 +155,7 @@ jobs:
           --mac
           --${{ matrix.arch }}
           --publish never
+          -c.publish.channel="${UPDATE_CHANNEL}"
           -c.forceCodeSigning=true
           -c.mac.notarize=true
           -c.mac.bundleShortVersion="${BASE_VERSION}"
@@ -153,7 +164,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm run rename:desktop-update-assets -- release "${{ matrix.arch }}"
+          npm run rename:desktop-update-assets -- release "${{ matrix.arch }}" "${UPDATE_CHANNEL}"
       - name: Notarize and staple disk image
         shell: bash
         run: |
@@ -192,7 +203,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
-            release/latest-mac-${{ matrix.arch }}.yml
+            release/${{ needs.validate.outputs.update_channel }}-mac-${{ matrix.arch }}.yml
             release/*.blockmap
             release/SHA256SUMS-macos-${{ matrix.arch }}.txt
             release/verification-macos-${{ matrix.arch }}.txt
@@ -207,6 +218,7 @@ jobs:
       attestations: write
     env:
       PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
@@ -218,13 +230,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Set preview package version
-        if: needs.validate.outputs.channel == 'preview'
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
         shell: pwsh
         run: npm version --no-git-tag-version $env:PACKAGE_VERSION
       - run: npm run build
       - name: Build signed installer
-        run: npx electron-builder --win nsis --x64 --publish never -c.forceCodeSigning=true
+        run: npx electron-builder --win nsis --x64 --publish never -c.publish.channel="$env:UPDATE_CHANNEL" -c.forceCodeSigning=true
       - name: Verify Authenticode and checksums
         shell: pwsh
         run: |
@@ -254,7 +266,7 @@ jobs:
           if-no-files-found: error
           path: |
             release/*.exe
-            release/latest*.yml
+            release/${{ needs.validate.outputs.update_channel }}.yml
             release/*.blockmap
             release/SHA256SUMS-windows-x64.txt
             release/verification-windows-x64.txt
@@ -268,6 +280,7 @@ jobs:
       attestations: write
     env:
       PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -277,12 +290,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Set preview package version
-        if: needs.validate.outputs.channel == 'preview'
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
         run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - run: npm run build
       - name: Build native packages
-        run: npx electron-builder --linux AppImage deb --x64 --publish never
+        run: npx electron-builder --linux AppImage deb --x64 --publish never -c.publish.channel="${UPDATE_CHANNEL}"
       - name: Record package checksums
         run: |
           sha256sum release/*.AppImage release/*.deb > release/SHA256SUMS-linux-x64.txt
@@ -299,7 +312,7 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
-            release/latest*.yml
+            release/${{ needs.validate.outputs.update_channel }}-linux.yml
             release/*.blockmap
             release/SHA256SUMS-linux-x64.txt
             release/verification-linux-x64.txt
@@ -377,8 +390,8 @@ jobs:
               --notes "${notes}"
           fi
 
-  publish-preview:
-    if: needs.validate.outputs.channel == 'preview'
+  publish-nightly:
+    if: needs.validate.outputs.channel == 'nightly'
     needs:
       - validate
       - macos
@@ -394,48 +407,64 @@ jobs:
       RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
       SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           pattern: ${{ needs.validate.outputs.artifact_prefix }}-*
           path: release
           merge-multiple: true
-      - name: Publish preview prerelease
+      - name: Publish nightly prerelease
         shell: bash
         run: |
           set -euo pipefail
           jq -n \
-            --arg channel "preview" \
+            --arg channel "nightly" \
             --arg version "${PACKAGE_VERSION}" \
             --arg tag "${RELEASE_TAG}" \
             --arg source_commit "${SOURCE_REF}" \
             '{channel: $channel, version: $version, tag: $tag, source_commit: $source_commit}' \
-            > release/aldunis-code-preview.json
+            > release/aldunis-code-nightly.json
+          npm run merge:desktop-update-manifest -- \
+            release/nightly-mac.yml \
+            release/nightly-mac-arm64.yml \
+            release/nightly-mac-x64.yml
           mapfile -t assets < <(find release -type f \( \
             -name '*.dmg' -o \
             -name '*.zip' -o \
             -name '*.exe' -o \
             -name '*.AppImage' -o \
             -name '*.deb' -o \
+            -name '*.blockmap' -o \
+            -name 'nightly.yml' -o \
+            -name 'nightly-linux.yml' -o \
+            -name 'nightly-mac.yml' -o \
             -name 'SHA256SUMS-*' -o \
             -name 'verification-*' -o \
-            -name 'aldunis-code-preview.json' \
+            -name 'aldunis-code-nightly.json' \
           \) -print | sort)
           test "${#assets[@]}" -gt 0
-          notes=$'Opt-in nightly preview build. This prerelease is for manual dogfooding; it does not publish update metadata or promote a Tenkai channel.\n\nSource commit: '"${SOURCE_REF}"
+          notes=$'Opt-in nightly build with signed packages and nightly update metadata. It does not promote a Tenkai channel.\n\nSource commit: '"${SOURCE_REF}"
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --clobber
             gh release edit "${RELEASE_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "Aldunis Code Preview ${PACKAGE_VERSION}" \
+              --title "Aldunis Code Nightly ${PACKAGE_VERSION}" \
               --prerelease \
               --notes "${notes}"
           else
             gh release create "${RELEASE_TAG}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${SOURCE_REF}" \
-              --title "Aldunis Code Preview ${PACKAGE_VERSION}" \
+              --title "Aldunis Code Nightly ${PACKAGE_VERSION}" \
               --prerelease \
               --notes "${notes}"
           fi
