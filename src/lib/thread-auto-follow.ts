@@ -41,6 +41,15 @@ export function scrollThreadToBottom(target: { scrollTop: number; scrollHeight: 
   target.scrollTop = target.scrollHeight;
 }
 
+/**
+ * Empty first-run content should stay anchored at its heading, not at the
+ * bottom of a short scroll container. Once real conversation content exists,
+ * the normal follow-to-tail behavior applies again.
+ */
+export function shouldPinThreadToBottom(following: boolean, hasContent: boolean): boolean {
+  return following && hasContent;
+}
+
 export function readThreadScrollMetrics(element: {
   scrollTop: number;
   clientHeight: number;

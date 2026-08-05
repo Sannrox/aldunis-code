@@ -6,6 +6,7 @@ import {
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
   scrollThreadToBottom,
+  shouldPinThreadToBottom,
   threadDistanceFromBottom,
   threadHasOverflow,
 } from "./thread-auto-follow";
@@ -70,6 +71,12 @@ test("scrollThreadToBottom pins scrollTop to scrollHeight", () => {
   const target = { scrollTop: 12, scrollHeight: 900 };
   scrollThreadToBottom(target);
   assert.equal(target.scrollTop, 900);
+});
+
+test("empty first-run content is not pinned to the bottom", () => {
+  assert.equal(shouldPinThreadToBottom(true, false), false);
+  assert.equal(shouldPinThreadToBottom(false, false), false);
+  assert.equal(shouldPinThreadToBottom(true, true), true);
 });
 
 test("threadHasOverflow ignores 1px subpixel noise", () => {
