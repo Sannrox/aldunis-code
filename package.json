@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local-first agentic development workbench",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sannrox/aldunis-code.git"
+  },
   "main": "dist-electron/main.js",
   "type": "module",
   "engines": {
@@ -19,9 +23,11 @@
     "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
     "verify:desktop-release-tag": "tsx scripts/verify-desktop-release-tag.ts",
+    "rename:desktop-update-assets": "node scripts/rename-desktop-update-assets.mjs",
+    "merge:desktop-update-manifest": "node scripts/merge-desktop-update-manifest.mjs",
     "preview:version": "tsx scripts/preview-version.ts",
     "build:web": "tsc -b && vite build",
-    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs && esbuild server/browser-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-electron/browser-mcp.mjs",
+    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:electron-updater --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs && esbuild server/browser-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-electron/browser-mcp.mjs",
     "build:cli": "esbuild server/main.ts --bundle --platform=node --format=esm --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-cli/aldunis-code.js --banner:js='#!/usr/bin/env node' && esbuild server/permission-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-cli/permission-mcp.mjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-cli/shikigami-permission-hook.mjs",
     "build": "npm run build:web && npm run build:desktop-main && npm run build:cli",
     "desktop": "npm run build && electron .",
@@ -39,7 +45,8 @@
     "react-dom": "19.0.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "vite": "6.4.3"
+    "vite": "6.4.3",
+    "electron-updater": "6.6.2"
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.7",
@@ -51,6 +58,7 @@
     "electron-builder": "26.15.3",
     "esbuild": "0.28.1",
     "jsdom": "^26.1.0",
+    "js-yaml": "4.3.0",
     "tsx": "4.23.1",
     "typescript": "5.7.3"
   },
@@ -88,7 +96,8 @@
         "NSMicrophoneUsageDescription": "Aldunis Code uses the microphone only when you activate voice input to transcribe a prompt."
       },
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ]
     },
     "win": {
@@ -98,6 +107,7 @@
     },
     "linux": {
       "category": "Development",
+      "maintainer": "Sannrox",
       "target": [
         "AppImage",
         "deb"

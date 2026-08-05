@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+import type { DesktopUpdateApi } from "../desktop/update-contract";
+
+declare global {
 interface Window {
   aldunisDesktopCapabilities?: {
     localApplication: boolean;
@@ -70,5 +73,8 @@ interface Window {
     useLocalEnvironment: () => Promise<void>;
     confirmRemoteEnvironmentPairing: () => Promise<boolean>;
     getCapabilities: () => Promise<NonNullable<Window["aldunisDesktopCapabilities"]>>;
-  };
+  } & DesktopUpdateApi;
 }
+}
+
+export {};

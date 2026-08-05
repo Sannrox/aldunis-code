@@ -26,6 +26,10 @@ import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
 import { ActivityDialog, type ActivitySelectionAction } from "./features/dialogs/activity-dialog";
 import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
 import {
+  DesktopUpdateBanner,
+  type DesktopUpdateControls,
+} from "./features/updates/desktop-update";
+import {
   isKeybindingCaptured,
   matchesModifierShortcut,
 } from "./lib/workspace-shortcuts";
@@ -35,6 +39,7 @@ import {
   readProductAvailabilityResponse,
   type ProductAvailability,
 } from "./lib/product-availability";
+import type { DesktopUpdateSnapshot } from "../desktop/update-contract";
 
 const desktopPlatform = window.aldunisDesktop?.platform;
 if (desktopPlatform) {
@@ -87,6 +92,7 @@ function App() {
   const [productAvailability, setProductAvailability] = useState<ProductAvailability>(
     DEFAULT_PRODUCT_AVAILABILITY,
   );
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateSnapshot | null>(null);
   const [hostCapabilities, setHostCapabilities] = useState<HostCapabilities>({
     mode: "local",
     managed: false,
@@ -175,6 +181,21 @@ function App() {
       setProduct("code");
     }
   }, [product, productAvailability]);
+  useEffect(() => {
+    const api = window.aldunisDesktop;
+    if (!api) return;
+    let active = true;
+    const unsubscribe = api.onUpdateState((snapshot) => {
+      if (active) setDesktopUpdate(snapshot);
+    });
+    void api.getUpdateState().then((snapshot) => {
+      if (active && snapshot) setDesktopUpdate(snapshot);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
@@ -315,6 +336,26 @@ function App() {
       active = false;
     };
   }, [hostCapabilitiesLoaded, hostCapabilities.managed]);
+  const runDesktopUpdateAction = async (
+    action: "checkForUpdate" | "downloadUpdate" | "installUpdate",
+  ): Promise<void> => {
+    const api = window.aldunisDesktop;
+    if (!api) return;
+    try {
+      const snapshot = await api[action]();
+      if (snapshot) setDesktopUpdate(snapshot);
+    } catch {
+      // The main process publishes a sanitized error state for updater failures.
+    }
+  };
+  const desktopUpdateControls: DesktopUpdateControls | undefined = desktopPlatform
+    ? {
+      snapshot: desktopUpdate,
+      onCheck: () => { void runDesktopUpdateAction("checkForUpdate"); },
+      onDownload: () => { void runDesktopUpdateAction("downloadUpdate"); },
+      onInstall: () => { void runDesktopUpdateAction("installUpdate"); },
+    }
+    : undefined;
   if (hostCapabilitiesError) {
     return (
       <main className="remote-pairing-error" role="alert">
@@ -378,6 +419,7 @@ function App() {
         managedModel={hostCapabilities.provider?.model}
         managedAccount={hostCapabilities.account}
       />
+      {desktopUpdateControls && <DesktopUpdateBanner {...desktopUpdateControls} />}
       <RepositoryDialog
         open={repositoryDialog}
         busy={repositoryBusy}
@@ -467,6 +509,7 @@ function App() {
           setPreferencesOpen(false);
           window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
         }}
+        desktopUpdates={desktopUpdateControls}
         onSave={async (value) => {
           const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
           if (!response.ok) return;

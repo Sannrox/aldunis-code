@@ -4,6 +4,10 @@ import { Button } from "../../components/ui";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { VOICE_INPUT_SHORTCUT_LABEL } from "../../lib/voice-input";
 import { shortcutLabel } from "../../lib/workspace-shortcuts";
+import {
+  DesktopUpdateSettings,
+  type DesktopUpdateControls,
+} from "../updates/desktop-update";
 
 const SECTIONS = [
   "General",
@@ -16,7 +20,7 @@ const SECTIONS = [
   "Archived",
 ] as const;
 
-export type Section = (typeof SECTIONS)[number];
+export type Section = (typeof SECTIONS)[number] | "Updates";
 
 export function preferenceSectionHasEditableFields(section: Section): boolean {
   return section === "General" || section === "Worktrees" || section === "Keybindings";
@@ -155,6 +159,7 @@ export function PreferencesDialog({
   onOpenProviderManagement,
   onOpenConnections = () => undefined,
   onOpenArchivedThreads,
+  desktopUpdates,
 }: {
   open: boolean;
   preferences: Preferences;
@@ -164,10 +169,12 @@ export function PreferencesDialog({
   onOpenProviderManagement: () => void;
   onOpenConnections?: () => void;
   onOpenArchivedThreads: () => void;
+  desktopUpdates?: DesktopUpdateControls;
 }) {
   const [draft, setDraft] = useState(preferences);
   const [busy, setBusy] = useState(false);
   const [section, setSection] = useState<Section>("General");
+  const sections = desktopUpdates ? [...SECTIONS, "Updates" as const] : SECTIONS;
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -260,7 +267,7 @@ export function PreferencesDialog({
           ← Back to threads
         </button>
         <div className="snav-sections">
-          {SECTIONS.map((item) => (
+          {sections.map((item) => (
             <button
               type="button"
               key={item}
@@ -289,6 +296,7 @@ export function PreferencesDialog({
             {section === "Access" && "Loopback and paired remote sessions."}
             {section === "Keybindings" && "Command palette, conversation search, product switch, sidebar, and composer shortcuts."}
             {section === "Diagnostics" && "Where to look when a provider will not start."}
+            {section === "Updates" && "Keep the packaged desktop shell current without interrupting an active turn."}
             {section === "Archived" && "Review conversations hidden from the active sidebar."}
           </div>
 
@@ -564,6 +572,9 @@ export function PreferencesDialog({
                 Prefer the existing provider profile probes and adapter administration for connectivity
                 checks. There is no ambient “connected” chrome — providers are spawned per session.
               </p>
+            )}
+            {section === "Updates" && desktopUpdates && (
+              <DesktopUpdateSettings {...desktopUpdates} />
             )}
             {section === "Archived" && (
               <ArchivedSettingsLinks

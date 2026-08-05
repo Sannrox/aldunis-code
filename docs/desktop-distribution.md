@@ -21,7 +21,9 @@ Electron's main process starts the existing HTTP host on an operating-system
 assigned loopback port and does not create the renderer until the host reports
 that it is listening. The renderer loads only that loopback origin. It runs
 with context isolation and the Chromium sandbox enabled, with Node integration
-disabled and no preload bridge.
+disabled. Its preload exposes only the directory picker, shared-browser
+controls, and typed desktop-update actions; it does not expose Node or a
+general command bridge.
 
 The application takes a single-instance lock. A second launch or an
 `aldunis-code://` deep link focuses the existing window; deep links do not
@@ -73,7 +75,7 @@ record:
 
 | Job | Protected environment | Evidence |
 | --- | --- | --- |
-| macOS Intel and Apple silicon | `desktop-macos-signing` | signed and notarized DMG, SHA-256 checksum, `codesign`, Gatekeeper, and stapling results, GitHub artifact attestation |
+| macOS Intel and Apple silicon | `desktop-macos-signing` | signed and notarized DMG and update ZIP, SHA-256 checksums, `codesign`, Gatekeeper, and stapling results, GitHub artifact attestation |
 | Windows x64 | `desktop-windows-signing` | signed NSIS installer, SHA-256 checksum, Authenticode result and signer subject, GitHub artifact attestation |
 | Linux x64 | none | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations |
 
@@ -97,11 +99,22 @@ release candidate. Tenkai remains authoritative for promotion, environments,
 rollback, and recovery.
 
 There are two channels: `stable` and opt-in `preview`; nightly is the preview
-cadence, not a third release authority. Update metadata is signed independently
-from package hosting. The client accepts only a valid signature for its
-selected channel and never downgrades automatically. Update checks may be
-added only after those controls and clean-machine packaging tests exist; this
-workflow intentionally contains no auto-updater.
+cadence, not a third release authority. Stable packages publish the
+electron-builder `latest*.yml` manifests and blockmaps alongside the packaged
+artifacts. The packaged client has a fixed GitHub feed, rejects automatic
+downgrades, waits before its first background check, and never downloads or
+installs without an explicit operator action. macOS and Windows packages and
+Linux AppImages can update in place; Debian packages remain manual-update
+because their package-manager lifecycle is outside the app. Preview releases
+remain manual-download artifacts until a separate preview-channel decision and
+clean-machine upgrade evidence exist.
+
+The updater is disabled for development builds, missing update manifests, and
+Linux packages that are not running from an AppImage. A restart first closes
+the local host and shared-browser sessions through the normal desktop shutdown
+path, then invokes Electron's signed-package installer. The renderer receives
+only update state and the four explicit actions: check, download, install, and
+subscribe to state changes.
 
 Preview uses the same `com.aldunis.code` application identity and local-data
 root as stable. Installing preview is therefore an explicit opt-in replacement

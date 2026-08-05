@@ -69,6 +69,7 @@ test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle"
 
   assert.match(mainProcessBuild ?? "", /esbuild desktop\/main\.ts/);
   assert.match(mainProcessBuild ?? "", /--format=esm/);
+  assert.match(mainProcessBuild ?? "", /--external:electron-updater/);
   assert.match(mainProcessBuild ?? "", /--external:proper-lockfile/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/grpc-js/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/proto-loader/);
@@ -149,6 +150,30 @@ test("desktop distribution workflow keeps preview publication separate from stab
   assert.match(workflow, /gh release upload/);
   assert.match(workflow, /--clobber/);
   assert.match(workflow, /contents: write/);
+  assert.match(workflow, /publish-stable:/);
+  assert.match(workflow, /latest-mac-\$\{\{ matrix\.arch \}\}\.yml/);
+  assert.match(workflow, /latest-linux\.yml/);
+  assert.match(workflow, /latest\.yml/);
+  assert.match(workflow, /merge:desktop-update-manifest/);
+  assert.match(workflow, /-name '\*\.zip'/);
+});
+
+test("desktop packaging config produces stable updater metadata and macOS zip artifacts", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    dependencies?: { [name: string]: string };
+    scripts?: { "build:desktop-main"?: string };
+    repository?: { type?: string; url?: string };
+    build?: { linux?: { maintainer?: string }; mac?: { target?: string[] } };
+  };
+
+  assert.equal(packageJson.dependencies?.["electron-updater"], "6.6.2");
+  assert.match(packageJson.scripts?.["build:desktop-main"] ?? "", /external:electron-updater/);
+  assert.equal(packageJson.build?.linux?.maintainer, "Sannrox");
+  assert.deepEqual(packageJson.build?.mac?.target, ["dmg", "zip"]);
+  assert.deepEqual(packageJson.repository, {
+    type: "git",
+    url: "https://github.com/Sannrox/aldunis-code.git",
+  });
 });
 
 test("native packages cannot overwrite the web build output", async () => {

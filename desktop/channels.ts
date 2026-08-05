@@ -18,3 +18,8 @@ export interface DesktopCapabilities {
   sharedBrowser: boolean;
   remoteConnectionControls: boolean;
 }
+export const DESKTOP_UPDATE_STATE_CHANNEL = "aldunis:desktop-update-state";
+export const GET_DESKTOP_UPDATE_STATE_CHANNEL = "aldunis:desktop-update-get-state";
+export const CHECK_DESKTOP_UPDATE_CHANNEL = "aldunis:desktop-update-check";
+export const DOWNLOAD_DESKTOP_UPDATE_CHANNEL = "aldunis:desktop-update-download";
+export const INSTALL_DESKTOP_UPDATE_CHANNEL = "aldunis:desktop-update-install";
