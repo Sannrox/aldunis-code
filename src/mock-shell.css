@@ -2076,6 +2076,66 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .delivery-boundary-note{margin:0 12px 8px;padding:8px 9px;border:1px solid color-mix(in srgb,var(--amber) 28%,var(--border));border-radius:7px;background:color-mix(in srgb,var(--amber) 7%,transparent);color:var(--muted-foreground);font-size:11px;line-height:1.45}
 .delivery-loading{margin:0 12px 8px;color:var(--muted-foreground);font:10.5px var(--font-mono)}
+.turn-changes-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--card) 82%, var(--accent));
+}
+.turn-changes-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.turn-changes-card > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.turn-changes-card strong { color: var(--foreground); font-size: 12.5px; }
+.turn-changes-card header small { color: var(--muted-foreground); font-size: 11px; }
+.turn-changes-card ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.turn-changes-card li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted-foreground);
+  font: 11.5px/1.45 var(--font-mono);
+}
+.turn-changes-card li > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.turn-changes-card li small { margin-left: auto; color: var(--muted-foreground); white-space: nowrap; }
+.turn-changes-card li.turn-changes-more { color: var(--muted-foreground); font-style: italic; }
+.turn-changes-card .change-state { flex: 0 0 auto; font: 10.5px/1.45 var(--font-mono); text-transform: lowercase; }
+.turn-changes-open {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.turn-changes-open:hover, .turn-changes-open:focus-visible { background: var(--accent); outline: none; }
+.checkpoint-review-note { margin: 8px 12px; }
 .diff-view pre {
   display: flex !important;
   flex-direction: column !important;

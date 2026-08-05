@@ -251,6 +251,14 @@ export interface ProviderSessionReference {
 
 export type CheckpointState = "baseline" | "completed" | "failed" | "superseded" | "unavailable";
 
+export interface CheckpointFile {
+  path: string;
+  state: "added" | "modified" | "deleted" | "renamed" | "binary";
+  previousPath: string | null;
+  additions: number | null;
+  deletions: number | null;
+}
+
 export interface TurnCheckpoint {
   schemaVersion: 2;
   id: string;
@@ -266,6 +274,8 @@ export interface TurnCheckpoint {
   completedHead: string | null;
   state: CheckpointState;
   message: string | null;
+  /** Metadata-only summary of the completed turn's tree diff. */
+  files?: CheckpointFile[];
   createdAt: string;
   updatedAt: string;
 }

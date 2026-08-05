@@ -40,7 +40,7 @@ import {
   ProviderAdapterStore,
 } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
-import { listChangedFiles, readFileDiff } from "./changes.ts";
+import { listChangedFiles, readCheckpointFileDiff, readFileDiff } from "./changes.ts";
 import {
   annotationView,
   captureAnnotationContext,
@@ -2117,6 +2117,53 @@ async function handleApi(
       });
       return true;
     }
+    const checkpointDiffMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/diff$/);
+    if (checkpointDiffMatch) {
+      const body = await readJson(request) as {
+        root?: unknown;
+        worktree?: unknown;
+        path?: unknown;
+      };
+      if (
+        typeof body.root !== "string"
+        || typeof body.worktree !== "string"
+        || typeof body.path !== "string"
+      ) {
+        throw new RepositoryError("A repository, worktree, and changed path are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      const projection = await state.load();
+      const checkpoint = projection.checkpoints.find(
+        (item) => item.id === checkpointDiffMatch[1] && item.worktree === context.worktree,
+      );
+      const checkpointThread = checkpoint
+        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
+        : undefined;
+      if (!checkpointThread) {
+        throw new LocalStateError("The checkpoint conversation is unavailable.", 404);
+      }
+      if (
+        !checkpoint
+        || (checkpoint.state !== "completed" && checkpoint.state !== "superseded")
+        || !checkpoint.baselineIdentity
+        || !checkpoint.completedIdentity
+      ) {
+        throw new RepositoryError("This turn diff is unavailable.", 409);
+      }
+      const files = checkpoint.files?.length ? checkpoint.files : await checkpointDiff(
+        context.worktree,
+        checkpoint.baselineIdentity,
+        checkpoint.completedIdentity,
+      );
+      sendJson(response, 200, await readCheckpointFileDiff(
+        context.worktree,
+        checkpoint.baselineIdentity,
+        checkpoint.completedIdentity,
+        body.path,
+        files,
+      ));
+      return true;
+    }
     const rewindMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/rewind$/);
     if (rewindMatch) {
       const body = await readJson(request) as {
@@ -3250,6 +3297,17 @@ async function handleApi(
                 message: "HEAD changed during the turn; rewind does not rewrite Git history.",
               });
             } else {
+              let files: Awaited<ReturnType<typeof checkpointDiff>> = [];
+              try {
+                files = await checkpointDiff(
+                  context.worktree,
+                  baselineIdentity,
+                  captured.identity,
+                );
+              } catch {
+                // The tree identities remain authoritative even if the
+                // optional inline summary cannot be computed.
+              }
               const saved = await state.saveCheckpoint({
                 ...checkpoint,
                 completedIdentity: captured.identity,
@@ -3257,6 +3315,7 @@ async function handleApi(
                 completedHead: captured.head,
                 state: "completed",
                 message: null,
+                files,
               });
               await state.supersedeCompletedCheckpoints(
                 persisted.thread.id,

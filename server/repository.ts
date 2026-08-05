@@ -55,6 +55,8 @@ export interface CheckpointFile {
   path: string;
   state: "added" | "modified" | "deleted" | "renamed" | "binary";
   previousPath: string | null;
+  additions: number | null;
+  deletions: number | null;
 }
 
 async function git(
@@ -254,9 +256,29 @@ function parseNameStatus(output: string): CheckpointFile[] {
           : renamed
             ? "renamed"
             : "modified",
+      additions: null,
+      deletions: null,
     });
   }
   return files;
+}
+
+function parseNumstat(output: string): Map<string, { additions: number | null; deletions: number | null }> {
+  const stats = new Map<string, { additions: number | null; deletions: number | null }>();
+  for (const field of output.split("\0").filter(Boolean)) {
+    const firstTab = field.indexOf("\t");
+    const secondTab = firstTab === -1 ? -1 : field.indexOf("\t", firstTab + 1);
+    if (firstTab === -1 || secondTab === -1) continue;
+    const added = field.slice(0, firstTab);
+    const deleted = field.slice(firstTab + 1, secondTab);
+    const path = field.slice(secondTab + 1);
+    if (!path) continue;
+    stats.set(path, {
+      additions: added === "-" ? null : Number.isFinite(Number(added)) ? Number(added) : null,
+      deletions: deleted === "-" ? null : Number.isFinite(Number(deleted)) ? Number(deleted) : null,
+    });
+  }
+  return stats;
 }
 
 export async function checkpointDiff(
@@ -274,14 +296,20 @@ export async function checkpointDiff(
     "--",
   ]);
   const files = parseNameStatus(output);
-  const binary = await git(worktree, ["diff", "--numstat", "-z", fromIdentity, toIdentity, "--"]);
-  const binaryPaths = new Set(
-    binary.split("\0").filter(Boolean).flatMap((field) => {
-      const [added, deleted, ...pathParts] = field.split("\t");
-      return added === "-" && deleted === "-" ? [pathParts.join("\t")] : [];
-    }),
-  );
-  return files.map((file) => binaryPaths.has(file.path) ? { ...file, state: "binary" } : file);
+  // Do not ask Git to detect renames for numstat: the NUL-delimited output
+  // for a rename has two path fields, while the name-status result above has
+  // already normalized the old and new paths for us.
+  const stats = parseNumstat(await git(worktree, ["diff", "--numstat", "-z", "--no-renames", fromIdentity, toIdentity, "--"]));
+  return files.map((file) => {
+    const stat = stats.get(file.path) ?? (file.previousPath ? stats.get(file.previousPath) : undefined);
+    const binary = stat?.additions === null && stat.deletions === null;
+    return {
+      ...file,
+      additions: binary ? null : stat?.additions ?? 0,
+      deletions: binary ? null : stat?.deletions ?? 0,
+      state: binary ? "binary" : file.state,
+    };
+  });
 }
 
 export async function rewindCheckpoint(
