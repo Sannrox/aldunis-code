@@ -50,6 +50,38 @@ code{font-family:var(--font-mono)}
 .kbd{font-family:var(--font-mono);font-size:11px;padding:1px 5px;border-radius:4px;background:var(--accent);color:var(--muted-foreground)}
 .app{display:flex;height:100vh;position:relative}
 
+.desktop-update-banner {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  z-index: 45;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  width: min(510px, calc(100vw - 36px));
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--acid);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-popover);
+}
+.desktop-update-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 3px; }
+.desktop-update-copy strong { font-size: 13px; font-weight: 600; }
+.desktop-update-copy span { color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
+.desktop-update-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
+.desktop-update-progress { width: 100%; height: 5px; margin-top: 5px; accent-color: var(--acid); }
+.desktop-update-settings { display: flex; flex-direction: column; gap: 16px; }
+.desktop-update-settings-status { display: flex; flex-direction: column; gap: 6px; color: var(--foreground); }
+.desktop-update-settings-status span { color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.desktop-update-settings-actions { display: flex; gap: 8px; }
+
+@media (max-width: 680px) {
+  .desktop-update-banner { top: 10px; right: 10px; width: calc(100vw - 20px); flex-direction: column; gap: 10px; }
+  .desktop-update-actions { width: 100%; justify-content: flex-end; }
+}
+
 /* sidebar */
 .sb{width:272px;flex:0 0 272px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;position:relative}
 .sb-hd{display:flex;align-items:center;gap:9px;padding:12px 12px 8px}

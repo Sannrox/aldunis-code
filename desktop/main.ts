@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { autoUpdater } from "electron-updater";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalHost } from "../server/host.ts";
@@ -18,8 +20,13 @@ import {
 } from "./lifecycle.ts";
 import {
   BROWSER_PICTURE_IN_PICTURE_CHANNEL,
+  CHECK_DESKTOP_UPDATE_CHANNEL,
   CHOOSE_DIRECTORY_CHANNEL,
   DESKTOP_CAPABILITIES_CHANNEL,
+  DESKTOP_UPDATE_STATE_CHANNEL,
+  DOWNLOAD_DESKTOP_UPDATE_CHANNEL,
+  GET_DESKTOP_UPDATE_STATE_CHANNEL,
+  INSTALL_DESKTOP_UPDATE_CHANNEL,
   REGISTER_BROWSER_VIEW_CHANNEL,
   REMOTE_ENVIRONMENT_CONFIRM_CHANNEL,
   REMOTE_ENVIRONMENT_CONNECT_CHANNEL,
@@ -32,6 +39,7 @@ import {
   type DesktopCapabilities,
 } from "./channels.ts";
 import { SharedBrowserManager } from "./shared-browser.ts";
+import { DesktopUpdater, type DesktopUpdaterEngine } from "./updater.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
 
 const applicationRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -45,6 +53,7 @@ let activeRemoteEnvironmentId: string | null = null;
 let activeRemoteApplicationOrigin: string | null = null;
 let approvedOrigins: Set<string> | null = null;
 let releaseWriterLease: (() => Promise<void>) | null = null;
+let desktopUpdater: DesktopUpdater | null = null;
 let shuttingDown = false;
 
 function showWindow(): void {
@@ -56,6 +65,30 @@ function showWindow(): void {
 
 function handleDeepLink(value: string): void {
   if (isSupportedDeepLink(value)) showWindow();
+}
+
+async function closeLocalServices(): Promise<void> {
+  const runningBackend = backend;
+  backend = null;
+  try {
+    if (runningBackend?.listening) await closeServer(runningBackend);
+    await remoteEnvironments?.close();
+  } finally {
+    const release = releaseWriterLease;
+    releaseWriterLease = null;
+    try {
+      await release?.();
+    } finally {
+      browserManager?.closeAll();
+    }
+  }
+}
+
+async function prepareForUpdate(): Promise<void> {
+  shuttingDown = true;
+  desktopUpdater?.dispose();
+  await closeLocalServices();
+  if (window && !window.isDestroyed()) window.destroy();
 }
 
 if (!gotSingleInstanceLock) {
@@ -159,6 +192,27 @@ if (!gotSingleInstanceLock) {
         sharedBrowser: false,
         remoteConnectionControls: false,
       };
+    });
+    desktopUpdater = new DesktopUpdater({
+      engine: autoUpdater as unknown as DesktopUpdaterEngine,
+      currentVersion: app.getVersion(),
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      hasUpdateManifest: existsSync(join(process.resourcesPath, "app-update.yml")),
+      isAppImage: process.platform !== "linux" || Boolean(process.env.APPIMAGE),
+      disabledByEnvironment: process.env.ALDUNIS_CODE_DISABLE_UPDATES === "1",
+      onState: (snapshot) => {
+        if (
+          window
+          && localApplicationUrl
+          && !window.isDestroyed()
+          && !window.webContents.isDestroyed()
+          && isLocalApplicationOrigin(window.webContents.getURL(), localApplicationUrl)
+        ) {
+          window.webContents.send(DESKTOP_UPDATE_STATE_CHANNEL, snapshot);
+        }
+      },
+      prepareForInstall,
     });
     ipcMain.removeHandler(CHOOSE_DIRECTORY_CHANNEL);
     ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
@@ -301,6 +355,23 @@ if (!gotSingleInstanceLock) {
       await remoteEnvironments.confirmPairing(activeRemoteEnvironmentId);
       return true;
     });
+    ipcMain.removeHandler(GET_DESKTOP_UPDATE_STATE_CHANNEL);
+    ipcMain.handle(GET_DESKTOP_UPDATE_STATE_CHANNEL, (event) => (
+      isLocalApplicationWindow(event) ? desktopUpdater?.getState() ?? null : null
+    ));
+    ipcMain.removeHandler(CHECK_DESKTOP_UPDATE_CHANNEL);
+    ipcMain.handle(CHECK_DESKTOP_UPDATE_CHANNEL, async (event) => (
+      isLocalApplicationWindow(event) ? await desktopUpdater?.checkForUpdate() ?? null : null
+    ));
+    ipcMain.removeHandler(DOWNLOAD_DESKTOP_UPDATE_CHANNEL);
+    ipcMain.handle(DOWNLOAD_DESKTOP_UPDATE_CHANNEL, async (event) => (
+      isLocalApplicationWindow(event) ? await desktopUpdater?.downloadUpdate() ?? null : null
+    ));
+    ipcMain.removeHandler(INSTALL_DESKTOP_UPDATE_CHANNEL);
+    ipcMain.handle(INSTALL_DESKTOP_UPDATE_CHANNEL, async (event) => (
+      isLocalApplicationWindow(event) ? await desktopUpdater?.installUpdate() ?? null : null
+    ));
+    desktopUpdater.start();
     window.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("https://")) void shell.openExternal(url);
       return { action: "deny" };
@@ -322,17 +393,14 @@ if (!gotSingleInstanceLock) {
     app.quit();
   });
 
-  app.on("window-all-closed", () => app.quit());
+  app.on("window-all-closed", () => {
+    if (!shuttingDown) app.quit();
+  });
   app.on("before-quit", (event) => {
-    if (shuttingDown || !backend?.listening) return;
+    if (shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
-    void closeServer(backend)
-      .then(() => remoteEnvironments?.close())
-      .then(() => releaseWriterLease?.())
-      .finally(() => {
-        browserManager?.closeAll();
-        app.quit();
-      });
+    desktopUpdater?.dispose();
+    void closeLocalServices().finally(() => app.quit());
   });
 }

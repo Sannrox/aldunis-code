@@ -236,6 +236,10 @@
     {
       "name": "DeliveryCorrelationReceipt",
       "description": "An aldunis.delivery-receipt/v1 correlation export containing stable identities, digests, freshness, and completeness without signed assertions, credentials, source, command output, or approval material."
+    },
+    {
+      "name": "AldunisDesktopAutoUpdater",
+      "description": "The packaged Electron main-process updater for Aldunis Code stable releases. It owns a fixed update feed and explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and preserves the local host shutdown boundary before installation."
     }
   ],
   "relations": [
@@ -835,6 +839,12 @@
       "subject": "PictureInPictureBrowserMirror",
       "source": "Aldunis Code shared-browser desktop mirror",
       "locator": "desktop/shared-browser.ts; desktop/channels.ts; desktop/preload.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AldunisDesktopAutoUpdater",
+      "source": "Aldunis Code desktop update lifecycle",
+      "locator": "desktop/updater.ts; desktop/main.ts; desktop/preload.ts; desktop/update-contract.ts; docs/desktop-distribution.md",
       "confidence": 1.0
     },
     {

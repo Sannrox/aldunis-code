@@ -142,21 +142,18 @@ jobs:
       - name: Build signed and notarized package
         run: >-
           npx electron-builder
-          --mac dmg
+          --mac
           --${{ matrix.arch }}
           --publish never
           -c.forceCodeSigning=true
           -c.mac.notarize=true
           -c.mac.bundleShortVersion="${BASE_VERSION}"
           -c.mac.bundleVersion="${BASE_VERSION}"
-      - name: Give preview DMG a unique architecture name
-        if: needs.validate.outputs.channel == 'preview'
+      - name: Give macOS update assets a unique architecture name
         shell: bash
         run: |
           set -euo pipefail
-          for dmg_path in release/*.dmg; do
-            mv "${dmg_path}" "${dmg_path%.dmg}-${{ matrix.arch }}.dmg"
-          done
+          npm run rename:desktop-update-assets -- release "${{ matrix.arch }}"
       - name: Notarize and staple disk image
         shell: bash
         run: |
@@ -182,16 +179,21 @@ jobs:
             xcrun stapler validate "${app_path}"
             xcrun stapler validate "${dmg_path}"
           } 2>&1 | tee "release/verification-macos-${{ matrix.arch }}.txt"
-          shasum -a 256 "${dmg_path}" > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
+          shasum -a 256 release/*.dmg release/*.zip > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
       - uses: actions/attest@v4
         with:
-          subject-path: release/*.dmg
+          subject-path: |
+            release/*.dmg
+            release/*.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.validate.outputs.artifact_prefix }}-macos-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             release/*.dmg
+            release/*.zip
+            release/latest-mac-${{ matrix.arch }}.yml
+            release/*.blockmap
             release/SHA256SUMS-macos-${{ matrix.arch }}.txt
             release/verification-macos-${{ matrix.arch }}.txt
 
@@ -252,6 +254,8 @@ jobs:
           if-no-files-found: error
           path: |
             release/*.exe
+            release/latest*.yml
+            release/*.blockmap
             release/SHA256SUMS-windows-x64.txt
             release/verification-windows-x64.txt
 
@@ -295,8 +299,83 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+            release/latest*.yml
+            release/*.blockmap
             release/SHA256SUMS-linux-x64.txt
             release/verification-linux-x64.txt
+
+  publish-stable:
+    if: needs.validate.outputs.channel == 'stable'
+    needs:
+      - validate
+      - macos
+      - windows
+      - linux
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+      SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.validate.outputs.artifact_prefix }}-*
+          path: release
+          merge-multiple: true
+      - name: Merge macOS architecture update metadata
+        run: >-
+          npm run merge:desktop-update-manifest --
+          release/latest-mac.yml
+          release/latest-mac-arm64.yml
+          release/latest-mac-x64.yml
+      - name: Publish stable desktop release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find release -type f \( \
+            -name '*.dmg' -o \
+            -name '*.zip' -o \
+            -name '*.exe' -o \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.blockmap' -o \
+            -name 'latest.yml' -o \
+            -name 'latest-linux.yml' -o \
+            -name 'latest-mac.yml' -o \
+            -name 'SHA256SUMS-*' -o \
+            -name 'verification-*' \
+          \) -print | sort)
+          test "${#assets[@]}" -gt 0
+          notes=$'Stable Aldunis Code desktop release with signed packages and update metadata.\n\nSource commit: '"${SOURCE_REF}"
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Aldunis Code ${PACKAGE_VERSION}" \
+              --latest \
+              --notes "${notes}"
+          else
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${SOURCE_REF}" \
+              --title "Aldunis Code ${PACKAGE_VERSION}" \
+              --latest \
+              --notes "${notes}"
+          fi
 
   publish-preview:
     if: needs.validate.outputs.channel == 'preview'
@@ -333,6 +412,7 @@ jobs:
             > release/aldunis-code-preview.json
           mapfile -t assets < <(find release -type f \( \
             -name '*.dmg' -o \
+            -name '*.zip' -o \
             -name '*.exe' -o \
             -name '*.AppImage' -o \
             -name '*.deb' -o \
