@@ -8,6 +8,10 @@ import type {
 export const DESKTOP_UPDATE_STARTUP_DELAY_MS = 15_000;
 export const DESKTOP_UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 
+export function resolveDesktopUpdateChannel(version: string): DesktopUpdateChannel {
+  return /-nightly\.\d{8}\.[1-9]\d*$/u.test(version) ? "nightly" : "stable";
+}
+
 type UpdateEvent =
   | "checking-for-update"
   | "update-available"
@@ -19,6 +23,7 @@ type UpdateEvent =
 type UpdateListener = (...args: any[]) => void;
 
 export interface DesktopUpdaterEngine {
+  channel: string | null;
   autoDownload: boolean;
   autoInstallOnAppQuit: boolean;
   allowDowngrade: boolean;
@@ -131,7 +136,7 @@ export class DesktopUpdater {
     this.options = options;
     this.scheduler = options.scheduler ?? defaultScheduler;
     const disabledReason = getDesktopUpdateDisabledReason(options);
-    const channel = options.channel ?? "stable";
+    const channel = options.channel ?? resolveDesktopUpdateChannel(options.currentVersion);
     this.state = {
       channel,
       currentVersion: options.currentVersion,
@@ -154,10 +159,11 @@ export class DesktopUpdater {
   start(): void {
     if (this.started || this.disposed || this.state.phase === "disabled") return;
     this.started = true;
+    this.options.engine.channel = this.state.channel === "nightly" ? "nightly" : "latest";
     this.options.engine.autoDownload = false;
     this.options.engine.autoInstallOnAppQuit = false;
     this.options.engine.allowDowngrade = false;
-    this.options.engine.allowPrerelease = false;
+    this.options.engine.allowPrerelease = this.state.channel === "nightly";
     this.registerEventListeners();
 
     if (this.options.scheduleChecks === false) return;

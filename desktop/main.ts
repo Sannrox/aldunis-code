@@ -39,7 +39,7 @@ import {
   type DesktopCapabilities,
 } from "./channels.ts";
 import { SharedBrowserManager } from "./shared-browser.ts";
-import { DesktopUpdater, type DesktopUpdaterEngine } from "./updater.ts";
+import { DesktopUpdater, resolveDesktopUpdateChannel, type DesktopUpdaterEngine } from "./updater.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
 
 const applicationRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -196,6 +196,7 @@ if (!gotSingleInstanceLock) {
     desktopUpdater = new DesktopUpdater({
       engine: autoUpdater as unknown as DesktopUpdaterEngine,
       currentVersion: app.getVersion(),
+      channel: resolveDesktopUpdateChannel(app.getVersion()),
       platform: process.platform,
       isPackaged: app.isPackaged,
       hasUpdateManifest: existsSync(join(process.resourcesPath, "app-update.yml")),

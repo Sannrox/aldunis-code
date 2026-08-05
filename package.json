@@ -63,6 +63,12 @@
     "typescript": "5.7.3"
   },
   "build": {
+    "detectUpdateChannel": true,
+    "publish": {
+      "provider": "github",
+      "owner": "Sannrox",
+      "repo": "aldunis-code"
+    },
     "appId": "com.aldunis.code",
     "productName": "Aldunis Code",
     "icon": "public/aldunis-mark.png",

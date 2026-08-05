@@ -41,7 +41,10 @@ function readDesktopUpdateSnapshot(value: unknown): DesktopUpdateSnapshot | null
   ]);
   if (
     snapshot.channel !== "stable"
-    || typeof snapshot.currentVersion !== "string"
+    && snapshot.channel !== "nightly"
+  ) return null;
+  if (
+    typeof snapshot.currentVersion !== "string"
     || typeof snapshot.phase !== "string"
     || !phases.has(snapshot.phase)
   ) return null;

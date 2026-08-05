@@ -2,14 +2,18 @@ import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dump, load } from "js-yaml";
 
-const [, , directory, suffix] = process.argv;
+const [, , directory, suffix, channel = "latest"] = process.argv;
 
 if (!directory || !suffix) {
-  throw new Error("Usage: node scripts/rename-desktop-update-assets.mjs <release-directory> <architecture>");
+  throw new Error("Usage: node scripts/rename-desktop-update-assets.mjs <release-directory> <architecture> [latest|nightly]");
+}
+
+if (channel !== "latest" && channel !== "nightly") {
+  throw new Error("Update channel must be latest or nightly.");
 }
 
 const entries = await readdir(directory, { withFileTypes: true });
-const manifestName = "latest-mac.yml";
+const manifestName = `${channel}-mac.yml`;
 const manifestPath = join(directory, manifestName);
 const manifest = load(await readFile(manifestPath, "utf8"));
 const renameable = entries
@@ -34,4 +38,4 @@ function rewriteReferences(value) {
 
 const rewritten = rewriteReferences(manifest);
 await writeFile(manifestPath, dump(rewritten, { lineWidth: -1, noRefs: true }), "utf8");
-await rename(manifestPath, join(directory, `latest-mac-${suffix}.yml`));
+await rename(manifestPath, join(directory, `${channel}-mac-${suffix}.yml`));
