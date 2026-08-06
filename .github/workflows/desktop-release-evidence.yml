@@ -114,12 +114,14 @@ jobs:
     env:
       PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
       BASE_VERSION: ${{ needs.validate.outputs.base_version }}
+      RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
       UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
-      CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+      MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+      MACOS_APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      MACOS_APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      MACOS_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      MACOS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -140,32 +142,66 @@ jobs:
       - name: Set nightly package version
         if: needs.validate.outputs.channel == 'nightly'
         run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
-      - name: Install App Store Connect API key
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      - name: Configure macOS signing
         run: |
-          key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "${APPLE_API_KEY_P8}" > "${key_path}"
-          chmod 600 "${key_path}"
-          echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
+          set -euo pipefail
+          if [[ -n "${MACOS_CSC_LINK}" \
+            && -n "${MACOS_CSC_KEY_PASSWORD}" \
+            && -n "${MACOS_APPLE_API_KEY_P8}" \
+            && -n "${MACOS_APPLE_API_KEY_ID}" \
+            && -n "${MACOS_APPLE_API_ISSUER}" \
+            && -n "${MACOS_APPLE_TEAM_ID}" ]]; then
+            echo "MACOS_SIGNING_MODE=developer-id" >> "${GITHUB_ENV}"
+            {
+              echo "CSC_LINK<<__ALDUNIS_CSC_LINK__"
+              printf '%s\n' "${MACOS_CSC_LINK}"
+              echo "__ALDUNIS_CSC_LINK__"
+              echo "CSC_KEY_PASSWORD<<__ALDUNIS_CSC_PASSWORD__"
+              printf '%s\n' "${MACOS_CSC_KEY_PASSWORD}"
+              echo "__ALDUNIS_CSC_PASSWORD__"
+              echo "APPLE_API_KEY_ID=${MACOS_APPLE_API_KEY_ID}"
+              echo "APPLE_API_ISSUER=${MACOS_APPLE_API_ISSUER}"
+              echo "APPLE_TEAM_ID=${MACOS_APPLE_TEAM_ID}"
+            } >> "${GITHUB_ENV}"
+            key_path="${RUNNER_TEMP}/AuthKey_${MACOS_APPLE_API_KEY_ID}.p8"
+            printf '%s' "${MACOS_APPLE_API_KEY_P8}" > "${key_path}"
+            chmod 600 "${key_path}"
+            echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
+            echo "Developer ID signing and notarization enabled."
+          else
+            if [[ "${RELEASE_CHANNEL}" == "nightly" ]]; then
+              echo "MACOS_SIGNING_MODE=adhoc" >> "${GITHUB_ENV}"
+              echo "Apple signing credentials are incomplete; using ad-hoc signing without notarization for nightly."
+            else
+              echo "Stable macOS releases require complete Developer ID signing and notarization credentials." >&2
+              exit 1
+            fi
+          fi
       - run: npm run build
-      - name: Build signed and notarized package
-        run: >-
-          npx electron-builder
-          --mac
-          --${{ matrix.arch }}
-          --publish never
-          -c.publish.channel="${UPDATE_CHANNEL}"
-          -c.forceCodeSigning=true
-          -c.mac.notarize=true
-          -c.mac.bundleShortVersion="${BASE_VERSION}"
-          -c.mac.bundleVersion="${BASE_VERSION}"
+      - name: Build macOS package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${MACOS_SIGNING_MODE}" == "developer-id" ]]; then
+            signing_args=(-c.forceCodeSigning=true -c.mac.notarize=true)
+          else
+            signing_args=(-c.mac.identity=- -c.forceCodeSigning=true -c.mac.notarize=false)
+          fi
+          npx electron-builder \
+            --mac \
+            --${{ matrix.arch }} \
+            --publish never \
+            -c.publish.channel="${UPDATE_CHANNEL}" \
+            "${signing_args[@]}" \
+            -c.mac.bundleShortVersion="${BASE_VERSION}" \
+            -c.mac.bundleVersion="${BASE_VERSION}"
       - name: Give macOS update assets a unique architecture name
         shell: bash
         run: |
           set -euo pipefail
           npm run rename:desktop-update-assets -- release "${{ matrix.arch }}" "${UPDATE_CHANNEL}"
       - name: Notarize and staple disk image
+        if: env.MACOS_SIGNING_MODE == 'developer-id'
         shell: bash
         run: |
           dmg_path="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
@@ -177,6 +213,7 @@ jobs:
             --wait
           xcrun stapler staple "${dmg_path}"
       - name: Verify signature, notarization, and stapling
+        if: env.MACOS_SIGNING_MODE == 'developer-id'
         shell: bash
         run: |
           set -o pipefail
@@ -190,6 +227,25 @@ jobs:
             xcrun stapler validate "${app_path}"
             xcrun stapler validate "${dmg_path}"
           } 2>&1 | tee "release/verification-macos-${{ matrix.arch }}.txt"
+          shasum -a 256 release/*.dmg release/*.zip > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
+      - name: Verify ad-hoc signature and checksums
+        if: env.MACOS_SIGNING_MODE == 'adhoc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find release -type d -name '*.app' -print -quit)"
+          test -n "${app_path}"
+          {
+            codesign --verify --deep --strict --verbose=2 "${app_path}"
+            codesign --display --verbose=2 "${app_path}"
+          } 2>&1 | tee "release/verification-macos-${{ matrix.arch }}.txt"
+          if spctl --assess --type execute --verbose=2 "${app_path}"; then
+            echo "Gatekeeper assessment passed for the ad-hoc nightly package." \
+              | tee -a "release/verification-macos-${{ matrix.arch }}.txt"
+          else
+            echo "Gatekeeper assessment requires manual approval for this ad-hoc nightly package." \
+              | tee -a "release/verification-macos-${{ matrix.arch }}.txt"
+          fi
           shasum -a 256 release/*.dmg release/*.zip > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
       - uses: actions/attest@v4
         with:
@@ -450,7 +506,11 @@ jobs:
             -name 'aldunis-code-nightly.json' \
           \) -print | sort)
           test "${#assets[@]}" -gt 0
-          notes=$'Opt-in nightly build with signed packages and nightly update metadata. It does not promote a Tenkai channel.\n\nSource commit: '"${SOURCE_REF}"
+          macos_note="macOS packages use Developer ID signing and notarization."
+          if grep -R -q 'Signature=adhoc' release/verification-macos-*.txt; then
+            macos_note="macOS packages use ad-hoc signing; first launch requires manual Gatekeeper approval."
+          fi
+          notes=$'Opt-in nightly build with signed packages and nightly update metadata. It does not promote a Tenkai channel.\n\n'"${macos_note}"$'\n\nSource commit: '"${SOURCE_REF}"
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \

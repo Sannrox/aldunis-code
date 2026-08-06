@@ -55,7 +55,8 @@ protected secret or hardware-backed signing service and are unavailable to
 pull-request builds.
 Every artifact receives a SHA-256 checksum and a signed SLSA provenance
 attestation tied to the source commit and workflow identity. macOS artifacts
-must pass `codesign`, Gatekeeper assessment, notarization, and stapling;
+with Developer ID credentials must pass `codesign`, Gatekeeper assessment,
+notarization, and stapling;
 Windows artifacts must pass signature verification on a clean VM.
 
 The repository-side evidence producer is
@@ -75,13 +76,19 @@ remain inputs to the Tenkai-owned release record:
 
 | Job | Protected environment | Evidence |
 | --- | --- | --- |
-| macOS Intel and Apple silicon | `desktop-macos-signing` | signed and notarized DMG and update ZIP, SHA-256 checksums, `codesign`, Gatekeeper, and stapling results, GitHub artifact attestation |
+| macOS Intel and Apple silicon | `desktop-macos-signing` | Developer ID-signed and notarized DMG and update ZIP when Apple credentials are configured; otherwise ad-hoc-signed packages with `codesign` and checksum evidence, plus GitHub artifact attestation |
 | Windows x64 | `desktop-windows-signing` | signed NSIS installer, SHA-256 checksum, Authenticode result and signer subject, GitHub artifact attestation |
 | Linux x64 | none | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations |
 
-Nightly packages use the same signing, notarization, checksum, and attestation
-checks as stable packages. A missing protected signing environment therefore
-fails the nightly workflow rather than producing a weaker public artifact.
+Nightly packages use the same checksum and attestation checks as stable
+packages. The macOS job follows the Bugyo fallback: complete Apple credentials
+enable Developer ID signing and notarization; missing or incomplete credentials
+select an explicit ad-hoc identity and skip notarization and stapling. Ad-hoc
+packages remain identifiable through their verification evidence and are not
+sufficient for Tenkai production promotion. A user installing an ad-hoc
+nightly on macOS must approve the unidentified developer in Gatekeeper on first
+launch (for example, Control-click the app, choose Open, and confirm); this is
+not required once Developer ID signing and notarization are configured.
 
 Repository administrators must configure tag protection and require reviewers
 on both signing environments. The workflow expects these environment secrets:
