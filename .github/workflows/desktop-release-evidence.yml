@@ -292,7 +292,9 @@ jobs:
         run: npm version --no-git-tag-version $env:PACKAGE_VERSION
       - run: npm run build
       - name: Build signed installer
-        run: npx electron-builder --win nsis --x64 --publish never -c.publish.channel="$env:UPDATE_CHANNEL" -c.forceCodeSigning=true
+        # PowerShell treats -c.foo=bar as the short -c config-path option.
+        # Use electron-builder's long-form dot notation for native Windows.
+        run: npx electron-builder --win nsis --x64 --publish never --config.publish.channel="$env:UPDATE_CHANNEL" --config.forceCodeSigning=true
       - name: Verify Authenticode and checksums
         shell: pwsh
         run: |
