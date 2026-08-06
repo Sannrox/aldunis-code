@@ -9,7 +9,7 @@ artifacts are safe to distribute.
 | Platform | Minimum | Package | Trust requirement |
 | --- | --- | --- | --- |
 | macOS | 13 (Ventura), Intel and Apple silicon | signed `.dmg` | Developer ID signing, hardened runtime, notarization, and stapling |
-| Windows | Windows 10 22H2, x64 | signed NSIS installer | organization-backed Authenticode signing |
+| Windows | Windows 10 22H2, x64 | signed NSIS installer for stable; unsigned fallback may be used for nightly | organization-backed Authenticode signing for stable |
 | Linux | Ubuntu 22.04 LTS or equivalent, x64 | AppImage and `.deb` | checksums and signed release provenance |
 
 Wayland is supported through Electron where available; X11 remains the
@@ -56,8 +56,12 @@ pull-request builds.
 Every artifact receives a SHA-256 checksum and a signed SLSA provenance
 attestation tied to the source commit and workflow identity. macOS artifacts
 with Developer ID credentials must pass `codesign`, Gatekeeper assessment,
-notarization, and stapling;
-Windows artifacts must pass signature verification on a clean VM.
+notarization, and stapling; stable Windows artifacts must pass Authenticode
+signature verification on a clean VM. When Windows credentials are absent, the
+nightly job explicitly builds an unsigned installer, records `NotSigned`
+verification evidence, and keeps stable publication fail-closed. Unsigned
+Windows nightlies are not suitable for Tenkai production promotion and may
+trigger Windows SmartScreen or an unknown-publisher warning.
 
 The repository-side evidence producer is
 `.github/workflows/desktop-release-evidence.yml`. Stable runs happen only for a
@@ -77,13 +81,17 @@ remain inputs to the Tenkai-owned release record:
 | Job | Protected environment | Evidence |
 | --- | --- | --- |
 | macOS Intel and Apple silicon | `desktop-macos-signing` | Developer ID-signed and notarized DMG and update ZIP when Apple credentials are configured; otherwise ad-hoc-signed packages with `codesign` and checksum evidence, plus GitHub artifact attestation |
-| Windows x64 | `desktop-windows-signing` | signed NSIS installer, SHA-256 checksum, Authenticode result and signer subject, GitHub artifact attestation |
+| Windows x64 | `desktop-windows-signing` | signed NSIS installer when credentials are configured; unsigned nightly fallback records `NotSigned`, SHA-256 checksum, and GitHub artifact attestation |
 | Linux x64 | none | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations |
 
 Nightly packages use the same checksum and attestation checks as stable
 packages. The macOS job follows the Bugyo fallback: complete Apple credentials
 enable Developer ID signing and notarization; missing or incomplete credentials
-select an explicit ad-hoc identity and skip notarization and stapling. Ad-hoc
+select an explicit ad-hoc identity and skip notarization and stapling. The
+Windows job follows the same nightly-only policy: complete Authenticode
+credentials enable signing, while missing or incomplete credentials produce an
+explicitly unsigned nightly installer. Stable jobs fail before packaging when
+their signing credentials are incomplete. Ad-hoc
 packages remain identifiable through their verification evidence and are not
 sufficient for Tenkai production promotion. A user installing an ad-hoc
 nightly on macOS must approve the unidentified developer in Gatekeeper on first
@@ -97,7 +105,8 @@ on both signing environments. The workflow expects these environment secrets:
   `MACOS_CSC_KEY_PASSWORD`, `APPLE_API_KEY_P8`, `APPLE_API_KEY_ID`,
   `APPLE_API_ISSUER`, and `APPLE_TEAM_ID`.
 - `desktop-windows-signing`: `WINDOWS_CSC_LINK` and
-  `WINDOWS_CSC_KEY_PASSWORD`.
+  `WINDOWS_CSC_KEY_PASSWORD` (required for stable signing; optional for the
+  unsigned nightly fallback).
 
 Never add those values to repository variables, pull-request workflows,
 artifacts, logs, or documentation. A release operator links the successful
@@ -140,8 +149,10 @@ immutable. If a signing key or release workflow is compromised:
 4. Rotate signing and update-metadata keys through reviewed recovery access.
 5. Rebuild from a verified commit on clean runners and publish a higher version.
 
-The repository can now produce signed native build evidence for stable tags and
-nightly releases, but stable public promotion remains fail-closed until
-a credentialed tag run succeeds and its install, upgrade, rollback, and
-clean-uninstall evidence is attached to the Tenkai release candidate. Local
-non-release packages remain dogfooding artifacts, not public releases.
+The repository can produce signed native build evidence for stable tags and
+credentialed nightlies. It can also publish an explicitly unsigned Windows
+nightly when the Windows signing credentials are unavailable. Stable public
+promotion remains fail-closed until a credentialed tag run succeeds and its
+install, upgrade, rollback, and clean-uninstall evidence is attached to the
+Tenkai release candidate. Local non-release packages remain dogfooding
+artifacts, not public releases.

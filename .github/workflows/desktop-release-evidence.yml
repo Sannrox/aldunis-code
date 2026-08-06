@@ -274,9 +274,10 @@ jobs:
       attestations: write
     env:
       PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
       UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
-      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+      WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -291,10 +292,39 @@ jobs:
         shell: pwsh
         run: npm version --no-git-tag-version $env:PACKAGE_VERSION
       - run: npm run build
-      - name: Build signed installer
+      - name: Configure Windows signing
+        shell: pwsh
+        run: |
+          $hasSigningCredentials = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_LINK) -and `
+            -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_KEY_PASSWORD)
+          if ($hasSigningCredentials) {
+            "WINDOWS_SIGNING_MODE=signed" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CSC_LINK=$env:WINDOWS_CSC_LINK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CSC_KEY_PASSWORD=$env:WINDOWS_CSC_KEY_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows Authenticode signing enabled."
+          } elseif ($env:RELEASE_CHANNEL -eq "nightly") {
+            "WINDOWS_SIGNING_MODE=unsigned-nightly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows signing credentials are incomplete; building an unsigned nightly package."
+          } else {
+            throw "Stable Windows releases require complete Authenticode signing credentials."
+          }
+      - name: Build Windows installer
         # PowerShell treats -c.foo=bar as the short -c config-path option.
-        # Use electron-builder's long-form dot notation for native Windows.
-        run: npx electron-builder --win nsis --x64 --publish never --config.publish.channel="$env:UPDATE_CHANNEL" --config.forceCodeSigning=true
+        # Use electron-builder's long-form dotted configuration for native Windows.
+        shell: pwsh
+        run: |
+          $builderArgs = @(
+            "--win",
+            "nsis",
+            "--x64",
+            "--publish",
+            "never",
+            "--config.publish.channel=$env:UPDATE_CHANNEL"
+          )
+          if ($env:WINDOWS_SIGNING_MODE -eq "signed") {
+            $builderArgs += "--config.forceCodeSigning=true"
+          }
+          npx electron-builder @builderArgs
       - name: Verify Authenticode and checksums
         shell: pwsh
         run: |
@@ -304,10 +334,17 @@ jobs:
           }
           $evidence = foreach ($installer in $installers) {
             $signature = Get-AuthenticodeSignature $installer.FullName
-            if ($signature.Status -ne "Valid") {
-              throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
+            if ($env:WINDOWS_SIGNING_MODE -eq "signed") {
+              if ($signature.Status -ne "Valid") {
+                throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
+              }
+              "$($installer.Name): $($signature.Status); $($signature.SignerCertificate.Subject)"
+            } else {
+              if ($signature.Status -ne "NotSigned") {
+                throw "Expected an unsigned nightly Windows installer, got Authenticode status $($signature.Status) for $($installer.Name)"
+              }
+              "Unsigned nightly package: $($installer.Name); Authenticode status=$($signature.Status)"
             }
-            "$($installer.Name): $($signature.Status); $($signature.SignerCertificate.Subject)"
           }
           $evidence | Tee-Object -FilePath release/verification-windows-x64.txt
           $checksums = foreach ($installer in $installers) {
@@ -512,7 +549,11 @@ jobs:
           if grep -R -q 'Signature=adhoc' release/verification-macos-*.txt; then
             macos_note="macOS packages use ad-hoc signing; first launch requires manual Gatekeeper approval."
           fi
-          notes=$'Opt-in nightly build with signed packages and nightly update metadata. It does not promote a Tenkai channel.\n\n'"${macos_note}"$'\n\nSource commit: '"${SOURCE_REF}"
+          windows_note="Windows packages use Authenticode signing."
+          if grep -R -q 'Unsigned nightly package' release/verification-windows-x64.txt; then
+            windows_note="Windows nightly package is unsigned because Authenticode credentials were not configured; stable releases remain fail-closed."
+          fi
+          notes=$'Opt-in nightly build with nightly update metadata. It does not promote a Tenkai channel.\n\n'"${macos_note}"$'\n\n'"${windows_note}"$'\n\nSource commit: '"${SOURCE_REF}"
           if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" "${assets[@]}" \
               --repo "${GITHUB_REPOSITORY}" \

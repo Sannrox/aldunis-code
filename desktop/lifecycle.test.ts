@@ -178,15 +178,23 @@ test("desktop distribution workflow keeps nightly publication separate from stab
   assert.match(workflow, /Verify ad-hoc signature and checksums/);
   assert.match(workflow, /RELEASE_CHANNEL: \$\{\{ needs\.validate\.outputs\.channel \}\}/);
   assert.match(workflow, /Stable macOS releases require complete Developer ID signing/);
-  assert.match(
-    workflow,
-    /--config\.publish\.channel="\$env:UPDATE_CHANNEL" --config\.forceCodeSigning=true/,
-  );
+  assert.match(workflow, /--config\.publish\.channel=\$env:UPDATE_CHANNEL/);
+  assert.match(workflow, /--config\.forceCodeSigning=true/);
+  assert.match(workflow, /WINDOWS_SIGNING_MODE=unsigned-nightly/);
+  assert.match(workflow, /Stable Windows releases require complete Authenticode signing credentials/);
+  assert.match(workflow, /Unsigned nightly package/);
+  assert.match(workflow, /if \(\$env:WINDOWS_SIGNING_MODE -eq "signed"\)/);
   assert.match(workflow, /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/);
   assert.match(workflow, /latest-linux\.yml/);
   assert.match(workflow, /latest\.yml/);
   assert.match(workflow, /merge:desktop-update-manifest/);
   assert.match(workflow, /-name '\*\.zip'/);
+});
+
+test("README documents the unsigned Windows nightly fallback", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /nightly workflow may publish an unsigned\s+Windows installer/);
+  assert.match(readme, /Stable\s+releases remain fail-closed/);
 });
 
 test("desktop packaging config produces channel updater metadata and macOS zip artifacts", async () => {
