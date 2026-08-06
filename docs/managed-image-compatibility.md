@@ -1,6 +1,6 @@
 # Managed image compatibility report
 
-- Status: integrated managed-image build prepared; final publication pending
+- Status: integrated managed-image build and publication workflow
 - Scope: image portion of [Platform #141](https://github.com/Sannrox/aldunis-platform/issues/141)
 - Shikigami build input: `ghcr.io/sannrox/shikigami@sha256:91c9ea4f3ef0c59b91cf57a1cc7b3a849c80ea02d984c6a8db71c9736e966a95`
 - Shikigami revision: `8de00f0d715b1e73573a58f84ccdc157d1f98ca2`
@@ -9,7 +9,11 @@
 
 This report records the smallest safe boundary selected by [Platform #142](https://github.com/Sannrox/aldunis-platform/issues/142): the independently published Shikigami OCI image is a digest-pinned build input to the final managed Code image. The final runtime copies the reviewed `shikigami` executable and continues to invoke it through Code's accepted local-subprocess provider. It does not start a Shikigami service, add a sidecar, or define a network protocol.
 
-The build and restricted smoke check are implemented in this branch. No final integrated Code image has been published from this branch yet, so Platform must not pin the predecessor Code-only image as the managed deployment image.
+The build and restricted smoke check are implemented in the managed-image
+workflow. Every push to the protected `main` branch builds and publishes a
+digest-addressable image after the smoke gate; `code-v*` tags and manual
+dispatch from `main` remain available for explicit releases. Platform must
+consume the recorded immutable digest, not a mutable tag.
 
 ## Contract evidence
 
