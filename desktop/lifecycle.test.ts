@@ -98,6 +98,16 @@ test("desktop build emits the host-owned browser MCP bridge beside the main bund
   assert.match(command, /--outfile=dist-electron\/browser-mcp\.mjs/);
 });
 
+test("desktop CLI build keeps its banner argument portable across shells", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    scripts?: { "build:cli"?: string };
+  };
+  const command = packageJson.scripts?.["build:cli"] ?? "";
+
+  assert.match(command, /--banner:js=\"#!\/usr\/bin\/env node\"/);
+  assert.doesNotMatch(command, /--banner:js='/);
+});
+
 test("shared browser validates webview attachment parameters before guest creation", async () => {
   const source = await readFile(new URL("./shared-browser.ts", import.meta.url), "utf8");
   assert.match(source, /will-attach-webview/);
@@ -155,6 +165,11 @@ test("desktop distribution workflow keeps nightly publication separate from stab
   assert.match(workflow, /publish-nightly:/);
   assert.match(workflow, /nightly\.yml/);
   assert.match(workflow, /-c\.publish\.channel=/);
+  assert.match(workflow, /MACOS_SIGNING_MODE=adhoc/);
+  assert.match(workflow, /-c\.mac\.identity=-/);
+  assert.match(workflow, /Verify ad-hoc signature and checksums/);
+  assert.match(workflow, /RELEASE_CHANNEL: \$\{\{ needs\.validate\.outputs\.channel \}\}/);
+  assert.match(workflow, /Stable macOS releases require complete Developer ID signing/);
   assert.match(workflow, /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/);
   assert.match(workflow, /latest-linux\.yml/);
   assert.match(workflow, /latest\.yml/);
