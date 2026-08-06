@@ -17,8 +17,21 @@ async function fixture() {
   const parent = await mkdtemp(join(tmpdir(), "aldunis-context-"));
   const root = join(parent, "repository");
   await mkdir(join(root, "src"), { recursive: true });
+  await mkdir(join(root, "auth"));
   await writeFile(join(root, "src", "main.ts"), "export const ready = true;\n");
+  await writeFile(join(root, "auth", "login.ts"), "export const login = true;\n");
+  await writeFile(join(root, "auth-token.ts"), "export const authToken = true;\n");
   await writeFile(join(root, ".env"), "TOKEN=secret\n");
+  await writeFile(join(root, "credentials.yaml"), "token: secret\n");
+  await writeFile(join(root, "api-key.yml"), "api_key: secret\n");
+  await writeFile(join(root, "password.conf"), "password=secret\n");
+  await writeFile(join(root, "secret.toml"), "token = \"secret\"\n");
+  await writeFile(join(root, "credentials.json.bak"), "{\"token\":\"secret\"}\n");
+  await writeFile(join(root, "token.env.backup"), "TOKEN=secret\n");
+  await writeFile(join(root, "secret.yaml.old"), "token: secret\n");
+  await writeFile(join(root, "id_ed25519.pub"), "ssh-ed25519 public-key\n");
+  await mkdir(join(root, "data"));
+  await writeFile(join(root, "data", "sekai.sock.gateway-token"), "gateway-secret-token\n");
   await writeFile(join(root, "binary.dat"), Buffer.from([1, 0, 2]));
   await writeFile(join(root, "image.png"), Buffer.from([137, 80, 78, 71]));
   await writeFile(join(root, "oversized.txt"), "x".repeat(64 * 1024 + 1));
@@ -39,6 +52,21 @@ test("file discovery is repository-scoped and hides secret-like names", async ()
   const { root } = await fixture();
   assert.deepEqual(await searchRepositoryFiles(root, "main"), ["src/main.ts"]);
   assert.equal((await searchRepositoryFiles(root, "")).includes(".env"), false);
+  assert.deepEqual(await searchRepositoryFiles(root, "gateway-token"), []);
+  assert.deepEqual(await searchRepositoryFiles(root, "login"), ["auth/login.ts"]);
+  assert.deepEqual(await searchRepositoryFiles(root, "auth-token"), ["auth-token.ts"]);
+  assert.deepEqual(await searchRepositoryFiles(root, "id_ed25519"), ["id_ed25519.pub"]);
+  for (const secretPath of [
+    "credentials.yaml",
+    "api-key.yml",
+    "password.conf",
+    "secret.toml",
+    "credentials.json.bak",
+    "token.env.backup",
+    "secret.yaml.old",
+  ]) {
+    assert.deepEqual(await searchRepositoryFiles(root, secretPath), []);
+  }
 });
 
 test("browsing searches names and bounded text deterministically", async () => {
@@ -53,6 +81,10 @@ test("browsing searches names and bounded text deterministically", async () => {
   ]);
   assert.equal(byContent.files.some(({ path }) => path.startsWith(".")), false);
   assert.equal((await browseRepositoryFiles(root, "target must stay ignored")).files.length, 0);
+  assert.deepEqual((await browseRepositoryFiles(root, "gateway-token")).files, []);
+  assert.deepEqual((await browseRepositoryFiles(root, "login")).files.map(({ path }) => path), ["auth/login.ts"]);
+  assert.deepEqual((await browseRepositoryFiles(root, "auth-token")).files.map(({ path }) => path), ["auth-token.ts"]);
+  assert.deepEqual((await browseRepositoryFiles(root, "credentials")).files, []);
 });
 
 test("content search reports when its byte budget makes results incomplete", async () => {
@@ -81,6 +113,10 @@ test("preview reports text, images, binary, truncation, missing, and symlinks ex
   assert.equal(truncated.attachable, false);
   assert.match(truncated.message ?? "", /truncated/);
   await assert.rejects(() => previewRepositoryFile(root, "missing.ts"), /missing or was deleted/);
+  await assert.rejects(
+    () => previewRepositoryFile(root, "data/sekai.sock.gateway-token"),
+    /secret-like/,
+  );
   await writeFile(join(parent, "outside.txt"), "outside");
   await symlink(join(parent, "outside.txt"), join(root, "linked-preview.txt"));
   await assert.rejects(() => previewRepositoryFile(root, "linked-preview.txt"), /Symlinks/);
@@ -88,9 +124,16 @@ test("preview reports text, images, binary, truncation, missing, and symlinks ex
 
 test("text and supported images resolve into bounded local context", async () => {
   const { root } = await fixture();
-  const attachments = await resolveContextAttachments(root, ["src/main.ts", "image.png"]);
+  const attachments = await resolveContextAttachments(root, [
+    "src/main.ts",
+    "auth-token.ts",
+    "id_ed25519.pub",
+    "image.png",
+  ]);
   assert.deepEqual(attachments.map(({ path, kind }) => ({ path, kind })), [
     { path: "src/main.ts", kind: "text" },
+    { path: "auth-token.ts", kind: "text" },
+    { path: "id_ed25519.pub", kind: "text" },
     { path: "image.png", kind: "image" },
   ]);
   const prompt = composePrompt("Review this.", attachments);
@@ -149,6 +192,10 @@ test("the repository root is a valid folder pin", async () => {
   );
   assert.equal(
     assembled.entries.some((entry) => entry.path === "image.png"),
+    true,
+  );
+  assert.equal(
+    assembled.entries.some((entry) => entry.path === "auth/login.ts"),
     true,
   );
   assert.equal(
@@ -270,6 +317,21 @@ test("missing, binary, oversized, secret-like, excessive, and escaping inputs fa
   await assert.rejects(() => resolveContextAttachments(root, ["binary.dat"]), /binary/);
   await assert.rejects(() => resolveContextAttachments(root, ["oversized.txt"]), /exceeds/);
   await assert.rejects(() => resolveContextAttachments(root, [".env"]), /secret-like/);
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["data/sekai.sock.gateway-token"]),
+    /secret-like/,
+  );
+  for (const secretPath of [
+    "credentials.yaml",
+    "api-key.yml",
+    "password.conf",
+    "secret.toml",
+    "credentials.json.bak",
+    "token.env.backup",
+    "secret.yaml.old",
+  ]) {
+    await assert.rejects(() => resolveContextAttachments(root, [secretPath]), /secret-like/);
+  }
   await assert.rejects(
     () => resolveContextAttachments(root, Array.from({ length: MAX_CONTEXT_FILES + 1 }, (_, index) => `${index}.ts`)),
     /Attach at most/,
