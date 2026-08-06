@@ -70,6 +70,15 @@ npm run check
 npm run build
 ```
 
+### Desktop release signing
+
+Nightly desktop releases are opt-in prereleases. When Windows Authenticode
+credentials are not configured, the nightly workflow may publish an unsigned
+Windows installer and labels that limitation in the release notes. Stable
+releases remain fail-closed and require signed Windows and macOS packages.
+See [desktop distribution](docs/desktop-distribution.md) for the signing
+requirements and update-channel behavior.
+
 Full install, providers, remote access, and desktop packaging:
 **[docs/getting-started.md](docs/getting-started.md)**
 
