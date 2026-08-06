@@ -532,6 +532,23 @@ test("composer crow chips ellipsize in narrow dual-pane columns", () => {
   assert.match(shell, /\.crow \.cc\s*\{[^}]*max-width:[^}]*text-overflow:\s*ellipsis/s);
 });
 
+test("composer keeps the desktop action row compact", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /@media\s*\(min-width:\s*681px\)\s*\{\s*\.split:not\(\.with-review\)\s*>\s*\.conv:only-child\s+\.crow\s*\{[^}]*flex-wrap:\s*nowrap/s,
+  );
+  assert.match(
+    css,
+    /\.composer-run-settings\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*border:\s*0/s,
+  );
+  assert.match(
+    shell,
+    /\.split:not\(\.with-review\)\s*>\s*\.conv:only-child\s+\.composer-run-settings\s*\{[^}]*flex-basis:\s*0/s,
+  );
+});
+
 test("composer grows within its established desktop height bounds", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");

@@ -3818,7 +3818,6 @@ export function Conversation({
               </svg>
             </button>
             <div className="composer-run-settings" role="group" aria-label="Run settings">
-              <span className="composer-run-settings-label">Run settings</span>
             <div className="composer-provider" ref={providerMenuRef}>
               <button
                 type="button"
@@ -4261,7 +4260,6 @@ export function Conversation({
                   <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
                     <path d="M12 19V5M5 12l7-7 7 7" />
                   </svg>
-                  <span className="send-label">{threadId ? "Send" : "Start"}</span>
                 </button>
               )}
           </div>

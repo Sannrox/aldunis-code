@@ -3037,20 +3037,10 @@ select.ui-input {
   min-width: 0;
   flex: 1 1 auto;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--muted);
-}
-.composer-run-settings-label {
-  flex: 0 0 auto;
-  padding: 0 5px;
-  color: var(--muted-foreground);
-  font: 600 9px var(--font-mono);
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 .composer-run-settings > .composer-provider { min-width: 0; }
 .composer-provider-profile-chip {
