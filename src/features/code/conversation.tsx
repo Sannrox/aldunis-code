@@ -3785,7 +3785,7 @@ export function Conversation({
           {!providerReady && historyRestored && providersLoaded && (
             <div className="context-error" role="status">{providerReadinessMessage}</div>
           )}
-          {contextError && <div className="context-error" role="alert">{contextError}</div>}
+          {contextError && !contextOpen && <div className="context-error" role="alert">{contextError}</div>}
           {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
           <div className="crow">
             <button
