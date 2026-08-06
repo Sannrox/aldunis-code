@@ -182,6 +182,13 @@ test("conversation thread shell supports auto-follow jump control", () => {
   assert.match(shell, /\.thread-follow-jump\s*\{[^}]*position:\s*absolute/s);
 });
 
+test("conversation message copy actions are hover/focus visible and touch accessible", () => {
+  assert.match(shellCss, /\.turn-actions\s*\{[^}]*opacity:0[^}]*transition:opacity \.2s ease/s);
+  assert.match(shellCss, /\.turn:hover \.turn-actions,\.turn:focus-within \.turn-actions\s*\{opacity:1\}/s);
+  assert.match(shellCss, /\.message-copy-button\.is-copied\s*\{color:var\(--emerald\) !important\}/s);
+  assert.match(shellCss, /@media \(any-pointer:coarse\)\{\.turn-actions\{opacity:1\}\}/s);
+});
+
 test("review dock contains overflow; short docks use one scroll stream", () => {
   // Stacked dual-pane left .rv-files ~8px and .review-workspace ~14px when both
   // competed for a ~60px body. Desktop: workspace scrolls; mobile: body scrolls.

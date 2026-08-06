@@ -103,7 +103,10 @@ import {
   type WorkspacePanel,
   type WorkspacePanelDestination,
 } from "../../lib/workspace-panel";
-import { presentAssistantTimeline } from "../../lib/conversation-timeline";
+import {
+  presentAssistantTimeline,
+  type AssistantTimelineBlock,
+} from "../../lib/conversation-timeline";
 import { latestPlanFromEvents } from "../../lib/provider-plan";
 import {
   shouldRefreshAfterRestoredTurn,
@@ -121,6 +124,7 @@ import {
   ContextPackagePanel,
   ContextPackageSummary,
 } from "./context-package";
+import { MessageCopyButton } from "./message-copy-button";
 import {
   defaultWorkspaceMode,
   NEW_CONVERSATION_WORKSPACE_MODES,
@@ -225,6 +229,28 @@ export function appendProviderEvent(current: ProviderEvent[], next: ProviderEven
   }
   if (!replaced) result.push(next);
   return result;
+}
+
+export function assistantTextFromEvents(events: readonly ProviderEvent[]): string {
+  return presentAssistantTimeline([...events])
+    .filter((block): block is Extract<AssistantTimelineBlock, { kind: "text" }> => block.kind === "text")
+    .map((block) => block.text)
+    .join("\n\n");
+}
+
+function TurnCopyAction({
+  text,
+  label,
+}: {
+  text: string;
+  label: string;
+}) {
+  if (!text.trim()) return null;
+  return (
+    <div className="turn-actions">
+      <MessageCopyButton text={text} label={label} />
+    </div>
+  );
 }
 
 export function GovernanceCorrelationSummary({
@@ -2452,11 +2478,7 @@ export function Conversation({
   useEffect(() => {
     if (!latestPlan) setPlanOpen(false);
   }, [latestPlan]);
-  const assistantText = joinAssistantTextChunks(
-    providerEvents
-      .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
-      .map((event) => event.text),
-  );
+  const assistantText = assistantTextFromEvents(providerEvents);
   const thinkingText = joinAssistantTextChunks(
     providerEvents
       .filter((event): event is Extract<ProviderEvent, { kind: "thinking" }> => event.kind === "thinking")
@@ -2981,6 +3003,7 @@ export function Conversation({
               {turn.contextReceipt && (
                 <ContextPackageSummary receipt={turn.contextReceipt} label="Submitted context" />
               )}
+              <TurnCopyAction text={turn.message.text} label="Copy prompt" />
             </div>
             <div className="turn">
               <div className="role">
@@ -3009,6 +3032,7 @@ export function Conversation({
               {(turn.state === "interrupted" || turn.state === "cancelled") && (
                 <p className="provider-state">{providerLabel} cancelled</p>
               )}
+              <TurnCopyAction text={assistantTextFromEvents(turn.events)} label="Copy answer" />
             </div>
           </React.Fragment>
         ))}
@@ -3023,6 +3047,7 @@ export function Conversation({
             {currentContextReceipt && (
               <ContextPackageSummary receipt={currentContextReceipt} label="Submitted context" />
             )}
+            <TurnCopyAction text={latestMessage.text} label="Copy prompt" />
           </div>
         )}
         {showAssistantTurn && (
@@ -3054,6 +3079,7 @@ export function Conversation({
                 .map((correlation) => (
                   <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
                 ))}
+              {!runActive && <TurnCopyAction text={assistantText} label="Copy answer" />}
               {approvals.map((approval) => (
                 <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`${pane} pane approval required: ${approval.scope.summary}`}>
                   <header>

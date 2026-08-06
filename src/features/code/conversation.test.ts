@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendProviderEvent,
+  assistantTextFromEvents,
   filterSelectableWorktrees,
   formatHostLabel,
   providerProfileDisplayName,
@@ -58,6 +59,28 @@ test("provider browser observations replace the prior transient frame", () => {
     second,
     { kind: "assistant_text", text: "after" },
   ]);
+});
+
+test("assistantTextFromEvents preserves answer blocks and ignores non-answer events", () => {
+  assert.equal(
+    assistantTextFromEvents([
+      { kind: "assistant_text", text: "Before" },
+      { kind: "tool_started", toolCallId: "call-1", name: "Read" },
+      { kind: "assistant_text", text: "After" },
+      { kind: "thinking", text: "private" },
+    ]),
+    "Before\n\nAfter",
+  );
+});
+
+test("assistantTextFromEvents still joins chunks within one answer block", () => {
+  assert.equal(
+    assistantTextFromEvents([
+      { kind: "assistant_text", text: "Before" },
+      { kind: "assistant_text", text: "## After" },
+    ]),
+    "Before\n## After",
+  );
 });
 
 test("worktree filtering groups branch search without hiding the selected worktree", () => {
