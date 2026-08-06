@@ -23,6 +23,13 @@ const IMAGE_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 const SECRET_NAMES = /(^|\/)(\.env(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)$|credentials(?:\.json)?$|.*\.(?:key|pem|p12|pfx))$/i;
+const SECRET_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)(?:$|[-_.](?:json|txt|data|db|env|sock|token|secret|key|pem|p12|pfx))/i;
+
+function isSecretLikePath(path: string): boolean {
+  const fileName = path.split("/").at(-1) ?? path;
+  return SECRET_NAMES.test(path)
+    || SECRET_NAME_PART.test(fileName);
+}
 
 export interface ContextAttachment {
   path: string;
@@ -99,7 +106,7 @@ function relativeFilePath(worktree: string, input: string): string {
 }
 
 function assertNotSecretLike(path: string): void {
-  if (SECRET_NAMES.test(path)) {
+  if (isSecretLikePath(path)) {
     throw new RepositoryError(`${path} looks secret-like and cannot be attached.`, 403);
   }
 }
@@ -126,7 +133,7 @@ async function repositoryPaths(worktree: string, signal?: AbortSignal): Promise<
   return stdout
     .split("\0")
     .filter(Boolean)
-    .filter((path) => !isHidden(path) && !SECRET_NAMES.test(path))
+    .filter((path) => !isHidden(path) && !isSecretLikePath(path))
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -182,7 +189,7 @@ export async function assembleContextPackage(
   const entries: ContextReceiptEntry[] = [];
 
   for (const pin of uniquePins) {
-    if (pin.path !== "." && (SECRET_NAMES.test(pin.path) || isHidden(pin.path))) {
+    if (pin.path !== "." && (isSecretLikePath(pin.path) || isHidden(pin.path))) {
       entries.push(omittedEntry(pin.path, pin.kind === "folder" ? "aldunis_folder" : "aldunis_attachment", "ignored or secret-like path"));
       continue;
     }
