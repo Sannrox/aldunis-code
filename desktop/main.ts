@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -194,7 +194,7 @@ if (!gotSingleInstanceLock) {
       };
     });
     desktopUpdater = new DesktopUpdater({
-      engine: autoUpdater as unknown as DesktopUpdaterEngine,
+      engine: electronUpdater.autoUpdater as unknown as DesktopUpdaterEngine,
       currentVersion: app.getVersion(),
       channel: resolveDesktopUpdateChannel(app.getVersion()),
       platform: process.platform,
@@ -213,7 +213,7 @@ if (!gotSingleInstanceLock) {
           window.webContents.send(DESKTOP_UPDATE_STATE_CHANNEL, snapshot);
         }
       },
-      prepareForInstall,
+      prepareForInstall: prepareForUpdate,
     });
     ipcMain.removeHandler(CHOOSE_DIRECTORY_CHANNEL);
     ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
