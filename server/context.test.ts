@@ -164,6 +164,10 @@ test("the repository root is a valid folder pin", async () => {
     true,
   );
   assert.equal(
+    assembled.entries.some((entry) => entry.path === "auth/login.ts"),
+    true,
+  );
+  assert.equal(
     assembled.attachments.some((attachment) => attachment.path === "AGENTS.md"),
     false,
   );
