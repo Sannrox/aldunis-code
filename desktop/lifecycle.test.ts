@@ -76,6 +76,14 @@ test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle"
   assert.match(mainProcessBuild ?? "", /--external:@iarna\/toml/);
 });
 
+test("desktop main adapts the CommonJS updater and wires update shutdown", async () => {
+  const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+
+  assert.match(source, /import electronUpdater from "electron-updater";/);
+  assert.match(source, /engine: electronUpdater\.autoUpdater as unknown as DesktopUpdaterEngine/);
+  assert.match(source, /prepareForInstall: prepareForUpdate,/);
+});
+
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
     scripts?: { "build:desktop-main"?: string };
