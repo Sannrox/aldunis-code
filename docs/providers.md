@@ -35,6 +35,12 @@ it on the next list. Installing or updating an adapter creates
 `default:adapter:<package-id>` with required/sensitive env slots from the
 manifest (values remain empty until you set them).
 
+The Electron desktop hydrates a bounded, non-secret environment from the
+user's login shell before starting the local host. This keeps provider
+discovery and provider subprocesses aligned with the CLI environment when the
+desktop app is launched outside a shell. A profile may still use an absolute
+binary path when a provider is installed in a non-standard location.
+
 Sensitive environment values live in the host secret store (write-only in the UI).
 
 ### Composer commands, skills, and files

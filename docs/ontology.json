@@ -244,6 +244,10 @@
     {
       "name": "DesktopUpdateChannel",
       "description": "The packaged desktop update stream selected by the application version: stable releases use the latest feed, while dated nightly releases use the nightly prerelease feed."
+    },
+    {
+      "name": "DesktopShellEnvironment",
+      "description": "The Electron desktop startup boundary that imports a bounded PATH and selected non-secret session environment from the user's login shell before local provider discovery and subprocess launch; it never exposes those values to the renderer or changes provider credential ownership."
     }
   ],
   "relations": [
@@ -602,6 +606,16 @@
       "description": "The packaged updater selects exactly one stable or nightly feed from the installed desktop release identity without switching channels or granting downgrade authority.",
       "domain": "AldunisDesktopAutoUpdater",
       "range": "DesktopUpdateChannel",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "prepares_provider_discovery",
+      "description": "Desktop startup prepares the inherited process environment used by provider readiness probes and provider subprocesses without moving provider-specific credentials or authority into the desktop environment manager.",
+      "domain": "DesktopShellEnvironment",
+      "range": "ProviderDiscovery",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1165,6 +1179,18 @@
       "subject": "exports_delivery_correlation",
       "source": "Aldunis Code local release-delivery contract",
       "locator": "server/release-delivery-workflow.ts#receipt",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopShellEnvironment",
+      "source": "Aldunis Code desktop provider-process startup contract",
+      "locator": "desktop/shell-environment.ts; desktop/main.ts#app.whenReady",
+      "confidence": 1.0
+    },
+    {
+      "subject": "prepares_provider_discovery",
+      "source": "Aldunis Code desktop provider-process startup contract",
+      "locator": "desktop/main.ts#app.whenReady; server/profiles.ts#probeRuntime",
       "confidence": 1.0
     }
   ]

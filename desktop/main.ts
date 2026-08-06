@@ -39,6 +39,7 @@ import {
   type DesktopCapabilities,
 } from "./channels.ts";
 import { SharedBrowserManager } from "./shared-browser.ts";
+import { hydrateDesktopProcessEnvironment } from "./shell-environment.ts";
 import { DesktopUpdater, resolveDesktopUpdateChannel, type DesktopUpdaterEngine } from "./updater.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
 
@@ -106,6 +107,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    await hydrateDesktopProcessEnvironment();
     process.env.ALDUNIS_CODE_STATE_DIR = join(app.getPath("userData"), "state");
     app.setAppLogsPath();
     const state = new LocalStateStore();

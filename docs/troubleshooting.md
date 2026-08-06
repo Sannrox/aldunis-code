@@ -22,6 +22,11 @@ The host defaults to loopback. Do not pass a public `--host` unless you intend
 
 ## Provider not listed or not ready
 
+The desktop app imports a bounded `PATH` from the user's login shell before
+provider discovery starts. Restart the desktop app after changing shell
+configuration. If the provider is installed outside the shell's `PATH`, set
+an absolute binary path in Settings → Provider profiles.
+
 1. Confirm the binary is on `PATH` (`claude`, `codex`, `shikigami`, `kiro-cli`,
    `grok`, `opencode`).
 2. Read the composer placeholder and empty-state detail — discovery surfaces a
