@@ -12,6 +12,8 @@
     "vite.config.ts",
     "desktop/lifecycle.ts",
     "desktop/lifecycle.test.ts",
+    "desktop/shell-environment.ts",
+    "desktop/shell-environment.test.ts",
     "desktop/window-chrome.ts",
     "scripts/verify-desktop-release-tag.ts",
     "scripts/preview-version.ts"
