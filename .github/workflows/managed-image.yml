@@ -3,6 +3,8 @@ name: Publish managed Code image
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "code-v*"
 
@@ -18,6 +20,7 @@ env:
 
 jobs:
   smoke:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     name: Smoke managed Code image
     runs-on: ubuntu-latest
     permissions:
@@ -57,6 +60,7 @@ jobs:
         run: bash scripts/managed-image-smoke.sh aldunis-code:managed-smoke "$SHIKIGAMI_IMAGE" "$SHIKIGAMI_REVISION"
 
   publish:
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     name: Publish linux/amd64 image
     needs: smoke
     runs-on: ubuntu-latest
@@ -87,7 +91,6 @@ jobs:
           tags: |
             type=sha,prefix=sha-
             type=ref,event=tag
-            type=raw,value=managed-latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push image
         id: image
@@ -107,6 +110,8 @@ jobs:
             SHIKIGAMI_REVISION=${{ env.SHIKIGAMI_REVISION }}
           provenance: mode=max
           sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Attest image provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
