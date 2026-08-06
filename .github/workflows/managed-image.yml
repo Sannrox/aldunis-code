@@ -126,3 +126,82 @@ jobs:
         run: |
           printf 'Image: %s@%s\n' "$IMAGE_NAME" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
           printf 'Platform must consume the digest above and set the matching Code revision label.\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Admit and roll out the staging Catalog release
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          CATALOG_API_URL: ${{ vars.ALDUNIS_CATALOG_API_URL }}
+          CATALOG_PUBLISH_TOKEN: ${{ secrets.ALDUNIS_CATALOG_PUBLISH_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SOURCE_REVISION: ${{ github.sha }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+          test -n "$CATALOG_API_URL" || {
+            echo "ALDUNIS_CATALOG_API_URL repository variable is required" >&2
+            exit 1
+          }
+          test -n "$CATALOG_PUBLISH_TOKEN" || {
+            echo "ALDUNIS_CATALOG_PUBLISH_TOKEN repository secret is required" >&2
+            exit 1
+          }
+          case "$CATALOG_API_URL" in
+            https://*) ;;
+            *) echo "ALDUNIS_CATALOG_API_URL must use HTTPS" >&2; exit 1 ;;
+          esac
+          CATALOG_API_URL="${CATALOG_API_URL%/}"
+          printf '%s\n' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
+            echo "published image digest is not immutable" >&2
+            exit 1
+          }
+          printf '%s\n' "$SOURCE_REVISION" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "source revision is not a full Git revision" >&2
+            exit 1
+          }
+          catalog_image="${IMAGE_NAME,,}"
+          test "$catalog_image" = 'ghcr.io/sannrox/aldunis-code' || {
+            echo "managed Code image is not the approved GHCR repository" >&2
+            exit 1
+          }
+
+          release_id="code-$SOURCE_REVISION"
+          publish_payload="$(jq -cn \
+            --arg release_id "$release_id" \
+            --arg image "$catalog_image@$IMAGE_DIGEST" \
+            --arg revision "$SOURCE_REVISION" \
+            '{release_id: $release_id, image: $image, revision: $revision, channel: "staging"}')"
+          publish_response="$(mktemp)"
+          rollout_response="$(mktemp)"
+          cleanup() {
+            rm -f "$publish_response" "$rollout_response"
+          }
+          trap cleanup EXIT
+
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 2 \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $CATALOG_PUBLISH_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --header "X-Request-ID: github-code-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --data "$publish_payload" \
+            "$CATALOG_API_URL/code/publish" > "$publish_response"
+
+          test "$(jq -r '.published // false' "$publish_response")" = true
+          catalog_release_id="$(jq -er '.catalog_release_id' "$publish_response")"
+          jq -e '(.catalog_release_id | type) == "string" and (.manifest_digest | startswith("sha256:"))' \
+            "$publish_response" >/dev/null
+
+          rollout_payload="$(jq -cn --arg release_id "$catalog_release_id" '{release_id: $release_id}')"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-delay 2 \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $CATALOG_PUBLISH_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --header "X-Request-ID: github-code-rollout-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --data "$rollout_payload" \
+            "$CATALOG_API_URL/code/rollout" > "$rollout_response"
+
+          jq -e '.operation.state == "promoted" or .operation.state == "succeeded"' \
+            "$rollout_response" >/dev/null
+          {
+            printf 'Catalog release: %s\n' "$catalog_release_id"
+            printf 'Tenkai rollout requested for: %s\n' "$release_id"
+          } >> "$GITHUB_STEP_SUMMARY"

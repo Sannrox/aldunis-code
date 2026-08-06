@@ -11,9 +11,17 @@ This report records the smallest safe boundary selected by [Platform #142](https
 
 The build and restricted smoke check are implemented in the managed-image
 workflow. Every push to the protected `main` branch builds and publishes a
-digest-addressable image after the smoke gate; `code-v*` tags and manual
-dispatch from `main` remain available for explicit releases. Platform must
-consume the recorded immutable digest, not a mutable tag.
+digest-addressable image after the smoke gate, then admits that exact digest
+to the staging Aldunis Catalog and requests a Tenkai rollout. `code-v*` tags
+and manual dispatch from `main` remain available for explicit image
+publication; tags do not auto-deploy. Platform must consume the recorded
+immutable digest, not a mutable tag.
+
+The staging handoff requires the repository variable
+`ALDUNIS_CATALOG_API_URL` (the HTTPS Aldunis `/service-status/v1/tenkai`
+prefix) and the repository secret `ALDUNIS_CATALOG_PUBLISH_TOKEN`. The token
+is tenant-scoped and is used only for the machine-only publish and rollout
+routes. It is never written to the image, workflow artifact, or browser.
 
 ## Contract evidence
 
@@ -76,6 +84,10 @@ The Chisei managed-plane follow-up was merged as [Chisei #488](https://github.co
 2. Build the Code web application from a digest-pinned Node 22 Linux base, then copy the runtime packages, `dist`, server source, runtime-imported source modules, package metadata, contracts, vendored SDK package, provider adapters, and `git` into the final image.
 3. Copy `/usr/local/bin/shikigami` from the pinned build stage and label the final image with the exact Shikigami image reference and source revision.
 4. Build a `linux/amd64` smoke image and run the embedded CLI with network disabled, a read-only root, dropped capabilities, `no-new-privileges`, and resource limits. Only a passing smoke job can publish the managed image.
-5. Push the final image only to GHCR and record its immutable manifest digest for Platform to validate with its Compose configuration and managed health/smoke checks.
+5. Push the final image only to GHCR, record its immutable manifest digest,
+   and hand that exact digest to the Catalog/Tenkai release bridge. The
+   bridge admits the Catalog release before requesting promotion; the host
+   runtime remains responsible for the Plan, Docker replacement, health gate,
+   rollback, and suppression evidence.
 
 This composition preserves the accepted Code local-subprocess provider and keeps Shikigami's governance, workspace, permission, and token delivery inside that existing provider boundary. A separate runtime service remains out of scope.
