@@ -170,6 +170,10 @@ test("desktop distribution workflow keeps nightly publication separate from stab
   assert.match(workflow, /Verify ad-hoc signature and checksums/);
   assert.match(workflow, /RELEASE_CHANNEL: \$\{\{ needs\.validate\.outputs\.channel \}\}/);
   assert.match(workflow, /Stable macOS releases require complete Developer ID signing/);
+  assert.match(
+    workflow,
+    /--config\.publish\.channel="\$env:UPDATE_CHANNEL" --config\.forceCodeSigning=true/,
+  );
   assert.match(workflow, /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/);
   assert.match(workflow, /latest-linux\.yml/);
   assert.match(workflow, /latest\.yml/);
