@@ -22,12 +22,14 @@ const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".webp": "image/webp",
 };
-const SECRET_NAMES = /(^|\/)(\.env(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)$|credentials(?:\.json)?$|.*\.(?:key|pem|p12|pfx))$/i;
-const SECRET_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)(?:$|[-_.](?:json|txt|data|db|env|sock|token|secret|key|pem|p12|pfx))/i;
+const SECRET_NAMES = /(^|\/)(?:\.env(?:\.[^/]*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|credentials(?:\.json)?(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|[^/]+\.(?:key|pem|p12|pfx)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?)$/i;
+const SECRET_CONFIG_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)\.(?:json|txt|data|db|env|sock|yaml|yml|conf|config|toml|ini|cfg|properties)(?:$|[-_.])/i;
+const SECRET_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)(?:$|[-_.](?:token|secret|key|pem|p12|pfx))$/i;
 
 function isSecretLikePath(path: string): boolean {
   const fileName = path.split("/").at(-1) ?? path;
   return SECRET_NAMES.test(path)
+    || SECRET_CONFIG_NAME_PART.test(fileName)
     || SECRET_NAME_PART.test(fileName);
 }
 
