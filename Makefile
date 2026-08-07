@@ -25,7 +25,3 @@ test:
 .PHONY: test-integration
 test-integration:
 	bash ./scripts/make-targets/test-integration.sh $(WHAT)
-
-.PHONY: coverage
-coverage:
-	bash ./scripts/make-targets/coverage.sh
