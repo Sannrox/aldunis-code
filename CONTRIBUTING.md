@@ -43,31 +43,28 @@ explicitly enable [remote mode](docs/remote-workbench.md).
 
 ### Useful scripts
 
-| Script                    | Purpose                                                                      |
-| ------------------------- | ---------------------------------------------------------------------------- |
-| `npm run host`            | Local API / provider host                                                    |
-| `npm run cli -- --help`   | Inspect the structured host CLI                                              |
-| `npm run dev`             | Vite UI on 127.0.0.1:4174                                                    |
-| `npm run wlan`            | Authenticated private-WLAN host with HTTPS pairing                           |
-| `npm run ontology:sync`   | Rebuild the ignored project-local Sekai database from `docs/ontology.json`   |
-| `npm run ontology:check`  | Verify the project-local Sekai database matches `docs/ontology.json`         |
-| `make validate`           | Formatting, lint, whitespace, and TypeScript validation                      |
-| `make test`               | Full deterministic test suite                                                |
-| `make test-integration`   | Cross-process, HTTP, provider, persistence, and packaging fixtures           |
-| `make coverage`           | c8 coverage report for the affected test tier                                |
-| `make update`             | Rebuild the ignored project-local ontology database                          |
-| `make all`                | Build web, desktop, and CLI artifacts                                        |
-| `npm test`                | Direct unit test implementation                                              |
-| `npm run test:affected`   | Run the unit tier when runtime/build files changed; emit a JSON result       |
-| `npm run coverage`        | Run the affected test tier with a c8 coverage report                         |
-| `npm run format:check`    | Check changed Prettier-supported files                                       |
-| `npm run lint:changed`    | Lint changed JavaScript and TypeScript files with ESLint                     |
-| `npm run validate`        | Format, lint, and whitespace validation                                      |
-| `npm run verify`          | The CI verification command: validate, typecheck, tests, coverage, and build |
-| `npm run check`           | TypeScript project build check                                               |
-| `npm run build`           | Web + desktop main bundles                                                   |
-| `npm run desktop`         | Build and run the local Electron shell                                       |
-| `npm run package:desktop` | Build non-release local test packages                                        |
+| Script                    | Purpose                                                                    |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `npm run host`            | Local API / provider host                                                  |
+| `npm run cli -- --help`   | Inspect the structured host CLI                                            |
+| `npm run dev`             | Vite UI on 127.0.0.1:4174                                                  |
+| `npm run wlan`            | Authenticated private-WLAN host with HTTPS pairing                         |
+| `npm run ontology:sync`   | Rebuild the ignored project-local Sekai database from `docs/ontology.json` |
+| `npm run ontology:check`  | Verify the project-local Sekai database matches `docs/ontology.json`       |
+| `make validate`           | Formatting, lint, whitespace, and TypeScript validation                    |
+| `make test`               | Full deterministic test suite                                              |
+| `make test-integration`   | Cross-process, HTTP, provider, persistence, and packaging fixtures         |
+| `make update`             | Rebuild the ignored project-local ontology database                        |
+| `make all`                | Build web, desktop, and CLI artifacts                                      |
+| `npm test`                | Direct unit test implementation                                            |
+| `npm run format:check`    | Check changed Prettier-supported files                                     |
+| `npm run lint:changed`    | Lint changed JavaScript and TypeScript files with ESLint                   |
+| `npm run validate`        | Format, lint, and whitespace validation                                    |
+| `npm run verify`          | The CI verification command: validate, typecheck, tests, and build         |
+| `npm run check`           | TypeScript project build check                                             |
+| `npm run build`           | Web + desktop main bundles                                                 |
+| `npm run desktop`         | Build and run the local Electron shell                                     |
+| `npm run package:desktop` | Build non-release local test packages                                      |
 
 ### Local Sekai ontology
 

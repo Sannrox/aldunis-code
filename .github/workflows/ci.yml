@@ -25,5 +25,4 @@ jobs:
       - run: make validate
       - run: make test
       - run: make test-integration
-      - run: make coverage
       - run: make all
