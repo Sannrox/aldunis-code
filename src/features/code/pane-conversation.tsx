@@ -1,10 +1,15 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
-import type { RepositoryMetadata, ConversationSummary, ClaudeProfile, ChangedFile, ProviderId } from "../../types";
+import React, { useEffect, useState } from "react";
+import type {
+  RepositoryMetadata,
+  ConversationSummary,
+  ClaudeProfile,
+  ChangedFile,
+  ProviderId,
+} from "../../types";
 import type { WorkspacePanel } from "../../lib/workspace-panel";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import type { ChangesPanelMode } from "../changes/changes-panel";
 import { Conversation } from "./conversation";
-import { MissingConversation } from "./missing-conversation";
 
 export function PaneConversation({
   repository,
@@ -35,6 +40,7 @@ export function PaneConversation({
   showThinking = false,
   initialPrompt,
   initialProvider,
+  projectConversations = [],
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -64,6 +70,7 @@ export function PaneConversation({
   showThinking?: boolean;
   initialPrompt?: string;
   initialProvider?: ProviderId;
+  projectConversations?: ConversationSummary[];
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -84,11 +91,13 @@ export function PaneConversation({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
       });
-      const body = await response.json() as { files?: ChangedFile[]; error?: string };
+      const body = (await response.json()) as { files?: ChangedFile[]; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
       setChanges(body.files ?? []);
     } catch (cause) {
-      setChangesError(cause instanceof Error ? cause.message : "Changed files could not be inspected.");
+      setChangesError(
+        cause instanceof Error ? cause.message : "Changed files could not be inspected.",
+      );
     } finally {
       setChangesLoading(false);
     }
@@ -97,7 +106,10 @@ export function PaneConversation({
     void refreshChanges();
   }, [repository?.root, repository?.selectedWorktree, conversation?.id]);
   useEffect(() => {
-    if (showChangesSignal > 0 && (!showChangesThreadId || conversation?.id === showChangesThreadId)) {
+    if (
+      showChangesSignal > 0 &&
+      (!showChangesThreadId || conversation?.id === showChangesThreadId)
+    ) {
       setActivePanel("changes");
       void refreshChanges();
       onChangesRequestConsumed?.(showChangesSignal);
@@ -142,6 +154,7 @@ export function PaneConversation({
       managedModel={managedModel}
       initialPrompt={initialPrompt}
       initialProvider={initialProvider}
+      projectConversations={projectConversations}
     />
   );
 }
