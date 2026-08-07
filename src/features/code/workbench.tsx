@@ -1377,10 +1377,24 @@ export function CodeWorkbench({
               error instanceof Error ? error.message : "Settle failed.",
             ));
         }}
+        onSnooze={(conversation, preset) => {
+          void postLifecycle("/api/state/conversations/snooze", {
+            threadId: conversation.id,
+            snoozedUntil: preset.snoozedUntil,
+          }).catch((error: unknown) => setLifecycleError(
+            error instanceof Error ? error.message : "Snooze failed.",
+          ));
+        }}
         onUnsettle={(conversation) => {
           void postLifecycle("/api/state/conversations/unsettle", { threadId: conversation.id })
             .catch((error: unknown) => setLifecycleError(
               error instanceof Error ? error.message : "Unsettle failed.",
+            ));
+        }}
+        onUnsnooze={(conversation) => {
+          void postLifecycle("/api/state/conversations/unsnooze", { threadId: conversation.id })
+            .catch((error: unknown) => setLifecycleError(
+              error instanceof Error ? error.message : "Unsnooze failed.",
             ));
         }}
         onReleaseWorktree={(conversation) => {

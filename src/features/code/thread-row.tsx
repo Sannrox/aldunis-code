@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationSummary } from "../../types";
 import type { ProviderId } from "../../types";
@@ -11,6 +11,11 @@ import {
   providerLabel,
 } from "./conversation-list";
 import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+  type SnoozePreset,
+} from "../../lib/thread-snooze";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
 
@@ -20,6 +25,7 @@ export function ThreadRow({
   active,
   onOpen,
   onSettle,
+  onSnooze,
   onOpenBeside,
   onAction,
   showSettle = true,
@@ -30,6 +36,7 @@ export function ThreadRow({
   active: boolean;
   onOpen: () => void;
   onSettle?: () => void;
+  onSnooze?: (preset: SnoozePreset) => void;
   onOpenBeside?: () => void;
   onAction?: (action: ConversationLifecycleAction) => void;
   showSettle?: boolean;
@@ -70,7 +77,14 @@ export function ThreadRow({
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const hasMenuActions = Boolean(onAction || (showBeside && onOpenBeside));
+  const snoozePresets = useMemo(
+    () => (menuOpen && onSnooze ? resolveSnoozePresets() : []),
+    [menuOpen, onSnooze],
+  );
+  const snoozeAllowed = Boolean(onSnooze) && canSnooze(conversation) && !archivedView;
+  const hasMenuActions = Boolean(
+    onAction || (showBeside && onOpenBeside) || snoozeAllowed,
+  );
 
   useLayoutEffect(() => {
     if (!menuOpen) return;
@@ -289,6 +303,22 @@ export function ThreadRow({
                     >
                       {conversation.pinnedAt ? "Unpin" : "Pin"}
                     </button>
+                    {snoozeAllowed && onSnooze && snoozePresets.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        role="menuitem"
+                        className="row-menu-snooze"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuOpen(false);
+                          onSnooze(preset);
+                        }}
+                      >
+                        <span>Snooze · {preset.label}</span>
+                        <span className="row-menu-snooze__when">{preset.whenLabel}</span>
+                      </button>
+                    ))}
                     {archivedView ? (
                       <button
                         type="button"

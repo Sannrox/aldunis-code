@@ -1699,6 +1699,27 @@ async function handleApi(
       sendJson(response, 200, await state.unsettleConversation(body.threadId));
       return true;
     }
+    if (route === "/api/state/conversations/snooze") {
+      const body = await readJson(request) as { threadId?: unknown; snoozedUntil?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      if (typeof body.snoozedUntil !== "string") {
+        throw new LocalStateError("A snooze wake time is required.", 400);
+      }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      sendJson(response, 200, await state.snoozeConversation(body.threadId, body.snoozedUntil));
+      return true;
+    }
+    if (route === "/api/state/conversations/unsnooze") {
+      const body = await readJson(request) as { threadId?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      sendJson(response, 200, await state.unsnoozeConversation(body.threadId));
+      return true;
+    }
     if (route === "/api/state/conversations/visit") {
       const body = await readJson(request) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {

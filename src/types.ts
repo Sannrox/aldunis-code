@@ -140,6 +140,10 @@ export interface ConversationSummary {
   pinnedAt?: string | null;
   archivedAt?: string | null;
   settledAt?: string | null;
+  /** Temporary inbox hide until this ISO time. Visibility only. */
+  snoozedUntil?: string | null;
+  /** When the operator last snoozed this conversation. */
+  snoozedAt?: string | null;
   wokeAt?: string | null;
   lastVisitedAt?: string | null;
   /** Derived server-side; attached by loadConversationList. */

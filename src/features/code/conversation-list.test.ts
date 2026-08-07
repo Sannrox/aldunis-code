@@ -109,6 +109,7 @@ test("sidebar groups every blocking state ahead of active conversations", () => 
     "running",
     "completed-unread",
   ]);
+  assert.deepEqual(grouped.snoozed, []);
 });
 
 test("settled and archived conversations never require sidebar attention", () => {
@@ -127,10 +128,57 @@ test("settled and archived conversations never require sidebar attention", () =>
   assert.deepEqual(activeView.attention, []);
   assert.deepEqual(activeView.active.map(({ id }) => id), ["archived"]);
   assert.deepEqual(activeView.settled.map(({ id }) => id), ["settled"]);
+  assert.deepEqual(activeView.snoozed, []);
 
   const archivedView = groupSidebarConversations([blockingArchived], true);
   assert.deepEqual(archivedView.attention, []);
   assert.deepEqual(archivedView.active.map(({ id }) => id), ["archived"]);
+});
+
+test("effective snooze shelves conversations until wake unless they block the operator", () => {
+  const now = "2026-04-09T12:00:00.000Z";
+  const conversations = [
+    {
+      id: "snoozed-idle",
+      status: "idle",
+      snoozedUntil: "2026-04-10T12:00:00.000Z",
+      updatedAt: "2026-04-09T10:00:00.000Z",
+    },
+    {
+      id: "snoozed-failed",
+      status: "failed",
+      snoozedUntil: "2026-04-11T12:00:00.000Z",
+      updatedAt: "2026-04-09T10:30:00.000Z",
+    },
+    {
+      id: "snoozed-approval",
+      status: "pending_approval",
+      snoozedUntil: "2026-04-10T12:00:00.000Z",
+      updatedAt: "2026-04-09T11:00:00.000Z",
+    },
+    {
+      id: "woke",
+      status: "completed",
+      snoozedUntil: "2026-04-08T12:00:00.000Z",
+      updatedAt: "2026-04-09T09:00:00.000Z",
+    },
+    {
+      id: "failed-active",
+      status: "failed",
+      updatedAt: "2026-04-09T08:00:00.000Z",
+    },
+  ] as ConversationSummary[];
+
+  const grouped = groupSidebarConversations(conversations, false, now);
+  assert.deepEqual(grouped.attention.map(({ id }) => id), [
+    "snoozed-approval",
+    "failed-active",
+  ]);
+  assert.deepEqual(grouped.snoozed.map(({ id }) => id), [
+    "snoozed-idle",
+    "snoozed-failed",
+  ]);
+  assert.deepEqual(grouped.active.map(({ id }) => id), ["woke"]);
 });
 
 test("elapsed formatting floors to now / m / h / d", () => {

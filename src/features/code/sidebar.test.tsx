@@ -37,7 +37,9 @@ test("new conversations wait for registered projects to restore", () => {
       onToggleArchived={() => undefined}
       onConversationAction={() => undefined}
       onSettle={() => undefined}
+      onSnooze={() => undefined}
       onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
       onReleaseWorktree={() => undefined}
       worktreeLimit={4}
       managedWorktreeCount={0}
@@ -89,7 +91,9 @@ test("collapsed sidebar exposes a hidden state for the shared shell", () => {
       onToggleArchived={() => undefined}
       onConversationAction={() => undefined}
       onSettle={() => undefined}
+      onSnooze={() => undefined}
       onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
       onReleaseWorktree={() => undefined}
       worktreeLimit={4}
       managedWorktreeCount={0}
@@ -135,7 +139,9 @@ test("empty project inbox offers a discoverable new conversation action", () => 
       onToggleArchived={() => undefined}
       onConversationAction={() => undefined}
       onSettle={() => undefined}
+      onSnooze={() => undefined}
       onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
       onReleaseWorktree={() => undefined}
       worktreeLimit={4}
       managedWorktreeCount={0}

@@ -1943,6 +1943,82 @@ test("settle and unsettle are idempotent and never archive the conversation", as
   assert.equal(rebuilt.threads[0].archivedAt ?? null, null);
 });
 
+test("snooze is visibility-only, clears settle, and rejects unresolved operator blocks", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/worktree-must-remain",
+    prompt: "Keep running under snooze",
+    mode: "build",
+    provider: "claude-code",
+  });
+
+  // Running work may be snoozed — visibility only.
+  const wake = new Date(Date.now() + 3_600_000).toISOString();
+  const snoozedWhileRunning = await store.snoozeConversation(thread.id, wake);
+  assert.equal(snoozedWhileRunning.snoozedUntil, wake);
+  assert.ok(snoozedWhileRunning.snoozedAt);
+  assert.equal(snoozedWhileRunning.settledAt ?? null, null);
+  assert.equal(snoozedWhileRunning.worktree, "/fixture/worktree-must-remain");
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_pending",
+    id: "approval-snooze",
+    runId: "run-snooze",
+    conversationId: thread.id,
+    repository: "/fixture",
+    worktree: "/fixture/worktree-must-remain",
+    toolCallId: "tool-1",
+    toolName: "Bash",
+    scope: { summary: "run", target: "shell", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  await assert.rejects(
+    () => store.snoozeConversation(thread.id, new Date(Date.now() + 7_200_000).toISOString()),
+    /tool approval is unresolved/,
+  );
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_resolved",
+    id: "approval-snooze",
+    state: "denied",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-snooze",
+    costUsd: 0,
+  });
+
+  const settled = await store.settleConversation(thread.id);
+  assert.ok(settled.settledAt);
+  assert.equal(settled.snoozedUntil ?? null, null);
+
+  const later = new Date(Date.now() + 86_400_000).toISOString();
+  const resnoozed = await store.snoozeConversation(thread.id, later);
+  assert.equal(resnoozed.snoozedUntil, later);
+  assert.equal(resnoozed.settledAt ?? null, null);
+
+  const again = await store.snoozeConversation(thread.id, later);
+  assert.equal(again.snoozedUntil, later);
+  assert.equal(again.snoozedAt, resnoozed.snoozedAt);
+
+  const unsnoozed = await store.unsnoozeConversation(thread.id);
+  assert.equal(unsnoozed.snoozedUntil ?? null, null);
+  assert.equal(unsnoozed.snoozedAt ?? null, null);
+  assert.equal((await store.unsnoozeConversation(thread.id)).snoozedUntil ?? null, null);
+
+  await assert.rejects(
+    () => store.snoozeConversation(thread.id, new Date(Date.now() - 1_000).toISOString()),
+    /future/,
+  );
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.threads[0].snoozedUntil ?? null, null);
+  assert.equal(rebuilt.threads[0].worktree, "/fixture/worktree-must-remain");
+});
+
 test("thread status projection and wokeAt track operator-attention transitions", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

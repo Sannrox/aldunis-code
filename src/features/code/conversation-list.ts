@@ -8,6 +8,10 @@ import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
+import {
+  isEffectivelySnoozed,
+  threadNeedsAttentionWhileSnoozed,
+} from "../../lib/thread-snooze";
 
 export interface ConversationListProjection {
   threads: ConversationSummary[];
@@ -98,16 +102,34 @@ export function isBlockingStatus(status: ConversationSummary["status"]): boolean
 export function groupSidebarConversations(
   conversations: ConversationSummary[],
   archivedView = false,
+  now: Date | string | number = Date.now(),
 ): {
   attention: ConversationSummary[];
   active: ConversationSummary[];
+  snoozed: ConversationSummary[];
   settled: ConversationSummary[];
 } {
   const attention: ConversationSummary[] = [];
   const active: ConversationSummary[] = [];
+  const snoozed: ConversationSummary[] = [];
   const settled: ConversationSummary[] = [];
 
   for (const conversation of conversations) {
+    // Approval/input always surfaces, including while a future snooze is set.
+    // Failed may be snoozed (visibility only), so check effective snooze first.
+    if (
+      !archivedView
+      && !conversation.archivedAt
+      && !conversation.settledAt
+      && threadNeedsAttentionWhileSnoozed(conversation)
+    ) {
+      attention.push(conversation);
+      continue;
+    }
+    if (!archivedView && isEffectivelySnoozed(conversation, now)) {
+      snoozed.push(conversation);
+      continue;
+    }
     if (conversation.settledAt) {
       settled.push(conversation);
     } else if (
@@ -121,10 +143,14 @@ export function groupSidebarConversations(
     }
   }
 
+  snoozed.sort((left, right) => (
+    (left.snoozedUntil ?? "").localeCompare(right.snoozedUntil ?? "")
+    || right.updatedAt.localeCompare(left.updatedAt)
+  ));
   settled.sort((left, right) => (
     (right.settledAt ?? "").localeCompare(left.settledAt ?? "")
   ));
-  return { attention, active, settled };
+  return { attention, active, snoozed, settled };
 }
 
 export function formatElapsed(iso: string, now = Date.now()): string {

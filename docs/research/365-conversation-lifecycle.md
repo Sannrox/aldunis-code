@@ -18,10 +18,18 @@ They answer different questions:
 | Pin | Should this conversation sort prominently? | Conversation history | `Thread.pinnedAt` |
 | Archive | Should this conversation leave the ordinary active-history view? | Conversation history | `Thread.archivedAt` |
 | Settle | Has the operator finished attending to this conversation for now? | Conversation history | `Thread.settledAt` |
+| Snooze | Should this conversation leave the ordinary inbox until a chosen wake time? | Conversation history | `Thread.snoozedUntil` + `Thread.snoozedAt` |
 | Release worktree | Should this Aldunis-owned checkout stop consuming local filesystem capacity? | Managed-worktree registry and Git | Registry removal intent/result plus checkout removal |
 
 Unsettle is the inverse transition for settle, not a fifth concept.
-Restore is the inverse transition for archive.
+Unsnooze is the inverse transition for snooze (timer wake is derived, not
+a separate write). Restore is the inverse transition for archive.
+
+Snooze is visibility-only and orthogonal to archive and worktree release.
+Presentation treats settle and snooze as mutually exclusive: snoozing
+clears `settledAt`, and settling clears snooze fields. Pending approval or
+awaiting input cannot be snoozed and override an active snooze so the
+operator is never asked in the dark.
 
 The application may continue to offer the compound **Settle and release
 worktree** action, but it must remain an explicit composition of two operations.

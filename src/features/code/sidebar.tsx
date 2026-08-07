@@ -18,6 +18,7 @@ import {
 import { AldunisBrandMark } from "../../components/brand-mark";
 import { ManagedAccountPanel } from "./managed-account-panel";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
+import { snoozeWakeLabel, type SnoozePreset } from "../../lib/thread-snooze";
 
 export type ProjectFilter = "all" | string;
 
@@ -61,7 +62,9 @@ export function CodeSidebar({
   onToggleArchived,
   onConversationAction,
   onSettle,
+  onSnooze,
   onUnsettle,
+  onUnsnooze,
   onReleaseWorktree,
   worktreeLimit,
   managedWorktreeCount,
@@ -105,7 +108,9 @@ export function CodeSidebar({
     action: "rename" | "pin" | "archive" | "restore" | "delete",
   ) => void;
   onSettle: (conversation: ConversationSummary) => void;
+  onSnooze: (conversation: ConversationSummary, preset: SnoozePreset) => void;
   onUnsettle: (conversation: ConversationSummary) => void;
+  onUnsnooze: (conversation: ConversationSummary) => void;
   onReleaseWorktree: (conversation: ConversationSummary) => void;
   worktreeLimit: number;
   managedWorktreeCount: number;
@@ -115,9 +120,13 @@ export function CodeSidebar({
   const [productOpen, setProductOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [shelfOpen, setShelfOpen] = useState(false);
+  const [snoozedShelfOpen, setSnoozedShelfOpen] = useState(true);
+  // Clock tick so timer wakes re-group without a server write.
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const brandRef = useRef<HTMLDivElement>(null);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const settledShelfId = useId();
+  const snoozedShelfId = useId();
   const attentionHeadingId = useId();
   const activeHeadingId = useId();
 
@@ -128,10 +137,24 @@ export function CodeSidebar({
     }
   }, [sidebarOpen]);
 
-  const { attention, active, settled } = useMemo(
-    () => groupSidebarConversations(conversations, showingArchived),
-    [conversations, showingArchived],
+  const { attention, active, snoozed, settled } = useMemo(
+    () => groupSidebarConversations(conversations, showingArchived, nowMs),
+    [conversations, showingArchived, nowMs],
   );
+
+  useEffect(() => {
+    const wakeTimes = conversations
+      .map((conversation) => conversation.snoozedUntil)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .map((value) => Date.parse(value))
+      .filter((value) => Number.isFinite(value) && value > nowMs);
+    if (wakeTimes.length === 0) return;
+    const nextWake = Math.min(...wakeTimes);
+    // Cap long delays so tab sleep and large clock skew still re-evaluate.
+    const delay = Math.min(Math.max(nextWake - Date.now(), 250), 60_000);
+    const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [conversations, nowMs]);
 
   const meterPct = worktreeLimit > 0
     ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100))
@@ -498,6 +521,7 @@ export function CodeSidebar({
                       active={openInPane}
                       onOpen={() => onOpenConversation(conversation.id)}
                       onSettle={() => onSettle(conversation)}
+                      onSnooze={(preset) => onSnooze(conversation, preset)}
                       showSettle
                       showBeside={!openInPane}
                       onOpenBeside={() => onOpenBeside(conversation.id)}
@@ -531,6 +555,9 @@ export function CodeSidebar({
                     active={openInPane}
                     onOpen={() => onOpenConversation(conversation.id)}
                     onSettle={showingArchived ? undefined : () => onSettle(conversation)}
+                    onSnooze={showingArchived
+                      ? undefined
+                      : (preset) => onSnooze(conversation, preset)}
                     showSettle={!showingArchived}
                     // Beside is for a second column — hide when this thread is already primary or secondary.
                     showBeside={!showingArchived && !openInPane}
@@ -563,6 +590,68 @@ export function CodeSidebar({
               </div>
             )}
           </div>
+
+          {!showingArchived && snoozed.length > 0 && (
+            <div className="shelf shelf--snoozed">
+              <button
+                type="button"
+                className={`shelf-h ${snoozedShelfOpen ? "open" : ""}`}
+                onClick={() => setSnoozedShelfOpen((value) => !value)}
+                aria-expanded={snoozedShelfOpen}
+                aria-controls={snoozedShelfOpen ? snoozedShelfId : undefined}
+                aria-label={`Snoozed conversations (${snoozed.length})`}
+              >
+                <span className="cv" aria-hidden="true">▶</span>
+                <span>Snoozed ({snoozed.length})</span>
+              </button>
+              {snoozedShelfOpen && (
+                <div id={snoozedShelfId} role="region" aria-label="Snoozed conversations">
+                  {snoozed.map((conversation) => {
+                    const wake = conversation.snoozedUntil
+                      ? snoozeWakeLabel(conversation.snoozedUntil, nowMs)
+                      : "later";
+                    const provider = conversation.provider
+                      ? providerListLabel(conversation.provider)
+                      : null;
+                    const meta = [provider, `wakes in ${wake}`].filter(Boolean).join(" · ");
+                    return (
+                      <div className="srow" key={conversation.id}>
+                        <button
+                          type="button"
+                          className="srow-main"
+                          onClick={() => onOpenConversation(conversation.id)}
+                          aria-label={
+                            meta
+                              ? `Open snoozed conversation "${conversation.title}" · ${meta}`
+                              : `Open snoozed conversation "${conversation.title}"`
+                          }
+                        >
+                          <span className="t" title={conversation.title}>{conversation.title}</span>
+                        </button>
+                        <span className="w" title={meta || undefined}>
+                          {wake}
+                        </span>
+                        <div className="sacts">
+                          <button
+                            type="button"
+                            className="sbtn"
+                            aria-label={
+                              conversation.provider
+                                ? `Unsnooze "${conversation.title}" · ${providerListLabel(conversation.provider)}`
+                                : `Unsnooze "${conversation.title}"`
+                            }
+                            onClick={() => onUnsnooze(conversation)}
+                          >
+                            Unsnooze
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {!showingArchived && (
             <div className="shelf">

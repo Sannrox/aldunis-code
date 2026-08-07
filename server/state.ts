@@ -54,6 +54,10 @@ export interface Thread {
   archivedAt?: string | null;
   /** Sidebar settle (reversible). Distinct from archivedAt. */
   settledAt?: string | null;
+  /** Temporary inbox hide until this ISO time. Visibility only; never releases worktrees. */
+  snoozedUntil?: string | null;
+  /** When the operator last snoozed this conversation. */
+  snoozedAt?: string | null;
   /** When the thread last entered a state that wants operator attention. */
   wokeAt?: string | null;
   /** When the operator last opened this thread. Unread is lastVisitedAt < wokeAt. */
@@ -655,10 +659,15 @@ function migrateThreadRecord(payload: Record<string, unknown>): Thread {
     throw new LocalStateError("Local history is corrupt.");
   }
   return {
-    ...(payload as unknown as Omit<Thread, "schemaVersion" | "settledAt" | "wokeAt" | "lastVisitedAt">),
+    ...(payload as unknown as Omit<
+      Thread,
+      "schemaVersion" | "settledAt" | "snoozedUntil" | "snoozedAt" | "wokeAt" | "lastVisitedAt"
+    >),
     schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
     workspaceMode,
     settledAt: migrateNullableTimestamp(payload.settledAt),
+    snoozedUntil: migrateNullableTimestamp(payload.snoozedUntil),
+    snoozedAt: migrateNullableTimestamp(payload.snoozedAt),
     wokeAt: migrateNullableTimestamp(payload.wokeAt),
     lastVisitedAt: migrateNullableTimestamp(payload.lastVisitedAt),
   };
@@ -1252,6 +1261,8 @@ export class LocalStateStore {
             pinnedAt: null,
             archivedAt: null,
             settledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
             wokeAt: null,
             lastVisitedAt: null,
           };
@@ -1372,6 +1383,8 @@ export class LocalStateStore {
       pinnedAt: null,
       archivedAt: null,
       settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
       wokeAt: null,
       lastVisitedAt: null,
     };
@@ -1683,25 +1696,94 @@ export class LocalStateStore {
   /**
    * Sidebar settle: reversible, independent of archive, and never touches the worktree.
    * Idempotent — an already-settled thread is returned unchanged.
+   * Settling clears any active snooze so presentation stays mutually exclusive.
    */
   async settleConversation(threadId: string): Promise<Thread> {
-    const projection = await this.load();
-    const thread = this.#requireThread(projection, threadId);
-    this.#assertConversationSettled(projection, threadId, "settled");
-    if (thread.settledAt) return thread;
-    const now = new Date().toISOString();
-    const saved = { ...thread, settledAt: now, updatedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed((projection) => {
+      const thread = this.#requireThread(projection, threadId);
+      this.#assertConversationSettled(projection, threadId, "settled");
+      if (thread.settledAt && !thread.snoozedUntil && !thread.snoozedAt) {
+        return { event: null, value: thread };
+      }
+      const now = new Date().toISOString();
+      const saved = {
+        ...thread,
+        settledAt: thread.settledAt ?? now,
+        snoozedUntil: null,
+        snoozedAt: null,
+        updatedAt: now,
+      };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   /** Clear settle. Idempotent — an unsettled thread is returned unchanged. */
   async unsettleConversation(threadId: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    if (!thread.settledAt) return thread;
-    const saved = { ...thread, settledAt: null, updatedAt: new Date().toISOString() };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed((projection) => {
+      const thread = this.#requireThread(projection, threadId);
+      if (!thread.settledAt) return { event: null, value: thread };
+      const saved = { ...thread, settledAt: null, updatedAt: new Date().toISOString() };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
+  }
+
+  /**
+   * Temporary inbox hide until `snoozedUntil`. Visibility only: never archives,
+   * never releases a worktree, and allows running provider work. Clears settle.
+   * Rejects when the operator is blocked on approval or input.
+   * Merges against the write-queue projection so concurrent provider updates
+   * (wokeAt, etc.) are not clobbered by a stale whole-thread snapshot.
+   */
+  async snoozeConversation(threadId: string, snoozedUntilInput: string): Promise<Thread> {
+    const wakeMs = Date.parse(snoozedUntilInput);
+    if (Number.isNaN(wakeMs)) {
+      throw new LocalStateError("A valid snooze wake time is required.", 400);
+    }
+    const requestedAt = Date.now();
+    if (wakeMs <= requestedAt) {
+      throw new LocalStateError("Snooze wake time must be in the future.", 400);
+    }
+    if (wakeMs - requestedAt > 60 * 24 * 60 * 60 * 1_000) {
+      throw new LocalStateError("Snooze wake time must be within 60 days.", 400);
+    }
+    const snoozedUntil = new Date(wakeMs).toISOString();
+    return this.#appendComputed((projection) => {
+      const thread = this.#requireThread(projection, threadId);
+      this.#assertConversationSnoozable(projection, threadId);
+      const at = new Date().toISOString();
+      if (
+        thread.snoozedUntil === snoozedUntil
+        && thread.snoozedAt
+        && !thread.settledAt
+      ) {
+        return { event: null, value: thread };
+      }
+      const saved = {
+        ...thread,
+        snoozedUntil,
+        snoozedAt: at,
+        settledAt: null,
+        updatedAt: at,
+      };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
+  }
+
+  /** Clear snooze. Idempotent — an unsnoozed thread is returned unchanged. */
+  async unsnoozeConversation(threadId: string): Promise<Thread> {
+    return this.#appendComputed((projection) => {
+      const thread = this.#requireThread(projection, threadId);
+      if (!thread.snoozedUntil && !thread.snoozedAt) {
+        return { event: null, value: thread };
+      }
+      const saved = {
+        ...thread,
+        snoozedUntil: null,
+        snoozedAt: null,
+        updatedAt: new Date().toISOString(),
+      };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   async markConversationVisited(threadId: string): Promise<Thread> {
@@ -2064,6 +2146,25 @@ export class LocalStateStore {
         : "provider work is active";
     throw new LocalStateError(
       `This conversation cannot be ${action} because ${reason}. Stop or resolve it, then retry.`,
+      409,
+    );
+  }
+
+  /**
+   * Snooze hides the row only. Running turns may continue; unresolved approval
+   * or input must stay visible so the operator is never asked in the dark.
+   */
+  #assertConversationSnoozable(projection: StateProjection, threadId: string): void {
+    const blocking = projection.turns.find((turn) => (
+      turn.threadId === threadId
+      && (turn.status === "waiting_for_user" || turn.status === "waiting_for_approval")
+    ));
+    if (!blocking) return;
+    const reason = blocking.status === "waiting_for_approval"
+      ? "a tool approval is unresolved"
+      : "provider input is unresolved";
+    throw new LocalStateError(
+      `This conversation cannot be snoozed because ${reason}. Resolve it, then retry.`,
       409,
     );
   }

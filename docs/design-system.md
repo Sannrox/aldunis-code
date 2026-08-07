@@ -81,6 +81,16 @@ bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
 
+**Snooze** is a separate temporary hide, inspired by T3 Code. Row actions
+offer presets (in 1 hour, this evening when meaningful, tomorrow morning,
+next week). Snoozed threads leave Active/Attention and appear in a
+`Snoozed (N)` shelf with a compact wake label (`20m` / `3h` / `2d`). When
+the wake time elapses the row returns without a server write. Pending
+approval or awaiting input cannot be snoozed and, if they arise while
+snoozed, surface immediately in Needs attention. Running provider work may
+remain snoozed — snooze never stops the agent, archives history, or
+releases a worktree. Settling clears snooze; snoozing clears settle.
+
 The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
 macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
 browser or desktop profile, and the collapsed state removes the sidebar from
