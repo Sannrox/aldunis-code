@@ -150,6 +150,13 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Pull request status
+
+When GitHub CLI can resolve a pull request for a conversation worktree branch,
+the sidebar row shows a compact `PR #n` / `Merged #n` / `Closed #n` control that
+opens the PR URL. Absence of a PR, `gh`, or a GitHub remote is silent — no error
+chrome. Status is a live projection, not durable conversation state.
+
 ## Message copy
 
 Submitted prompts and completed assistant answers expose a ghost icon button

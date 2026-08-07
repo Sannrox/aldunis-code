@@ -4221,6 +4221,43 @@ select.ui-input {
   padding-block: 6px;
 }
 
+/* Thread-row GitHub PR projection (T3-inspired). Layout participant in .rb. */
+.pr-status {
+  display: inline-flex;
+  align-items: center;
+  max-width: 6.5rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--muted-foreground) 8%, transparent);
+  flex: 0 1 auto;
+}
+.pr-status.pr-status--open {
+  color: var(--foreground);
+}
+.pr-status.pr-status--merged {
+  color: color-mix(in srgb, var(--violet, #7c3aed) 85%, var(--foreground));
+}
+.pr-status.pr-status--closed {
+  color: color-mix(
+    in srgb,
+    var(--destructive-foreground, var(--destructive)) 80%,
+    var(--foreground)
+  );
+}
+.row-menu-pr {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
 /* Message copy actions (T3-inspired turn footer). */
 .turn-actions {
   display: flex;

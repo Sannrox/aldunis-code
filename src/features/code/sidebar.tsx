@@ -5,6 +5,7 @@ import type {
   ChangedFile,
   ConversationSummary,
   ManagedAccount,
+  BranchPrStatus,
 } from "../../types";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
@@ -66,6 +67,7 @@ export function CodeSidebar({
   onUnsettle,
   onUnsnooze,
   onReleaseWorktree,
+  prStatusByWorktree = null,
   worktreeLimit,
   managedWorktreeCount,
   managedAccount,
@@ -112,6 +114,8 @@ export function CodeSidebar({
   onUnsettle: (conversation: ConversationSummary) => void;
   onUnsnooze: (conversation: ConversationSummary) => void;
   onReleaseWorktree: (conversation: ConversationSummary) => void;
+  /** Live GitHub PR projection keyed by worktree path. */
+  prStatusByWorktree?: Map<string, BranchPrStatus> | null;
   worktreeLimit: number;
   managedWorktreeCount: number;
   managedAccount?: ManagedAccount | null;
@@ -559,6 +563,7 @@ export function CodeSidebar({
                       onOpen={() => onOpenConversation(conversation.id)}
                       onSettle={() => onSettle(conversation)}
                       onSnooze={(preset) => onSnooze(conversation, preset)}
+                      prStatus={prStatusByWorktree?.get(conversation.worktree) ?? null}
                       showSettle
                       showBeside={!openInPane}
                       onOpenBeside={() => onOpenBeside(conversation.id)}
@@ -596,6 +601,7 @@ export function CodeSidebar({
                     onSnooze={
                       showingArchived ? undefined : (preset) => onSnooze(conversation, preset)
                     }
+                    prStatus={prStatusByWorktree?.get(conversation.worktree) ?? null}
                     showSettle={!showingArchived}
                     // Beside is for a second column — hide when this thread is already primary or secondary.
                     showBeside={!showingArchived && !openInPane}

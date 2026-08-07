@@ -1,7 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ConversationSummary } from "../../types";
-import type { ProviderId } from "../../types";
+import type { BranchPrStatus, ConversationSummary, ProviderId } from "../../types";
 import { providerAvatarInitials } from "../../lib/provider-readiness";
 import {
   branchFromWorktree,
@@ -12,6 +11,7 @@ import {
 } from "./conversation-list";
 import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
 import { canSnooze, resolveSnoozePresets, type SnoozePreset } from "../../lib/thread-snooze";
+import { prStatusAriaLabel, prStatusLabel } from "../../lib/branch-pr-status";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
 
@@ -24,6 +24,7 @@ export function ThreadRow({
   onSnooze,
   onOpenBeside,
   onAction,
+  prStatus = null,
   showSettle = true,
   showBeside = false,
   archivedView = false,
@@ -35,6 +36,8 @@ export function ThreadRow({
   onSnooze?: (preset: SnoozePreset) => void;
   onOpenBeside?: () => void;
   onAction?: (action: ConversationLifecycleAction) => void;
+  /** Live GitHub PR for this worktree branch, if known. */
+  prStatus?: BranchPrStatus | null;
   showSettle?: boolean;
   /** Include "Beside" in the row action menu to open this thread in a split secondary pane. */
   showBeside?: boolean;
@@ -48,6 +51,7 @@ export function ThreadRow({
   const listLabel = providerLabel(conversation.provider);
   const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
   const branch = branchFromWorktree(conversation.worktree);
+  const prLabel = prStatus ? prStatusLabel(prStatus) : null;
   const workspaceLabel = WORKSPACE_MODE_COPY[conversation.workspaceMode ?? "shared"].shortLabel;
   const statusLabel =
     status === "pending_approval"
@@ -68,6 +72,7 @@ export function ThreadRow({
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
     branch,
+    prLabel,
     workspaceLabel,
     listLabel,
     elapsed,
@@ -85,7 +90,9 @@ export function ThreadRow({
     [menuOpen, onSnooze],
   );
   const snoozeAllowed = Boolean(onSnooze) && canSnooze(conversation) && !archivedView;
-  const hasMenuActions = Boolean(onAction || (showBeside && onOpenBeside) || snoozeAllowed);
+  const hasMenuActions = Boolean(
+    onAction || (showBeside && onOpenBeside) || snoozeAllowed || prStatus,
+  );
 
   useLayoutEffect(() => {
     if (!menuOpen) return;
@@ -228,6 +235,14 @@ export function ThreadRow({
           <span className="br" title={branch}>
             {branch}
           </span>
+          {prStatus && prLabel && (
+            <span
+              className={`pr-status pr-status--${prStatus.state}`}
+              title={prStatusAriaLabel(prStatus)}
+            >
+              {prLabel}
+            </span>
+          )}
           {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
           <span className="pv" title={listLabel} aria-hidden="true">
             {monogram}
@@ -303,6 +318,21 @@ export function ThreadRow({
                     >
                       Beside
                     </button>
+                  )}
+                  {prStatus && (
+                    <a
+                      role="menuitem"
+                      className="row-menu-pr"
+                      href={prStatus.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen(false);
+                      }}
+                    >
+                      Open {prStatusLabel(prStatus)}
+                    </a>
                   )}
                   {onAction && (
                     <>

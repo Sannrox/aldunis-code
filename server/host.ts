@@ -53,6 +53,7 @@ import {
   inspectDelivery,
   type DeliveryAction,
 } from "./delivery.ts";
+import { BRANCH_PR_BATCH_LIMIT, inspectBranchPr, inspectBranchPrBatch } from "./branch-pr.ts";
 import {
   ReleaseDeliveryBroker,
   ReleaseDeliveryStore,
@@ -4220,6 +4221,42 @@ async function handleApi(
       }
       const context = await selectedWorktree(body.root, body.worktree);
       sendJson(response, 200, await inspectDelivery(context.root, context.worktree));
+      return true;
+    }
+    if (route === "/api/delivery/pr-status") {
+      // Best-effort GitHub PR projection for sidebar rows. Soft-fails when gh
+      // is missing or no PR is linked to the current branch.
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
+      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
+        throw new RepositoryError("A repository and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      sendJson(response, 200, await inspectBranchPr(context.worktree));
+      return true;
+    }
+    if (route === "/api/delivery/pr-status/batch") {
+      const body = (await readJson(request)) as {
+        items?: unknown;
+      };
+      if (!Array.isArray(body.items)) {
+        throw new RepositoryError("A list of repository worktrees is required.");
+      }
+      // Soft-fail unavailable worktrees independently so one released checkout
+      // cannot blank PR chrome for every other row.
+      const worktrees: string[] = [];
+      for (const item of body.items) {
+        if (worktrees.length >= BRANCH_PR_BATCH_LIMIT) break;
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const entry = item as { root?: unknown; worktree?: unknown };
+        if (typeof entry.root !== "string" || typeof entry.worktree !== "string") continue;
+        try {
+          const context = await selectedWorktree(entry.root, entry.worktree);
+          worktrees.push(context.worktree);
+        } catch {
+          // Released, missing, or out-of-scope paths stay without PR projection.
+        }
+      }
+      sendJson(response, 200, { results: await inspectBranchPrBatch(worktrees) });
       return true;
     }
     if (route === "/api/delivery/pr-draft") {

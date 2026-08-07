@@ -146,6 +146,22 @@ export interface ConversationSummary {
   statusSince?: string;
   projectName?: string;
 }
+
+/** Live GitHub PR projection for a conversation worktree (not durable history). */
+export type BranchPrState = "open" | "merged" | "closed";
+export interface BranchPrStatus {
+  worktree: string;
+  branch: string;
+  number: number;
+  title: string;
+  state: BranchPrState;
+  url: string;
+}
+export interface BranchPrLookupResult {
+  worktree: string;
+  branch: string | null;
+  pr: BranchPrStatus | null;
+}
 export interface DelegatedConversationRelationship {
   id: string;
   parentThreadId: string;
