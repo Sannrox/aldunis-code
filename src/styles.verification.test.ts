@@ -60,6 +60,12 @@ test("icon buttons resist flex shrink in tight headers", () => {
   assert.match(css, /\.ui-button--icon-sm\s*\{[^}]*min-width:\s*28px[^}]*flex:\s*0\s+0\s+28px/s);
 });
 
+test("workspace checkpoint title and state stay spaced in the card header", () => {
+  // Without gap, "Workspace checkpoint" + "failed" rendered as "Workspace checkpointfailed".
+  assert.match(css, /\.checkpoint-card > header > div\s*\{[^}]*display:\s*flex[^}]*gap:\s*8px/s);
+  assert.match(css, /\.checkpoint-card header small\s*\{[^}]*color:\s*var\(--muted-foreground\)/s);
+});
+
 test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
   assert.doesNotMatch(css, /@import\s+url\(/i);
@@ -84,17 +90,47 @@ test("Aldunis brand mark follows the resolved application theme", () => {
 
 test("macOS desktop shell integrates the native titlebar without swallowing controls", () => {
   assert.match(shellCss, /\.desktop-titlebar\s*\{[^}]*display:\s*none/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.desktop-titlebar\s*\{[^}]*position:\s*absolute[^}]*display:\s*block[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*-webkit-app-region:\s*drag/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.desktop-titlebar::after\s*\{[^}]*left:\s*var\(--desktop-shell-sidebar-width\)[^}]*border-left:\s*1px solid var\(--border\)/s);
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.desktop-titlebar\s*\{[^}]*position:\s*absolute[^}]*display:\s*block[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*-webkit-app-region:\s*drag/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.desktop-titlebar::after\s*\{[^}]*left:\s*var\(--desktop-shell-sidebar-width\)[^}]*border-left:\s*1px solid var\(--border\)/s,
+  );
   assert.doesNotMatch(shellCss, /\.desktop-titlebar__history/);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb,\s*html\[data-desktop-shell="macos"\] \.main\s*\{[^}]*padding-top:\s*var\(--desktop-shell-titlebar-height\)/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sidebar-toggle--open\s*\{[^}]*top:\s*12px[^}]*left:\s*100px[^}]*width:\s*36px[^}]*height:\s*36px[^}]*pointer-events:\s*auto[^}]*background:\s*transparent[^}]*-webkit-app-region:\s*no-drag/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-hd \.sidebar-toggle--collapse\s*\{[^}]*position:\s*absolute[^}]*top:\s*calc\(-1 \* var\(--desktop-shell-titlebar-height\) \+ 12px\)[^}]*left:\s*100px[^}]*right:\s*auto[^}]*-webkit-app-region:\s*no-drag/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\]\s*\{[^}]*--desktop-shell-titlebar-height:\s*52px[^}]*--desktop-shell-content-left:\s*12px[^}]*--desktop-shell-sidebar-width:\s*272px/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-hd\s*\{[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*padding:\s*0 var\(--desktop-shell-content-left\)/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.sb-name\s*\{[^}]*white-space:\s*nowrap/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] \.topbar\s*\{[^}]*padding-left:\s*16px\s*!important/s);
-  assert.match(shellCss, /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] > \.domain-page\s*\{[^}]*padding-top:\s*0/s);
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.sb,\s*html\[data-desktop-shell="macos"\] \.main\s*\{[^}]*padding-top:\s*var\(--desktop-shell-titlebar-height\)/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.sidebar-toggle--open\s*\{[^}]*top:\s*12px[^}]*left:\s*100px[^}]*width:\s*36px[^}]*height:\s*36px[^}]*pointer-events:\s*auto[^}]*background:\s*transparent[^}]*-webkit-app-region:\s*no-drag/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.sb-hd \.sidebar-toggle--collapse\s*\{[^}]*position:\s*absolute[^}]*top:\s*calc\(-1 \* var\(--desktop-shell-titlebar-height\) \+ 12px\)[^}]*left:\s*100px[^}]*right:\s*auto[^}]*-webkit-app-region:\s*no-drag/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\]\s*\{[^}]*--desktop-shell-titlebar-height:\s*52px[^}]*--desktop-shell-content-left:\s*12px[^}]*--desktop-shell-sidebar-width:\s*272px/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.sb-hd\s*\{[^}]*height:\s*var\(--desktop-shell-titlebar-height\)[^}]*padding:\s*0 var\(--desktop-shell-content-left\)/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.sb-name\s*\{[^}]*white-space:\s*nowrap/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] \.topbar\s*\{[^}]*padding-left:\s*16px\s*!important/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] > \.domain-page\s*\{[^}]*padding-top:\s*0/s,
+  );
 });
 
 test("conversation overlays are contained by .conv (not review dock)", () => {
@@ -133,7 +169,10 @@ test("floating preview escapes the conversation overlay without losing bounds", 
 });
 
 test("provider browser observations stay read-only inside the floating view", () => {
-  assert.match(css, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex[^}]*background:\s*#111/s);
+  assert.match(
+    css,
+    /\.browser-observation-workspace\s*\{[^}]*display:\s*flex[^}]*background:\s*#111/s,
+  );
   assert.match(css, /\.browser-observation-workspace img\s*\{[^}]*object-fit:\s*contain/s);
   assert.match(shellCss, /\.browser-observation-workspace\s*\{[^}]*display:\s*flex\s*!important/s);
 });
@@ -149,14 +188,8 @@ test("review dock shrinks so dual-pane conversation stays usable", () => {
   // thread. Dock must be allowed to shrink (flex-shrink + percentage cap).
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
-  assert.match(
-    shell,
-    /\.rv,\s*\.review-dock\s*\{[^}]*flex:\s*0\s+1\s+min\(430px,\s*48%\)/s,
-  );
-  assert.match(
-    shell,
-    /\.conv\s*\{[^}]*min-width:\s*min\(240px,\s*100%\)/s,
-  );
+  assert.match(shell, /\.rv,\s*\.review-dock\s*\{[^}]*flex:\s*0\s+1\s+min\(430px,\s*48%\)/s);
+  assert.match(shell, /\.conv\s*\{[^}]*min-width:\s*min\(240px,\s*100%\)/s);
 });
 
 test("narrow review dock must not use fixed 42vh basis that crushes .conv", () => {
@@ -169,10 +202,7 @@ test("narrow review dock must not use fixed 42vh basis that crushes .conv", () =
     shell,
     /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock,\s*\.rv\s*\{[^}]*flex:\s*0\s+1\s+min\(50vh,\s*55%\)/s,
   );
-  assert.match(
-    shell,
-    /\.split\.with-review\s*>\s*\.conv\s*\{[^}]*min-height:\s*100px/s,
-  );
+  assert.match(shell, /\.split\.with-review\s*>\s*\.conv\s*\{[^}]*min-height:\s*100px/s);
 });
 
 test("conversation thread shell supports auto-follow jump control", () => {
@@ -188,10 +218,7 @@ test("review dock contains overflow; short docks use one scroll stream", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   assert.match(shell, /\.rv,\s*\.review-dock\s*\{[^}]*overflow:\s*hidden/s);
-  assert.match(
-    shell,
-    /\.review-workspace\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s,
-  );
+  assert.match(shell, /\.review-workspace\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
   assert.match(
     shell,
     /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?\.review-dock\s+\.changes-body[\s\S]*?overflow-y:\s*auto/s,
@@ -213,7 +240,10 @@ test("pane-switcher tabs have usable hit targets and active chrome", () => {
 test("workspace panel selector groups status-bearing controls and compacts at narrow widths", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
-  assert.match(shell, /\.workspace-panel-selector\s*\{[^}]*display:\s*flex[^}]*border:\s*1px solid var\(--border\)/s);
+  assert.match(
+    shell,
+    /\.workspace-panel-selector\s*\{[^}]*display:\s*flex[^}]*border:\s*1px solid var\(--border\)/s,
+  );
   assert.match(shell, /\.workspace-panel-count\s*\{[^}]*min-width:\s*18px/s);
   assert.match(
     shell,
@@ -336,10 +366,7 @@ test("command palette search field has a usable min-height", () => {
 });
 
 test("conversation search controls align with the dialog content inset", () => {
-  assert.match(
-    css,
-    /\.thread-search-controls\s*\{[^}]*padding:\s*8px 16px 4px/s,
-  );
+  assert.match(css, /\.thread-search-controls\s*\{[^}]*padding:\s*8px 16px 4px/s);
 });
 
 test("delegated approval cards stay readable in narrow parent panels", () => {
@@ -404,10 +431,7 @@ test("automations dialog keeps content inset and independently scrollable", () =
   );
   const dialog = readFileSync(dialogPath, "utf8");
   assert.match(dialog, /className="automations-dialog-body"/);
-  assert.match(
-    css,
-    /\.automations-dialog-body\s*\{[^}]*overflow-y:\s*auto[^}]*padding:\s*16px/s,
-  );
+  assert.match(css, /\.automations-dialog-body\s*\{[^}]*overflow-y:\s*auto[^}]*padding:\s*16px/s);
 });
 
 test("adapter catalog docs links and advanced toggle meet min hit size", () => {
@@ -485,10 +509,7 @@ test("provider management keeps one bounded shell and stacks navigation narrowly
     css,
     /@media\s*\(max-width:\s*760px\)\s*\{[\s\S]*?\.provider-management-layout\s*\{[^}]*grid-template-columns:\s*1fr[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/s,
   );
-  assert.match(
-    css,
-    /\.provider-management-layout\s*>\s*nav\s+button\s*\{[^}]*min-height:\s*56px/s,
-  );
+  assert.match(css, /\.provider-management-layout\s*>\s*nav\s+button\s*\{[^}]*min-height:\s*56px/s);
 });
 
 test("annotation resolve and ui-button--xs meet min hit size", () => {
@@ -535,22 +556,28 @@ test("composer crow chips ellipsize in narrow dual-pane columns", () => {
 test("composer grows within its established desktop height bounds", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
-  assert.match(
-    shell,
-    /\.composer-input\s*\{[^}]*min-height:\s*44px[^}]*max-height:\s*160px/s,
-  );
+  assert.match(shell, /\.composer-input\s*\{[^}]*min-height:\s*44px[^}]*max-height:\s*160px/s);
 });
 
 test("voice input keeps a secondary control hierarchy and touch hit target", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
-  assert.match(shell, /\.voice-input-toggle\s*\{[^}]*flex:\s*0\s+0\s+30px[^}]*width:\s*30px[^}]*height:\s*30px/s);
+  assert.match(
+    shell,
+    /\.voice-input-toggle\s*\{[^}]*flex:\s*0\s+0\s+30px[^}]*width:\s*30px[^}]*height:\s*30px/s,
+  );
   assert.match(
     shell,
     /@media\s*\(any-pointer:\s*coarse\)\s*\{[\s\S]*?\.voice-input-toggle\s*\{[^}]*width:\s*44px[^}]*height:\s*44px[^}]*flex-basis:\s*44px/s,
   );
-  assert.match(shell, /\.voice-input-toggle\.is-listening::after\s*\{[^}]*animation:\s*voice-input-pulse/s);
-  assert.match(shell, /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.voice-input-toggle\.is-listening::after\s*\{\s*animation:\s*none/s);
+  assert.match(
+    shell,
+    /\.voice-input-toggle\.is-listening::after\s*\{[^}]*animation:\s*voice-input-pulse/s,
+  );
+  assert.match(
+    shell,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.voice-input-toggle\.is-listening::after\s*\{\s*animation:\s*none/s,
+  );
 });
 
 test("sparse mobile empty state stays above the fixed composer", () => {
@@ -576,19 +603,36 @@ test("narrow empty-state copy cannot create a horizontal thread scrollbar", () =
 });
 
 test("disabled product destinations remain readable while unavailable", () => {
-  assert.match(shellCss, /\.pi2\.dis,\.pi2:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s);
-  assert.match(shellCss, /\.brand-switch__menu button\.dis,.brand-switch__menu button:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s);
+  assert.match(
+    shellCss,
+    /\.pi2\.dis,\.pi2:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s,
+  );
+  assert.match(
+    shellCss,
+    /\.brand-switch__menu button\.dis,.brand-switch__menu button:disabled\s*\{[^}]*opacity:\s*1[^}]*color:\s*var\(--muted-foreground\)/s,
+  );
 });
 
 test("narrow workbench uses a drawer sidebar with an explicit scrim", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
-  const drawerCss = shell.slice(shell.lastIndexOf("/* Narrow screens use the sidebar as a temporary navigation drawer"));
+  const drawerCss = shell.slice(
+    shell.lastIndexOf("/* Narrow screens use the sidebar as a temporary navigation drawer"),
+  );
   assert.match(drawerCss, /\.sidebar-scrim\s*\{\s*display:\s*none;\s*\}/);
   assert.match(drawerCss, /\.app\s*\{\s*flex-direction:\s*row !important;\s*\}/);
-  assert.match(drawerCss, /\.sb \{[\s\S]*?position: fixed !important[\s\S]*?width: min\(86vw, 320px\) !important/);
-  assert.match(drawerCss, /\.sb\[data-sidebar-state="collapsed"\][\s\S]*?transform: translateX\(-105%\)/);
-  assert.match(drawerCss, /\.sidebar-scrim \{[\s\S]*?z-index: 35[\s\S]*?background: rgb\(0 0 0 \/ \.16\)/);
+  assert.match(
+    drawerCss,
+    /\.sb \{[\s\S]*?position: fixed !important[\s\S]*?width: min\(86vw, 320px\) !important/,
+  );
+  assert.match(
+    drawerCss,
+    /\.sb\[data-sidebar-state="collapsed"\][\s\S]*?transform: translateX\(-105%\)/,
+  );
+  assert.match(
+    drawerCss,
+    /\.sidebar-scrim \{[\s\S]*?z-index: 35[\s\S]*?background: rgb\(0 0 0 \/ \.16\)/,
+  );
 });
 
 test("diff source lines scroll horizontally instead of wrapping", () => {
