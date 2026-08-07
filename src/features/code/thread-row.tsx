@@ -366,6 +366,7 @@ export function ThreadRow({
                             type="button"
                             role="menuitem"
                             className="row-menu-snooze"
+                            aria-label={`Snooze · ${preset.label} · ${preset.whenLabel}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               setMenuOpen(false);
