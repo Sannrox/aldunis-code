@@ -13,23 +13,27 @@ import {
 
 test("one state projection supplies conversation metadata and status atomically", () => {
   const conversations = conversationListFromProjection({
-    threads: [{
-      id: "child",
-      projectId: "project",
-      title: "Child",
-      worktree: "/repo/child",
-      provider: "codex-cli",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      projectName: "stale",
-      pinnedAt: null,
-      archivedAt: null,
-    }],
+    threads: [
+      {
+        id: "child",
+        projectId: "project",
+        title: "Child",
+        worktree: "/repo/child",
+        provider: "codex-cli",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        projectName: "stale",
+        pinnedAt: null,
+        archivedAt: null,
+      },
+    ],
     projects: [{ id: "project", name: "Current project" }],
-    threadStatuses: [{
-      threadId: "child",
-      status: "completed",
-      since: "2026-01-02T00:00:00.000Z",
-    }],
+    threadStatuses: [
+      {
+        threadId: "child",
+        status: "completed",
+        since: "2026-01-02T00:00:00.000Z",
+      },
+    ],
   });
   assert.equal(conversations[0].projectName, "Current project");
   assert.equal(conversations[0].status, "completed");
@@ -38,29 +42,36 @@ test("one state projection supplies conversation metadata and status atomically"
 
 test("conversation metadata retains the provider session profile and model", () => {
   const conversations = conversationListFromProjection({
-    threads: [{
-      id: "parent",
-      projectId: "project",
-      title: "Parent",
-      worktree: "/repo",
-      provider: "claude-code",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      pinnedAt: null,
-      archivedAt: null,
-    }],
-    providerSessions: [{
-      threadId: "parent",
-      provider: "claude-code",
-      model: "claude-sonnet-4-6",
-      profileId: "work:claude",
-    }],
+    threads: [
+      {
+        id: "parent",
+        projectId: "project",
+        title: "Parent",
+        worktree: "/repo",
+        provider: "claude-code",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        pinnedAt: null,
+        archivedAt: null,
+      },
+    ],
+    providerSessions: [
+      {
+        threadId: "parent",
+        provider: "claude-code",
+        model: "claude-sonnet-4-6",
+        profileId: "work:claude",
+      },
+    ],
   });
   assert.equal(conversations[0].profileId, "work:claude");
   assert.equal(conversations[0].model, "claude-sonnet-4-6");
 });
 
 test("unread is lastVisitedAt < wokeAt and never stored", () => {
-  assert.equal(isUnread({ wokeAt: "2026-01-02T00:00:00.000Z", lastVisitedAt: null } as never), true);
+  assert.equal(
+    isUnread({ wokeAt: "2026-01-02T00:00:00.000Z", lastVisitedAt: null } as never),
+    true,
+  );
   assert.equal(
     isUnread({
       wokeAt: "2026-01-02T00:00:00.000Z",
@@ -99,16 +110,14 @@ test("sidebar groups every blocking state ahead of active conversations", () => 
 
   const grouped = groupSidebarConversations(conversations);
 
-  assert.deepEqual(grouped.attention.map(({ id }) => id), [
-    "approval-pinned",
-    "input",
-    "failed",
-  ]);
-  assert.deepEqual(grouped.active.map(({ id }) => id), [
-    "idle-pinned",
-    "running",
-    "completed-unread",
-  ]);
+  assert.deepEqual(
+    grouped.attention.map(({ id }) => id),
+    ["approval-pinned", "input", "failed"],
+  );
+  assert.deepEqual(
+    grouped.active.map(({ id }) => id),
+    ["idle-pinned", "running", "completed-unread"],
+  );
   assert.deepEqual(grouped.snoozed, []);
 });
 
@@ -126,13 +135,22 @@ test("settled and archived conversations never require sidebar attention", () =>
 
   const activeView = groupSidebarConversations([blockingArchived, blockingSettled]);
   assert.deepEqual(activeView.attention, []);
-  assert.deepEqual(activeView.active.map(({ id }) => id), ["archived"]);
-  assert.deepEqual(activeView.settled.map(({ id }) => id), ["settled"]);
+  assert.deepEqual(
+    activeView.active.map(({ id }) => id),
+    ["archived"],
+  );
+  assert.deepEqual(
+    activeView.settled.map(({ id }) => id),
+    ["settled"],
+  );
   assert.deepEqual(activeView.snoozed, []);
 
   const archivedView = groupSidebarConversations([blockingArchived], true);
   assert.deepEqual(archivedView.attention, []);
-  assert.deepEqual(archivedView.active.map(({ id }) => id), ["archived"]);
+  assert.deepEqual(
+    archivedView.active.map(({ id }) => id),
+    ["archived"],
+  );
 });
 
 test("effective snooze shelves conversations until wake unless they block the operator", () => {
@@ -170,15 +188,18 @@ test("effective snooze shelves conversations until wake unless they block the op
   ] as ConversationSummary[];
 
   const grouped = groupSidebarConversations(conversations, false, now);
-  assert.deepEqual(grouped.attention.map(({ id }) => id), [
-    "snoozed-approval",
-    "failed-active",
-  ]);
-  assert.deepEqual(grouped.snoozed.map(({ id }) => id), [
-    "snoozed-idle",
-    "snoozed-failed",
-  ]);
-  assert.deepEqual(grouped.active.map(({ id }) => id), ["woke"]);
+  assert.deepEqual(
+    grouped.attention.map(({ id }) => id),
+    ["snoozed-approval", "failed-active"],
+  );
+  assert.deepEqual(
+    grouped.snoozed.map(({ id }) => id),
+    ["snoozed-idle", "snoozed-failed"],
+  );
+  assert.deepEqual(
+    grouped.active.map(({ id }) => id),
+    ["woke"],
+  );
 });
 
 test("elapsed formatting floors to now / m / h / d", () => {

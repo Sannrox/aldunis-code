@@ -9,34 +9,25 @@ import {
   threadNeedsAttentionWhileSnoozed,
 } from "./thread-snooze";
 
-function localDate(
-  year: number,
-  month: number,
-  day: number,
-  hour = 0,
-  minute = 0,
-): Date {
+function localDate(year: number, month: number, day: number, hour = 0, minute = 0): Date {
   return new Date(year, month - 1, day, hour, minute, 0, 0);
 }
 
 test("snooze presets include evening only before it is imminent", () => {
   const morning = resolveSnoozePresets(localDate(2026, 4, 8, 10));
-  assert.deepEqual(morning.map((preset) => preset.id), [
-    "hour",
-    "evening",
-    "tomorrow",
-    "next-week",
-  ]);
+  assert.deepEqual(
+    morning.map((preset) => preset.id),
+    ["hour", "evening", "tomorrow", "next-week"],
+  );
   const evening = morning.find((preset) => preset.id === "evening");
   assert.ok(evening);
   assert.equal(new Date(evening.snoozedUntil).getHours(), 18);
 
   const late = resolveSnoozePresets(localDate(2026, 4, 8, 17, 30));
-  assert.deepEqual(late.map((preset) => preset.id), [
-    "hour",
-    "tomorrow",
-    "next-week",
-  ]);
+  assert.deepEqual(
+    late.map((preset) => preset.id),
+    ["hour", "tomorrow", "next-week"],
+  );
 });
 
 test("tomorrow and next week land on local morning hours", () => {
@@ -56,9 +47,18 @@ test("effective snooze is future-only and yields to approval or input", () => {
   const now = "2026-04-09T12:00:00.000Z";
   assert.equal(isEffectivelySnoozed({ snoozedUntil: future, status: "idle" }, now), true);
   assert.equal(isEffectivelySnoozed({ snoozedUntil: future, status: "running" }, now), true);
-  assert.equal(isEffectivelySnoozed({ snoozedUntil: future, status: "pending_approval" }, now), false);
-  assert.equal(isEffectivelySnoozed({ snoozedUntil: future, status: "awaiting_input" }, now), false);
-  assert.equal(isEffectivelySnoozed({ snoozedUntil: "2026-04-08T12:00:00.000Z", status: "idle" }, now), false);
+  assert.equal(
+    isEffectivelySnoozed({ snoozedUntil: future, status: "pending_approval" }, now),
+    false,
+  );
+  assert.equal(
+    isEffectivelySnoozed({ snoozedUntil: future, status: "awaiting_input" }, now),
+    false,
+  );
+  assert.equal(
+    isEffectivelySnoozed({ snoozedUntil: "2026-04-08T12:00:00.000Z", status: "idle" }, now),
+    false,
+  );
   assert.equal(isEffectivelySnoozed({ snoozedUntil: null, status: "idle" }, now), false);
   assert.equal(isEffectivelySnoozed({ snoozedUntil: "not-a-date", status: "idle" }, now), false);
 });
@@ -88,7 +88,11 @@ test("assertValidSnoozeUntil rejects past and far-future times", () => {
     /future/,
   );
   assert.throws(
-    () => assertValidSnoozeUntil(new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString(), now),
+    () =>
+      assertValidSnoozeUntil(
+        new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString(),
+        now,
+      ),
     /60 days/,
   );
   const valid = assertValidSnoozeUntil(new Date(now.getTime() + 3_600_000).toISOString(), now);

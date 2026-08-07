@@ -8,10 +8,7 @@ import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
-import {
-  isEffectivelySnoozed,
-  threadNeedsAttentionWhileSnoozed,
-} from "../../lib/thread-snooze";
+import { isEffectivelySnoozed, threadNeedsAttentionWhileSnoozed } from "../../lib/thread-snooze";
 
 export interface ConversationListProjection {
   threads: ConversationSummary[];
@@ -48,15 +45,9 @@ export function conversationListFromProjection(
       const session = providerSessions.get(`${thread.id}:${thread.provider}`);
       return {
         ...thread,
-        ...(thread.profileId == null && session?.profileId
-          ? { profileId: session.profileId }
-          : {}),
-        ...(thread.model == null && session?.model
-          ? { model: session.model }
-          : {}),
-        projectName: projectNames.get(thread.projectId)
-          ?? thread.projectName
-          ?? "project",
+        ...(thread.profileId == null && session?.profileId ? { profileId: session.profileId } : {}),
+        ...(thread.model == null && session?.model ? { model: session.model } : {}),
+        projectName: projectNames.get(thread.projectId) ?? thread.projectName ?? "project",
         status: status?.status ?? "idle",
         statusSince: status?.since ?? thread.updatedAt,
       };
@@ -75,10 +66,8 @@ export async function loadConversationList(
   projectId?: string | null,
   options: { fresh?: boolean } = {},
 ): Promise<ConversationSummary[]> {
-  const loadProjection = options.fresh
-    ? loadFreshLocalStateProjection
-    : loadLocalStateProjection;
-  const projection = await loadProjection() as ConversationListProjection;
+  const loadProjection = options.fresh ? loadFreshLocalStateProjection : loadLocalStateProjection;
+  const projection = (await loadProjection()) as ConversationListProjection;
   return conversationListFromProjection(projection, projectId);
 }
 
@@ -118,10 +107,10 @@ export function groupSidebarConversations(
     // Approval/input always surfaces, including while a future snooze is set.
     // Failed may be snoozed (visibility only), so check effective snooze first.
     if (
-      !archivedView
-      && !conversation.archivedAt
-      && !conversation.settledAt
-      && threadNeedsAttentionWhileSnoozed(conversation)
+      !archivedView &&
+      !conversation.archivedAt &&
+      !conversation.settledAt &&
+      threadNeedsAttentionWhileSnoozed(conversation)
     ) {
       attention.push(conversation);
       continue;
@@ -132,24 +121,19 @@ export function groupSidebarConversations(
     }
     if (conversation.settledAt) {
       settled.push(conversation);
-    } else if (
-      !archivedView
-      && !conversation.archivedAt
-      && isBlockingStatus(conversation.status)
-    ) {
+    } else if (!archivedView && !conversation.archivedAt && isBlockingStatus(conversation.status)) {
       attention.push(conversation);
     } else {
       active.push(conversation);
     }
   }
 
-  snoozed.sort((left, right) => (
-    (left.snoozedUntil ?? "").localeCompare(right.snoozedUntil ?? "")
-    || right.updatedAt.localeCompare(left.updatedAt)
-  ));
-  settled.sort((left, right) => (
-    (right.settledAt ?? "").localeCompare(left.settledAt ?? "")
-  ));
+  snoozed.sort(
+    (left, right) =>
+      (left.snoozedUntil ?? "").localeCompare(right.snoozedUntil ?? "") ||
+      right.updatedAt.localeCompare(left.updatedAt),
+  );
+  settled.sort((left, right) => (right.settledAt ?? "").localeCompare(left.settledAt ?? ""));
   return { attention, active, snoozed, settled };
 }
 

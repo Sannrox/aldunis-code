@@ -156,16 +156,17 @@ export function CodeSidebar({
     return () => window.clearTimeout(timer);
   }, [conversations, nowMs]);
 
-  const meterPct = worktreeLimit > 0
-    ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100))
-    : 0;
+  const meterPct =
+    worktreeLimit > 0 ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100)) : 0;
   const meterHot = worktreeLimit > 0 && managedWorktreeCount / worktreeLimit >= 0.75;
 
   useEffect(() => {
     if (!productOpen) return;
     const root = brandRef.current;
     if (!root) return;
-    const items = () => [...root.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]')];
+    const items = () => [
+      ...root.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]'),
+    ];
     const frame = window.requestAnimationFrame(() => {
       const list = items();
       const selected = list.find((item) => item.getAttribute("aria-checked") === "true") ?? list[0];
@@ -184,7 +185,9 @@ export function CodeSidebar({
       const list = items();
       if (!list.length) return;
       // Skip disabled products when moving focus.
-      const enabled = list.filter((item) => !item.hasAttribute("disabled") && item.getAttribute("aria-disabled") !== "true");
+      const enabled = list.filter(
+        (item) => !item.hasAttribute("disabled") && item.getAttribute("aria-disabled") !== "true",
+      );
       const pool = enabled.length ? enabled : list;
       const currentIndex = pool.indexOf(document.activeElement as HTMLElement);
       if (event.key === "ArrowDown") {
@@ -220,7 +223,8 @@ export function CodeSidebar({
     // Move focus into the listbox so arrow keys work immediately.
     const focusSelected = () => {
       const opts = options();
-      const selected = opts.find((option) => option.getAttribute("aria-selected") === "true") ?? opts[0];
+      const selected =
+        opts.find((option) => option.getAttribute("aria-selected") === "true") ?? opts[0];
       selected?.focus();
     };
     const frame = window.requestAnimationFrame(focusSelected);
@@ -275,14 +279,19 @@ export function CodeSidebar({
   }, [onRequestClose, sidebarOpen]);
 
   const selectedProject = useMemo(
-    () => (projectFilter === "all" ? null : projects.find((project) => project.id === projectFilter) ?? null),
+    () =>
+      projectFilter === "all"
+        ? null
+        : (projects.find((project) => project.id === projectFilter) ?? null),
     [projectFilter, projects],
   );
-  const projectFilterLabel = repositoryRestoring && projects.length === 0
-    ? "Restoring projects…"
-    : selectedProject?.name ?? "All projects";
-  const projectFilterDetail = selectedProject?.root
-    ?? (projects.length === 0
+  const projectFilterLabel =
+    repositoryRestoring && projects.length === 0
+      ? "Restoring projects…"
+      : (selectedProject?.name ?? "All projects");
+  const projectFilterDetail =
+    selectedProject?.root ??
+    (projects.length === 0
       ? "Add a project to start"
       : repository
         ? `Current: ${repository.name} · ${projects.length} project${projects.length === 1 ? "" : "s"}`
@@ -293,8 +302,14 @@ export function CodeSidebar({
       if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
       // mock uses ⌘1–4 without shift in UI label; we accept both
       const map: Record<string, Product> = {
-        Digit1: "code", Digit2: "sekai", Digit3: "chisei", Digit4: "tenkai",
-        "1": "code", "2": "sekai", "3": "chisei", "4": "tenkai",
+        Digit1: "code",
+        Digit2: "sekai",
+        Digit3: "chisei",
+        Digit4: "tenkai",
+        "1": "code",
+        "2": "sekai",
+        "3": "chisei",
+        "4": "tenkai",
       };
       const next = map[event.code] ?? map[event.key];
       if (!next || !isProductAvailable(next, productAvailability)) return;
@@ -328,10 +343,19 @@ export function CodeSidebar({
           aria-label={`Product: ${current.label}`}
         >
           <div className="logo" aria-hidden="true">
-            {product === "code" ? <AldunisBrandMark className="aldunis-brand-mark--compact" /> : current.mark}
+            {product === "code" ? (
+              <AldunisBrandMark className="aldunis-brand-mark--compact" />
+            ) : (
+              current.mark
+            )}
           </div>
           <div className="sb-name">{brandName}</div>
-          <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true" style={{ color: "var(--muted-foreground)" }}>
+          <svg
+            className="ic ic-sm"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            style={{ color: "var(--muted-foreground)" }}
+          >
             <path d="m6 9 6 6 6-6" />
           </svg>
         </button>
@@ -379,13 +403,19 @@ export function CodeSidebar({
                   }}
                 >
                   <span className="m2" aria-hidden="true">
-                    {item.id === "code" ? <AldunisBrandMark className="aldunis-brand-mark--compact" /> : item.mark}
+                    {item.id === "code" ? (
+                      <AldunisBrandMark className="aldunis-brand-mark--compact" />
+                    ) : (
+                      item.mark
+                    )}
                   </span>
                   <span className="b2">
                     <span className="n2">{item.label}</span>
                     <span className="p2">{detail}</span>
                   </span>
-                  <span className="k2" aria-hidden="true">⌘{index + 1}</span>
+                  <span className="k2" aria-hidden="true">
+                    ⌘{index + 1}
+                  </span>
                 </button>
               );
             })}
@@ -394,9 +424,17 @@ export function CodeSidebar({
       </div>
 
       {product === "code" && (
-        <div className="code-nav" style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <div
+          className="code-nav"
+          style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
+        >
           <div className="g1">
-            <button type="button" className="search" onClick={onOpenPalette} aria-label="Search and commands">
+            <button
+              type="button"
+              className="search"
+              onClick={onOpenPalette}
+              aria-label="Search and commands"
+            >
               <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
                 <circle cx="11" cy="11" r="7" />
                 <path d="m20 20-3.5-3.5" />
@@ -427,9 +465,7 @@ export function CodeSidebar({
               aria-haspopup="listbox"
               aria-expanded={projectMenuOpen}
               aria-label={`Project filter: ${projectFilterLabel}${
-                projectFilter === "all" && repository
-                  ? `, current project ${repository.name}`
-                  : ""
+                projectFilter === "all" && repository ? `, current project ${repository.name}` : ""
               }${
                 attention.length > 0
                   ? `, ${attention.length} conversation${attention.length === 1 ? "" : "s"} need attention`
@@ -512,8 +548,9 @@ export function CodeSidebar({
                   <span className="n">{attention.length}</span>
                 </div>
                 {attention.map((conversation) => {
-                  const openInPane = primaryConversationId === conversation.id
-                    || secondaryConversationId === conversation.id;
+                  const openInPane =
+                    primaryConversationId === conversation.id ||
+                    secondaryConversationId === conversation.id;
                   return (
                     <ThreadRow
                       key={conversation.id}
@@ -546,8 +583,9 @@ export function CodeSidebar({
             </div>
             <div role="group" aria-labelledby={activeHeadingId}>
               {active.map((conversation) => {
-                const openInPane = primaryConversationId === conversation.id
-                  || secondaryConversationId === conversation.id;
+                const openInPane =
+                  primaryConversationId === conversation.id ||
+                  secondaryConversationId === conversation.id;
                 return (
                   <ThreadRow
                     key={conversation.id}
@@ -555,9 +593,9 @@ export function CodeSidebar({
                     active={openInPane}
                     onOpen={() => onOpenConversation(conversation.id)}
                     onSettle={showingArchived ? undefined : () => onSettle(conversation)}
-                    onSnooze={showingArchived
-                      ? undefined
-                      : (preset) => onSnooze(conversation, preset)}
+                    onSnooze={
+                      showingArchived ? undefined : (preset) => onSnooze(conversation, preset)
+                    }
                     showSettle={!showingArchived}
                     // Beside is for a second column — hide when this thread is already primary or secondary.
                     showBeside={!showingArchived && !openInPane}
@@ -601,7 +639,9 @@ export function CodeSidebar({
                 aria-controls={snoozedShelfOpen ? snoozedShelfId : undefined}
                 aria-label={`Snoozed conversations (${snoozed.length})`}
               >
-                <span className="cv" aria-hidden="true">▶</span>
+                <span className="cv" aria-hidden="true">
+                  ▶
+                </span>
                 <span>Snoozed ({snoozed.length})</span>
               </button>
               {snoozedShelfOpen && (
@@ -626,7 +666,9 @@ export function CodeSidebar({
                               : `Open snoozed conversation "${conversation.title}"`
                           }
                         >
-                          <span className="t" title={conversation.title}>{conversation.title}</span>
+                          <span className="t" title={conversation.title}>
+                            {conversation.title}
+                          </span>
                         </button>
                         <span className="w" title={meta || undefined}>
                           {wake}
@@ -663,7 +705,9 @@ export function CodeSidebar({
                 aria-controls={shelfOpen ? settledShelfId : undefined}
                 aria-label={`Settled conversations (${settled.length})`}
               >
-                <span className="cv" aria-hidden="true">▶</span>
+                <span className="cv" aria-hidden="true">
+                  ▶
+                </span>
                 <span>Settled ({settled.length})</span>
               </button>
               {shelfOpen && (
@@ -700,20 +744,20 @@ export function CodeSidebar({
                               : `Open settled conversation "${conversation.title}"`
                           }
                         >
-                          <span className="t" title={conversation.title}>{conversation.title}</span>
+                          <span className="t" title={conversation.title}>
+                            {conversation.title}
+                          </span>
                         </button>
-                        {holds
-                          ? (
-                            <span className="wt" title={meta || undefined}>
-                              <span className="dot" />
-                              {provider ? `${provider} · worktree` : "worktree"}
-                            </span>
-                          )
-                          : (
-                            <span className="w" title={meta || undefined}>
-                              {meta || branch}
-                            </span>
-                          )}
+                        {holds ? (
+                          <span className="wt" title={meta || undefined}>
+                            <span className="dot" />
+                            {provider ? `${provider} · worktree` : "worktree"}
+                          </span>
+                        ) : (
+                          <span className="w" title={meta || undefined}>
+                            {meta || branch}
+                          </span>
+                        )}
                         <div className="sacts">
                           {holds && (
                             <button

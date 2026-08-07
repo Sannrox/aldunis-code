@@ -13,12 +13,12 @@ operations and independent authorities.
 
 They answer different questions:
 
-| Concept | Question | Owner | Durable effect |
-| --- | --- | --- | --- |
-| Pin | Should this conversation sort prominently? | Conversation history | `Thread.pinnedAt` |
-| Archive | Should this conversation leave the ordinary active-history view? | Conversation history | `Thread.archivedAt` |
-| Settle | Has the operator finished attending to this conversation for now? | Conversation history | `Thread.settledAt` |
-| Snooze | Should this conversation leave the ordinary inbox until a chosen wake time? | Conversation history | `Thread.snoozedUntil` + `Thread.snoozedAt` |
+| Concept          | Question                                                                     | Owner                             | Durable effect                                       |
+| ---------------- | ---------------------------------------------------------------------------- | --------------------------------- | ---------------------------------------------------- |
+| Pin              | Should this conversation sort prominently?                                   | Conversation history              | `Thread.pinnedAt`                                    |
+| Archive          | Should this conversation leave the ordinary active-history view?             | Conversation history              | `Thread.archivedAt`                                  |
+| Settle           | Has the operator finished attending to this conversation for now?            | Conversation history              | `Thread.settledAt`                                   |
+| Snooze           | Should this conversation leave the ordinary inbox until a chosen wake time?  | Conversation history              | `Thread.snoozedUntil` + `Thread.snoozedAt`           |
 | Release worktree | Should this Aldunis-owned checkout stop consuming local filesystem capacity? | Managed-worktree registry and Git | Registry removal intent/result plus checkout removal |
 
 Unsettle is the inverse transition for settle, not a fifth concept.
@@ -63,14 +63,14 @@ settle never remove a worktree.
 
 ## Presentation and behavior
 
-| Operation | Primary presentation effect | Other behavior |
-| --- | --- | --- |
-| Pin | Orders the conversation ahead of ordinary peers in its current group | Does not change visibility, completion, history, checkpoints, or worktrees |
-| Archive | Moves the conversation from Active to the Archived filter | Preserves pin, settle, history, checkpoints, provider binding, and worktree |
-| Restore | Clears archived presentation | Preserves pin, settle, history, checkpoints, and worktree |
-| Settle | Moves an unarchived conversation to the reversible Settled shelf | Suppresses attention grouping; preserves history, checkpoints, and worktree |
-| Unsettle | Returns the conversation to ordinary active grouping | Preserves archive, pin, history, checkpoints, and worktree |
-| Release | Removes only a clean Aldunis-owned checkout and frees one managed-worktree slot | Preserves conversation history, branch, commits, remote, provider binding, and checkpoint metadata |
+| Operation | Primary presentation effect                                                     | Other behavior                                                                                     |
+| --------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Pin       | Orders the conversation ahead of ordinary peers in its current group            | Does not change visibility, completion, history, checkpoints, or worktrees                         |
+| Archive   | Moves the conversation from Active to the Archived filter                       | Preserves pin, settle, history, checkpoints, provider binding, and worktree                        |
+| Restore   | Clears archived presentation                                                    | Preserves pin, settle, history, checkpoints, and worktree                                          |
+| Settle    | Moves an unarchived conversation to the reversible Settled shelf                | Suppresses attention grouping; preserves history, checkpoints, and worktree                        |
+| Unsettle  | Returns the conversation to ordinary active grouping                            | Preserves archive, pin, history, checkpoints, and worktree                                         |
+| Release   | Removes only a clean Aldunis-owned checkout and frees one managed-worktree slot | Preserves conversation history, branch, commits, remote, provider binding, and checkpoint metadata |
 
 Archive and settle both reduce ordinary sidebar prominence, but they express
 different intent. Archive is a visibility filter over retained history.
@@ -83,12 +83,12 @@ both archive and release.
 Pin, archive, and settle are orthogonal nullable timestamps. The state layer
 allows all eight combinations:
 
-| Archived | Settled | Pinned | Meaning |
-| --- | --- | --- | --- |
-| No | No | No/Yes | Ordinary active conversation, optionally prominent |
-| No | Yes | No/Yes | Completed-for-now conversation on the Settled shelf |
-| Yes | No | No/Yes | Retained history hidden behind the Archived filter |
-| Yes | Yes | No/Yes | Archived retained history that is also marked complete |
+| Archived | Settled | Pinned | Meaning                                                |
+| -------- | ------- | ------ | ------------------------------------------------------ |
+| No       | No      | No/Yes | Ordinary active conversation, optionally prominent     |
+| No       | Yes     | No/Yes | Completed-for-now conversation on the Settled shelf    |
+| Yes      | No      | No/Yes | Retained history hidden behind the Archived filter     |
+| Yes      | Yes     | No/Yes | Archived retained history that is also marked complete |
 
 The normal UI does not offer Settle while viewing Archived conversations, but
 the persisted model does not make archive and settle mutually exclusive.
@@ -127,19 +127,19 @@ or work continues in a new conversation; it must not silently rebind history.
 
 ## Recovery cases
 
-| Case | Required outcome |
-| --- | --- |
-| Active provider turn | Archive, settle, delete, and release return a retryable conflict; pin remains presentation-only |
-| Missing managed worktree | Release marks the ownership record removed and succeeds; it currently does not first prove the checkout was not moved |
-| User-created or already released worktree | Release reports no removal and does not claim ownership |
-| Dirty, locked, or branch-mismatched checkout still at the registered path | Release fails without force or hidden cleanup |
-| Managed checkout moved away from its registered path | Current release treats the old path as missing, drops the active ownership record, and can leave the moved checkout intact; the recovery follow-up must close this gap |
-| Git removal fails | The registry rolls back the pending marker where possible; files and history remain inspectable |
-| Registry finalization fails after Git removal | Pending-removal state remains and no longer consumes the active limit, but no startup or operator retry currently finalizes it; the follow-up issue must add bounded recovery |
-| Combined settle then release fails | Settle remains recorded; the Settled shelf continues to show the held worktree and offers Release again |
-| Retained conversation | Pin/archive/settle do not affect the 200-conversation retention count |
-| Checkpoint cleanup | Conversation deletion, project deletion, and retention own checkpoint-ref cleanup; settle/archive/release do not |
-| Project deletion | Active checkpoint work blocks deletion; cleanup intent is persisted before refs and project records are removed; worktrees are not implicitly removed |
+| Case                                                                      | Required outcome                                                                                                                                                              |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Active provider turn                                                      | Archive, settle, delete, and release return a retryable conflict; pin remains presentation-only                                                                               |
+| Missing managed worktree                                                  | Release marks the ownership record removed and succeeds; it currently does not first prove the checkout was not moved                                                         |
+| User-created or already released worktree                                 | Release reports no removal and does not claim ownership                                                                                                                       |
+| Dirty, locked, or branch-mismatched checkout still at the registered path | Release fails without force or hidden cleanup                                                                                                                                 |
+| Managed checkout moved away from its registered path                      | Current release treats the old path as missing, drops the active ownership record, and can leave the moved checkout intact; the recovery follow-up must close this gap        |
+| Git removal fails                                                         | The registry rolls back the pending marker where possible; files and history remain inspectable                                                                               |
+| Registry finalization fails after Git removal                             | Pending-removal state remains and no longer consumes the active limit, but no startup or operator retry currently finalizes it; the follow-up issue must add bounded recovery |
+| Combined settle then release fails                                        | Settle remains recorded; the Settled shelf continues to show the held worktree and offers Release again                                                                       |
+| Retained conversation                                                     | Pin/archive/settle do not affect the 200-conversation retention count                                                                                                         |
+| Checkpoint cleanup                                                        | Conversation deletion, project deletion, and retention own checkpoint-ref cleanup; settle/archive/release do not                                                              |
+| Project deletion                                                          | Active checkpoint work blocks deletion; cleanup intent is persisted before refs and project records are removed; worktrees are not implicitly removed                         |
 
 The partial result of the combined action is important: settling is safe to
 commit before destructive filesystem cleanup because a failed release remains
@@ -149,15 +149,15 @@ that still exists.
 
 ## Complexity assessment
 
-| Measure | Current independent model | Collapsed lifecycle proposal |
-| --- | ---: | ---: |
-| User-facing concepts | 4 | At best 3 |
-| Thread timestamp fields | 3 | At best 2 |
-| Conversation lifecycle routes | 6 (`pin`, `archive`, `restore`, `settle`, `unsettle`, release) | At best 4 |
-| Filesystem removal routes | 1 | Still 1; confirmation and recovery cannot disappear |
-| Managed registry states | Unchanged | Unchanged |
-| Partial-success branch for settle + release | Explicit and retryable | Still exists, but must be hidden, rolled back, or represented elsewhere |
-| Existing history migration | None | Required for any removed timestamp or changed semantics |
+| Measure                                     |                                      Current independent model |                                            Collapsed lifecycle proposal |
+| ------------------------------------------- | -------------------------------------------------------------: | ----------------------------------------------------------------------: |
+| User-facing concepts                        |                                                              4 |                                                               At best 3 |
+| Thread timestamp fields                     |                                                              3 |                                                               At best 2 |
+| Conversation lifecycle routes               | 6 (`pin`, `archive`, `restore`, `settle`, `unsettle`, release) |                                                               At best 4 |
+| Filesystem removal routes                   |                                                              1 |                     Still 1; confirmation and recovery cannot disappear |
+| Managed registry states                     |                                                      Unchanged |                                                               Unchanged |
+| Partial-success branch for settle + release |                                         Explicit and retryable | Still exists, but must be hidden, rolled back, or represented elsewhere |
+| Existing history migration                  |                                                           None |                 Required for any removed timestamp or changed semantics |
 
 The maximum apparent reduction is one concept, one timestamp, and two inverse
 routes. It does not remove the filesystem confirmation, Git validation,

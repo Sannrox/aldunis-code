@@ -13,11 +13,7 @@ import {
   type ProviderPlanStep,
   type ReasoningEffort,
 } from "./provider.ts";
-import type {
-  AutomationFire,
-  AutomationFireKey,
-  AutomationFireStatus,
-} from "./automations.ts";
+import type { AutomationFire, AutomationFireKey, AutomationFireStatus } from "./automations.ts";
 import type { ContextPin, ContextReceiptEntry } from "./context.ts";
 import type { WorkspaceMode } from "../src/types.ts";
 
@@ -327,12 +323,7 @@ export interface FileReview {
 
 /** Derived sidebar status — computed server-side so the client only does elapsed time. */
 export type ThreadStatus =
-  | "pending_approval"
-  | "awaiting_input"
-  | "running"
-  | "failed"
-  | "completed"
-  | "idle";
+  "pending_approval" | "awaiting_input" | "running" | "failed" | "completed" | "idle";
 
 export interface ThreadStatusProjection {
   threadId: string;
@@ -397,7 +388,10 @@ type StateEvent =
   | { type: "conversation_deletion_saved"; conversationDeletion: ConversationDeletion }
   | { type: "fork_created"; thread: Thread; fork: ConversationFork }
   | { type: "fork_saved"; fork: ConversationFork }
-  | { type: "delegated_relationship_saved"; delegatedRelationship: DelegatedConversationRelationship }
+  | {
+      type: "delegated_relationship_saved";
+      delegatedRelationship: DelegatedConversationRelationship;
+    }
   | { type: "input_request_saved"; inputRequest: ChildInputRequest }
   | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt }
   | { type: "automation_fire_saved"; automationFire: AutomationFire };
@@ -411,7 +405,10 @@ interface EventEnvelope {
 }
 
 export class LocalStateError extends Error {
-  constructor(message: string, readonly status = 500) {
+  constructor(
+    message: string,
+    readonly status = 500,
+  ) {
     super(message);
   }
 }
@@ -447,9 +444,7 @@ function automationFireOutcome(
   projection: StateProjection,
   fire: AutomationFire,
 ): { status: AutomationFireTerminalStatus; error: string | null } {
-  const turn = fire.turnId
-    ? projection.turns.find((item) => item.id === fire.turnId)
-    : undefined;
+  const turn = fire.turnId ? projection.turns.find((item) => item.id === fire.turnId) : undefined;
   if (turn?.status === "completed") return { status: "completed", error: null };
   if (turn?.status === "failed") return { status: "failed", error: "The provider turn failed." };
   return {
@@ -479,9 +474,8 @@ export function projectThreadStatus(
     return {
       threadId,
       status: "pending_approval",
-      since: thread?.wokeAt && thread.wokeAt >= approval.createdAt
-        ? thread.wokeAt
-        : approval.createdAt,
+      since:
+        thread?.wokeAt && thread.wokeAt >= approval.createdAt ? thread.wokeAt : approval.createdAt,
     };
   }
   const awaiting = [...turns].reverse().find((turn) => turn.status === "waiting_for_user");
@@ -489,14 +483,13 @@ export function projectThreadStatus(
     return {
       threadId,
       status: "awaiting_input",
-      since: thread?.wokeAt && thread.wokeAt >= awaiting.createdAt
-        ? thread.wokeAt
-        : awaiting.createdAt,
+      since:
+        thread?.wokeAt && thread.wokeAt >= awaiting.createdAt ? thread.wokeAt : awaiting.createdAt,
     };
   }
-  const running = [...turns].reverse().find((turn) => (
-    turn.status === "active" || turn.status === "running"
-  ));
+  const running = [...turns]
+    .reverse()
+    .find((turn) => turn.status === "active" || turn.status === "running");
   if (running) {
     return { threadId, status: "running", since: running.createdAt };
   }
@@ -504,8 +497,9 @@ export function projectThreadStatus(
     return {
       threadId,
       status: "failed",
-      since: latest.completedAt
-        ?? (thread?.wokeAt && thread.wokeAt >= latest.createdAt ? thread.wokeAt : latest.createdAt),
+      since:
+        latest.completedAt ??
+        (thread?.wokeAt && thread.wokeAt >= latest.createdAt ? thread.wokeAt : latest.createdAt),
     };
   }
   if (latest?.status === "completed") {
@@ -518,8 +512,12 @@ export function projectThreadStatus(
   return {
     threadId,
     status: "idle",
-    since: latest?.completedAt ?? latest?.createdAt ?? thread?.updatedAt ?? thread?.createdAt
-      ?? new Date(0).toISOString(),
+    since:
+      latest?.completedAt ??
+      latest?.createdAt ??
+      thread?.updatedAt ??
+      thread?.createdAt ??
+      new Date(0).toISOString(),
   };
 }
 
@@ -538,9 +536,9 @@ export function projectDelegatedConversationOutcomes(
     if (!childIds.has(turn.threadId) || turn.status !== "completed") continue;
     const previous = latestByChild.get(turn.threadId);
     if (
-      !previous
-      || turn.createdAt > previous.createdAt
-      || (turn.createdAt === previous.createdAt && turn.id > previous.id)
+      !previous ||
+      turn.createdAt > previous.createdAt ||
+      (turn.createdAt === previous.createdAt && turn.id > previous.id)
     ) {
       latestByChild.set(turn.threadId, turn);
     }
@@ -551,10 +549,11 @@ export function projectDelegatedConversationOutcomes(
   const lastToolStartByTurn = new Map<string, number>();
   for (const activity of projection.activities) {
     if (
-      !childByTurn.has(activity.turnId)
-      || activity.kind !== "tool_started"
-      || activity.eventSequence === undefined
-    ) continue;
+      !childByTurn.has(activity.turnId) ||
+      activity.kind !== "tool_started" ||
+      activity.eventSequence === undefined
+    )
+      continue;
     lastToolStartByTurn.set(
       activity.turnId,
       Math.max(lastToolStartByTurn.get(activity.turnId) ?? 0, activity.eventSequence),
@@ -565,10 +564,7 @@ export function projectDelegatedConversationOutcomes(
     truncated: boolean;
     pendingWhitespace: string;
   };
-  const appendBoundedTail = (
-    current: BoundedSummary | undefined,
-    next: string,
-  ): BoundedSummary => {
+  const appendBoundedTail = (current: BoundedSummary | undefined, next: string): BoundedSummary => {
     if (!next.trim()) {
       const whitespace = `${current?.pendingWhitespace ?? ""}${next}`;
       return {
@@ -602,9 +598,9 @@ export function projectDelegatedConversationOutcomes(
     );
     const lastToolStart = lastToolStartByTurn.get(message.turnId);
     if (
-      lastToolStart === undefined
-      || message.eventSequence === undefined
-      || message.eventSequence > lastToolStart
+      lastToolStart === undefined ||
+      message.eventSequence === undefined ||
+      message.eventSequence > lastToolStart
     ) {
       finalAssistantByChild.set(
         childThreadId,
@@ -620,13 +616,15 @@ export function projectDelegatedConversationOutcomes(
       ? finalAssistant
       : allAssistantByChild.get(childThreadId);
     const summary = (projected?.text ?? "").trim();
-    return [{
-      childThreadId,
-      completedAt: latest.completedAt ?? latest.createdAt,
-      summary: summary
-        ? `${projected?.truncated ? "…" : ""}${summary}`
-        : "No written result was recorded.",
-    }];
+    return [
+      {
+        childThreadId,
+        completedAt: latest.completedAt ?? latest.createdAt,
+        summary: summary
+          ? `${projected?.truncated ? "…" : ""}${summary}`
+          : "No written result was recorded.",
+      },
+    ];
   });
 }
 
@@ -652,9 +650,9 @@ function migrateNullableTimestamp(value: unknown): string | null {
 function migrateThreadRecord(payload: Record<string, unknown>): Thread {
   const workspaceMode = payload.workspaceMode === undefined ? "shared" : payload.workspaceMode;
   if (
-    workspaceMode !== "shared"
-    && workspaceMode !== "aldunis-managed"
-    && workspaceMode !== "provider-native"
+    workspaceMode !== "shared" &&
+    workspaceMode !== "aldunis-managed" &&
+    workspaceMode !== "provider-native"
   ) {
     throw new LocalStateError("Local history is corrupt.");
   }
@@ -729,11 +727,12 @@ function renderForkPrompt(
   if (annotations.length) {
     sections.push(
       "User-authored diff annotations:",
-      ...annotations.map((annotation) => (
-        `${annotation.path}: ${annotation.text}${annotation.capturedContext
-          ? `\nContext: ${annotation.capturedContext}`
-          : ""}`
-      )),
+      ...annotations.map(
+        (annotation) =>
+          `${annotation.path}: ${annotation.text}${
+            annotation.capturedContext ? `\nContext: ${annotation.capturedContext}` : ""
+          }`,
+      ),
     );
   }
   sections.push(
@@ -760,7 +759,7 @@ function buildForkPreview(source: Thread, projection: StateProjection) {
   return {
     sourceThreadId: source.id,
     sourceProvider: source.provider,
-    workspaceMode: source.workspaceMode ?? "shared" as const,
+    workspaceMode: source.workspaceMode ?? ("shared" as const),
     worktree: source.worktree,
     messages,
     annotations,
@@ -811,11 +810,11 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.contextReceipts, event.contextReceipt);
   } else if (event.type === "governance_correlation_saved") {
     replaceById(projection.governanceCorrelations, event.governanceCorrelation);
-  }
-  else if (event.type === "provider_session_saved") {
+  } else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
-      (item) => item.threadId === event.providerSession.threadId
-        && item.provider === event.providerSession.provider,
+      (item) =>
+        item.threadId === event.providerSession.threadId &&
+        item.provider === event.providerSession.provider,
     );
     if (index === -1) projection.providerSessions.push(event.providerSession);
     else projection.providerSessions[index] = event.providerSession;
@@ -858,16 +857,14 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
   if (!isRecord(value) || !isSupportedSchemaVersion(value.schemaVersion)) {
-    throw new LocalStateError(
-      `Local history uses an incompatible schema at line ${lineNumber}.`,
-    );
+    throw new LocalStateError(`Local history uses an incompatible schema at line ${lineNumber}.`);
   }
   if (
-    typeof value.sequence !== "number"
-    || typeof value.id !== "string"
-    || typeof value.recordedAt !== "string"
-    || !isRecord(value.event)
-    || typeof value.event.type !== "string"
+    typeof value.sequence !== "number" ||
+    typeof value.id !== "string" ||
+    typeof value.recordedAt !== "string" ||
+    !isRecord(value.event) ||
+    typeof value.event.type !== "string"
   ) {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
@@ -897,15 +894,14 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   const payload = key ? event[key] : undefined;
   const forkThread = event.type === "fork_created" ? event.thread : undefined;
   if (
-    !key
-    || !isRecord(payload)
-    || !isSupportedSchemaVersion(payload.schemaVersion)
-    || (event.type === "fork_created" && (
-      !isRecord(forkThread)
-      || !isSupportedSchemaVersion(forkThread.schemaVersion)
-      || typeof forkThread.id !== "string"
-    ))
-    || (key === "providerSession"
+    !key ||
+    !isRecord(payload) ||
+    !isSupportedSchemaVersion(payload.schemaVersion) ||
+    (event.type === "fork_created" &&
+      (!isRecord(forkThread) ||
+        !isSupportedSchemaVersion(forkThread.schemaVersion) ||
+        typeof forkThread.id !== "string")) ||
+    (key === "providerSession"
       ? typeof payload.threadId !== "string" || typeof payload.sessionId !== "string"
       : key === "conversationDeletion"
         ? typeof payload.threadId !== "string"
@@ -1009,13 +1005,13 @@ export class LocalStateStore {
     );
     const repaired = firstMismatch !== -1;
     if (repaired) {
-      const isCompleteFork = maximumSequence > 0
-        && parsedEnvelopes.length > maximumSequence
-        && sequences.size === maximumSequence
-        && Array.from(
-          { length: maximumSequence },
-          (_, index) => sequences.has(index + 1),
-        ).every(Boolean);
+      const isCompleteFork =
+        maximumSequence > 0 &&
+        parsedEnvelopes.length > maximumSequence &&
+        sequences.size === maximumSequence &&
+        Array.from({ length: maximumSequence }, (_, index) => sequences.has(index + 1)).every(
+          Boolean,
+        );
       if (!isCompleteFork) {
         const envelope = parsedEnvelopes[firstMismatch];
         throw new LocalStateError(
@@ -1024,9 +1020,9 @@ export class LocalStateStore {
       }
     }
     const projection = emptyProjection();
-    const envelopes = parsedEnvelopes.map((parsed, index) => (
-      repaired ? { ...parsed, sequence: index + 1 } : parsed
-    ));
+    const envelopes = parsedEnvelopes.map((parsed, index) =>
+      repaired ? { ...parsed, sequence: index + 1 } : parsed,
+    );
     for (const envelope of envelopes) {
       applyEvent(projection, envelope);
     }
@@ -1138,11 +1134,12 @@ export class LocalStateStore {
         openedAt,
         chiseiNamespace: input.chiseiNamespace ?? existing?.chiseiNamespace ?? null,
       };
-      const unchanged = existing
-        && existing.name === project.name
-        && existing.root === project.root
-        && existing.openedAt === project.openedAt
-        && (existing.chiseiNamespace ?? null) === project.chiseiNamespace;
+      const unchanged =
+        existing &&
+        existing.name === project.name &&
+        existing.root === project.root &&
+        existing.openedAt === project.openedAt &&
+        (existing.chiseiNamespace ?? null) === project.chiseiNamespace;
       return {
         event: unchanged ? null : { type: "project_saved", project },
         value: unchanged ? existing : project,
@@ -1152,7 +1149,7 @@ export class LocalStateStore {
 
   async bindProjectChiseiNamespace(projectId: string, namespace: string | null): Promise<Project> {
     const normalized = namespace?.trim() || null;
-    if (normalized && (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(normalized))) {
+    if (normalized && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(normalized)) {
       throw new LocalStateError("The Chisei namespace is invalid.", 400);
     }
     return this.#appendComputed((projection) => {
@@ -1184,9 +1181,9 @@ export class LocalStateStore {
         throw new LocalStateError("The selected project is not in local history.", 404);
       }
       if (
-        !input.threadId
-        && projection.threads.filter((thread) => thread.projectId === input.projectId).length
-          >= MAX_THREADS_PER_PROJECT
+        !input.threadId &&
+        projection.threads.filter((thread) => thread.projectId === input.projectId).length >=
+          MAX_THREADS_PER_PROJECT
       ) {
         throw new LocalStateError(
           `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit. Delete or retain older conversations before starting another.`,
@@ -1226,9 +1223,9 @@ export class LocalStateStore {
       }
       const workspaceMode = existing?.workspaceMode ?? input.workspaceMode ?? "shared";
       if (
-        !input.threadId
-        && workspaceMode === "aldunis-managed"
-        && projection.threads.some((thread) => thread.worktree === input.worktree)
+        !input.threadId &&
+        workspaceMode === "aldunis-managed" &&
+        projection.threads.some((thread) => thread.worktree === input.worktree)
       ) {
         throw new LocalStateError(
           "Each Aldunis-managed conversation needs its own worktree. Create a new one before starting this chat.",
@@ -1335,7 +1332,10 @@ export class LocalStateStore {
     }
     const destinationWorktree = input.destinationWorktree ?? source.worktree;
     const destinationWorkspaceMode = input.workspaceMode ?? source.workspaceMode ?? "shared";
-    if (source.workspaceMode === "aldunis-managed" && destinationWorkspaceMode !== "aldunis-managed") {
+    if (
+      source.workspaceMode === "aldunis-managed" &&
+      destinationWorkspaceMode !== "aldunis-managed"
+    ) {
       throw new LocalStateError(
         "A fork from an Aldunis-managed conversation requires a distinct Aldunis-managed worktree.",
         409,
@@ -1348,8 +1348,8 @@ export class LocalStateStore {
       );
     }
     if (
-      projection.threads.filter((thread) => thread.projectId === source.projectId).length
-      >= MAX_THREADS_PER_PROJECT
+      projection.threads.filter((thread) => thread.projectId === source.projectId).length >=
+      MAX_THREADS_PER_PROJECT
     ) {
       throw new LocalStateError(
         `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit.`,
@@ -1410,9 +1410,9 @@ export class LocalStateStore {
     return this.#appendComputed((currentProjection) => {
       const currentSource = currentProjection.threads.find((item) => item.id === source.id);
       if (
-        !currentSource
-        || currentSource.worktree !== source.worktree
-        || (currentSource.workspaceMode ?? "shared") !== (source.workspaceMode ?? "shared")
+        !currentSource ||
+        currentSource.worktree !== source.worktree ||
+        (currentSource.workspaceMode ?? "shared") !== (source.workspaceMode ?? "shared")
       ) {
         throw new LocalStateError("The source conversation changed after the fork preview.", 409);
       }
@@ -1424,8 +1424,8 @@ export class LocalStateStore {
         throw new LocalStateError("The reviewed context exceeds the 64 KiB fork limit.", 413);
       }
       if (
-        destinationWorkspaceMode === "aldunis-managed"
-        && currentProjection.threads.some((item) => item.worktree === destinationWorktree)
+        destinationWorkspaceMode === "aldunis-managed" &&
+        currentProjection.threads.some((item) => item.worktree === destinationWorktree)
       ) {
         throw new LocalStateError(
           "The fork destination worktree is already bound to another conversation.",
@@ -1433,8 +1433,8 @@ export class LocalStateStore {
         );
       }
       if (
-        currentProjection.threads.filter((item) => item.projectId === source.projectId).length
-        >= MAX_THREADS_PER_PROJECT
+        currentProjection.threads.filter((item) => item.projectId === source.projectId).length >=
+        MAX_THREADS_PER_PROJECT
       ) {
         throw new LocalStateError(
           `This project has reached the ${MAX_THREADS_PER_PROJECT}-conversation local retention limit.`,
@@ -1476,12 +1476,17 @@ export class LocalStateStore {
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
       const fire = projection.automationFires.find((item) => item.turnId === turnId);
       if (fire?.providerRunId && fire.providerRunId !== providerRunId) {
-        throw new LocalStateError("The automation fire is already bound to another provider run.", 409);
+        throw new LocalStateError(
+          "The automation fire is already bound to another provider run.",
+          409,
+        );
       }
-      const events: StateEvent[] = [{
-        type: "turn_saved",
-        turn: { ...turn, providerRunId },
-      }];
+      const events: StateEvent[] = [
+        {
+          type: "turn_saved",
+          turn: { ...turn, providerRunId },
+        },
+      ];
       if (fire && fire.providerRunId !== providerRunId) {
         events.push({
           type: "automation_fire_saved",
@@ -1498,9 +1503,11 @@ export class LocalStateStore {
 
   async getAutomationFire(automationId: string, key: string): Promise<AutomationFire | null> {
     const projection = await this.load();
-    return projection.automationFires.find(
-      (fire) => fire.automationId === automationId && fire.key === key,
-    ) ?? null;
+    return (
+      projection.automationFires.find(
+        (fire) => fire.automationId === automationId && fire.key === key,
+      ) ?? null
+    );
   }
 
   async getAutomationFireById(fireId: string): Promise<AutomationFire | null> {
@@ -1510,9 +1517,11 @@ export class LocalStateStore {
 
   async latestAutomationFire(automationId: string): Promise<AutomationFire | null> {
     const projection = await this.load();
-    return projection.automationFires
-      .filter((fire) => fire.automationId === automationId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+    return (
+      projection.automationFires
+        .filter((fire) => fire.automationId === automationId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+    );
   }
 
   async recordAutomationFireSkippedBusy(input: AutomationFireKey): Promise<AutomationFire> {
@@ -1542,14 +1551,20 @@ export class LocalStateStore {
     });
   }
 
-  async claimAutomationFire(input: AutomationFireKey): Promise<{ fire: AutomationFire; claimed: boolean }> {
+  async claimAutomationFire(
+    input: AutomationFireKey,
+  ): Promise<{ fire: AutomationFire; claimed: boolean }> {
     return this.#appendComputed((projection) => {
       const existing = projection.automationFires.find(
         (fire) => fire.automationId === input.automationId && fire.key === input.key,
       );
       const now = new Date().toISOString();
       if (existing) {
-        if (existing.kind !== "scheduled" || existing.status !== "skipped_busy" || existing.turnId) {
+        if (
+          existing.kind !== "scheduled" ||
+          existing.status !== "skipped_busy" ||
+          existing.turnId
+        ) {
           return { event: null, value: { fire: existing, claimed: false } };
         }
         const fire: AutomationFire = {
@@ -1590,7 +1605,8 @@ export class LocalStateStore {
   async bindAutomationFireTurn(fireId: string, turnId: string): Promise<void> {
     await this.#appendComputed((projection) => {
       const fire = projection.automationFires.find((item) => item.id === fireId);
-      if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
+      if (!fire)
+        throw new LocalStateError("The automation fire is missing from local history.", 404);
       if (fire.turnId && fire.turnId !== turnId) {
         throw new LocalStateError("The automation fire is already bound to another turn.", 409);
       }
@@ -1611,7 +1627,8 @@ export class LocalStateStore {
   ): Promise<AutomationFire> {
     return this.#appendComputed((projection) => {
       const fire = projection.automationFires.find((item) => item.id === fireId);
-      if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
+      if (!fire)
+        throw new LocalStateError("The automation fire is missing from local history.", 404);
       if (fire.status !== "started" && fire.status !== "skipped_busy") {
         return { event: null, value: fire };
       }
@@ -1751,11 +1768,7 @@ export class LocalStateStore {
       const thread = this.#requireThread(projection, threadId);
       this.#assertConversationSnoozable(projection, threadId);
       const at = new Date().toISOString();
-      if (
-        thread.snoozedUntil === snoozedUntil
-        && thread.snoozedAt
-        && !thread.settledAt
-      ) {
+      if (thread.snoozedUntil === snoozedUntil && thread.snoozedAt && !thread.settledAt) {
         return { event: null, value: thread };
       }
       const saved = {
@@ -1795,7 +1808,9 @@ export class LocalStateStore {
     return saved;
   }
 
-  async previewConversationDeletion(threadId: string): Promise<ConversationDeletion["affectedRecords"]> {
+  async previewConversationDeletion(
+    threadId: string,
+  ): Promise<ConversationDeletion["affectedRecords"]> {
     const projection = await this.load();
     this.#requireThread(projection, threadId);
     this.#assertConversationSettled(projection, threadId, "deleted");
@@ -1821,11 +1836,13 @@ export class LocalStateStore {
       if (existing) {
         throw new LocalStateError("This conversation already has a delegated parent.", 409);
       }
-      if (wouldCreateDelegatedConversationCycle(
-        projection.delegatedRelationships,
-        parentThreadId,
-        childThreadId,
-      )) {
+      if (
+        wouldCreateDelegatedConversationCycle(
+          projection.delegatedRelationships,
+          parentThreadId,
+          childThreadId,
+        )
+      ) {
         throw new LocalStateError("This delegated relationship would create a cycle.", 409);
       }
       const relationship: DelegatedConversationRelationship = {
@@ -1871,10 +1888,7 @@ export class LocalStateStore {
       if (request.state !== "pending") {
         throw new LocalStateError("The input request has already been resolved.", 409);
       }
-      if (
-        !request.allowFreeForm
-        && !request.choices.some((choice) => choice.label === trimmed)
-      ) {
+      if (!request.allowFreeForm && !request.choices.some((choice) => choice.label === trimmed)) {
         throw new LocalStateError("Select one of the available answers.", 400);
       }
       const turn = projection.turns.find(
@@ -1885,9 +1899,9 @@ export class LocalStateStore {
       }
       const thread = projection.threads.find((item) => item.id === request.threadId);
       if (
-        request.responseMode === "native_resume"
-        && thread?.provider === "shikigami"
-        && request.resumeState !== "available"
+        request.responseMode === "native_resume" &&
+        thread?.provider === "shikigami" &&
+        request.resumeState !== "available"
       ) {
         throw new LocalStateError(
           request.resumeError ?? "Native Shikigami resume is unavailable.",
@@ -1916,14 +1930,18 @@ export class LocalStateStore {
       replaceById(projection.inputRequests, nextRequest);
       projection.inputReceipts.push(receipt);
       const hasOtherPendingInput = projection.inputRequests.some(
-        (item) => item.id !== requestId
-          && item.turnId === request.turnId
-          && item.providerRunId === request.providerRunId
-          && item.state === "pending",
+        (item) =>
+          item.id !== requestId &&
+          item.turnId === request.turnId &&
+          item.providerRunId === request.providerRunId &&
+          item.state === "pending",
       );
-      replaceById(projection.turns, request.responseMode === "native_resume"
-        ? { ...turn, status: hasOtherPendingInput ? "waiting_for_user" : "active" }
-        : { ...turn, status: "completed", completedAt: now });
+      replaceById(
+        projection.turns,
+        request.responseMode === "native_resume"
+          ? { ...turn, status: hasOtherPendingInput ? "waiting_for_user" : "active" }
+          : { ...turn, status: "completed", completedAt: now },
+      );
       resolved = { request: nextRequest, receipt };
     });
     if (!resolved) throw new LocalStateError("The input request could not be resolved.");
@@ -1943,9 +1961,9 @@ export class LocalStateStore {
     }
     const thread = projection.threads.find((item) => item.id === request.threadId);
     if (
-      request.responseMode === "native_resume"
-      && thread?.provider === "shikigami"
-      && request.resumeState !== "available"
+      request.responseMode === "native_resume" &&
+      thread?.provider === "shikigami" &&
+      request.resumeState !== "available"
     ) {
       throw new LocalStateError(
         request.resumeError ?? "Native Shikigami resume is unavailable.",
@@ -1968,7 +1986,12 @@ export class LocalStateStore {
     requestId: string,
     threadId: string,
     resumeSessionId: string,
-  ): Promise<{ request: ChildInputRequest; thread: Thread; turn: Turn; checkpoint: TurnCheckpoint }> {
+  ): Promise<{
+    request: ChildInputRequest;
+    thread: Thread;
+    turn: Turn;
+    checkpoint: TurnCheckpoint;
+  }> {
     return this.#appendComputed((projection) => {
       const request = projection.inputRequests.find(
         (item) => item.id === requestId && item.threadId === threadId,
@@ -1978,26 +2001,30 @@ export class LocalStateStore {
         ? projection.turns.find((item) => item.id === request.turnId)
         : undefined;
       const checkpoint = request
-        ? projection.checkpoints.find((item) => (
-          item.turnId === request.turnId
-          && item.threadId === threadId
-          && item.worktree === thread?.worktree
-          && item.state === "baseline"
-        ))
+        ? projection.checkpoints.find(
+            (item) =>
+              item.turnId === request.turnId &&
+              item.threadId === threadId &&
+              item.worktree === thread?.worktree &&
+              item.state === "baseline",
+          )
         : undefined;
       if (!request || !thread || !turn || !checkpoint) {
         throw new LocalStateError("The native Shikigami resume binding is unavailable.", 409);
       }
       if (
-        request.state !== "answered"
-        || request.responseMode !== "native_resume"
-        || request.resumeState !== "starting"
-        || thread.provider !== "shikigami"
-        || request.providerRequestId !== resumeSessionId
-        || turn.providerRunId !== request.providerRunId
-        || !["active", "running"].includes(turn.status)
+        request.state !== "answered" ||
+        request.responseMode !== "native_resume" ||
+        request.resumeState !== "starting" ||
+        thread.provider !== "shikigami" ||
+        request.providerRequestId !== resumeSessionId ||
+        turn.providerRunId !== request.providerRunId ||
+        !["active", "running"].includes(turn.status)
       ) {
-        throw new LocalStateError("The native Shikigami resume binding is stale or already claimed.", 409);
+        throw new LocalStateError(
+          "The native Shikigami resume binding is stale or already claimed.",
+          409,
+        );
       }
       const claimed = {
         ...request,
@@ -2014,7 +2041,8 @@ export class LocalStateStore {
   async markNativeShikigamiResumeStarted(requestId: string): Promise<void> {
     await this.#appendComputed((projection) => {
       const request = projection.inputRequests.find((item) => item.id === requestId);
-      if (!request || request.responseMode !== "native_resume") return { event: null, value: undefined };
+      if (!request || request.responseMode !== "native_resume")
+        return { event: null, value: undefined };
       if (request.resumeState === "started") return { event: null, value: undefined };
       if (request.resumeState !== "claimed") {
         throw new LocalStateError("The native Shikigami resume was not claimed.", 409);
@@ -2134,16 +2162,18 @@ export class LocalStateStore {
     threadId: string,
     action: "archived" | "deleted" | "settled",
   ): void {
-    const blocking = projection.turns.find((turn) => (
-      turn.threadId === threadId
-      && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
-    ));
+    const blocking = projection.turns.find(
+      (turn) =>
+        turn.threadId === threadId &&
+        ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
+    );
     if (!blocking) return;
-    const reason = blocking.status === "waiting_for_approval"
-      ? "a tool approval is unresolved"
-      : blocking.status === "waiting_for_user"
-        ? "provider input is unresolved"
-        : "provider work is active";
+    const reason =
+      blocking.status === "waiting_for_approval"
+        ? "a tool approval is unresolved"
+        : blocking.status === "waiting_for_user"
+          ? "provider input is unresolved"
+          : "provider work is active";
     throw new LocalStateError(
       `This conversation cannot be ${action} because ${reason}. Stop or resolve it, then retry.`,
       409,
@@ -2155,14 +2185,16 @@ export class LocalStateStore {
    * or input must stay visible so the operator is never asked in the dark.
    */
   #assertConversationSnoozable(projection: StateProjection, threadId: string): void {
-    const blocking = projection.turns.find((turn) => (
-      turn.threadId === threadId
-      && (turn.status === "waiting_for_user" || turn.status === "waiting_for_approval")
-    ));
+    const blocking = projection.turns.find(
+      (turn) =>
+        turn.threadId === threadId &&
+        (turn.status === "waiting_for_user" || turn.status === "waiting_for_approval"),
+    );
     if (!blocking) return;
-    const reason = blocking.status === "waiting_for_approval"
-      ? "a tool approval is unresolved"
-      : "provider input is unresolved";
+    const reason =
+      blocking.status === "waiting_for_approval"
+        ? "a tool approval is unresolved"
+        : "provider input is unresolved";
     throw new LocalStateError(
       `This conversation cannot be snoozed because ${reason}. Resolve it, then retry.`,
       409,
@@ -2182,35 +2214,28 @@ export class LocalStateStore {
       messages: projection.messages.filter((message) => turnIds.has(message.turnId)).length,
       activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)).length,
       plans: projection.plans.filter((plan) => plan.threadId === threadId).length,
-      contextReceipts: projection.contextReceipts.filter(
-        (receipt) => receipt.threadId === threadId,
-      ).length,
+      contextReceipts: projection.contextReceipts.filter((receipt) => receipt.threadId === threadId)
+        .length,
       governanceCorrelations: projection.governanceCorrelations.filter(
         (receipt) => receipt.threadId === threadId,
       ).length,
       providerSessions: projection.providerSessions.filter(
         (session) => session.threadId === threadId,
       ).length,
-      checkpoints: projection.checkpoints.filter(
-        (checkpoint) => checkpoint.threadId === threadId,
-      ).length,
-      annotations: projection.annotations.filter(
-        (annotation) => annotation.threadId === threadId,
-      ).length,
-      fileReviews: projection.fileReviews.filter(
-        (review) => review.threadId === threadId,
-      ).length,
+      checkpoints: projection.checkpoints.filter((checkpoint) => checkpoint.threadId === threadId)
+        .length,
+      annotations: projection.annotations.filter((annotation) => annotation.threadId === threadId)
+        .length,
+      fileReviews: projection.fileReviews.filter((review) => review.threadId === threadId).length,
       forks: projection.forks.filter(
         (fork) => fork.sourceThreadId === threadId || fork.destinationThreadId === threadId,
       ).length,
       delegatedRelationships: projection.delegatedRelationships.filter(
-        (relationship) => (
-          relationship.parentThreadId === threadId || relationship.childThreadId === threadId
-        ),
+        (relationship) =>
+          relationship.parentThreadId === threadId || relationship.childThreadId === threadId,
       ).length,
-      inputRequests: projection.inputRequests.filter(
-        (request) => request.threadId === threadId,
-      ).length,
+      inputRequests: projection.inputRequests.filter((request) => request.threadId === threadId)
+        .length,
       inputReceipts: projection.inputReceipts.filter(
         (receipt) => receipt.childThreadId === threadId || receipt.parentThreadId === threadId,
       ).length,
@@ -2227,7 +2252,9 @@ export class LocalStateStore {
       (fire) => !fire.turnId || !turnIds.has(fire.turnId),
     );
     projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
-    projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
+    projection.activities = projection.activities.filter(
+      (activity) => !turnIds.has(activity.turnId),
+    );
     projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
     projection.contextReceipts = projection.contextReceipts.filter(
       (receipt) => receipt.threadId !== threadId,
@@ -2249,31 +2276,33 @@ export class LocalStateStore {
     );
     const removedForkIds = new Set(
       projection.forks
-        .filter((fork) => (
-          fork.sourceThreadId === threadId || fork.destinationThreadId === threadId
-        ))
+        .filter((fork) => fork.sourceThreadId === threadId || fork.destinationThreadId === threadId)
         .map((fork) => fork.id),
     );
     projection.forks = projection.forks.filter((fork) => !removedForkIds.has(fork.id));
     projection.delegatedRelationships = projection.delegatedRelationships.filter(
-      (relationship) => (
-        relationship.parentThreadId !== threadId && relationship.childThreadId !== threadId
-      ),
+      (relationship) =>
+        relationship.parentThreadId !== threadId && relationship.childThreadId !== threadId,
     );
     const removedRequestIds = new Set(
-      projection.inputRequests.filter((request) => request.threadId === threadId).map((request) => request.id),
+      projection.inputRequests
+        .filter((request) => request.threadId === threadId)
+        .map((request) => request.id),
     );
-    projection.inputRequests = projection.inputRequests.filter((request) => !removedRequestIds.has(request.id));
+    projection.inputRequests = projection.inputRequests.filter(
+      (request) => !removedRequestIds.has(request.id),
+    );
     projection.inputReceipts = projection.inputReceipts.filter(
-      (receipt) => !removedRequestIds.has(receipt.requestId)
-        && receipt.childThreadId !== threadId
-        && receipt.parentThreadId !== threadId,
+      (receipt) =>
+        !removedRequestIds.has(receipt.requestId) &&
+        receipt.childThreadId !== threadId &&
+        receipt.parentThreadId !== threadId,
     );
-    projection.threads = projection.threads.map((thread) => (
+    projection.threads = projection.threads.map((thread) =>
       thread.parentThreadId === threadId || (thread.forkId && removedForkIds.has(thread.forkId))
         ? { ...thread, parentThreadId: undefined, forkId: undefined }
-        : thread
-    ));
+        : thread,
+    );
   }
 
   async recoverInterruptedTurns(): Promise<void> {
@@ -2315,7 +2344,12 @@ export class LocalStateStore {
           resumeError: unavailableMessage,
         });
         const sourceTurn = current.turns.find((item) => item.id === request.turnId);
-        if (sourceTurn && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(sourceTurn.status)) {
+        if (
+          sourceTurn &&
+          ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(
+            sourceTurn.status,
+          )
+        ) {
           replaceById(current.turns, {
             ...sourceTurn,
             status: "interrupted",
@@ -2326,19 +2360,22 @@ export class LocalStateStore {
     });
     const projection = await this.load();
     for (const turn of projection.turns) {
-      const nativeInputs = turn.status === "waiting_for_user"
-        ? projection.inputRequests.filter((request) => (
-          request.turnId === turn.id
-          && request.state === "pending"
-          && request.responseMode === "native_resume"
-          && projection.threads.find((thread) => thread.id === turn.threadId)?.provider !== "shikigami"
-        ))
-        : [];
+      const nativeInputs =
+        turn.status === "waiting_for_user"
+          ? projection.inputRequests.filter(
+              (request) =>
+                request.turnId === turn.id &&
+                request.state === "pending" &&
+                request.responseMode === "native_resume" &&
+                projection.threads.find((thread) => thread.id === turn.threadId)?.provider !==
+                  "shikigami",
+            )
+          : [];
       if (
-        turn.status !== "active"
-        && turn.status !== "running"
-        && turn.status !== "waiting_for_approval"
-        && nativeInputs.length === 0
+        turn.status !== "active" &&
+        turn.status !== "running" &&
+        turn.status !== "waiting_for_approval" &&
+        nativeInputs.length === 0
       ) {
         continue;
       }
@@ -2379,7 +2416,10 @@ export class LocalStateStore {
     const now = new Date().toISOString();
     if (event.kind === "browser_observation") {
       if (event.provider !== provider) {
-        throw new LocalStateError("The browser observation provider does not match the active provider.", 502);
+        throw new LocalStateError(
+          "The browser observation provider does not match the active provider.",
+          502,
+        );
       }
       // Screenshots are sensitive provider output. They are stream-only UI
       // state: never append them to local history, activity, or checkpoints.
@@ -2408,9 +2448,9 @@ export class LocalStateStore {
         providerRequestId: event.providerRequestId,
         expiresAt: event.expiresAt,
         allowFreeForm: event.allowFreeForm,
-        ...(provider === "shikigami"
-          && event.responseMode === "native_resume"
-          && event.providerRequestId
+        ...(provider === "shikigami" &&
+        event.responseMode === "native_resume" &&
+        event.providerRequestId
           ? { resumeState: "available" as const, resumeError: null }
           : {}),
         state: "pending",
@@ -2444,10 +2484,11 @@ export class LocalStateStore {
       });
       if (!["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
         const hasOtherPendingInput = projection.inputRequests.some(
-          (item) => item.id !== request.id
-            && item.turnId === request.turnId
-            && item.providerRunId === request.providerRunId
-            && item.state === "pending",
+          (item) =>
+            item.id !== request.id &&
+            item.turnId === request.turnId &&
+            item.providerRunId === request.providerRunId &&
+            item.state === "pending",
         );
         await this.#append({
           type: "turn_saved",
@@ -2462,9 +2503,10 @@ export class LocalStateStore {
       if (["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
         return;
       }
-      const nextStatus = event.kind === "approval_pending" && event.state === "pending"
-        ? "waiting_for_approval" as const
-        : "active" as const;
+      const nextStatus =
+        event.kind === "approval_pending" && event.state === "pending"
+          ? ("waiting_for_approval" as const)
+          : ("active" as const);
       await this.#append({
         type: "turn_saved",
         turn: {
@@ -2509,11 +2551,12 @@ export class LocalStateStore {
         .update(`${threadId}\n${turnId}\n${provider}\n${event.artifact.id}`, "utf8")
         .digest("hex");
       const existing = projection.plans.find((plan) => plan.id === id);
-      const body = event.artifact.body === undefined
-        ? existing?.body
-        : event.bodyMode === "append"
-          ? `${existing?.body ?? ""}${event.artifact.body}`
-          : event.artifact.body;
+      const body =
+        event.artifact.body === undefined
+          ? existing?.body
+          : event.bodyMode === "append"
+            ? `${existing?.body ?? ""}${event.artifact.body}`
+            : event.artifact.body;
       await this.#append({
         type: "plan_saved",
         plan: {
@@ -2525,11 +2568,15 @@ export class LocalStateStore {
           provider,
           ...(event.artifact.title !== undefined
             ? { title: event.artifact.title }
-            : existing?.title !== undefined ? { title: existing.title } : {}),
+            : existing?.title !== undefined
+              ? { title: existing.title }
+              : {}),
           ...(body !== undefined ? { body } : {}),
           ...(event.artifact.steps !== undefined
             ? { steps: event.artifact.steps }
-            : existing?.steps !== undefined ? { steps: existing.steps } : {}),
+            : existing?.steps !== undefined
+              ? { steps: existing.steps }
+              : {}),
           createdAt: existing?.createdAt ?? now,
           updatedAt: event.artifact.updatedAt ?? now,
           eventSequence: existing?.eventSequence,
@@ -2539,10 +2586,10 @@ export class LocalStateStore {
     }
     if (event.kind === "governance_correlation") {
       if (
-        provider !== "shikigami"
-        || event.governance !== "sekai-chisei"
-        || event.operationId !== event.runId
-        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event.runId)
+        provider !== "shikigami" ||
+        event.governance !== "sekai-chisei" ||
+        event.operationId !== event.runId ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event.runId)
       ) {
         throw new LocalStateError("The provider governance correlation is incompatible.", 502);
       }
@@ -2554,10 +2601,14 @@ export class LocalStateStore {
       const existing = projection.governanceCorrelations.find(
         (receipt) => receipt.turnId === turnId,
       );
-      if (existing && (
-        existing.runId !== event.runId || existing.operationId !== event.operationId
-      )) {
-        throw new LocalStateError("The provider reported conflicting governance correlations.", 502);
+      if (
+        existing &&
+        (existing.runId !== event.runId || existing.operationId !== event.operationId)
+      ) {
+        throw new LocalStateError(
+          "The provider reported conflicting governance correlations.",
+          502,
+        );
       }
       if (existing) return;
       const id = createHash("sha256")
@@ -2590,18 +2641,22 @@ export class LocalStateStore {
           threadId,
           provider,
           sessionId: event.sessionId,
-          model: event.kind === "session_started" ? event.model : current?.model ?? null,
-          ...(providerBinding?.profileId ?? current?.profileId
+          model: event.kind === "session_started" ? event.model : (current?.model ?? null),
+          ...((providerBinding?.profileId ?? current?.profileId)
             ? { profileId: providerBinding?.profileId ?? current?.profileId }
             : {}),
-          ...(providerBinding?.continuationKey ?? current?.continuationKey
+          ...((providerBinding?.continuationKey ?? current?.continuationKey)
             ? { continuationKey: providerBinding?.continuationKey ?? current?.continuationKey }
             : {}),
           updatedAt: now,
         },
       });
     }
-    if (event.kind === "tool_started" || event.kind === "tool_finished" || event.kind === "failed") {
+    if (
+      event.kind === "tool_started" ||
+      event.kind === "tool_finished" ||
+      event.kind === "failed"
+    ) {
       await this.#append({
         type: "activity_saved",
         activity: {
@@ -2611,7 +2666,8 @@ export class LocalStateStore {
           kind: event.kind === "failed" ? "provider_failed" : event.kind,
           toolCallId: event.kind === "failed" ? null : event.toolCallId,
           name: event.kind === "tool_started" ? event.name : null,
-          failed: event.kind === "tool_finished" ? event.failed : event.kind === "failed" ? true : null,
+          failed:
+            event.kind === "tool_finished" ? event.failed : event.kind === "failed" ? true : null,
           // Never persist arbitrary failure text — it can contain credentials
           // or subprocess dumps. Only repository-owned, typed diagnostics are
           // durable; every other failure restores a generic label.
@@ -2624,11 +2680,12 @@ export class LocalStateStore {
       const projection = await this.load();
       const turn = projection.turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
-      const nextStatus = event.kind === "turn_completed"
-        ? "completed" as const
-        : event.kind === "cancelled"
-          ? "interrupted" as const
-          : "failed" as const;
+      const nextStatus =
+        event.kind === "turn_completed"
+          ? ("completed" as const)
+          : event.kind === "cancelled"
+            ? ("interrupted" as const)
+            : ("failed" as const);
       await this.#append({
         type: "turn_saved",
         turn: {
@@ -2705,11 +2762,12 @@ export class LocalStateStore {
       throw new LocalStateError("A file path and content identity are required.", 400);
     }
     const now = new Date().toISOString();
-    const existing = projection.fileReviews.find((item) => (
-      item.threadId === input.threadId
-      && item.path === path
-      && item.diffIdentity === diffIdentity
-    ));
+    const existing = projection.fileReviews.find(
+      (item) =>
+        item.threadId === input.threadId &&
+        item.path === path &&
+        item.diffIdentity === diffIdentity,
+    );
     const saved: FileReview = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
       id: existing?.id ?? randomUUID(),
@@ -2718,7 +2776,11 @@ export class LocalStateStore {
       previousPath: input.previousPath ?? existing?.previousPath ?? null,
       diffIdentity,
       reviewed: input.reviewed,
-      reviewedAt: input.reviewed ? (existing?.reviewed && existing.reviewedAt ? existing.reviewedAt : now) : null,
+      reviewedAt: input.reviewed
+        ? existing?.reviewed && existing.reviewedAt
+          ? existing.reviewedAt
+          : now
+        : null,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -2734,10 +2796,10 @@ export class LocalStateStore {
     const projection = await this.load();
     for (const checkpoint of projection.checkpoints) {
       if (
-        checkpoint.threadId === threadId
-        && checkpoint.worktree === worktree
-        && checkpoint.id !== exceptId
-        && checkpoint.state === "completed"
+        checkpoint.threadId === threadId &&
+        checkpoint.worktree === worktree &&
+        checkpoint.id !== exceptId &&
+        checkpoint.state === "completed"
       ) {
         await this.saveCheckpoint({ ...checkpoint, state: "superseded" });
       }
@@ -2747,7 +2809,9 @@ export class LocalStateStore {
   async deleteProject(projectId: string): Promise<void> {
     await this.#compact((projection) => {
       const threadIds = new Set(
-        projection.threads.filter((thread) => thread.projectId === projectId).map((thread) => thread.id),
+        projection.threads
+          .filter((thread) => thread.projectId === projectId)
+          .map((thread) => thread.id),
       );
       const turnIds = new Set(
         projection.turns.filter((turn) => threadIds.has(turn.threadId)).map((turn) => turn.id),
@@ -2759,7 +2823,9 @@ export class LocalStateStore {
         (fire) => !fire.turnId || !turnIds.has(fire.turnId),
       );
       projection.messages = projection.messages.filter((message) => !turnIds.has(message.turnId));
-      projection.activities = projection.activities.filter((activity) => !turnIds.has(activity.turnId));
+      projection.activities = projection.activities.filter(
+        (activity) => !turnIds.has(activity.turnId),
+      );
       projection.plans = projection.plans.filter((plan) => !threadIds.has(plan.threadId));
       projection.contextReceipts = projection.contextReceipts.filter(
         (receipt) => !threadIds.has(receipt.threadId),
@@ -2783,19 +2849,22 @@ export class LocalStateStore {
         (fork) => !threadIds.has(fork.sourceThreadId) && !threadIds.has(fork.destinationThreadId),
       );
       projection.delegatedRelationships = projection.delegatedRelationships.filter(
-        (relationship) => (
-          !threadIds.has(relationship.parentThreadId)
-          && !threadIds.has(relationship.childThreadId)
-        ),
+        (relationship) =>
+          !threadIds.has(relationship.parentThreadId) && !threadIds.has(relationship.childThreadId),
       );
       const requestIds = new Set(
-        projection.inputRequests.filter((request) => threadIds.has(request.threadId)).map((request) => request.id),
+        projection.inputRequests
+          .filter((request) => threadIds.has(request.threadId))
+          .map((request) => request.id),
       );
-      projection.inputRequests = projection.inputRequests.filter((request) => !requestIds.has(request.id));
+      projection.inputRequests = projection.inputRequests.filter(
+        (request) => !requestIds.has(request.id),
+      );
       projection.inputReceipts = projection.inputReceipts.filter(
-        (receipt) => !requestIds.has(receipt.requestId)
-          && !threadIds.has(receipt.childThreadId)
-          && (!receipt.parentThreadId || !threadIds.has(receipt.parentThreadId)),
+        (receipt) =>
+          !requestIds.has(receipt.requestId) &&
+          !threadIds.has(receipt.childThreadId) &&
+          (!receipt.parentThreadId || !threadIds.has(receipt.parentThreadId)),
       );
     });
   }
@@ -2807,9 +2876,9 @@ export class LocalStateStore {
       );
       const expiredThreads = new Set(
         projection.threads
-          .filter((thread) => (
-            new Date(thread.updatedAt) < olderThan && !protectedByFork.has(thread.id)
-          ))
+          .filter(
+            (thread) => new Date(thread.updatedAt) < olderThan && !protectedByFork.has(thread.id),
+          )
           .map((thread) => thread.id),
       );
       const expiredTurns = new Set(
@@ -2820,8 +2889,12 @@ export class LocalStateStore {
       projection.automationFires = projection.automationFires.filter(
         (fire) => !fire.turnId || !expiredTurns.has(fire.turnId),
       );
-      projection.messages = projection.messages.filter((message) => !expiredTurns.has(message.turnId));
-      projection.activities = projection.activities.filter((activity) => !expiredTurns.has(activity.turnId));
+      projection.messages = projection.messages.filter(
+        (message) => !expiredTurns.has(message.turnId),
+      );
+      projection.activities = projection.activities.filter(
+        (activity) => !expiredTurns.has(activity.turnId),
+      );
       projection.plans = projection.plans.filter((plan) => !expiredThreads.has(plan.threadId));
       projection.contextReceipts = projection.contextReceipts.filter(
         (receipt) => !expiredThreads.has(receipt.threadId),
@@ -2842,25 +2915,27 @@ export class LocalStateStore {
         (review) => !expiredThreads.has(review.threadId),
       );
       projection.forks = projection.forks.filter(
-        (fork) => (
-          !expiredThreads.has(fork.sourceThreadId)
-          && !expiredThreads.has(fork.destinationThreadId)
-        ),
+        (fork) =>
+          !expiredThreads.has(fork.sourceThreadId) && !expiredThreads.has(fork.destinationThreadId),
       );
       projection.delegatedRelationships = projection.delegatedRelationships.filter(
-        (relationship) => (
-          !expiredThreads.has(relationship.parentThreadId)
-          && !expiredThreads.has(relationship.childThreadId)
-        ),
+        (relationship) =>
+          !expiredThreads.has(relationship.parentThreadId) &&
+          !expiredThreads.has(relationship.childThreadId),
       );
       const requestIds = new Set(
-        projection.inputRequests.filter((request) => expiredThreads.has(request.threadId)).map((request) => request.id),
+        projection.inputRequests
+          .filter((request) => expiredThreads.has(request.threadId))
+          .map((request) => request.id),
       );
-      projection.inputRequests = projection.inputRequests.filter((request) => !requestIds.has(request.id));
+      projection.inputRequests = projection.inputRequests.filter(
+        (request) => !requestIds.has(request.id),
+      );
       projection.inputReceipts = projection.inputReceipts.filter(
-        (receipt) => !requestIds.has(receipt.requestId)
-          && !expiredThreads.has(receipt.childThreadId)
-          && (!receipt.parentThreadId || !expiredThreads.has(receipt.parentThreadId)),
+        (receipt) =>
+          !requestIds.has(receipt.requestId) &&
+          !expiredThreads.has(receipt.childThreadId) &&
+          (!receipt.parentThreadId || !expiredThreads.has(receipt.parentThreadId)),
       );
     });
   }
@@ -2902,11 +2977,11 @@ export class LocalStateStore {
             governanceCorrelation,
           },
         })),
-      ].sort((left, right) => (
+      ].sort((left, right) =>
         left.eventSequence !== undefined && right.eventSequence !== undefined
           ? left.eventSequence - right.eventSequence
-          : left.createdAt.localeCompare(right.createdAt)
-      ));
+          : left.createdAt.localeCompare(right.createdAt),
+      );
       const events: StateEvent[] = [
         ...next.projects.map((project): StateEvent => ({ type: "project_saved", project })),
         ...next.threads.map((thread): StateEvent => ({ type: "thread_saved", thread })),

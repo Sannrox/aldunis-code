@@ -102,9 +102,7 @@ export function threadNeedsAttentionWhileSnoozed(
  * Snooze is allowed unless the agent is blocked on the operator. Running work
  * may remain snoozed — visibility only.
  */
-export function canSnooze(
-  thread: Pick<ThreadSnoozeFields, "status">,
-): boolean {
+export function canSnooze(thread: Pick<ThreadSnoozeFields, "status">): boolean {
   return !threadNeedsAttentionWhileSnoozed(thread);
 }
 
@@ -144,10 +142,7 @@ export function snoozeWakeLabel(
 }
 
 /** Validate a client-supplied wake time before the host persists it. */
-export function assertValidSnoozeUntil(
-  snoozedUntil: string,
-  now: Date = new Date(),
-): string {
+export function assertValidSnoozeUntil(snoozedUntil: string, now: Date = new Date()): string {
   const wakeMs = Date.parse(snoozedUntil);
   if (Number.isNaN(wakeMs)) {
     throw new Error("A valid snooze wake time is required.");

@@ -40,14 +40,14 @@ primary.
 something wants a decision, or something failed. It is never applied to
 things that are merely in progress or merely finished.
 
-| Meaning | Treatment |
-| --- | --- |
-| Pending approval | amber label |
-| Awaiting input | indigo label |
-| Failed | red label |
-| Working | muted spinner, no label |
-| Completed | faint check, no label |
-| Diff added / removed | green / red, retained |
+| Meaning              | Treatment               |
+| -------------------- | ----------------------- |
+| Pending approval     | amber label             |
+| Awaiting input       | indigo label            |
+| Failed               | red label               |
+| Working              | muted spinner, no label |
+| Completed            | faint check, no label   |
+| Diff added / removed | green / red, retained   |
 
 Diff coloring stays even under a monochrome system. Glyphs and tinted rows
 do some of the work, but scanning a long diff without hue is measurably
@@ -206,15 +206,15 @@ is a user mistaking a local action for an authoritative one.
 
 Use the live application and automated checks as the source of truth:
 
-| Concern | Source |
-| --- | --- |
-| Semantic tokens and component styling | `src/styles.css` |
-| Shell layout | `src/mock-shell.css` |
-| Shared UI primitives | `src/components/ui/` |
-| Sidebar and settled shelf | `src/features/code/sidebar.tsx` |
-| Preferences and worktree limits | `src/features/dialogs/preferences-dialog.tsx` |
-| Structural style checks | `src/styles.verification.test.ts` |
-| Exploratory reference mock | `docs/design/workbench-mock.html` |
+| Concern                               | Source                                        |
+| ------------------------------------- | --------------------------------------------- |
+| Semantic tokens and component styling | `src/styles.css`                              |
+| Shell layout                          | `src/mock-shell.css`                          |
+| Shared UI primitives                  | `src/components/ui/`                          |
+| Sidebar and settled shelf             | `src/features/code/sidebar.tsx`               |
+| Preferences and worktree limits       | `src/features/dialogs/preferences-dialog.tsx` |
+| Structural style checks               | `src/styles.verification.test.ts`             |
+| Exploratory reference mock            | `docs/design/workbench-mock.html`             |
 
 The HTML mock is design evidence, not a runtime contract. When it differs from
 the shipped application, update or annotate the mock rather than documenting
