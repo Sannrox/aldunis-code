@@ -10,6 +10,8 @@ import type {
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
   ManagedAccount,
+  BranchPrLookupResult,
+  BranchPrStatus,
 } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
@@ -45,6 +47,12 @@ import {
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import { delegatedConversationLabels } from "./delegated-conversation-labels";
 import { delegatedConversationAncestorIds } from "../../lib/delegated-conversation-graph";
+import {
+  BRANCH_PR_CLIENT_BATCH_LIMIT,
+  chunkWorktreeRoots,
+  indexBranchPrResults,
+  uniqueWorktreeRoots,
+} from "../../lib/branch-pr-status";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -1091,6 +1099,61 @@ export function CodeWorkbench({
       return showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt;
     });
   }, [conversations, projectFilter, projects, showingArchived]);
+  const [prStatusByWorktree, setPrStatusByWorktree] = useState<Map<string, BranchPrStatus>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    const projectRootById = new Map(projects.map((project) => [project.id, project.root]));
+    // Prefer memberRoots when a conversation's projectId maps into a collapsed chip.
+    for (const project of projects) {
+      if (!project.memberRoots) continue;
+      for (const [memberId, root] of Object.entries(project.memberRoots)) {
+        projectRootById.set(memberId, root);
+      }
+    }
+    // Cap uniqueness first; refresh still chunks in case limits change.
+    const items = uniqueWorktreeRoots(
+      listedConversations.flatMap((conversation) => {
+        const root = projectRootById.get(conversation.projectId);
+        if (!root || !conversation.worktree) return [];
+        return [{ root, worktree: conversation.worktree }];
+      }),
+      BRANCH_PR_CLIENT_BATCH_LIMIT * 4,
+    );
+    if (items.length === 0) {
+      setPrStatusByWorktree(new Map());
+      return;
+    }
+    const refresh = async () => {
+      try {
+        const results: BranchPrLookupResult[] = [];
+        for (const batch of chunkWorktreeRoots(items, BRANCH_PR_CLIENT_BATCH_LIMIT)) {
+          const response = await fetch("/api/delivery/pr-status/batch", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ items: batch }),
+          });
+          if (!response.ok) continue;
+          const body = (await response.json()) as {
+            results?: BranchPrLookupResult[];
+            error?: string;
+          };
+          if (Array.isArray(body.results)) results.push(...body.results);
+        }
+        if (cancelled) return;
+        setPrStatusByWorktree(indexBranchPrResults(results));
+      } catch {
+        // Soft-fail: missing gh or network issues leave rows without PR chrome.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [listedConversations, projects]);
   const worktreeLimit = 10;
   const managedWorktreeCount =
     repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
@@ -1413,6 +1476,7 @@ export function CodeWorkbench({
           closeSidebarBeforeMobileDialog();
         }}
         conversations={listedConversations}
+        prStatusByWorktree={prStatusByWorktree}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
         onOpenConversation={(id) => {

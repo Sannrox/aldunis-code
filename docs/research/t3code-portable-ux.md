@@ -1,6 +1,6 @@
 # Portable UX from T3 Code
 
-Status: Partial implementation (#542 snooze, #545 context meter, #548 message copy)
+Status: Partial implementation (#542 snooze, #545 context meter, #548 message copy, #551 PR rows)
 
 Source: Comparison of [pingdotgg/t3code](https://github.com/pingdotgg/t3code)
 against Aldunis Code product boundaries and design system.
@@ -27,7 +27,7 @@ against Aldunis Code product boundaries and design system.
 | **Time-based thread snooze**              | High   | Implemented in #542. Visibility-only hide with presets; attention override.          |
 | **Context window meter**                  | High   | Implemented in #545. Codex/ACP usage → ephemeral composer ring; not durable history. |
 | **Message copy actions**                  | Medium | Implemented in #548. Hover/focus copy for prompts and answers.                       |
-| PR status on thread rows                  | Medium | Needs VCS status projection; delivery already drafts PRs.                            |
+| **PR status on thread rows**              | Medium | Implemented in #551. GitHub `gh pr view` projection; soft-fail without gh.           |
 | Previous-worktree seed in new-thread flow | Medium | Composer workspace selector could offer last non-current worktree.                   |
 | Composer draft stash                      | Medium | Local draft recovery across threads without server transcripts.                      |
 
@@ -46,8 +46,9 @@ against Aldunis Code product boundaries and design system.
 
 1. Thread snooze (#542) — pure local lifecycle UX, no provider protocol change.
 2. Context window meter (#545) — surface dropped usage events per provider.
-3. PR row indicators — once delivery/VCS status is cheap to project.
-4. Previous worktree + draft stash — composer polish.
+3. Message copy (#548) — prompt/answer clipboard actions.
+4. PR row indicators (#551) — GitHub PR state on conversation rows.
+5. Previous worktree + draft stash — composer polish.
 
 Do not port T3 architecture (Effect event sourcing, multi-environment
 orchestration) wholesale; keep Aldunis ownership boundaries and design system.
