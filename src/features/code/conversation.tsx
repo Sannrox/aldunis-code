@@ -106,7 +106,6 @@ import {
   providerDiscoveryTimedOut,
   PROVIDER_DISCOVERY_TIMEOUT_DETAIL,
 } from "../../lib/provider-discovery-cache";
-import { shortToolCallId } from "../../lib/tool-presentation";
 import {
   WORKSPACE_PANEL_DESTINATIONS,
   moveWorkspacePanelFocus,
@@ -126,6 +125,7 @@ import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
 import { ProviderPlanActions, ProviderPlanCard, ProviderPlanContent } from "./provider-plan";
 import { ContextPackagePanel, ContextPackageSummary } from "./context-package";
+import { ToolActivity } from "./tool-activity";
 import {
   defaultWorkspaceMode,
   NEW_CONVERSATION_WORKSPACE_MODES,
@@ -2953,38 +2953,12 @@ export function Conversation({
           );
         }
         return (
-          <div
-            className="tools"
-            role="list"
-            aria-label={`${providerLabel} tool activity`}
+          <ToolActivity
             key={`${keyPrefix}-tools-${blockIndex}`}
-          >
-            {block.rows.map((row) => {
-              const statusLabel =
-                row.status === "running"
-                  ? "Running"
-                  : row.status === "failed"
-                    ? "Failed"
-                    : row.status === "cancelled"
-                      ? "Cancelled"
-                      : "Done";
-              const shortId = shortToolCallId(row.toolCallId);
-              return (
-                <div
-                  className={`tool tool-${row.status}`}
-                  role="listitem"
-                  key={row.toolCallId}
-                  aria-label={`${statusLabel} ${row.name} ${shortId}`}
-                >
-                  <span aria-hidden="true">{statusLabel}</span>
-                  <code aria-hidden="true">{row.name}</code>
-                  <span className="r" title={row.toolCallId} aria-hidden="true">
-                    {shortId}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+            rows={block.rows}
+            providerLabel={providerLabel}
+            groupId={`${keyPrefix}-tools-${blockIndex}`}
+          />
         );
       },
     );
