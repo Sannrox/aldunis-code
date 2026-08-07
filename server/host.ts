@@ -87,7 +87,6 @@ import {
 import {
   ClaudeProfileStore,
   DEFAULT_SHIKIGAMI_PROFILE_ID,
-  isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
   type ProfileProbeKind,
@@ -1146,7 +1145,7 @@ async function handleApi(
     if (route === "/api/repositories/open") {
       const body = (await readJson(request)) as { path?: unknown; repositoryId?: unknown };
       let managedRepositoryId: string | undefined;
-      let repository = managedHost
+      const repository = managedHost
         ? await (async () => {
             if (typeof body.repositoryId !== "string" || body.path !== undefined) {
               throw new RepositoryError("Select a repository from the managed catalogue.", 403);

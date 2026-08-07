@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata,
   ConversationSummary,
@@ -22,7 +22,6 @@ import {
   type ConversationListProjection,
 } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
-import { Icon } from "../../components/icon";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
@@ -902,7 +901,7 @@ export function CodeWorkbench({
     return () => {
       active = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/retry only; repo switches must not reshuffle
+    // Mount/retry only; repo switches must not reshuffle.
   }, [restoreAttempt]);
 
   // Track the bound project for split persistence without resetting the inbox selection.
@@ -1079,7 +1078,6 @@ export function CodeWorkbench({
       events.close();
     };
     // The host hides delegated relationships while disabled, so enable performs a fresh load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orchestrationThreadsBeta]);
   const listedConversations = useMemo(() => {
     const memberIds =
