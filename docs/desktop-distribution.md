@@ -125,6 +125,10 @@ packages remain manual-update because their package-manager lifecycle is
 outside the app. A stable installation stays on stable updates, while a
 nightly installation stays on nightly updates.
 
+The macOS packaging step reconciles builder-normalized artifact names and
+fails before publication if an update manifest references an asset that was
+not generated for that architecture.
+
 The updater is disabled for development builds, missing update manifests, and
 Linux packages that are not running from an AppImage. A restart first closes
 the local host and shared-browser sessions through the normal desktop shutdown
