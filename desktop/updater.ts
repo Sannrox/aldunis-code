@@ -1,6 +1,7 @@
 import type {
   DesktopUpdateChannel,
   DesktopUpdateDisabledReason,
+  DesktopUpdateErrorStage,
   DesktopUpdatePhase,
   DesktopUpdateSnapshot,
 } from "./update-contract.ts";
@@ -116,7 +117,9 @@ function readProgress(value: unknown): number | null {
   return Math.max(0, Math.min(100, record.percent));
 }
 
-function safeUpdateError(): string {
+function safeUpdateError(stage: DesktopUpdateErrorStage): string {
+  if (stage === "download") return "The update download failed. Check your connection and try again.";
+  if (stage === "install") return "The update could not be installed. Try again later.";
   return "The update check failed. Check your connection and try again.";
 }
 
@@ -209,6 +212,7 @@ export class DesktopUpdater {
       releaseDate: undefined,
       progress: undefined,
       error: undefined,
+      errorStage: undefined,
     });
     try {
       const result = await this.options.engine.checkForUpdates();
@@ -221,14 +225,21 @@ export class DesktopUpdater {
         this.finishCheck("idle");
       }
     } catch {
-      if (!this.disposed) this.setState({ phase: "error", error: safeUpdateError(), lastCheckedAt: new Date().toISOString() });
+      if (!this.disposed) {
+        this.setState({
+          phase: "error",
+          error: safeUpdateError("check"),
+          errorStage: "check",
+          lastCheckedAt: new Date().toISOString(),
+        });
+      }
     }
     return this.getState();
   }
 
   async downloadUpdate(): Promise<DesktopUpdateSnapshot> {
     if (this.disposed || this.state.phase !== "available" || !this.pendingUpdate) return this.getState();
-    this.setState({ phase: "downloading", progress: 0, error: undefined });
+    this.setState({ phase: "downloading", progress: 0, error: undefined, errorStage: undefined });
     try {
       await this.options.engine.downloadUpdate();
       if (!this.disposed && this.state.phase === "downloading") {
@@ -241,19 +252,28 @@ export class DesktopUpdater {
         });
       }
     } catch {
-      if (!this.disposed) this.setState({ phase: "error", error: safeUpdateError() });
+      if (!this.disposed) {
+        this.setState({ phase: "error", error: safeUpdateError("download"), errorStage: "download" });
+      }
     }
     return this.getState();
   }
 
   async installUpdate(): Promise<DesktopUpdateSnapshot> {
     if (this.disposed || this.state.phase !== "downloaded") return this.getState();
-    this.setState({ phase: "installing", error: undefined });
+    this.setState({ phase: "installing", error: undefined, errorStage: undefined });
     try {
       await this.options.prepareForInstall?.();
+      if (this.disposed || this.state.phase !== "installing") return this.getState();
       this.options.engine.quitAndInstall(false, true);
     } catch {
-      if (!this.disposed) this.setState({ phase: "error", error: "The update could not be installed. Try again later." });
+      if (!this.disposed) {
+        this.setState({
+          phase: "error",
+          error: safeUpdateError("install"),
+          errorStage: "install",
+        });
+      }
     }
     return this.getState();
   }
@@ -261,7 +281,7 @@ export class DesktopUpdater {
   private registerEventListeners(): void {
     const listeners: Record<UpdateEvent, UpdateListener> = {
       "checking-for-update": () => {
-        if (!this.disposed) this.setState({ phase: "checking", error: undefined });
+        if (!this.disposed) this.setState({ phase: "checking", error: undefined, errorStage: undefined });
       },
       "update-available": (value: unknown) => {
         const info = readUpdateInfo(value);
@@ -271,7 +291,19 @@ export class DesktopUpdater {
         if (!this.disposed) this.finishCheck("idle");
       },
       error: () => {
-        if (!this.disposed) this.setState({ phase: "error", error: safeUpdateError(), lastCheckedAt: new Date().toISOString() });
+        if (!this.disposed) {
+          const stage: DesktopUpdateErrorStage = this.state.phase === "downloading"
+            ? "download"
+            : this.state.phase === "installing"
+              ? "install"
+              : "check";
+          this.setState({
+            phase: "error",
+            error: safeUpdateError(stage),
+            errorStage: stage,
+            lastCheckedAt: new Date().toISOString(),
+          });
+        }
       },
       "download-progress": (value: unknown) => {
         const progress = readProgress(value);
@@ -305,12 +337,19 @@ export class DesktopUpdater {
       releaseDate: info.releaseDate,
       progress: undefined,
       error: undefined,
+      errorStage: undefined,
       lastCheckedAt: new Date().toISOString(),
     });
   }
 
   private finishCheck(phase: "idle"): void {
-    this.setState({ phase, error: undefined, progress: undefined, lastCheckedAt: new Date().toISOString() });
+    this.setState({
+      phase,
+      error: undefined,
+      errorStage: undefined,
+      progress: undefined,
+      lastCheckedAt: new Date().toISOString(),
+    });
   }
 
   private setState(patch: Partial<DesktopUpdateSnapshot>): void {

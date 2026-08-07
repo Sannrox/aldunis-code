@@ -20,7 +20,7 @@
     "ontology:sync": "bash scripts/ontology.sh sync",
     "ontology:check": "bash scripts/ontology.sh check",
     "start": "npm run build && node dist-cli/aldunis-code.js start",
-    "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
+    "test": "tsx --test server/*.test.ts desktop/*.test.ts scripts/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
     "check": "tsc -b --pretty false",
     "verify:desktop-release-tag": "tsx scripts/verify-desktop-release-tag.ts",
     "rename:desktop-update-assets": "node scripts/rename-desktop-update-assets.mjs",

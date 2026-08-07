@@ -16,6 +16,8 @@ export type DesktopUpdatePhase =
   | "installing"
   | "error";
 
+export type DesktopUpdateErrorStage = "check" | "download" | "install";
+
 export interface DesktopUpdateSnapshot {
   channel: DesktopUpdateChannel;
   currentVersion: string;
@@ -26,6 +28,7 @@ export interface DesktopUpdateSnapshot {
   progress?: number;
   lastCheckedAt?: string;
   error?: string;
+  errorStage?: DesktopUpdateErrorStage;
   disabledReason?: DesktopUpdateDisabledReason;
 }
 
