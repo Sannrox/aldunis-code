@@ -11,13 +11,19 @@ permissions:
 jobs:
   console:
     runs-on: ubuntu-latest
+    env:
+      DETERMINISTIC_CHECK_BASE: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
+      - run: make validate
+      - run: make test
+      - run: make test-integration
+      - run: make coverage
+      - run: make all

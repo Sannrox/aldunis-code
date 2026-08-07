@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-cli/
+dist-electron/
+release/
+coverage/
+vendor/sekai-chisei-sdk/dist/
+public/*.png
+public/*.ico
