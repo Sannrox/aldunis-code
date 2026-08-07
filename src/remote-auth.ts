@@ -76,11 +76,10 @@ async function pairFromFragment(): Promise<void> {
   const params = new URLSearchParams(location.hash.slice(1));
   const credential = params.get("pair");
   if (!credential) return;
-  const keys = await crypto.subtle.generateKey(
-    { name: "ECDSA", namedCurve: "P-256" },
-    true,
-    ["sign", "verify"],
-  );
+  const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+    "sign",
+    "verify",
+  ]);
   const response = await nativeFetch("/api/remote/pair", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -90,7 +89,7 @@ async function pairFromFragment(): Promise<void> {
       publicKey: await crypto.subtle.exportKey("jwk", keys.publicKey),
     }),
   });
-  const body = await response.json() as Omit<RemoteSession, "privateKey"> & { error?: string };
+  const body = (await response.json()) as Omit<RemoteSession, "privateKey"> & { error?: string };
   if (!response.ok) throw new Error(body.error ?? "Remote pairing failed.");
   const privateJwk = await crypto.subtle.exportKey("jwk", keys.privateKey);
   const nonExportablePrivateKey = await crypto.subtle.importKey(
@@ -111,22 +110,26 @@ async function pairFromFragment(): Promise<void> {
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 }
 
-async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+async function authorizedFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
   const request = new Request(input, init);
   const url = new URL(request.url, location.href);
   if (
-    url.origin !== location.origin
-    || !url.pathname.startsWith("/api/")
-    || url.pathname === "/api/remote/pair"
+    url.origin !== location.origin ||
+    !url.pathname.startsWith("/api/") ||
+    url.pathname === "/api/remote/pair"
   ) {
     return nativeFetch(request);
   }
   const session = loadSession();
   if (!session) return nativeFetch(request);
   const method = request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD"
-    ? new ArrayBuffer(0)
-    : await request.clone().arrayBuffer();
+  const body =
+    method === "GET" || method === "HEAD"
+      ? new ArrayBuffer(0)
+      : await request.clone().arrayBuffer();
   const timestamp = Date.now().toString();
   const nonce = crypto.randomUUID();
   const payload = [
@@ -139,11 +142,13 @@ async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {})
   ].join("\n");
   const privateKey = await loadPrivateKey(session.hostId);
   if (!privateKey) throw new Error("The remote device key is missing. Pair this device again.");
-  const signature = encode(await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    privateKey,
-    new TextEncoder().encode(payload),
-  ));
+  const signature = encode(
+    await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      privateKey,
+      new TextEncoder().encode(payload),
+    ),
+  );
   const headers = new Headers(request.headers);
   headers.set("authorization", `DPoP ${session.sessionId}.${session.sessionToken}`);
   headers.set("x-aldunis-timestamp", timestamp);
@@ -168,7 +173,7 @@ export async function initializeRemoteAuthentication(): Promise<boolean> {
   const descriptorResponse = await nativeFetch("/api/remote/descriptor", { method: "POST" });
   let remoteEnabled = false;
   if (descriptorResponse.ok) {
-    const descriptor = await descriptorResponse.json() as {
+    const descriptor = (await descriptorResponse.json()) as {
       protocolVersion?: unknown;
       remoteEnabled?: boolean;
     };
@@ -179,7 +184,9 @@ export async function initializeRemoteAuthentication(): Promise<boolean> {
         throw new Error("This Aldunis host uses an incompatible remote protocol.");
       }
       if (!loadSession()) {
-        throw new Error("This device is not paired, or its session expired or was revoked. Create a new pairing link on the host.");
+        throw new Error(
+          "This device is not paired, or its session expired or was revoked. Create a new pairing link on the host.",
+        );
       }
     }
   }

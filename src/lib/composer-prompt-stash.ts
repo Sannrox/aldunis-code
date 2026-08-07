@@ -92,11 +92,13 @@ export function getPromptStashStorage(
  * Managed scope must identify the person, not only the tenant: shared
  * browser profiles in the same tenant must not read each other's drafts.
  */
-export function resolvePromptStashScope(input: {
-  remoteSessionId?: string | null;
-  /** Managed operator key — prefer `tenantId:displayName`, not tenant alone. */
-  tenantId?: string | null;
-} = {}): string {
+export function resolvePromptStashScope(
+  input: {
+    remoteSessionId?: string | null;
+    /** Managed operator key — prefer `tenantId:displayName`, not tenant alone. */
+    tenantId?: string | null;
+  } = {},
+): string {
   const remote = input.remoteSessionId?.trim();
   if (remote) return `remote:${remote}`;
   const operator = input.tenantId?.trim();
@@ -255,9 +257,7 @@ export function createPromptStashEntry(
 export function stashEntrySnippet(entry: PromptStashEntry): string {
   const trimmed = entry.prompt.trim().replace(/\s+/g, " ");
   if (!trimmed) return "(empty)";
-  return trimmed.length > SNIPPET_MAX_CHARS
-    ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…`
-    : trimmed;
+  return trimmed.length > SNIPPET_MAX_CHARS ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…` : trimmed;
 }
 
 /** Pure insert: newest first, hard cap, optional eviction of the oldest. */

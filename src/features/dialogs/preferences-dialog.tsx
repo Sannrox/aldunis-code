@@ -5,10 +5,7 @@ import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { VOICE_INPUT_SHORTCUT_LABEL } from "../../lib/voice-input";
 import { PROMPT_STASH_SHORTCUT_LABEL } from "../../lib/composer-prompt-stash";
 import { shortcutLabel } from "../../lib/workspace-shortcuts";
-import {
-  DesktopUpdateSettings,
-  type DesktopUpdateControls,
-} from "../updates/desktop-update";
+import { DesktopUpdateSettings, type DesktopUpdateControls } from "../updates/desktop-update";
 
 const SECTIONS = [
   "General",
@@ -27,19 +24,18 @@ export function preferenceSectionHasEditableFields(section: Section): boolean {
   return section === "General" || section === "Worktrees" || section === "Keybindings";
 }
 
-export function preferencesHaveUnsavedChanges(
-  draft: Preferences,
-  saved: Preferences,
-): boolean {
-  return draft.theme !== saved.theme
-    || draft.density !== saved.density
-    || draft.zoom !== saved.zoom
-    || draft.reducedMotion !== saved.reducedMotion
-    || draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta
-    || draft.showThinking !== saved.showThinking
-    || draft.commandPaletteShortcut !== saved.commandPaletteShortcut
-    || draft.conversationSearchShortcut !== saved.conversationSearchShortcut
-    || draft.managedWorktreeLimit !== saved.managedWorktreeLimit;
+export function preferencesHaveUnsavedChanges(draft: Preferences, saved: Preferences): boolean {
+  return (
+    draft.theme !== saved.theme ||
+    draft.density !== saved.density ||
+    draft.zoom !== saved.zoom ||
+    draft.reducedMotion !== saved.reducedMotion ||
+    draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta ||
+    draft.showThinking !== saved.showThinking ||
+    draft.commandPaletteShortcut !== saved.commandPaletteShortcut ||
+    draft.conversationSearchShortcut !== saved.conversationSearchShortcut ||
+    draft.managedWorktreeLimit !== saved.managedWorktreeLimit
+  );
 }
 
 export function ProviderSettingsLinks({
@@ -52,8 +48,8 @@ export function ProviderSettingsLinks({
   return (
     <div className="provider-settings-links">
       <p className="preference-note">
-        Profiles, adapter package trust, and readiness diagnostics share one navigation shell.
-        Their credentials, approvals, and mutation APIs remain separate.
+        Profiles, adapter package trust, and readiness diagnostics share one navigation shell. Their
+        credentials, approvals, and mutation APIs remain separate.
       </p>
       <div>
         <Button
@@ -88,12 +84,7 @@ export function ArchivedSettingsLinks({
         archive.
       </p>
       <div>
-        <Button
-          type="button"
-          variant="primary"
-          onClick={onOpenArchivedThreads}
-          disabled={disabled}
-        >
+        <Button type="button" variant="primary" onClick={onOpenArchivedThreads} disabled={disabled}>
           Open archived threads
         </Button>
       </div>
@@ -120,12 +111,7 @@ export function AccessSettingsLinks({
         can use a session, but cannot administer access.
       </p>
       <div>
-        <Button
-          type="button"
-          variant="primary"
-          onClick={onOpenConnections}
-          disabled={disabled}
-        >
+        <Button type="button" variant="primary" onClick={onOpenConnections} disabled={disabled}>
           Open Connections
         </Button>
       </div>
@@ -181,17 +167,15 @@ export function PreferencesDialog({
 
   useEffect(() => {
     if (!open) return;
-    returnFocusRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDraft(preferences);
     setSection("General");
     const focusInitial = () => {
       const root = rootRef.current;
       if (!root) return;
       const preferred = root.querySelector<HTMLElement>("[data-dialog-initial-focus]");
-      const first = preferred
-        ?? root.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+      const first = preferred ?? root.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
       first?.focus();
     };
     const frame = window.requestAnimationFrame(focusInitial);
@@ -259,12 +243,7 @@ export function PreferencesDialog({
       aria-labelledby="settings-title"
     >
       <nav className="snav" aria-label="Settings sections">
-        <button
-          type="button"
-          className="sback"
-          data-dialog-initial-focus
-          onClick={onClose}
-        >
+        <button type="button" className="sback" data-dialog-initial-focus onClick={onClose}>
           ← Back to threads
         </button>
         <div className="snav-sections">
@@ -290,14 +269,18 @@ export function PreferencesDialog({
           )}
           <h2 id="settings-title">{section === "Archived" ? "Archived threads" : section}</h2>
           <div className="lead">
-            {section === "General" && "Appearance and startup. None of this changes while you work."}
-            {section === "Providers" && "Installation-wide provider posture — not mid-turn switching."}
+            {section === "General" &&
+              "Appearance and startup. None of this changes while you work."}
+            {section === "Providers" &&
+              "Installation-wide provider posture — not mid-turn switching."}
             {section === "Worktrees" && "Managed checkout limits for Aldunis-created worktrees."}
             {section === "Approvals" && "How mutating tools ask for consent."}
             {section === "Access" && "Loopback and paired remote sessions."}
-            {section === "Keybindings" && "Command palette, conversation search, product switch, sidebar, and composer shortcuts."}
+            {section === "Keybindings" &&
+              "Command palette, conversation search, product switch, sidebar, and composer shortcuts."}
             {section === "Diagnostics" && "Where to look when a provider will not start."}
-            {section === "Updates" && "Keep the packaged desktop shell current without interrupting an active turn."}
+            {section === "Updates" &&
+              "Keep the packaged desktop shell current without interrupting an active turn."}
             {section === "Archived" && "Review conversations hidden from the active sidebar."}
           </div>
 
@@ -314,7 +297,9 @@ export function PreferencesDialog({
                 <div className="field">
                   <div className="fl">
                     <div className="fn">Theme</div>
-                    <div className="fd">Changes apply when you save. System follows your operating system setting.</div>
+                    <div className="fd">
+                      Changes apply when you save. System follows your operating system setting.
+                    </div>
                   </div>
                   <div className="fc">
                     <div className="seg" role="group" aria-label="Theme">
@@ -335,7 +320,10 @@ export function PreferencesDialog({
                 <div className="field">
                   <div className="fl">
                     <div className="fn">Conversation search</div>
-                    <div className="fd">Search bounded local thread metadata. Messages and repository contents stay excluded.</div>
+                    <div className="fd">
+                      Search bounded local thread metadata. Messages and repository contents stay
+                      excluded.
+                    </div>
                   </div>
                   <div className="fc">
                     <div className="seg" role="group" aria-label="Conversation search shortcut">
@@ -382,7 +370,9 @@ export function PreferencesDialog({
                 </div>
                 <div className="field">
                   <div className="fl">
-                    <label className="fn" htmlFor="preferences-zoom">Zoom</label>
+                    <label className="fn" htmlFor="preferences-zoom">
+                      Zoom
+                    </label>
                     <div className="fd">Scales the whole workbench UI.</div>
                   </div>
                   <div className="fc">
@@ -392,17 +382,23 @@ export function PreferencesDialog({
                       className="num"
                       style={{ width: "auto", minWidth: 72, padding: "0 8px" }}
                       value={draft.zoom}
-                      onChange={(event) => update("zoom", Number(event.target.value) as Preferences["zoom"])}
+                      onChange={(event) =>
+                        update("zoom", Number(event.target.value) as Preferences["zoom"])
+                      }
                     >
                       {[0.8, 0.9, 1, 1.1, 1.2].map((value) => (
-                        <option value={value} key={value}>{Math.round(value * 100)}%</option>
+                        <option value={value} key={value}>
+                          {Math.round(value * 100)}%
+                        </option>
                       ))}
                     </select>
                   </div>
                 </div>
                 <div className="field">
                   <div className="fl">
-                    <label className="fn" htmlFor="preferences-reduced-motion">Reduced motion</label>
+                    <label className="fn" htmlFor="preferences-reduced-motion">
+                      Reduced motion
+                    </label>
                     <div className="fd">Settle transitions and shelf chevrons respect this.</div>
                   </div>
                   <div className="fc">
@@ -411,7 +407,8 @@ export function PreferencesDialog({
                       name="preferences-reduced-motion"
                       value={draft.reducedMotion}
                       onChange={(event) =>
-                        update("reducedMotion", event.target.value as Preferences["reducedMotion"])}
+                        update("reducedMotion", event.target.value as Preferences["reducedMotion"])
+                      }
                     >
                       <option value="system">Follow system</option>
                       <option value="reduce">Reduce</option>
@@ -425,7 +422,8 @@ export function PreferencesDialog({
                       Show provider thinking
                     </label>
                     <div className="fd">
-                      Display provider-emitted reasoning in the live timeline. Thinking is never saved to local history.
+                      Display provider-emitted reasoning in the live timeline. Thinking is never
+                      saved to local history.
                     </div>
                   </div>
                   <div className="fc">
@@ -453,8 +451,7 @@ export function PreferencesDialog({
                       name="preferences-orchestration-threads"
                       type="checkbox"
                       checked={draft.orchestrationThreadsBeta}
-                      onChange={(event) =>
-                        update("orchestrationThreadsBeta", event.target.checked)}
+                      onChange={(event) => update("orchestrationThreadsBeta", event.target.checked)}
                     />
                   </div>
                 </div>
@@ -473,9 +470,12 @@ export function PreferencesDialog({
               <>
                 <div className="field">
                   <div className="fl">
-                    <label className="fn" htmlFor="preferences-worktree-limit">Managed worktree limit</label>
+                    <label className="fn" htmlFor="preferences-worktree-limit">
+                      Managed worktree limit
+                    </label>
                     <div className="fd">
-                      Dispatch fails once this many Aldunis worktrees exist. Settled threads still count.
+                      Dispatch fails once this many Aldunis worktrees exist. Settled threads still
+                      count.
                     </div>
                   </div>
                   <div className="fc">
@@ -489,7 +489,8 @@ export function PreferencesDialog({
                         update(
                           "managedWorktreeLimit",
                           event.target.value === "unlimited" ? null : Number(event.target.value),
-                        )}
+                        )
+                      }
                     >
                       <option value={5}>5</option>
                       <option value={8}>8</option>
@@ -554,14 +555,18 @@ export function PreferencesDialog({
                     <div className="fn">Sidebar</div>
                     <div className="fd">Collapse or reopen the workbench sidebar.</div>
                   </div>
-                  <div className="fc"><kbd>{SIDEBAR_TOGGLE_SHORTCUT_LABEL}</kbd></div>
+                  <div className="fc">
+                    <kbd>{SIDEBAR_TOGGLE_SHORTCUT_LABEL}</kbd>
+                  </div>
                 </div>
                 <div className="field">
                   <div className="fl">
                     <div className="fn">Voice input</div>
                     <div className="fd">Toggle dictation in the active conversation pane.</div>
                   </div>
-                  <div className="fc"><kbd>{VOICE_INPUT_SHORTCUT_LABEL}</kbd></div>
+                  <div className="fc">
+                    <kbd>{VOICE_INPUT_SHORTCUT_LABEL}</kbd>
+                  </div>
                 </div>
                 <div className="field">
                   <div className="fl">
@@ -570,17 +575,18 @@ export function PreferencesDialog({
                       Park the current draft across threads, or open the stash when empty.
                     </div>
                   </div>
-                  <div className="fc"><kbd>{PROMPT_STASH_SHORTCUT_LABEL}</kbd></div>
+                  <div className="fc">
+                    <kbd>{PROMPT_STASH_SHORTCUT_LABEL}</kbd>
+                  </div>
                 </div>
-                <p className="search-scope">
-                  Product switch: ⌘1–4 (with Ctrl on Windows/Linux).
-                </p>
+                <p className="search-scope">Product switch: ⌘1–4 (with Ctrl on Windows/Linux).</p>
               </>
             )}
             {section === "Diagnostics" && (
               <p className="preference-note">
-                Prefer the existing provider profile probes and adapter administration for connectivity
-                checks. There is no ambient “connected” chrome — providers are spawned per session.
+                Prefer the existing provider profile probes and adapter administration for
+                connectivity checks. There is no ambient “connected” chrome — providers are spawned
+                per session.
               </p>
             )}
             {section === "Updates" && desktopUpdates && (
@@ -593,8 +599,12 @@ export function PreferencesDialog({
               />
             )}
             {(preferenceSectionHasEditableFields(section) || draftDirty) && (
-              <footer style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}>
-                <Button type="button" onClick={onClose} aria-label="Cancel settings changes">Cancel</Button>
+              <footer
+                style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 24 }}
+              >
+                <Button type="button" onClick={onClose} aria-label="Cancel settings changes">
+                  Cancel
+                </Button>
                 <Button
                   type="submit"
                   variant="primary"

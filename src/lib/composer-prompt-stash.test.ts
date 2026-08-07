@@ -154,7 +154,10 @@ test("getPromptStashBackend keeps managed scopes in isolated memory", () => {
   const alice = getPromptStashBackend("managed:t1:alice", windowLike)!;
   const bob = getPromptStashBackend("managed:t1:bob", windowLike)!;
   assert.notEqual(alice, local);
-  assert.equal(writePromptStash(alice, [createPromptStashEntry("a", { id: "a" })!], "managed:t1:alice"), true);
+  assert.equal(
+    writePromptStash(alice, [createPromptStashEntry("a", { id: "a" })!], "managed:t1:alice"),
+    true,
+  );
   assert.equal(readPromptStash(bob, "managed:t1:bob").length, 0);
   assert.equal(readPromptStash(alice, "managed:t1:alice").length, 1);
   assert.equal(getPromptStashBackend("local", windowLike), local);

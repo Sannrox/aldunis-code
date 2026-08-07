@@ -489,10 +489,7 @@ export function Conversation({
       }
       return;
     }
-    if (
-      previousManagedScopeRef.current &&
-      previousManagedScopeRef.current !== promptStashScope
-    ) {
+    if (previousManagedScopeRef.current && previousManagedScopeRef.current !== promptStashScope) {
       clearManagedPromptStashes();
     }
     previousManagedScopeRef.current = promptStashScope;
