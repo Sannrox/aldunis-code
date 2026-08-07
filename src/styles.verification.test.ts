@@ -183,6 +183,25 @@ test("shared browser controls have a bounded workspace surface", () => {
   assert.match(shellCss, /\.shared-browser-workspace webview\s*\{[\s\S]*?border:\s*0\s*!important/);
 });
 
+test("conversation message copy actions are hover/focus visible and touch accessible", () => {
+  assert.match(
+    css,
+    /\.turn-actions\s*\{[^}]*opacity:\s*0[^}]*transition:\s*opacity\s+0\.2s\s+ease/s,
+  );
+  assert.match(
+    css,
+    /\.turn:hover \.turn-actions,\s*\.turn:focus-within \.turn-actions\s*\{[^}]*opacity:\s*1/s,
+  );
+  assert.match(
+    css,
+    /\.message-copy-button\.is-copied\s*\{[^}]*color:\s*var\(--emerald\)\s*!important/s,
+  );
+  assert.match(
+    css,
+    /@media\s*\(any-pointer:\s*coarse\)\s*\{[^}]*\.turn-actions\s*\{[^}]*opacity:\s*1/s,
+  );
+});
+
 test("review dock shrinks so dual-pane conversation stays usable", () => {
   // Fixed 430px review inside a ~500px dual-pane primary left ~70px for the
   // thread. Dock must be allowed to shrink (flex-shrink + percentage cap).
