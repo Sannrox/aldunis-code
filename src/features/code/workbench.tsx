@@ -1753,6 +1753,7 @@ export function CodeWorkbench({
                           active={activePane === "primary"}
                           quietDelegatedChild={quietPrimaryChild}
                           projects={projects}
+                          projectConversations={conversations}
                           onAddProject={onAddProject}
                           onSelectProject={onSelectProject}
                           profiles={profiles}
@@ -1843,6 +1844,7 @@ export function CodeWorkbench({
                               active={activePane === "secondary"}
                               quietDelegatedChild={quietSecondaryChild}
                               projects={projects}
+                              projectConversations={conversations}
                               onAddProject={onAddProject}
                               onSelectProject={onSelectProject}
                               profiles={profiles}

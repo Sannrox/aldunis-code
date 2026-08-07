@@ -4221,6 +4221,48 @@ select.ui-input {
   padding-block: 6px;
 }
 
+/* Previous worktree seed on new conversation setup (T3-inspired). */
+.previous-worktree-seed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--muted-foreground) 6%, transparent);
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+.previous-worktree-seed:hover,
+.previous-worktree-seed:focus-visible {
+  background: var(--accent);
+  border-color: var(--input);
+}
+.previous-worktree-seed:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--background),
+    0 0 0 4px var(--ring);
+}
+.previous-worktree-seed__label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  flex: 0 0 auto;
+}
+.previous-worktree-seed__value {
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Thread-row GitHub PR projection (T3-inspired). Layout participant in .rb. */
 .pr-status {
   display: inline-flex;

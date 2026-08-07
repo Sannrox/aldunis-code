@@ -55,6 +55,13 @@ import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import { contextWindowFromUsage, type ContextWindowSnapshot } from "../../lib/context-window";
 import { ContextWindowMeter } from "./context-window-meter";
 import {
+  clearComposerDraft,
+  composerDraftKey,
+  loadComposerDraft,
+  saveComposerDraft,
+} from "../../lib/composer-draft-stash";
+import { resolvePreviousWorktreeSeed } from "../../lib/previous-worktree";
+import {
   draftForPromptHistoryIndex,
   isBrowsingPromptHistory,
   isComposerHistoryBoundary,
@@ -406,6 +413,7 @@ export function Conversation({
   showThinking = false,
   initialPrompt,
   initialProvider,
+  projectConversations = [],
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -441,6 +449,8 @@ export function Conversation({
   /** One-shot bounded brief for a new conversation opened by a domain handoff. */
   initialPrompt?: string;
   initialProvider?: ProviderId;
+  /** Project peers used for previous-worktree seed on new conversations. */
+  projectConversations?: ConversationSummary[];
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -1560,6 +1570,46 @@ export function Conversation({
     repository?.projectId,
     provider,
   ]);
+  const activeDraftKey = composerDraftKey({
+    conversationId: conversation?.id ?? null,
+    projectId: repository?.projectId ?? conversation?.projectId ?? null,
+    pane,
+  });
+  // Restore stashed draft when the conversation / new-chat key changes.
+  useEffect(() => {
+    let storage: Storage | null = null;
+    try {
+      storage = typeof window !== "undefined" ? window.localStorage : null;
+    } catch {
+      storage = null;
+    }
+    // Domain handoff briefs win over a stashed new-chat draft once.
+    if (initialPrompt && !conversation?.id) {
+      return;
+    }
+    const stored = loadComposerDraft(storage, activeDraftKey);
+    setDraft(stored?.text ?? "");
+    setPromptHistoryBrowse(resetPromptHistoryBrowse([]));
+  }, [activeDraftKey, conversation?.id, initialPrompt]);
+  // Persist the draft for this key only; key and text are captured per effect generation.
+  useEffect(() => {
+    let storage: Storage | null = null;
+    try {
+      storage = typeof window !== "undefined" ? window.localStorage : null;
+    } catch {
+      storage = null;
+    }
+    if (!activeDraftKey || !storage) return;
+    const key = activeDraftKey;
+    const textForKey = draft;
+    const timer = window.setTimeout(() => {
+      saveComposerDraft(storage, key, textForKey);
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      saveComposerDraft(storage, key, textForKey);
+    };
+  }, [draft, activeDraftKey]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -2286,6 +2336,15 @@ export function Conversation({
     setCheckpointError(null);
     let activeTurnId: string | null = null;
     let createdThreadId: string | null = null;
+    const draftKeyAtSend = activeDraftKey;
+    let runAccepted = false;
+    const safeLocalStorage = (): Storage | null => {
+      try {
+        return typeof window !== "undefined" ? window.localStorage : null;
+      } catch {
+        return null;
+      }
+    };
     try {
       const response = await fetch("/api/provider/runs", {
         method: "POST",
@@ -2324,6 +2383,11 @@ export function Conversation({
       if (!response.ok) {
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? `${providerName} could not start.`);
+      }
+      // Clear stash only after the host accepted the run.
+      runAccepted = true;
+      if (promptOverride === undefined && draftKeyAtSend) {
+        clearComposerDraft(safeLocalStorage(), draftKeyAtSend);
       }
       const activeRunId = response.headers.get("x-provider-run-id");
       setRunId(activeRunId);
@@ -2431,6 +2495,14 @@ export function Conversation({
       setAssistantTurnAt(new Date().toISOString());
       if (promptOverride === undefined) {
         setElementReferences(sentElementReferences);
+      }
+      // Restore unsent text only when the host never accepted the run (avoid
+      // re-offering a prompt the provider may already be executing).
+      if (promptOverride === undefined && !runAccepted) {
+        setDraft(value);
+        if (draftKeyAtSend) {
+          saveComposerDraft(safeLocalStorage(), draftKeyAtSend, value);
+        }
       }
       setProviderEvents((current) => [
         ...current,
@@ -2917,6 +2989,23 @@ export function Conversation({
   );
   const worktreeFilterHasNoMatches =
     worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
+  const previousWorktreeSeed = useMemo(() => {
+    if (!canPickWorkspace || workspaceMode !== "shared") return null;
+    return resolvePreviousWorktreeSeed({
+      conversations: projectConversations,
+      projectId: repository?.projectId ?? null,
+      currentWorktreePath: repository?.selectedWorktree ?? null,
+    });
+  }, [
+    canPickWorkspace,
+    workspaceMode,
+    projectConversations,
+    repository?.projectId,
+    repository?.selectedWorktree,
+  ]);
+  const previousWorktreeOption = previousWorktreeSeed
+    ? (selectableWorktrees.find((item) => item.path === previousWorktreeSeed.worktreePath) ?? null)
+    : null;
   const selectedWorktreePath = repository?.selectedWorktree ?? "";
   const worktreeSelectValue = filteredSelectableWorktrees.some(
     (item) => item.path === selectedWorktreePath,
@@ -3963,6 +4052,20 @@ export function Conversation({
                                 : `${filteredSelectableWorktrees.length} available`}
                             </span>
                           </div>
+                        )}
+                        {previousWorktreeSeed && previousWorktreeOption && (
+                          <button
+                            type="button"
+                            className="previous-worktree-seed"
+                            onClick={() => onSelectWorktree(previousWorktreeSeed.worktreePath)}
+                            title={previousWorktreeSeed.worktreePath}
+                            aria-label={`Use previous worktree ${formatWorktreeOptionLabel(previousWorktreeOption)}`}
+                          >
+                            <span className="previous-worktree-seed__label">Previous worktree</span>
+                            <span className="previous-worktree-seed__value">
+                              {formatWorktreeOptionLabel(previousWorktreeOption)}
+                            </span>
+                          </button>
                         )}
                         <label className="new-chat-context-row new-chat-context-row--select">
                           <Icon name="branch" />

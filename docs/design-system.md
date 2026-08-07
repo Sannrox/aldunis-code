@@ -150,6 +150,17 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Composer drafts and previous worktree
+
+Unsent composer text is stashed in the browser profile only (per conversation
+and per new-chat pane). Switching threads restores the matching draft; a
+successful send clears it. Drafts never leave the local browser.
+
+New conversations in shared-checkout mode may show a **Previous worktree**
+control when another recent conversation in the same project used a different
+path. Choosing it selects that worktree once; it does not create or release
+checkouts.
+
 ## Pull request status
 
 When GitHub CLI can resolve a pull request for a conversation worktree branch,
