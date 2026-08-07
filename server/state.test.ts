@@ -478,6 +478,45 @@ test("typed provider failures survive reload without arbitrary error text", asyn
   ]);
 });
 
+test("provider mode rejections retain a safe actionable diagnostic", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const first = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Attempt a plan-only run",
+    mode: "plan",
+    provider: "shikigami",
+  });
+  const expected = "Shikigami requested mutating tool write_file while plan mode was active.";
+  await store.recordProviderEvent(first.thread.id, first.turn.id, "shikigami", {
+    kind: "failed",
+    code: "provider_mode_violation",
+    message: expected,
+    toolName: "write_file",
+    mode: "plan",
+  });
+  const second = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Attempt a forged diagnostic",
+    mode: "plan",
+    provider: "shikigami",
+    threadId: first.thread.id,
+  });
+  await store.recordProviderEvent(second.thread.id, second.turn.id, "shikigami", {
+    kind: "failed",
+    code: "provider_mode_violation",
+    message: "Shikigami requested mutating tool token=secret while plan mode was active.",
+    toolName: "token=secret",
+    mode: "plan",
+  });
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.activities.at(-2)?.message, expected);
+  assert.equal(rebuilt.activities.at(-1)?.message, "Provider failed.");
+});
+
 test("host restart marks orphaned active and approval turns interrupted", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
