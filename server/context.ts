@@ -22,10 +22,25 @@ const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".webp": "image/webp",
 };
-const SECRET_NAMES = /(^|\/)(\.env(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)$|credentials(?:\.json)?$|.*\.(?:key|pem|p12|pfx))$/i;
+const SECRET_NAMES = /(^|\/)(\.env(?:\.[^/]*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|credentials(?:\.json)?(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|[^/]+\.(?:key|pem|p12|pfx)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?)$/i;
+const SECRET_CONFIG_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)\.(?:json|txt|data|db|env|sock|yaml|yml|conf|config|toml|ini|cfg|properties)(?:$|[-_.](?:bak|backup|old|orig|copy|tmp|save|swp|local|production|prod|staging|stage|development|dev|private|secret|secrets|credential|credentials|auth|token|tokens|key|keys|env|environment))$/i;
+const SECRET_NAME_PART = /(?:^|[-_.])(?:api[-_.]?key|token|secret|credential|credentials|password|passwd|auth)(?:$|[-_.](?:token|secret|key|pem|p12|pfx))$/i;
 const SECRET_COMPONENT_MARKER = /^(?:secret|secrets|token|tokens)$/i;
 const SENSITIVE_FILENAME_MARKER = /^(?:secret|secrets|token|tokens)\.(?:json|yaml|yml|toml|ini|conf|config|env|txt|key|pem|p12|pfx)$/i;
 const CREDENTIAL_BASENAME_MARKER = /(?:^|[-_.])(?:api|access|auth|bearer|client|credential|database|db|deploy|gateway|oauth|private|refresh|service|session|ssh|user)(?:[-_.]?(?:secret|secrets|token|tokens))(?:$|\.(?:json|yaml|yml|toml|ini|conf|config|env|txt|key|pem|p12|pfx)$)/i;
+const DOCUMENTED_SECRET_BASENAME = /(?:\.env|\.(?:json|txt|data|db|env|sock|yaml|yml|conf|config|toml|ini|cfg|properties))\.(?:example|template|md)$/i;
+
+function isSecretLikePath(path: string): boolean {
+  const components = path.split("/");
+  const basename = components.at(-1) ?? "";
+  if (components.some((component) => SECRET_COMPONENT_MARKER.test(component))) return true;
+  if (DOCUMENTED_SECRET_BASENAME.test(basename)) return false;
+  return SECRET_NAMES.test(path)
+    || SENSITIVE_FILENAME_MARKER.test(basename)
+    || SECRET_CONFIG_NAME_PART.test(basename)
+    || SECRET_NAME_PART.test(basename)
+    || CREDENTIAL_BASENAME_MARKER.test(basename);
+}
 
 export interface ContextAttachment {
   path: string;
@@ -105,15 +120,6 @@ function assertNotSecretLike(path: string): void {
   if (isSecretLikePath(path)) {
     throw new RepositoryError(`${path} looks secret-like and cannot be attached.`, 403);
   }
-}
-
-function isSecretLikePath(path: string): boolean {
-  const components = path.split("/");
-  const basename = components.at(-1) ?? "";
-  return SECRET_NAMES.test(path)
-    || components.some((component) => SECRET_COMPONENT_MARKER.test(component))
-    || SENSITIVE_FILENAME_MARKER.test(basename)
-    || CREDENTIAL_BASENAME_MARKER.test(basename);
 }
 
 function isHidden(path: string): boolean {
