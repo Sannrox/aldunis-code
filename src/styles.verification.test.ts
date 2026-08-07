@@ -60,6 +60,12 @@ test("icon buttons resist flex shrink in tight headers", () => {
   assert.match(css, /\.ui-button--icon-sm\s*\{[^}]*min-width:\s*28px[^}]*flex:\s*0\s+0\s+28px/s);
 });
 
+test("workspace checkpoint title and state stay spaced in the card header", () => {
+  // Without gap, "Workspace checkpoint" + "failed" rendered as "Workspace checkpointfailed".
+  assert.match(css, /\.checkpoint-card > header > div\s*\{[^}]*display:\s*flex[^}]*gap:\s*8px/s);
+  assert.match(css, /\.checkpoint-card header small\s*\{[^}]*color:\s*var\(--muted-foreground\)/s);
+});
+
 test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
   assert.doesNotMatch(css, /@import\s+url\(/i);

@@ -2296,6 +2296,25 @@ select.ui-input {
   cursor: not-allowed;
 }
 .checkpoint-card { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.checkpoint-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.checkpoint-card > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.checkpoint-card strong { color: var(--foreground); font-size: 12.5px; }
+.checkpoint-card header small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+.checkpoint-card > p { margin: 8px 0 0; color: var(--muted-foreground); font-size: 12.5px; }
 .thinking { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 13px; margin-bottom: 8px; }
 .thinking-block {
   margin: 10px 0 12px;

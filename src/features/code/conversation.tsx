@@ -158,7 +158,7 @@ export function filterSelectableWorktrees(
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return worktrees;
   const matches = worktrees.filter((item) => (
-    `${item.branch ?? "Detached HEAD"} ${item.path} ${item.ownership}`
+    `${formatWorktreeOptionLabel(item)} ${item.path} ${item.ownership}`
       .toLocaleLowerCase()
       .includes(normalized)
   ));
@@ -169,6 +169,21 @@ export function filterSelectableWorktrees(
     return [selected, ...matches];
   }
   return matches;
+}
+
+/**
+ * Native <option> text is the only visual cue in the worktree picker. When
+ * several checkouts are detached, a bare "Detached HEAD" label is ambiguous —
+ * keep the branch name when present and append a short path tail otherwise.
+ */
+export function formatWorktreeOptionLabel(item: {
+  branch: string | null;
+  path: string;
+}): string {
+  if (item.branch) return item.branch;
+  const segments = item.path.replaceAll("\\", "/").split("/").filter(Boolean);
+  const tail = segments.slice(-2).join("/") || item.path;
+  return `Detached HEAD · ${tail}`;
 }
 
 const STARTER_PROMPTS = [
@@ -3564,7 +3579,7 @@ export function Conversation({
                       <optgroup label="Aldunis worktrees">
                         {managedSelectableWorktrees.map((item) => (
                           <option value={item.path} key={item.path}>
-                            {item.branch ?? "Detached HEAD"}
+                            {formatWorktreeOptionLabel(item)}
                           </option>
                         ))}
                       </optgroup>
@@ -3573,7 +3588,7 @@ export function Conversation({
                       <optgroup label="Existing worktrees">
                         {userSelectableWorktrees.map((item) => (
                           <option value={item.path} key={item.path}>
-                            {item.branch ?? "Detached HEAD"}
+                            {formatWorktreeOptionLabel(item)}
                           </option>
                         ))}
                       </optgroup>
