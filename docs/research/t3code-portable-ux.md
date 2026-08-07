@@ -1,6 +1,6 @@
 # Portable UX from T3 Code
 
-Status: Partial implementation (#542 snooze, #545 context meter)
+Status: Partial implementation (#542 snooze, #545 context meter, #548 message copy)
 
 Source: Comparison of [pingdotgg/t3code](https://github.com/pingdotgg/t3code)
 against Aldunis Code product boundaries and design system.
@@ -26,7 +26,7 @@ against Aldunis Code product boundaries and design system.
 | ----------------------------------------- | ------ | ------------------------------------------------------------------------------------ |
 | **Time-based thread snooze**              | High   | Implemented in #542. Visibility-only hide with presets; attention override.          |
 | **Context window meter**                  | High   | Implemented in #545. Codex/ACP usage → ephemeral composer ring; not durable history. |
-| Message copy actions                      | Medium | Open PR pattern already exists; keep keyboard/touch/a11y explicit.                   |
+| **Message copy actions**                  | Medium | Implemented in #548. Hover/focus copy for prompts and answers.                       |
 | PR status on thread rows                  | Medium | Needs VCS status projection; delivery already drafts PRs.                            |
 | Previous-worktree seed in new-thread flow | Medium | Composer workspace selector could offer last non-current worktree.                   |
 | Composer draft stash                      | Medium | Local draft recovery across threads without server transcripts.                      |

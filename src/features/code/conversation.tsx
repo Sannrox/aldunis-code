@@ -114,7 +114,10 @@ import {
   type WorkspacePanel,
   type WorkspacePanelDestination,
 } from "../../lib/workspace-panel";
-import { presentAssistantTimeline } from "../../lib/conversation-timeline";
+import {
+  presentAssistantTimeline,
+  type AssistantTimelineBlock,
+} from "../../lib/conversation-timeline";
 import { latestPlanFromEvents } from "../../lib/provider-plan";
 import {
   shouldRefreshAfterRestoredTurn,
@@ -125,6 +128,7 @@ import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
 import { ProviderPlanActions, ProviderPlanCard, ProviderPlanContent } from "./provider-plan";
 import { ContextPackagePanel, ContextPackageSummary } from "./context-package";
+import { MessageCopyButton } from "./message-copy-button";
 import { ToolActivity } from "./tool-activity";
 import {
   defaultWorkspaceMode,
@@ -135,6 +139,25 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
+}
+
+/** Join assistant text blocks while preserving timeline boundaries around tools/plans. */
+export function assistantTextFromEvents(events: readonly ProviderEvent[]): string {
+  return presentAssistantTimeline([...events])
+    .filter(
+      (block): block is Extract<AssistantTimelineBlock, { kind: "text" }> => block.kind === "text",
+    )
+    .map((block) => block.text)
+    .join("\n\n");
+}
+
+function TurnCopyAction({ text, label }: { text: string; label: string }) {
+  if (!text.trim()) return null;
+  return (
+    <div className="turn-actions">
+      <MessageCopyButton text={text} label={label} />
+    </div>
+  );
 }
 
 export function providerProfileDisplayName(
@@ -2638,14 +2661,7 @@ export function Conversation({
   useEffect(() => {
     if (!latestPlan) setPlanOpen(false);
   }, [latestPlan]);
-  const assistantText = joinAssistantTextChunks(
-    providerEvents
-      .filter(
-        (event): event is Extract<ProviderEvent, { kind: "assistant_text" }> =>
-          event.kind === "assistant_text",
-      )
-      .map((event) => event.text),
-  );
+  const assistantText = assistantTextFromEvents(providerEvents);
   const thinkingText = joinAssistantTextChunks(
     providerEvents
       .filter(
@@ -3247,6 +3263,7 @@ export function Conversation({
                           label="Submitted context"
                         />
                       )}
+                      <TurnCopyAction text={turn.message.text} label="Copy prompt" />
                     </div>
                     <div className="turn">
                       <div className="role">
@@ -3287,6 +3304,10 @@ export function Conversation({
                       {(turn.state === "interrupted" || turn.state === "cancelled") && (
                         <p className="provider-state">{providerLabel} cancelled</p>
                       )}
+                      <TurnCopyAction
+                        text={assistantTextFromEvents(turn.events)}
+                        label="Copy answer"
+                      />
                     </div>
                   </React.Fragment>
                 ))}
@@ -3309,6 +3330,7 @@ export function Conversation({
                         label="Submitted context"
                       />
                     )}
+                    <TurnCopyAction text={latestMessage.text} label="Copy prompt" />
                   </div>
                 )}
                 {showAssistantTurn && (
@@ -3354,6 +3376,7 @@ export function Conversation({
                           correlation={correlation}
                         />
                       ))}
+                    {!runActive && <TurnCopyAction text={assistantText} label="Copy answer" />}
                     {approvals.map((approval) => (
                       <section
                         className={`approval-card ${approval.state}`}

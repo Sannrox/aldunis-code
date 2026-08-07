@@ -4221,6 +4221,42 @@ select.ui-input {
   padding-block: 6px;
 }
 
+/* Message copy actions (T3-inspired turn footer). */
+.turn-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 28px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.turn:hover .turn-actions,
+.turn:focus-within .turn-actions {
+  opacity: 1;
+}
+.message-copy-button {
+  color: var(--muted-foreground) !important;
+}
+.message-copy-button.is-copied {
+  color: var(--emerald) !important;
+}
+.message-copy-button svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+@media (any-pointer: coarse) {
+  .turn-actions {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .turn-actions {
+    transition: none;
+  }
+}
+
 /* Ephemeral context-window meter (T3-inspired). */
 .context-window-meter {
   position: relative;
