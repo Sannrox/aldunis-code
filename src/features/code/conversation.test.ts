@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   appendProviderEvent,
+  assistantTextFromEvents,
   filterSelectableWorktrees,
   formatHostLabel,
   formatWorktreeOptionLabel,
@@ -29,6 +30,16 @@ test("ready composer copy distinguishes new work from an existing conversation",
     "What should we build, fix, or review?",
   );
   assert.equal(readyComposerPlaceholder("Codex CLI", "thread-1"), "Reply to Codex CLI…");
+});
+
+test("assistantTextFromEvents preserves text block boundaries around tools", () => {
+  const events = [
+    { kind: "assistant_text", text: "First paragraph." },
+    { kind: "tool_started", toolCallId: "t1", name: "Read" },
+    { kind: "tool_finished", toolCallId: "t1", failed: false },
+    { kind: "assistant_text", text: "Second paragraph." },
+  ] as ProviderEvent[];
+  assert.equal(assistantTextFromEvents(events), "First paragraph.\n\nSecond paragraph.");
 });
 
 test("host copy keeps loopback details human-readable", () => {

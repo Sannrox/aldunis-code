@@ -150,6 +150,14 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Message copy
+
+Submitted prompts and completed assistant answers expose a ghost icon button
+in the turn footer. The control is hover/focus-visible on fine pointers and
+always visible on coarse pointers. Brief “copied” / failure feedback uses
+polite live text; the success hue is temporary action confirmation, not a
+persistent “healthy” badge.
+
 ## Context window
 
 When a provider reports live token/context usage (Codex
