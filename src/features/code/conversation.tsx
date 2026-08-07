@@ -1,22 +1,32 @@
-import React, {
-  FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
-} from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
-  RepositoryMetadata, ConversationSummary, ClaudeProfile, ProviderId, ProviderDiscovery,
-  ProviderCapabilities, ProviderState, ProviderEvent, ProviderSkill, InteractionMode, ReasoningEffort,
+  RepositoryMetadata,
+  ConversationSummary,
+  ClaudeProfile,
+  ProviderId,
+  ProviderDiscovery,
+  ProviderCapabilities,
+  ProviderState,
+  ProviderEvent,
+  ProviderSkill,
+  InteractionMode,
+  ReasoningEffort,
   ProviderBrowserObservation,
-  ChangedFile, TurnCheckpoint, CheckpointFile, ApprovalState, ElementReference, ProviderPlanArtifact,
-  ContextPin, ContextReceipt, WorkspaceMode,
+  ChangedFile,
+  TurnCheckpoint,
+  CheckpointFile,
+  ElementReference,
+  ProviderPlanArtifact,
+  ContextPin,
+  ContextReceipt,
+  WorkspaceMode,
 } from "../../types";
-import { Button, CloseButton } from "../../components/ui";
+import { Button } from "../../components/ui";
 import { Icon } from "../../components/icon";
 import { ChangesPanel, type ChangesPanelMode } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
 import { EnvironmentControl } from "./environment-control";
-import {
-  PreviewPanel,
-  type PreviewPanelStatus,
-} from "../preview/preview-panel";
+import { PreviewPanel, type PreviewPanelStatus } from "../preview/preview-panel";
 import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
@@ -112,15 +122,8 @@ import {
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
-import {
-  ProviderPlanActions,
-  ProviderPlanCard,
-  ProviderPlanContent,
-} from "./provider-plan";
-import {
-  ContextPackagePanel,
-  ContextPackageSummary,
-} from "./context-package";
+import { ProviderPlanActions, ProviderPlanCard, ProviderPlanContent } from "./provider-plan";
+import { ContextPackagePanel, ContextPackageSummary } from "./context-package";
 import {
   defaultWorkspaceMode,
   NEW_CONVERSATION_WORKSPACE_MODES,
@@ -140,7 +143,8 @@ export function providerProfileDisplayName(
   if (provider !== "claude-code" && provider !== "shikigami") return null;
   const profile = profiles.find((candidate) => candidate.id === profileId);
   if (!profile) return null;
-  if (provider === "claude-code" && profile.provider && profile.provider !== "claude-code") return null;
+  if (provider === "claude-code" && profile.provider && profile.provider !== "claude-code")
+    return null;
   if (provider === "shikigami" && profile.provider !== "shikigami") return null;
   return profile.name;
 }
@@ -157,14 +161,12 @@ export function filterSelectableWorktrees(
 ): RepositoryMetadata["worktrees"] {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return worktrees;
-  const matches = worktrees.filter((item) => (
+  const matches = worktrees.filter((item) =>
     `${formatWorktreeOptionLabel(item)} ${item.path} ${item.ownership}`
       .toLocaleLowerCase()
-      .includes(normalized)
-  ));
-  const selected = selectedPath
-    ? worktrees.find((item) => item.path === selectedPath)
-    : undefined;
+      .includes(normalized),
+  );
+  const selected = selectedPath ? worktrees.find((item) => item.path === selectedPath) : undefined;
   if (selected && !matches.some((item) => item.path === selected.path)) {
     return [selected, ...matches];
   }
@@ -176,10 +178,7 @@ export function filterSelectableWorktrees(
  * several checkouts are detached, a bare "Detached HEAD" label is ambiguous —
  * keep the branch name when present and append a short path tail otherwise.
  */
-export function formatWorktreeOptionLabel(item: {
-  branch: string | null;
-  path: string;
-}): string {
+export function formatWorktreeOptionLabel(item: { branch: string | null; path: string }): string {
   if (item.branch) return item.branch;
   const segments = item.path.replaceAll("\\", "/").split("/").filter(Boolean);
   const tail = segments.slice(-2).join("/") || item.path;
@@ -192,11 +191,14 @@ const STARTER_PROMPTS = [
   { label: "Explain the codebase", value: "Explain the structure of this codebase" },
 ] as const;
 
-const NEW_CONVERSATION_WORKSPACE_COPY: Record<WorkspaceMode, {
-  label: string;
-  summary: string;
-  detail: string;
-}> = {
+const NEW_CONVERSATION_WORKSPACE_COPY: Record<
+  WorkspaceMode,
+  {
+    label: string;
+    summary: string;
+    detail: string;
+  }
+> = {
   shared: {
     label: "Shared checkout",
     summary: "Use the selected worktree",
@@ -215,18 +217,21 @@ const NEW_CONVERSATION_WORKSPACE_COPY: Record<WorkspaceMode, {
 };
 
 export function formatHostLabel(hostname: string | undefined): string {
-  return !hostname
-    || hostname === "localhost"
-    || hostname === "127.0.0.1"
-    || hostname === "::1"
-    || hostname === "[::1]"
+  return !hostname ||
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
     ? "Local Aldunis host"
     : hostname;
 }
 
 type VoiceInputState = "idle" | "listening" | "unsupported" | "error";
 
-export function appendProviderEvent(current: ProviderEvent[], next: ProviderEvent): ProviderEvent[] {
+export function appendProviderEvent(
+  current: ProviderEvent[],
+  next: ProviderEvent,
+): ProviderEvent[] {
   if (next.kind !== "browser_observation") return [...current, next];
   let replaced = false;
   const result: ProviderEvent[] = [];
@@ -259,9 +264,11 @@ export function GovernanceCorrelationSummary({
         disabled={!correlation.correlationId}
         onClick={() => {
           if (!correlation.correlationId) return;
-          window.dispatchEvent(new CustomEvent("aldunis:inspect-chisei-operation", {
-            detail: { correlationId: correlation.correlationId },
-          }));
+          window.dispatchEvent(
+            new CustomEvent("aldunis:inspect-chisei-operation", {
+              detail: { correlationId: correlation.correlationId },
+            }),
+          );
         }}
       >
         Inspect in Chisei
@@ -280,24 +287,33 @@ function TurnChangesCard({
   onOpen: (checkpoint: TurnCheckpoint) => void;
 }) {
   if (
-    (checkpoint?.state !== "completed" && checkpoint?.state !== "superseded")
-    || !checkpoint.files?.length
-  ) return null;
+    (checkpoint?.state !== "completed" && checkpoint?.state !== "superseded") ||
+    !checkpoint.files?.length
+  )
+    return null;
   const files = checkpoint.files;
   const additions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const deletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const visibleFiles = files.slice(0, 8);
-  const hasLineStats = files.some((file) => (
-    typeof file.additions === "number" || typeof file.deletions === "number"
-  ));
+  const hasLineStats = files.some(
+    (file) => typeof file.additions === "number" || typeof file.deletions === "number",
+  );
   return (
-    <section className="turn-changes-card" aria-label={`Changed files from this turn, ${pane} pane`}>
+    <section
+      className="turn-changes-card"
+      aria-label={`Changed files from this turn, ${pane} pane`}
+    >
       <header>
         <div>
           <strong>Changed files</strong>
           <small>
             {files.length} {files.length === 1 ? "file" : "files"}
-            {hasLineStats && <> · <b className="ok">+{additions}</b> <b className="bad">−{deletions}</b></>}
+            {hasLineStats && (
+              <>
+                {" "}
+                · <b className="ok">+{additions}</b> <b className="bad">−{deletions}</b>
+              </>
+            )}
           </small>
         </div>
         <button
@@ -314,11 +330,15 @@ function TurnChangesCard({
           <li key={`${file.path}-${file.previousPath ?? ""}`}>
             <span className={`change-state ${file.state}`}>{file.state}</span>
             <span title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}>
-              {file.previousPath ? `${file.previousPath} → ` : ""}{file.path}
+              {file.previousPath ? `${file.previousPath} → ` : ""}
+              {file.path}
             </span>
-            {hasLineStats && <small>
-              {file.additions == null ? "—" : `+${file.additions}`} {file.deletions == null ? "—" : `−${file.deletions}`}
-            </small>}
+            {hasLineStats && (
+              <small>
+                {file.additions == null ? "—" : `+${file.additions}`}{" "}
+                {file.deletions == null ? "—" : `−${file.deletions}`}
+              </small>
+            )}
           </li>
         ))}
         {files.length > visibleFiles.length && (
@@ -402,9 +422,9 @@ export function Conversation({
   const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
   const voicePrefixRef = useRef("");
   const voiceFinalTranscriptRef = useRef("");
-  const [voiceInputState, setVoiceInputState] = useState<VoiceInputState>(() => (
-    getVoiceRecognitionConstructor() ? "idle" : "unsupported"
-  ));
+  const [voiceInputState, setVoiceInputState] = useState<VoiceInputState>(() =>
+    getVoiceRecognitionConstructor() ? "idle" : "unsupported",
+  );
   const [voiceInputInterim, setVoiceInputInterim] = useState("");
   const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
 
@@ -415,7 +435,7 @@ export function Conversation({
     voiceRecognitionRef.current = null;
     setVoiceInputInterim("");
     if (!recognition) {
-      setVoiceInputState((current) => current === "unsupported" ? current : "idle");
+      setVoiceInputState((current) => (current === "unsupported" ? current : "idle"));
       return;
     }
     setVoiceInputState("idle");
@@ -434,7 +454,9 @@ export function Conversation({
     const Recognition = getVoiceRecognitionConstructor();
     if (!Recognition) {
       setVoiceInputState("unsupported");
-      setVoiceInputError("Voice input is not available in this browser. You can continue typing normally.");
+      setVoiceInputError(
+        "Voice input is not available in this browser. You can continue typing normally.",
+      );
       return;
     }
 
@@ -454,9 +476,8 @@ export function Conversation({
     setVoiceInputError(null);
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = typeof navigator !== "undefined" && navigator.language
-      ? navigator.language
-      : "en-US";
+    recognition.lang =
+      typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US";
     recognition.maxAlternatives = 1;
     recognition.onstart = () => {
       if (voiceRecognitionRef.current === recognition) setVoiceInputState("listening");
@@ -472,11 +493,13 @@ export function Conversation({
         finalTranscript,
       );
       setVoiceInputInterim(interimTranscript);
-      setDraft(composeVoiceDraft(
-        voicePrefixRef.current,
-        voiceFinalTranscriptRef.current,
-        interimTranscript,
-      ));
+      setDraft(
+        composeVoiceDraft(
+          voicePrefixRef.current,
+          voiceFinalTranscriptRef.current,
+          interimTranscript,
+        ),
+      );
     };
     recognition.onerror = (event) => {
       if (voiceRecognitionRef.current !== recognition) return;
@@ -507,11 +530,14 @@ export function Conversation({
     }
   };
 
-  useEffect(() => () => {
-    const recognition = voiceRecognitionRef.current;
-    voiceRecognitionRef.current = null;
-    recognition?.abort?.();
-  }, []);
+  useEffect(
+    () => () => {
+      const recognition = voiceRecognitionRef.current;
+      voiceRecognitionRef.current = null;
+      recognition?.abort?.();
+    },
+    [],
+  );
   useEffect(() => {
     if (active) return;
     const recognition = voiceRecognitionRef.current;
@@ -528,31 +554,34 @@ export function Conversation({
   const followingRef = useRef(true);
   const ignoreThreadScrollRef = useRef(false);
   const [following, setFollowing] = useState(true);
-  const [messages, setMessages] = useState<Array<{ text: string; mode: InteractionMode; createdAt?: string }>>([]);
-  const [archivedTurns, setArchivedTurns] = useState<Array<{
-    message: { text: string; mode: InteractionMode; createdAt?: string };
-    events: ProviderEvent[];
-    assistantAt?: string;
-    state: RestoredTurnStatus;
-    contextReceipt?: ContextReceipt;
-    checkpoint?: TurnCheckpoint;
-  }>>([]);
+  const [messages, setMessages] = useState<
+    Array<{ text: string; mode: InteractionMode; createdAt?: string }>
+  >([]);
+  const [archivedTurns, setArchivedTurns] = useState<
+    Array<{
+      message: { text: string; mode: InteractionMode; createdAt?: string };
+      events: ProviderEvent[];
+      assistantAt?: string;
+      state: RestoredTurnStatus;
+      contextReceipt?: ContextReceipt;
+      checkpoint?: TurnCheckpoint;
+    }>
+  >([]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
-  const [promptHistoryBrowse, setPromptHistoryBrowse] = useState<PromptHistoryBrowse>(() => (
-    resetPromptHistoryBrowse([])
-  ));
+  const [promptHistoryBrowse, setPromptHistoryBrowse] = useState<PromptHistoryBrowse>(() =>
+    resetPromptHistoryBrowse([]),
+  );
   useEffect(() => {
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
   }, [promptHistory]);
   const [mode, setMode] = useState<InteractionMode>(managedMode ? "build" : "ask");
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => (
-    managedMode
-      ? "shared"
-      : defaultWorkspaceMode("ask", conversation?.workspaceMode)
-  ));
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() =>
+    managedMode ? "shared" : defaultWorkspaceMode("ask", conversation?.workspaceMode),
+  );
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
-  const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] = useState<RepositoryMetadata | null>(null);
+  const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] =
+    useState<RepositoryMetadata | null>(null);
   const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
   const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
@@ -617,16 +646,19 @@ export function Conversation({
   }, [pinThreadToBottom, setThreadFollowing]);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
-  const contextPins = useMemo<ContextPin[]>(() => [
-    ...attachments.map((path) => ({ path, kind: "file" as const })),
-    ...folderPins.map((path) => ({ path, kind: "folder" as const })),
-  ], [attachments, folderPins]);
+  const contextPins = useMemo<ContextPin[]>(
+    () => [
+      ...attachments.map((path) => ({ path, kind: "file" as const })),
+      ...folderPins.map((path) => ({ path, kind: "folder" as const })),
+    ],
+    [attachments, folderPins],
+  );
   const [suggestions, setSuggestions] = useState<ComposerCommandItem[]>([]);
   const [suggestionMode, setSuggestionMode] = useState<ComposerSuggestionMode | null>(null);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [contextError, setContextError] = useState<string | null>(null);
-  const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(
-    () => peekProviderCapabilitiesCache(),
+  const [capabilities, setCapabilities] = useState<ProviderCapabilities | null>(() =>
+    peekProviderCapabilitiesCache(),
   );
   const [providerSkills, setProviderSkills] = useState<ProviderSkill[]>([]);
   const [profileId, setProfileId] = useState("");
@@ -634,18 +666,20 @@ export function Conversation({
     () => profiles.filter((profile) => profile.provider === "claude-code" || !profile.provider),
     [profiles],
   );
-  const defaultClaudeProfileId = claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id
-    ?? claudeProfiles[0]?.id
-    ?? "";
+  const defaultClaudeProfileId =
+    claudeProfiles.find((profile) => profile.id === "default:claude-code")?.id ??
+    claudeProfiles[0]?.id ??
+    "";
   const shikigamiProfiles = useMemo(
     () => profiles.filter((profile) => profile.provider === "shikigami"),
     [profiles],
   );
-  const defaultShikigamiProfileId = shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id
-    ?? shikigamiProfiles[0]?.id
-    ?? "";
+  const defaultShikigamiProfileId =
+    shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id ??
+    shikigamiProfiles[0]?.id ??
+    "";
   const [model, setModel] = useState(managedMode ? (managedModel ?? "default") : "default");
-  const [notificationsEnabled, setNotificationsEnabled] = useState(
+  const [notificationsEnabled] = useState(
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const lastAttentionState = useRef<string | null>(null);
@@ -656,26 +690,24 @@ export function Conversation({
   const conversationAvailableCallback = useRef(onConversationAvailable);
   conversationAvailableCallback.current = onConversationAvailable;
   // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
-  const [provider, setProvider] = useState<ProviderId>(
-    () => managedMode ? "shikigami" : conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER,
+  const [provider, setProvider] = useState<ProviderId>(() =>
+    managedMode ? "shikigami" : (conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER),
   );
   const initialPromptAppliedReference = useRef(false);
   useEffect(() => {
-    if (
-      conversation !== null
-      || !initialPrompt
-      || initialPromptAppliedReference.current
-    ) return;
+    if (conversation !== null || !initialPrompt || initialPromptAppliedReference.current) return;
     initialPromptAppliedReference.current = true;
     setDraft(initialPrompt);
     if (initialProvider) setProvider(initialProvider);
     setMode("build");
   }, [conversation, initialPrompt, initialProvider]);
-  const providerDiscoveryContext = useMemo(() => (
-    repository?.root && repository.selectedWorktree
-      ? { root: repository.root, worktree: repository.selectedWorktree }
-      : {}
-  ), [repository?.root, repository?.selectedWorktree]);
+  const providerDiscoveryContext = useMemo(
+    () =>
+      repository?.root && repository.selectedWorktree
+        ? { root: repository.root, worktree: repository.selectedWorktree }
+        : {},
+    [repository?.root, repository?.selectedWorktree],
+  );
   const [providers, setProviders] = useState<ProviderDiscovery[]>(
     () => peekProviderDiscoveryCache(providerDiscoveryContext) ?? [],
   );
@@ -694,17 +726,20 @@ export function Conversation({
     () => conversation?.reasoningEffort ?? "medium",
   );
   const legacyReasoningDefaultRef = useRef<string | null>(null);
-  const loadProviders = useCallback((force = false, showPending = force) => {
-    if (force) {
-      invalidateProviderDiscoveryCache();
-    }
-    if (showPending) {
-      setProvidersLoaded(false);
-    }
-    void loadProviderDiscovery(providerDiscoveryContext)
-      .then((list) => setProviders(list))
-      .finally(() => setProvidersLoaded(true));
-  }, [providerDiscoveryContext]);
+  const loadProviders = useCallback(
+    (force = false, showPending = force) => {
+      if (force) {
+        invalidateProviderDiscoveryCache();
+      }
+      if (showPending) {
+        setProvidersLoaded(false);
+      }
+      void loadProviderDiscovery(providerDiscoveryContext)
+        .then((list) => setProviders(list))
+        .finally(() => setProvidersLoaded(true));
+    },
+    [providerDiscoveryContext],
+  );
   useEffect(() => {
     loadProviders(false, true);
     const onAdaptersChanged = () => loadProviders(true);
@@ -758,10 +793,11 @@ export function Conversation({
    * upgrade) instead of hiding the choice entirely.
    */
   const availableProviders = useMemo(() => {
-    if (managedMode) return shikigamiProvider?.installed === false ? [] : ["shikigami" as ProviderId];
+    if (managedMode)
+      return shikigamiProvider?.installed === false ? [] : ["shikigami" as ProviderId];
     const shikigamiInstalled = Boolean(
-      shikigamiProvider?.installed
-      || shikigamiProvider?.profileDiscoveries?.some((profile) => profile.installed),
+      shikigamiProvider?.installed ||
+      shikigamiProvider?.profileDiscoveries?.some((profile) => profile.installed),
     );
     const list: ProviderId[] = [];
     const claude = providers.find((item) => item.id === "claude-code");
@@ -773,10 +809,10 @@ export function Conversation({
     }
     for (const item of providers) {
       if (
-        typeof item.id === "string"
-        && item.id.startsWith("adapter:")
-        && item.installed !== false
-        && item.enabled !== false
+        typeof item.id === "string" &&
+        item.id.startsWith("adapter:") &&
+        item.installed !== false &&
+        item.enabled !== false
       ) {
         list.push(item.id);
       }
@@ -789,24 +825,22 @@ export function Conversation({
    * No automatic fallback effect — that races profile loading and can steal
    * the Claude default mid-flight.
    */
-  const canSwitchProvider = conversation === null
-    && !threadId
-    && !runId
-    && !managedMode
-    && canSwitchNewConversationProvider(provider, availableProviders);
-  const canPickWorkspace = conversation === null
-    && !threadId
-    && !runId
-    && !managedMode;
+  const canSwitchProvider =
+    conversation === null &&
+    !threadId &&
+    !runId &&
+    !managedMode &&
+    canSwitchNewConversationProvider(provider, availableProviders);
+  const canPickWorkspace = conversation === null && !threadId && !runId && !managedMode;
   useEffect(() => {
     setWorktreeFilter("");
   }, [repository?.projectId]);
   const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
-      setProfileId((current) => claudeProfiles.some((profile) => profile.id === current)
-        ? current
-        : defaultClaudeProfileId);
+      setProfileId((current) =>
+        claudeProfiles.some((profile) => profile.id === current) ? current : defaultClaudeProfileId,
+      );
       // T3-style: pin a concrete alias (Sonnet), not a synthetic "default" token.
       setModel(resolveDefaultProviderModel("claude-code", undefined));
       setReasoningEffort("medium");
@@ -867,8 +901,9 @@ export function Conversation({
     if (nextModel !== model) {
       setModel(nextModel);
       if (
-        (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
-        && nextModel !== "default"
+        (provider === "codex-cli" ||
+          (typeof provider === "string" && provider.startsWith("adapter:"))) &&
+        nextModel !== "default"
       ) {
         const efforts = providerReasoningEfforts(provider, nextModel, selectedProvider);
         const match = selectedProvider?.models?.find((entry) => entry.id === nextModel);
@@ -887,9 +922,9 @@ export function Conversation({
   useEffect(() => {
     let resolved = model;
     if (provider === "claude-code") {
-      resolved = normalizeClaudeModelSlug(model === "default"
-        ? resolveDefaultProviderModel(provider, selectedProvider)
-        : model);
+      resolved = normalizeClaudeModelSlug(
+        model === "default" ? resolveDefaultProviderModel(provider, selectedProvider) : model,
+      );
     } else if (model === "default") {
       resolved = resolveDefaultProviderModel(provider, selectedProvider);
     }
@@ -925,10 +960,7 @@ export function Conversation({
       return true;
     });
   };
-  const selectWorkspaceMode = (
-    nextMode: WorkspaceMode,
-    source: "menu" | "keyboard" = "menu",
-  ) => {
+  const selectWorkspaceMode = (nextMode: WorkspaceMode, source: "menu" | "keyboard" = "menu") => {
     if (source === "menu" && performance.now() < workspaceMenuOpenedAtRef.current) return;
     if (!canPickWorkspace) {
       setWorkspaceMenuOpen(false);
@@ -941,10 +973,7 @@ export function Conversation({
     setModelMenuOpen(false);
     setModeMenuOpen(false);
   };
-  const selectProject = (
-    projectId: string,
-    source: "menu" | "keyboard" = "menu",
-  ) => {
+  const selectProject = (projectId: string, source: "menu" | "keyboard" = "menu") => {
     if (source === "menu" && performance.now() < projectMenuOpenedAtRef.current) return;
     setProjectMenuOpen(false);
     onSelectProject(projectId);
@@ -972,17 +1001,21 @@ export function Conversation({
     });
   };
   const modelOptions = managedMode
-    ? [{
-        id: managedModel ?? model,
-        displayName: managedModel ?? model,
-        isDefault: true,
-      }]
+    ? [
+        {
+          id: managedModel ?? model,
+          displayName: managedModel ?? model,
+          isDefault: true,
+        },
+      ]
     : providerModelOptions(provider, selectedProvider);
   useEffect(() => {
     if (!providerMenuOpen) return;
-    const optionButtons = () => Array.from(
-      providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-provider-option]") ?? [],
-    );
+    const optionButtons = () =>
+      Array.from(
+        providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-provider-option]") ??
+          [],
+      );
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && providerMenuRef.current?.contains(target)) return;
@@ -1003,9 +1036,12 @@ export function Conversation({
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next = index < 0
-          ? (delta > 0 ? 0 : options.length - 1)
-          : (index + delta + options.length) % options.length;
+        const next =
+          index < 0
+            ? delta > 0
+              ? 0
+              : options.length - 1
+            : (index + delta + options.length) % options.length;
         options[next]?.focus();
         return;
       }
@@ -1038,9 +1074,10 @@ export function Conversation({
   }, [providerMenuOpen, canSwitchProvider, provider]);
   useEffect(() => {
     if (!modelMenuOpen) return;
-    const optionButtons = () => Array.from(
-      modelMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-model-option]") ?? [],
-    );
+    const optionButtons = () =>
+      Array.from(
+        modelMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-model-option]") ?? [],
+      );
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && modelMenuRef.current?.contains(target)) return;
@@ -1060,9 +1097,12 @@ export function Conversation({
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next = index < 0
-          ? (delta > 0 ? 0 : options.length - 1)
-          : (index + delta + options.length) % options.length;
+        const next =
+          index < 0
+            ? delta > 0
+              ? 0
+              : options.length - 1
+            : (index + delta + options.length) % options.length;
         options[next]?.focus();
         return;
       }
@@ -1084,9 +1124,10 @@ export function Conversation({
   }, [modelMenuOpen, model, provider, selectedProvider, reasoningEffort]);
   useEffect(() => {
     if (!modeMenuOpen) return;
-    const optionButtons = () => Array.from(
-      modeMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-mode-option]") ?? [],
-    );
+    const optionButtons = () =>
+      Array.from(
+        modeMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-mode-option]") ?? [],
+      );
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && modeMenuRef.current?.contains(target)) return;
@@ -1106,9 +1147,12 @@ export function Conversation({
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next = index < 0
-          ? (delta > 0 ? 0 : options.length - 1)
-          : (index + delta + options.length) % options.length;
+        const next =
+          index < 0
+            ? delta > 0
+              ? 0
+              : options.length - 1
+            : (index + delta + options.length) % options.length;
         options[next]?.focus();
         return;
       }
@@ -1130,9 +1174,11 @@ export function Conversation({
   }, [modeMenuOpen, mode]);
   useEffect(() => {
     if (!workspaceMenuOpen) return;
-    const optionButtons = () => Array.from(
-      workspaceMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-workspace-option]") ?? [],
-    ).filter((button) => !button.disabled);
+    const optionButtons = () =>
+      Array.from(
+        workspaceMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-workspace-option]") ??
+          [],
+      ).filter((button) => !button.disabled);
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && workspaceMenuRef.current?.contains(target)) return;
@@ -1152,9 +1198,12 @@ export function Conversation({
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next = index < 0
-          ? (delta > 0 ? 0 : options.length - 1)
-          : (index + delta + options.length) % options.length;
+        const next =
+          index < 0
+            ? delta > 0
+              ? 0
+              : options.length - 1
+            : (index + delta + options.length) % options.length;
         options[next]?.focus();
         return;
       }
@@ -1176,9 +1225,10 @@ export function Conversation({
   }, [workspaceMenuOpen, providerNativeWorkspaceAvailable, canPickWorkspace]);
   useEffect(() => {
     if (!projectMenuOpen) return;
-    const optionButtons = () => Array.from(
-      projectMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-project-option]") ?? [],
-    );
+    const optionButtons = () =>
+      Array.from(
+        projectMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-project-option]") ?? [],
+      );
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && projectMenuRef.current?.contains(target)) return;
@@ -1198,9 +1248,12 @@ export function Conversation({
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next = index < 0
-          ? (delta > 0 ? 0 : options.length - 1)
-          : (index + delta + options.length) % options.length;
+        const next =
+          index < 0
+            ? delta > 0
+              ? 0
+              : options.length - 1
+            : (index + delta + options.length) % options.length;
         options[next]?.focus();
         return;
       }
@@ -1244,10 +1297,12 @@ export function Conversation({
     if (provider === "shikigami") {
       if (!shikigamiProfiles.some((profile) => profile.id === profileId)) {
         setProfileId(defaultShikigamiProfileId);
-        setModel(resolveDefaultProviderModel(
-          "shikigami",
-          providerDiscoveryForProfile("shikigami", shikigamiProvider, defaultShikigamiProfileId),
-        ));
+        setModel(
+          resolveDefaultProviderModel(
+            "shikigami",
+            providerDiscoveryForProfile("shikigami", shikigamiProvider, defaultShikigamiProfileId),
+          ),
+        );
       }
       return;
     }
@@ -1282,26 +1337,28 @@ export function Conversation({
   } | null>(null);
   const changesAdded = changes.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const changesRemoved = changes.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
-  const canDeliverChanges = Boolean(repository && changes.length > 0 && !changesLoading && !changesError);
-  const [workspacePanelFocus, setWorkspacePanelFocus] =
-    useState<WorkspacePanelDestination | null>(null);
+  const canDeliverChanges = Boolean(
+    repository && changes.length > 0 && !changesLoading && !changesError,
+  );
+  const [workspacePanelFocus, setWorkspacePanelFocus] = useState<WorkspacePanelDestination | null>(
+    null,
+  );
   const availableWorkspacePanels = repository ? WORKSPACE_PANEL_DESTINATIONS : [];
   const workspacePanelStop = workspacePanelTabStop(
     activePanel,
     availableWorkspacePanels,
     workspacePanelFocus,
   );
-  const workspacePanelTrigger = (destination: WorkspacePanelDestination) => (
+  const workspacePanelTrigger = (destination: WorkspacePanelDestination) =>
     destination === "files"
       ? filesPanelTriggerRef.current
       : destination === "preview"
         ? previewPanelTriggerRef.current
-        : changesPanelTriggerRef.current
-  );
+        : changesPanelTriggerRef.current;
   const updatePreviewStatus = useCallback((next: PreviewPanelStatus) => {
-    setPreviewStatus((current) => (
-      current.state === next.state && current.error === next.error ? current : next
-    ));
+    setPreviewStatus((current) =>
+      current.state === next.state && current.error === next.error ? current : next,
+    );
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
     if (destination === "preview") setPreviewFloating(false);
@@ -1322,10 +1379,7 @@ export function Conversation({
     activateWorkspacePanel("changes");
   };
   const openTurnChanges = (turnCheckpoint: TurnCheckpoint) => {
-    if (
-      turnCheckpoint.state !== "completed"
-      && turnCheckpoint.state !== "superseded"
-    ) return;
+    if (turnCheckpoint.state !== "completed" && turnCheckpoint.state !== "superseded") return;
     if (!turnCheckpoint.files?.length) return;
     setTurnChangesReview({
       checkpointId: turnCheckpoint.id,
@@ -1343,10 +1397,7 @@ export function Conversation({
     setTurnChangesReview(null);
     setChangesMode(openChangesMode);
   }, [openChangesMode, openChangesSignal]);
-  const closeWorkspacePanel = (
-    destination: WorkspacePanelDestination,
-    restoreFocus = true,
-  ) => {
+  const closeWorkspacePanel = (destination: WorkspacePanelDestination, restoreFocus = true) => {
     if (activePanel !== destination) return;
     if (destination === "changes") setTurnChangesReview(null);
     onPanelChange("none");
@@ -1373,22 +1424,19 @@ export function Conversation({
     event: React.KeyboardEvent<HTMLButtonElement>,
     destination: WorkspacePanelDestination,
   ) => {
-    const direction = event.key === "ArrowRight" || event.key === "ArrowDown"
-      ? "next"
-      : event.key === "ArrowLeft" || event.key === "ArrowUp"
-        ? "previous"
-        : event.key === "Home"
-          ? "first"
-          : event.key === "End"
-            ? "last"
-            : null;
+    const direction =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? "next"
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? "previous"
+          : event.key === "Home"
+            ? "first"
+            : event.key === "End"
+              ? "last"
+              : null;
     if (!direction) return;
     event.preventDefault();
-    const next = moveWorkspacePanelFocus(
-      destination,
-      direction,
-      availableWorkspacePanels,
-    );
+    const next = moveWorkspacePanelFocus(destination, direction, availableWorkspacePanels);
     if (next) {
       setWorkspacePanelFocus(next);
       workspacePanelTrigger(next)?.focus();
@@ -1396,7 +1444,9 @@ export function Conversation({
   };
   const previewIndicator = previewStatus.error
     ? "error"
-    : ["approval_pending", "starting", "running", "stopping", "failed"].includes(previewStatus.state)
+    : ["approval_pending", "starting", "running", "stopping", "failed"].includes(
+          previewStatus.state,
+        )
       ? previewStatus.state.replace("_", " ")
       : null;
   const [elementReferences, setElementReferences] = useState<ElementReference[]>([]);
@@ -1444,9 +1494,7 @@ export function Conversation({
     setHistoryRestoreError(null);
     setThreadId(conversation?.id ?? null);
     setWorkspaceMode(
-      managedMode
-        ? "shared"
-        : defaultWorkspaceMode("ask", conversation?.workspaceMode),
+      managedMode ? "shared" : defaultWorkspaceMode("ask", conversation?.workspaceMode),
     );
     setPreparedWorkspaceRepository(null);
     setWorkspaceApprovalPending(false);
@@ -1474,7 +1522,14 @@ export function Conversation({
     setRunId(null);
     followingRef.current = true;
     setFollowing(true);
-  }, [conversation?.id, conversation?.provider, conversation?.workspaceMode, managedMode, repository?.projectId, provider]);
+  }, [
+    conversation?.id,
+    conversation?.provider,
+    conversation?.workspaceMode,
+    managedMode,
+    repository?.projectId,
+    provider,
+  ]);
   useEffect(() => {
     if (providerState !== "completed" && providerState !== "cancelled") {
       setCompletionDismissed(false);
@@ -1485,7 +1540,7 @@ export function Conversation({
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
-      const projection = await loadLocalStateProjection() as {
+      const projection = (await loadLocalStateProjection()) as {
         threads: Array<{
           id: string;
           projectId: string;
@@ -1536,9 +1591,11 @@ export function Conversation({
           eventSequence?: number;
         }>;
         contextReceipts?: ContextReceipt[];
-        inputRequests?: Array<Extract<ProviderEvent, { kind: "input_requested" }> & {
-          turnId: string;
-        }>;
+        inputRequests?: Array<
+          Extract<ProviderEvent, { kind: "input_requested" }> & {
+            turnId: string;
+          }
+        >;
         providerSessions: Array<{
           threadId: string;
           provider?: ProviderId;
@@ -1558,34 +1615,39 @@ export function Conversation({
       };
       if (!active) return;
       const thread = conversation
-        ? projection.threads.find((item) => (
-            item.id === conversation.id
-            && item.projectId === repository.projectId
-            && item.worktree === repository.selectedWorktree
-          ))
+        ? projection.threads.find(
+            (item) =>
+              item.id === conversation.id &&
+              item.projectId === repository.projectId &&
+              item.worktree === repository.selectedWorktree,
+          )
         : null;
       if (!thread) {
         setHistoryRestored(true);
         return;
       }
-      const threadProvider = managedMode ? "shikigami" : thread.provider ?? "claude-code";
+      const threadProvider = managedMode ? "shikigami" : (thread.provider ?? "claude-code");
       if (threadProvider !== provider) {
         setProvider(threadProvider);
         return;
       }
       // Threads often omit model/profileId; providerSessions carries the last run binding.
-      const session = projection.providerSessions.find((item) => (
-        item.threadId === thread.id
-        && (item.provider ?? "claude-code") === threadProvider
-      ));
+      const session = projection.providerSessions.find(
+        (item) =>
+          item.threadId === thread.id && (item.provider ?? "claude-code") === threadProvider,
+      );
       if (thread.profileId) setProfileId(thread.profileId);
       else if (session?.profileId) setProfileId(session.profileId);
       if (thread.model) setModel(thread.model);
       else if (session?.model?.trim()) setModel(session.model.trim());
       if (thread.reasoningEffort) setReasoningEffort(thread.reasoningEffort);
       if (thread.contextPins) {
-        setAttachments(thread.contextPins.filter((pin) => pin.kind === "file").map((pin) => pin.path));
-        setFolderPins(thread.contextPins.filter((pin) => pin.kind === "folder").map((pin) => pin.path));
+        setAttachments(
+          thread.contextPins.filter((pin) => pin.kind === "file").map((pin) => pin.path),
+        );
+        setFolderPins(
+          thread.contextPins.filter((pin) => pin.kind === "folder").map((pin) => pin.path),
+        );
       }
       const turns = projection.turns
         .filter((item) => item.threadId === thread.id)
@@ -1596,16 +1658,16 @@ export function Conversation({
         return;
       }
       setThreadId(thread.id);
-      setSessionId(projection.providerSessions.find((item) => (
-        item.threadId === thread.id
-        && (item.provider ?? "claude-code") === provider
-      ))?.sessionId ?? null);
+      setSessionId(
+        projection.providerSessions.find(
+          (item) => item.threadId === thread.id && (item.provider ?? "claude-code") === provider,
+        )?.sessionId ?? null,
+      );
       setRunId(
-        latest.providerRunId && (
-          latest.status === "active"
-          || latest.status === "running"
-          || latest.status === "waiting_for_approval"
-        )
+        latest.providerRunId &&
+          (latest.status === "active" ||
+            latest.status === "running" ||
+            latest.status === "waiting_for_approval")
           ? latest.providerRunId
           : null,
       );
@@ -1613,108 +1675,144 @@ export function Conversation({
       const history = projection.messages
         .filter((message) => turnIds.has(message.turnId))
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      const userMessages = history.filter((message) => message.role === "user").map((message) => ({
-        text: message.text,
-        mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
-        createdAt: message.createdAt,
-      }));
+      const userMessages = history
+        .filter((message) => message.role === "user")
+        .map((message) => ({
+          text: message.text,
+          mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
+          createdAt: message.createdAt,
+        }));
       const eventsForTurn = (
         turnId: string,
-      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => [
-        ...history
-          .filter((message) => message.turnId === turnId && message.role === "assistant" && message.text.length > 0)
-          .map((message) => ({
-            event: { kind: "assistant_text" as const, text: message.text },
-            createdAt: message.createdAt,
-            eventSequence: message.eventSequence,
-          })),
-        ...(projection.activities ?? [])
-          .filter((activity) => activity.turnId === turnId)
-          .flatMap((activity): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
-          if (activity.kind === "provider_failed") {
-            const fallback = `${providerDisplayName(provider, selectedProvider)} failed.`;
-            return [{
-              event: { kind: "failed", message: activity.message?.trim() || fallback },
-              createdAt: activity.createdAt,
-              eventSequence: activity.eventSequence,
-            }];
-          }
-          if (activity.kind === "tool_started" && activity.toolCallId) {
-            return [{ event: {
-              kind: "tool_started", toolCallId: activity.toolCallId, name: activity.name?.trim() || "Tool",
-            }, createdAt: activity.createdAt, eventSequence: activity.eventSequence }];
-          }
-          if (activity.kind === "tool_finished" && activity.toolCallId) {
-            return [{ event: {
-              kind: "tool_finished", toolCallId: activity.toolCallId, failed: activity.failed === true,
-            }, createdAt: activity.createdAt, eventSequence: activity.eventSequence }];
-          }
-          return [];
-        }),
-        ...(projection.plans ?? [])
-          .filter((plan) => plan.turnId === turnId)
-          .map((plan) => ({
-            event: {
-              kind: "plan_updated" as const,
-              artifact: {
-                id: plan.artifactId,
-                provider: plan.provider,
-                ...(plan.title !== undefined ? { title: plan.title } : {}),
-                ...(plan.body !== undefined ? { body: plan.body } : {}),
-                ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
-                updatedAt: plan.updatedAt,
-              },
-            },
-            createdAt: plan.createdAt,
-            eventSequence: plan.eventSequence,
-          })),
-        ...(projection.inputRequests ?? [])
-          .filter((request) => (
-            request.turnId === turnId
-            && (
-              request.state === "pending"
-              || (request.responseMode === "native_resume" && request.resumeState === "unavailable")
+      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> =>
+        [
+          ...history
+            .filter(
+              (message) =>
+                message.turnId === turnId &&
+                message.role === "assistant" &&
+                message.text.length > 0,
             )
-          ))
-          .map((request) => ({
-            event: { ...request, kind: "input_requested" as const },
-            createdAt: request.createdAt,
-            eventSequence: undefined,
-          })),
-        ...(projection.governanceCorrelations ?? [])
-          .filter((receipt) => receipt.turnId === turnId)
-          .map((receipt) => ({
-            event: {
-              kind: "governance_correlation" as const,
-              governance: receipt.governance,
-              runId: receipt.runId,
-              operationId: receipt.operationId,
-              correlationId: receipt.id,
-            },
-            createdAt: receipt.createdAt,
-            eventSequence: undefined,
-          })),
-      ].sort((left, right) => (
-        left.eventSequence !== undefined && right.eventSequence !== undefined
-          ? left.eventSequence - right.eventSequence
-          : left.createdAt.localeCompare(right.createdAt)
-      ));
+            .map((message) => ({
+              event: { kind: "assistant_text" as const, text: message.text },
+              createdAt: message.createdAt,
+              eventSequence: message.eventSequence,
+            })),
+          ...(projection.activities ?? [])
+            .filter((activity) => activity.turnId === turnId)
+            .flatMap(
+              (
+                activity,
+              ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
+                if (activity.kind === "provider_failed") {
+                  const fallback = `${providerDisplayName(provider, selectedProvider)} failed.`;
+                  return [
+                    {
+                      event: { kind: "failed", message: activity.message?.trim() || fallback },
+                      createdAt: activity.createdAt,
+                      eventSequence: activity.eventSequence,
+                    },
+                  ];
+                }
+                if (activity.kind === "tool_started" && activity.toolCallId) {
+                  return [
+                    {
+                      event: {
+                        kind: "tool_started",
+                        toolCallId: activity.toolCallId,
+                        name: activity.name?.trim() || "Tool",
+                      },
+                      createdAt: activity.createdAt,
+                      eventSequence: activity.eventSequence,
+                    },
+                  ];
+                }
+                if (activity.kind === "tool_finished" && activity.toolCallId) {
+                  return [
+                    {
+                      event: {
+                        kind: "tool_finished",
+                        toolCallId: activity.toolCallId,
+                        failed: activity.failed === true,
+                      },
+                      createdAt: activity.createdAt,
+                      eventSequence: activity.eventSequence,
+                    },
+                  ];
+                }
+                return [];
+              },
+            ),
+          ...(projection.plans ?? [])
+            .filter((plan) => plan.turnId === turnId)
+            .map((plan) => ({
+              event: {
+                kind: "plan_updated" as const,
+                artifact: {
+                  id: plan.artifactId,
+                  provider: plan.provider,
+                  ...(plan.title !== undefined ? { title: plan.title } : {}),
+                  ...(plan.body !== undefined ? { body: plan.body } : {}),
+                  ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
+                  updatedAt: plan.updatedAt,
+                },
+              },
+              createdAt: plan.createdAt,
+              eventSequence: plan.eventSequence,
+            })),
+          ...(projection.inputRequests ?? [])
+            .filter(
+              (request) =>
+                request.turnId === turnId &&
+                (request.state === "pending" ||
+                  (request.responseMode === "native_resume" &&
+                    request.resumeState === "unavailable")),
+            )
+            .map((request) => ({
+              event: { ...request, kind: "input_requested" as const },
+              createdAt: request.createdAt,
+              eventSequence: undefined,
+            })),
+          ...(projection.governanceCorrelations ?? [])
+            .filter((receipt) => receipt.turnId === turnId)
+            .map((receipt) => ({
+              event: {
+                kind: "governance_correlation" as const,
+                governance: receipt.governance,
+                runId: receipt.runId,
+                operationId: receipt.operationId,
+                correlationId: receipt.id,
+              },
+              createdAt: receipt.createdAt,
+              eventSequence: undefined,
+            })),
+        ].sort((left, right) =>
+          left.eventSequence !== undefined && right.eventSequence !== undefined
+            ? left.eventSequence - right.eventSequence
+            : left.createdAt.localeCompare(right.createdAt),
+        );
       const restoredTurns = turns.flatMap((turn) => {
-        const user = history.find((message) => message.turnId === turn.id && message.role === "user");
+        const user = history.find(
+          (message) => message.turnId === turn.id && message.role === "user",
+        );
         if (!user) return [];
         const orderedEvents = eventsForTurn(turn.id);
-        return [{
-          message: {
-            text: user.text,
-            mode: turn.mode ?? "ask",
-            createdAt: user.createdAt,
+        return [
+          {
+            message: {
+              text: user.text,
+              mode: turn.mode ?? "ask",
+              createdAt: user.createdAt,
+            },
+            events: orderedEvents.map(({ event }) => event),
+            assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
+            state: turn.status,
+            contextReceipt: projection.contextReceipts?.find(
+              (receipt) => receipt.turnId === turn.id,
+            ),
+            checkpoint: projection.checkpoints?.find((checkpoint) => checkpoint.turnId === turn.id),
           },
-          events: orderedEvents.map(({ event }) => event),
-          assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
-          state: turn.status,
-          contextReceipt: projection.contextReceipts?.find((receipt) => receipt.turnId === turn.id),
-          checkpoint: projection.checkpoints?.find((checkpoint) => checkpoint.turnId === turn.id),
-        }];
+        ];
       });
       const currentTurn = restoredTurns.at(-1);
       setArchivedTurns(restoredTurns.slice(0, -1));
@@ -1724,22 +1822,22 @@ export function Conversation({
       setCheckpoint(currentTurn?.checkpoint ?? null);
       const lastAssistantAt = history
         .filter((message) => message.role === "assistant" && message.createdAt)
-        .at(-1)
-        ?.createdAt;
+        .at(-1)?.createdAt;
       setAssistantTurnAt(latest.completedAt ?? lastAssistantAt ?? latest.createdAt);
-      const nextState: ProviderState = latest.status === "active" || latest.status === "running"
-        ? "streaming"
-        : latest.status === "waiting_for_approval"
-          ? "waiting_for_approval"
-          : latest.status === "waiting_for_user"
-            ? "waiting_for_input"
-          : latest.status === "interrupted" || latest.status === "cancelled"
-            ? "cancelled"
-            : latest.status === "failed"
-              ? "failed"
-              : latest.status === "completed"
-                ? "completed"
-                : "idle";
+      const nextState: ProviderState =
+        latest.status === "active" || latest.status === "running"
+          ? "streaming"
+          : latest.status === "waiting_for_approval"
+            ? "waiting_for_approval"
+            : latest.status === "waiting_for_user"
+              ? "waiting_for_input"
+              : latest.status === "interrupted" || latest.status === "cancelled"
+                ? "cancelled"
+                : latest.status === "failed"
+                  ? "failed"
+                  : latest.status === "completed"
+                    ? "completed"
+                    : "idle";
       setProviderState(nextState);
       const restoredStatus = { turnId: latest.id, status: latest.status };
       if (shouldRefreshAfterRestoredTurn(restoredTurnStatus.current, restoredStatus)) {
@@ -1753,7 +1851,7 @@ export function Conversation({
           body: JSON.stringify({ runId: latest.providerRunId }),
         });
         if (approvalsResponse.ok) {
-          const body = await approvalsResponse.json() as {
+          const body = (await approvalsResponse.json()) as {
             approvals: Array<Extract<ProviderEvent, { kind: "approval_pending" }>>;
           };
           setProviderEvents((current) => [
@@ -1766,8 +1864,8 @@ export function Conversation({
         }
       }
       if (
-        lastAttentionState.current !== latest.status
-        && shouldNotifyForRestoredTurn(
+        lastAttentionState.current !== latest.status &&
+        shouldNotifyForRestoredTurn(
           latest.status,
           notificationsEnabled,
           document.visibilityState,
@@ -1775,21 +1873,22 @@ export function Conversation({
         )
       ) {
         new Notification("Aldunis Code needs attention", {
-          body: latest.status === "waiting_for_approval"
-            ? "A local action is waiting for your decision."
-            : latest.status === "waiting_for_user"
-              ? "A conversation is waiting for your input."
-            : "A background turn changed state.",
+          body:
+            latest.status === "waiting_for_approval"
+              ? "A local action is waiting for your decision."
+              : latest.status === "waiting_for_user"
+                ? "A conversation is waiting for your input."
+                : "A background turn changed state.",
         });
       }
       lastAttentionState.current = latest.status;
       setHistoryRestored(true);
       setHistoryRestoreError(null);
       if (
-        latest.status === "active"
-        || latest.status === "running"
-        || latest.status === "waiting_for_approval"
-        || latest.status === "waiting_for_user"
+        latest.status === "active" ||
+        latest.status === "running" ||
+        latest.status === "waiting_for_approval" ||
+        latest.status === "waiting_for_user"
       ) {
         timer = window.setTimeout(() => attempt(), 10_000);
       }
@@ -1802,7 +1901,9 @@ export function Conversation({
       });
     };
     attempt();
-    const visible = () => { if (document.visibilityState === "visible") attempt(); };
+    const visible = () => {
+      if (document.visibilityState === "visible") attempt();
+    };
     document.addEventListener("visibilitychange", visible);
     return () => {
       active = false;
@@ -1831,10 +1932,12 @@ export function Conversation({
       if (caps) setCapabilities(caps);
     });
   }, []);
-  const worktree = repository?.worktrees.find((item) => (
-    item.path === repository.selectedWorktree
-    && (item.state === "available" || item.state === "detached")
-  )) ?? null;
+  const worktree =
+    repository?.worktrees.find(
+      (item) =>
+        item.path === repository.selectedWorktree &&
+        (item.state === "available" || item.state === "detached"),
+    ) ?? null;
   useEffect(() => {
     if (!repository || !worktree) {
       setDraftContextReceipt(null);
@@ -1851,23 +1954,26 @@ export function Conversation({
           worktree: worktree.path,
           pins: contextPins,
         }),
-      }).then(async (response) => {
-        const body = await response.json() as { package?: ContextReceipt; error?: string };
-        if (!response.ok || !body.package) {
-          throw new Error(body.error ?? "The context package could not be resolved.");
-        }
-        if (!cancelled) {
-          setDraftContextReceipt(body.package);
-          setContextError(null);
-        }
-      }).catch((cause) => {
-        if (!cancelled) {
-          setDraftContextReceipt(null);
-          setContextError(cause instanceof Error ? cause.message : "Context resolution failed.");
-        }
-      }).finally(() => {
-        if (!cancelled) setContextPackageBusy(false);
-      });
+      })
+        .then(async (response) => {
+          const body = (await response.json()) as { package?: ContextReceipt; error?: string };
+          if (!response.ok || !body.package) {
+            throw new Error(body.error ?? "The context package could not be resolved.");
+          }
+          if (!cancelled) {
+            setDraftContextReceipt(body.package);
+            setContextError(null);
+          }
+        })
+        .catch((cause) => {
+          if (!cancelled) {
+            setDraftContextReceipt(null);
+            setContextError(cause instanceof Error ? cause.message : "Context resolution failed.");
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setContextPackageBusy(false);
+        });
     }, 150);
     return () => {
       cancelled = true;
@@ -1890,21 +1996,24 @@ export function Conversation({
         worktree: worktree.path,
       }),
       signal: controller.signal,
-    }).then(async (response) => {
-      const body = await response.json() as { skills?: ProviderSkill[] };
-      if (!response.ok) throw new Error("Codex skills could not be loaded.");
-      setProviderSkills(body.skills ?? []);
-    }).catch((error) => {
-      if (error instanceof Error && error.name !== "AbortError") setProviderSkills([]);
-    });
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as { skills?: ProviderSkill[] };
+        if (!response.ok) throw new Error("Codex skills could not be loaded.");
+        setProviderSkills(body.skills ?? []);
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name !== "AbortError") setProviderSkills([]);
+      });
     return () => controller.abort();
   }, [provider, repository, worktree]);
   const conversationBranch = worktree?.branch ?? "Detached HEAD";
-  const runActive = providerState === "starting"
-    || providerState === "streaming"
-    || providerState === "waiting_for_approval"
-    || providerState === "waiting_for_input"
-    || providerState === "cancelling";
+  const runActive =
+    providerState === "starting" ||
+    providerState === "streaming" ||
+    providerState === "waiting_for_approval" ||
+    providerState === "waiting_for_input" ||
+    providerState === "cancelling";
   const canPickModel = !managedMode && !runActive && modelOptions.length > 0;
   const canPickMode = !managedMode && !runActive;
   useEffect(() => {
@@ -1917,40 +2026,41 @@ export function Conversation({
   const providerReady = !providersLoaded
     ? false
     : managedMode
-    ? Boolean(
-        provider === "shikigami"
-        && shikigamiProvider?.installed
-        && shikigamiProvider.authenticated
-        && (!managedModel || model === managedModel),
-      )
-    : provider === "claude-code"
-    ? Boolean(profileId)
-    : provider === "codex-cli"
-      ? Boolean(codex?.installed && codex.authenticated)
-      : provider === "shikigami"
       ? Boolean(
-          selectedProvider?.installed
-          && selectedProvider.authenticated
-          && shikigamiProfiles.some((profile) => profile.id === profileId),
+          provider === "shikigami" &&
+          shikigamiProvider?.installed &&
+          shikigamiProvider.authenticated &&
+          (!managedModel || model === managedModel),
         )
-      : Boolean(
-        selectedProvider
-        && selectedProvider.installed !== false
-        && selectedProvider.enabled !== false
-        && selectedProvider.authenticated !== false,
-      );
+      : provider === "claude-code"
+        ? Boolean(profileId)
+        : provider === "codex-cli"
+          ? Boolean(codex?.installed && codex.authenticated)
+          : provider === "shikigami"
+            ? Boolean(
+                selectedProvider?.installed &&
+                selectedProvider.authenticated &&
+                shikigamiProfiles.some((profile) => profile.id === profileId),
+              )
+            : Boolean(
+                selectedProvider &&
+                selectedProvider.installed !== false &&
+                selectedProvider.enabled !== false &&
+                selectedProvider.authenticated !== false,
+              );
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (
-        event.defaultPrevented
-        || !matchesVoiceInputShortcut(event)
-        || document.querySelector('[role="dialog"][aria-modal="true"]')
-        || !worktree
-        || !providerReady
-        || runActive
-        || !historyRestored
-      ) return;
+        event.defaultPrevented ||
+        !matchesVoiceInputShortcut(event) ||
+        document.querySelector('[role="dialog"][aria-modal="true"]') ||
+        !worktree ||
+        !providerReady ||
+        runActive ||
+        !historyRestored
+      )
+        return;
       event.preventDefault();
       if (voiceRecognitionRef.current) stopVoiceInput();
       else startVoiceInput();
@@ -1961,38 +2071,35 @@ export function Conversation({
   const providerReadinessMessage = !providersLoaded
     ? "Checking provider…"
     : providerReady
-    ? ""
-    : providerNotReadyMessage(provider, selectedProvider, {
-      hasClaudeProfile: Boolean(profileId),
-      providerName,
-    });
+      ? ""
+      : providerNotReadyMessage(provider, selectedProvider, {
+          hasClaudeProfile: Boolean(profileId),
+          providerName,
+        });
   const effectiveModel = managedMode
-    ? managedModel ?? model
+    ? (managedModel ?? model)
     : (() => {
-    const base = model === "default"
-      ? resolveDefaultProviderModel(provider, selectedProvider)
-      : model;
-    return provider === "claude-code" ? normalizeClaudeModelSlug(base) : base;
-  })();
+        const base =
+          model === "default" ? resolveDefaultProviderModel(provider, selectedProvider) : model;
+        return provider === "claude-code" ? normalizeClaudeModelSlug(base) : base;
+      })();
   const modelChipLabel = providerModelLabel(provider, effectiveModel, selectedProvider);
   // Avoid a literal "Default" flash while history rehydrate / discovery is still settling.
-  const modelChipDisplay = (
-    modelChipLabel === "Default" && (!historyRestored || !providersLoaded)
-  )
-    ? "…"
-    : modelChipLabel;
+  const modelChipDisplay =
+    modelChipLabel === "Default" && (!historyRestored || !providersLoaded) ? "…" : modelChipLabel;
   const reasoningEfforts = providerReasoningEfforts(provider, effectiveModel, selectedProvider);
-  const showReasoningEffort = (
-    (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
-    && effectiveModel !== "default"
-  ) && reasoningEfforts.length > 0;
+  const showReasoningEffort =
+    (provider === "codex-cli" ||
+      (typeof provider === "string" && provider.startsWith("adapter:"))) &&
+    effectiveModel !== "default" &&
+    reasoningEfforts.length > 0;
   useEffect(() => {
     if (
-      !conversation
-      || conversation.reasoningEffort
-      || !providersLoaded
-      || !historyRestored
-      || legacyReasoningDefaultRef.current === conversation.id
+      !conversation ||
+      conversation.reasoningEffort ||
+      !providersLoaded ||
+      !historyRestored ||
+      legacyReasoningDefaultRef.current === conversation.id
     ) {
       return;
     }
@@ -2028,11 +2135,13 @@ export function Conversation({
     setSuggestionIndex(0);
     if (trigger.mode === "slash-command") {
       setSuggestionMode(trigger.mode);
-      setSuggestions(buildComposerCommandItems({
-        provider,
-        capabilities,
-        query: trigger.query,
-      }));
+      setSuggestions(
+        buildComposerCommandItems({
+          provider,
+          capabilities,
+          query: trigger.query,
+        }),
+      );
       return;
     }
     if (trigger.mode === "skill") {
@@ -2046,15 +2155,21 @@ export function Conversation({
     void fetch("/api/context/files", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ root: repository.root, worktree: worktree.path, query: trigger.query }),
+      body: JSON.stringify({
+        root: repository.root,
+        worktree: worktree.path,
+        query: trigger.query,
+      }),
       signal: controller.signal,
-    }).then(async (response) => {
-      const body = await response.json() as { files?: string[]; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Repository files could not be searched.");
-      setSuggestions(buildComposerPathItems(body.files ?? []));
-    }).catch((error) => {
-      if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
-    });
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as { files?: string[]; error?: string };
+        if (!response.ok) throw new Error(body.error ?? "Repository files could not be searched.");
+        setSuggestions(buildComposerPathItems(body.files ?? []));
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name !== "AbortError") setContextError(error.message);
+      });
     return () => controller.abort();
   }, [capabilities, draft, provider, providerSkills, repository, worktree]);
   const selectSuggestion = (suggestion: ComposerCommandItem) => {
@@ -2082,21 +2197,18 @@ export function Conversation({
       setContextOpen(true);
       return;
     }
-    const runRepository = workspaceMode === "aldunis-managed"
-      ? preparedWorkspaceRepository ?? repository
-      : repository;
-    const runWorktree = runRepository?.worktrees.find((item) => (
-      item.path === runRepository.selectedWorktree
-      && (item.state === "available" || item.state === "detached")
-    )) ?? null;
-    if (
-      !value
-      || !runRepository
-      || !runWorktree
-      || !providerReady
-      || runActive
-      || !historyRestored
-    ) return;
+    const runRepository =
+      workspaceMode === "aldunis-managed"
+        ? (preparedWorkspaceRepository ?? repository)
+        : repository;
+    const runWorktree =
+      runRepository?.worktrees.find(
+        (item) =>
+          item.path === runRepository.selectedWorktree &&
+          (item.state === "available" || item.state === "detached"),
+      ) ?? null;
+    if (!value || !runRepository || !runWorktree || !providerReady || runActive || !historyRestored)
+      return;
     if (promptOverride === undefined && voiceInputState === "listening") {
       stopVoiceInput();
     }
@@ -2123,7 +2235,10 @@ export function Conversation({
         },
       ]);
     }
-    setMessages((current) => [...current, { text: value, mode: turnMode, createdAt: new Date().toISOString() }]);
+    setMessages((current) => [
+      ...current,
+      { text: value, mode: turnMode, createdAt: new Date().toISOString() },
+    ]);
     // Sending always re-engages follow so the operator sees their prompt and the reply.
     followingRef.current = true;
     setFollowing(true);
@@ -2152,29 +2267,31 @@ export function Conversation({
           conversationId,
           projectId: runRepository.projectId,
           threadId: threadId ?? undefined,
-          resumeSessionId: turnProvider === "shikigami" ? undefined : sessionId ?? undefined,
+          resumeSessionId: turnProvider === "shikigami" ? undefined : (sessionId ?? undefined),
           contextPins,
           profileId: managedMode
             ? null
             : provider === "claude-code" || provider === "shikigami"
-            ? profileId
-            : null,
+              ? profileId
+              : null,
           model: turnModel,
           provider: turnProvider,
           workspaceMode,
-          reasoningEffort: (
-            !managedMode
-            && (provider === "codex-cli" || (typeof provider === "string" && provider.startsWith("adapter:")))
-            && turnModel !== "default"
-          )
-            ? reasoningEffort
-            : undefined,
-          elementReferences: sentElementReferences.map(({ screenshot: _screenshot, ...reference }) => reference),
+          reasoningEffort:
+            !managedMode &&
+            (provider === "codex-cli" ||
+              (typeof provider === "string" && provider.startsWith("adapter:"))) &&
+            turnModel !== "default"
+              ? reasoningEffort
+              : undefined,
+          elementReferences: sentElementReferences.map(
+            ({ screenshot: _screenshot, ...reference }) => reference,
+          ),
         }),
       });
       createdThreadId = response.headers.get("x-thread-id");
       if (!response.ok) {
-        const body = await response.json() as { error?: string };
+        const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? `${providerName} could not start.`);
       }
       const activeRunId = response.headers.get("x-provider-run-id");
@@ -2182,11 +2299,15 @@ export function Conversation({
       setThreadId(createdThreadId);
       activeTurnId = response.headers.get("x-turn-id");
       if (activeTurnId) {
-        void loadFreshLocalStateProjection().then((value) => {
-          const projection = value as { contextReceipts?: ContextReceipt[] };
-          const receipt = projection.contextReceipts?.find((item) => item.turnId === activeTurnId);
-          if (receipt) setCurrentContextReceipt(receipt);
-        }).catch(() => undefined);
+        void loadFreshLocalStateProjection()
+          .then((value) => {
+            const projection = value as { contextReceipts?: ContextReceipt[] };
+            const receipt = projection.contextReceipts?.find(
+              (item) => item.turnId === activeTurnId,
+            );
+            if (receipt) setCurrentContextReceipt(receipt);
+          })
+          .catch(() => undefined);
       }
       setProviderState("streaming");
       if (!response.body) throw new Error(`${providerName} returned no event stream.`);
@@ -2203,44 +2324,53 @@ export function Conversation({
           if (line) {
             const event = JSON.parse(line) as ProviderEvent;
             if (event.kind === "approval_resolved") {
-              setProviderEvents((current) => current.map((candidate) => (
-                candidate.kind === "approval_pending" && candidate.id === event.id
-                  ? { ...candidate, state: event.state }
-                  : candidate
-              )));
+              setProviderEvents((current) =>
+                current.map((candidate) =>
+                  candidate.kind === "approval_pending" && candidate.id === event.id
+                    ? { ...candidate, state: event.state }
+                    : candidate,
+                ),
+              );
               newline = buffer.indexOf("\n");
               continue;
             }
             if (event.kind === "input_resolved") {
-              setProviderEvents((current) => current.filter((candidate) => (
-                candidate.kind !== "input_requested" || candidate.id !== event.id
-              )));
+              setProviderEvents((current) =>
+                current.filter(
+                  (candidate) => candidate.kind !== "input_requested" || candidate.id !== event.id,
+                ),
+              );
               setProviderState("streaming");
               newline = buffer.indexOf("\n");
               continue;
             }
             setProviderEvents((current) => appendProviderEvent(current, event));
             if (event.kind === "input_requested") setProviderState("waiting_for_input");
-            if (event.kind === "session_started" || event.kind === "turn_completed") setSessionId(event.sessionId);
+            if (event.kind === "session_started" || event.kind === "turn_completed")
+              setSessionId(event.sessionId);
             if (event.kind === "turn_completed") {
               setProviderState("completed");
               setAssistantTurnAt(new Date().toISOString());
             }
             if (event.kind === "cancelled") {
-              setProviderEvents((current) => current.map((candidate) => (
-                candidate.kind === "approval_pending" && candidate.state === "pending"
-                  ? { ...candidate, state: "cancelled" }
-                  : candidate
-              )));
+              setProviderEvents((current) =>
+                current.map((candidate) =>
+                  candidate.kind === "approval_pending" && candidate.state === "pending"
+                    ? { ...candidate, state: "cancelled" }
+                    : candidate,
+                ),
+              );
               setProviderState("cancelled");
               setAssistantTurnAt(new Date().toISOString());
             }
             if (event.kind === "failed") {
-              setProviderEvents((current) => current.map((candidate) => (
-                candidate.kind === "approval_pending" && candidate.state === "pending"
-                  ? { ...candidate, state: "provider_failed" }
-                  : candidate
-              )));
+              setProviderEvents((current) =>
+                current.map((candidate) =>
+                  candidate.kind === "approval_pending" && candidate.state === "pending"
+                    ? { ...candidate, state: "provider_failed" }
+                    : candidate,
+                ),
+              );
               setProviderState("failed");
               setAssistantTurnAt(new Date().toISOString());
             }
@@ -2251,10 +2381,12 @@ export function Conversation({
       }
       if (activeTurnId) {
         try {
-          const projection = await loadFreshLocalStateProjection() as {
+          const projection = (await loadFreshLocalStateProjection()) as {
             checkpoints?: TurnCheckpoint[];
           };
-          setCheckpoint(projection.checkpoints?.find((item) => item.turnId === activeTurnId) ?? null);
+          setCheckpoint(
+            projection.checkpoints?.find((item) => item.turnId === activeTurnId) ?? null,
+          );
         } catch {
           // Checkpoint is optional after a completed turn.
         }
@@ -2264,10 +2396,13 @@ export function Conversation({
       if (promptOverride === undefined) {
         setElementReferences(sentElementReferences);
       }
-      setProviderEvents((current) => [...current, {
-        kind: "failed",
-        message: error instanceof Error ? error.message : `${providerName} failed.`,
-      }]);
+      setProviderEvents((current) => [
+        ...current,
+        {
+          kind: "failed",
+          message: error instanceof Error ? error.message : `${providerName} failed.`,
+        },
+      ]);
       setProviderState("failed");
     } finally {
       setRunId(null);
@@ -2281,7 +2416,6 @@ export function Conversation({
     void send();
     // The pending flag is cleared before sending, so the prepared path cannot
     // cause a second turn if a parent repository refresh races this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceApprovalPending, preparedWorkspaceRepository]);
   const previewRewind = async () => {
     if (!checkpoint || !repository || !worktree) return;
@@ -2293,7 +2427,7 @@ export function Conversation({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ root: repository.root, worktree: worktree.path }),
       });
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         currentIdentity?: string;
         currentIndexIdentity?: string;
         files?: CheckpointFile[];
@@ -2329,9 +2463,13 @@ export function Conversation({
           confirm: true,
         }),
       });
-      const body = await response.json() as { error?: string };
+      const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "The workspace could not be rewound.");
-      setCheckpoint({ ...checkpoint, state: "superseded", message: "Workspace rewound to the turn baseline." });
+      setCheckpoint({
+        ...checkpoint,
+        state: "superseded",
+        message: "Workspace rewound to the turn baseline.",
+      });
       setRewindPreview(null);
     } catch (error) {
       setCheckpointError(error instanceof Error ? error.message : "The workspace rewind failed.");
@@ -2346,10 +2484,13 @@ export function Conversation({
       const response = await fetch(`/api/provider/runs/${runId}/cancel`, { method: "POST" });
       if (!response.ok) throw new Error("The provider run could not be cancelled.");
     } catch (error) {
-      setProviderEvents((current) => [...current, {
-        kind: "failed",
-        message: error instanceof Error ? error.message : "Cancellation failed.",
-      }]);
+      setProviderEvents((current) => [
+        ...current,
+        {
+          kind: "failed",
+          message: error instanceof Error ? error.message : "Cancellation failed.",
+        },
+      ]);
       setProviderState("failed");
     }
   };
@@ -2370,23 +2511,26 @@ export function Conversation({
           decision,
         }),
       });
-      const body = await response.json() as typeof approval | { error?: string };
+      const body = (await response.json()) as typeof approval | { error?: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "Approval decision failed.");
-      setProviderEvents((current) => current.map((event) => (
-        event.kind === "approval_pending" && event.id === approval.id
-          ? { ...event, state: (body as typeof approval).state }
-          : event
-      )));
+      setProviderEvents((current) =>
+        current.map((event) =>
+          event.kind === "approval_pending" && event.id === approval.id
+            ? { ...event, state: (body as typeof approval).state }
+            : event,
+        ),
+      );
     } catch (error) {
-      setProviderEvents((current) => [...current, {
-        kind: "failed",
-        message: error instanceof Error ? error.message : "Approval decision failed.",
-      }]);
+      setProviderEvents((current) => [
+        ...current,
+        {
+          kind: "failed",
+          message: error instanceof Error ? error.message : "Approval decision failed.",
+        },
+      ]);
     }
   };
-  const answerInput = async (
-    input: Extract<ProviderEvent, { kind: "input_requested" }>,
-  ) => {
+  const answerInput = async (input: Extract<ProviderEvent, { kind: "input_requested" }>) => {
     const answer = (inputAnswers[input.id] ?? "").trim();
     if (!answer || !threadId) return;
     setInputBusyId(input.id);
@@ -2396,13 +2540,15 @@ export function Conversation({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ childThreadId: threadId, answer }),
       });
-      const body = await response.json() as { error?: string };
+      const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Input response failed.");
-      setProviderEvents((current) => current.map((event) => (
-        event.kind === "input_requested" && event.id === input.id
-          ? { kind: "input_resolved" as const, id: input.id, state: "answered" as const }
-          : event
-      )));
+      setProviderEvents((current) =>
+        current.map((event) =>
+          event.kind === "input_requested" && event.id === input.id
+            ? { kind: "input_resolved" as const, id: input.id, state: "answered" as const }
+            : event,
+        ),
+      );
       if (input.responseMode === "native_resume") {
         setProviderState("streaming");
         setHistoryRefreshSignal((current) => current + 1);
@@ -2412,22 +2558,28 @@ export function Conversation({
       }
       conversationAvailableCallback.current?.(threadId);
     } catch (error) {
-      setProviderEvents((current) => [...current, {
-        kind: "failed",
-        message: error instanceof Error ? error.message : "Input response failed.",
-      }]);
+      setProviderEvents((current) => [
+        ...current,
+        {
+          kind: "failed",
+          message: error instanceof Error ? error.message : "Input response failed.",
+        },
+      ]);
     } finally {
       setInputBusyId(null);
     }
   };
   const assistantTimeline = presentAssistantTimeline(providerEvents, "running", { showThinking });
-  const latestAgentBrowserObservation = useMemo<ProviderBrowserObservation | null>(() => (
-    providerEvents
-      .filter((event): event is Extract<ProviderEvent, { kind: "browser_observation" }> => (
-        event.kind === "browser_observation"
-      ))
-      .at(-1) ?? null
-  ), [providerEvents]);
+  const latestAgentBrowserObservation = useMemo<ProviderBrowserObservation | null>(
+    () =>
+      providerEvents
+        .filter(
+          (event): event is Extract<ProviderEvent, { kind: "browser_observation" }> =>
+            event.kind === "browser_observation",
+        )
+        .at(-1) ?? null,
+    [providerEvents],
+  );
   const agentBrowserObservationIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!latestAgentBrowserObservation) {
@@ -2435,83 +2587,94 @@ export function Conversation({
       setAgentBrowserViewOpen(false);
       return;
     }
-    if (agentBrowserObservationIdRef.current === latestAgentBrowserObservation.observationId) return;
+    if (agentBrowserObservationIdRef.current === latestAgentBrowserObservation.observationId)
+      return;
     agentBrowserObservationIdRef.current = latestAgentBrowserObservation.observationId;
     setAgentBrowserViewOpen(true);
     setPreviewMounted(true);
     setPreviewFloating(true);
   }, [latestAgentBrowserObservation]);
-  const latestPlan = useMemo(() => latestPlanFromEvents([
-    ...archivedTurns.map((turn) => turn.events),
-    providerEvents,
-  ]), [archivedTurns, providerEvents]);
-  const planEntries = useMemo(() => [
-    ...archivedTurns.flatMap((turn, index) => (
-      presentAssistantTimeline(turn.events, "running", { showThinking })
+  const latestPlan = useMemo(
+    () => latestPlanFromEvents([...archivedTurns.map((turn) => turn.events), providerEvents]),
+    [archivedTurns, providerEvents],
+  );
+  const planEntries = useMemo(
+    () => [
+      ...archivedTurns.flatMap((turn, index) =>
+        presentAssistantTimeline(turn.events, "running", { showThinking })
+          .filter(
+            (block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan",
+          )
+          .map((block) => ({
+            key: `archived-${index}-plan-${block.artifact.provider}-${block.artifact.id}`,
+            artifact: block.artifact,
+          })),
+      ),
+      ...presentAssistantTimeline(providerEvents, "running", { showThinking })
         .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
         .map((block) => ({
-          key: `archived-${index}-plan-${block.artifact.provider}-${block.artifact.id}`,
+          key: `current-plan-${block.artifact.provider}-${block.artifact.id}`,
           artifact: block.artifact,
-        }))
-    )),
-    ...presentAssistantTimeline(providerEvents, "running", { showThinking })
-      .filter((block): block is Extract<typeof block, { kind: "plan" }> => block.kind === "plan")
-      .map((block) => ({
-        key: `current-plan-${block.artifact.provider}-${block.artifact.id}`,
-        artifact: block.artifact,
-      })),
-  ], [archivedTurns, providerEvents, showThinking]);
+        })),
+    ],
+    [archivedTurns, providerEvents, showThinking],
+  );
   const panelPlan = selectedPlanKey
-    ? planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan
+    ? (planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan)
     : latestPlan;
   useEffect(() => {
     if (!latestPlan) setPlanOpen(false);
   }, [latestPlan]);
   const assistantText = joinAssistantTextChunks(
     providerEvents
-      .filter((event): event is Extract<ProviderEvent, { kind: "assistant_text" }> => event.kind === "assistant_text")
+      .filter(
+        (event): event is Extract<ProviderEvent, { kind: "assistant_text" }> =>
+          event.kind === "assistant_text",
+      )
       .map((event) => event.text),
   );
   const thinkingText = joinAssistantTextChunks(
     providerEvents
-      .filter((event): event is Extract<ProviderEvent, { kind: "thinking" }> => event.kind === "thinking")
+      .filter(
+        (event): event is Extract<ProviderEvent, { kind: "thinking" }> => event.kind === "thinking",
+      )
       .map((event) => event.text),
   );
-  const toolEvents = providerEvents.filter((event) => event.kind === "tool_started" || event.kind === "tool_finished");
+  const toolEvents = providerEvents.filter(
+    (event) => event.kind === "tool_started" || event.kind === "tool_finished",
+  );
   const approvals = providerEvents.filter(
-    (event): event is Extract<ProviderEvent, { kind: "approval_pending" }> => event.kind === "approval_pending",
+    (event): event is Extract<ProviderEvent, { kind: "approval_pending" }> =>
+      event.kind === "approval_pending",
   );
   const inputs = providerEvents.filter(
-    (event): event is Extract<ProviderEvent, { kind: "input_requested" }> => (
-      event.kind === "input_requested"
-      && (
-        event.state === undefined
-        || event.state === "pending"
-        || (event.responseMode === "native_resume" && event.resumeState === "unavailable")
-      )
-    ),
+    (event): event is Extract<ProviderEvent, { kind: "input_requested" }> =>
+      event.kind === "input_requested" &&
+      (event.state === undefined ||
+        event.state === "pending" ||
+        (event.responseMode === "native_resume" && event.resumeState === "unavailable")),
   );
   const failure = providerEvents
     .filter((event): event is Extract<ProviderEvent, { kind: "failed" }> => event.kind === "failed")
     .at(-1);
-  const hasAssistantContent = Boolean(assistantText.trim())
-    || (showThinking && Boolean(thinkingText.trim()))
-    || latestPlan != null
-    || toolEvents.length > 0
-    || approvals.length > 0
-    || inputs.length > 0
-    || failure != null;
+  const hasAssistantContent =
+    Boolean(assistantText.trim()) ||
+    (showThinking && Boolean(thinkingText.trim())) ||
+    latestPlan != null ||
+    toolEvents.length > 0 ||
+    approvals.length > 0 ||
+    inputs.length > 0 ||
+    failure != null;
   // Avoid empty assistant shells after restore (header-only with no body).
   // runActive covers starting/streaming/waiting_for_approval/cancelling.
-  const showAssistantTurn = hasAssistantContent
-    || runActive
-    || (providerState === "completed" && Boolean(threadId))
-    || providerState === "failed"
-    || providerState === "cancelled";
-  const conversationEmpty = messages.length === 0
-    && !showAssistantTurn
-    && providerState === "idle"
-    && !draft.trim();
+  const showAssistantTurn =
+    hasAssistantContent ||
+    runActive ||
+    (providerState === "completed" && Boolean(threadId)) ||
+    providerState === "failed" ||
+    providerState === "cancelled";
+  const conversationEmpty =
+    messages.length === 0 && !showAssistantTurn && providerState === "idle" && !draft.trim();
   // Content signature: when this changes while following, pin the viewport to the tail.
   const threadFollowContentKey = [
     conversation?.id ?? "new",
@@ -2555,12 +2718,13 @@ export function Conversation({
   }, [conversationEmpty, pinThreadToBottom, resetThreadToTop, conversation?.id, historyRestored]);
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const failureNeedsConfiguration = failure
-    ? providerFailureNeedsConfiguration(failure.message)
-      || providerTextReportsAuthenticationFailure(assistantText)
+    ? providerFailureNeedsConfiguration(failure.message) ||
+      providerTextReportsAuthenticationFailure(assistantText)
     : false;
   const selectedClaudeProfile = claudeProfiles.find((profile) => profile.id === profileId);
-  const configurationVerifiedAfterFailure = provider === "claude-code"
-    && providerConfigurationVerifiedAfterFailure(
+  const configurationVerifiedAfterFailure =
+    provider === "claude-code" &&
+    providerConfigurationVerifiedAfterFailure(
       selectedClaudeProfile?.probes.authentication,
       assistantTurnAt,
     );
@@ -2570,11 +2734,12 @@ export function Conversation({
     configurationVerifiedAfterFailure,
   );
   const conversationWorktreeMissing = Boolean(
-    conversation?.worktree
-    && repository
-    && !repository.worktrees.some((item) => item.path === conversation.worktree),
+    conversation?.worktree &&
+    repository &&
+    !repository.worktrees.some((item) => item.path === conversation.worktree),
   );
-  const accessLabel = mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
+  const accessLabel =
+    mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
   const emptyState = !repository
     ? {
         title: "Start with your workspace",
@@ -2587,73 +2752,80 @@ export function Conversation({
       ? {
           title: "Worktree is not available",
           detail: `This conversation is bound to ${conversation?.worktree}, which is not among the discovered worktrees for the open repository. Switch project or recreate the worktree before sending.`,
-          action: <Button variant="primary" size="lg" onClick={onManageWorktrees}>Manage worktrees</Button>,
-        }
-    : conversation && !historyRestored
-      ? {
-          title: "Restoring conversation…",
-          detail: "Loading the local transcript for this thread.",
-          action: null,
-        }
-    : !providersLoaded
-      ? {
-          title: "Checking providers…",
-          detail: "Discovering local CLIs and adapter packages.",
-          action: null,
-        }
-    : !providerReady
-      ? {
-          title: `${providerName} is not ready`,
-          detail: discoveryTimedOut
-            ? PROVIDER_DISCOVERY_TIMEOUT_DETAIL
-            : providerReadinessMessage || `Finish setup for ${providerName}, then return here.`,
-          action: discoveryTimedOut
-            ? (
-                <Button
-                  variant="primary"
-                  size="lg"
-                  onClick={() => {
-                    invalidateProviderDiscoveryCache();
-                    window.dispatchEvent(new Event("aldunis:providers-retry"));
-                  }}
-                >
-                  Retry provider check
-                </Button>
-              )
-            : provider === "claude-code"
-            ? <Button variant="primary" size="lg" onClick={() => onOpenProfiles(provider)}>Configure Claude</Button>
-            : null,
-        }
-    : !worktree
-      ? {
-          title: "Choose a worktree to continue",
-          detail: "Select an available worktree below, then start with the outcome you want.",
-          action: null,
-        }
-      : {
-          title: "What should we build, fix, or review?",
-          detail: "Start with the outcome you want. Aldunis keeps the conversation bound to this worktree.",
           action: (
-            <div className="starter-prompts" aria-label="Example prompts">
-              <span className="starter-prompts-label">Try a starting point</span>
-              <div className="starter-prompts-list">
-                {STARTER_PROMPTS.map((prompt) => (
-                  <button
-                    type="button"
-                    className="starter-prompt"
-                    key={prompt.label}
+            <Button variant="primary" size="lg" onClick={onManageWorktrees}>
+              Manage worktrees
+            </Button>
+          ),
+        }
+      : conversation && !historyRestored
+        ? {
+            title: "Restoring conversation…",
+            detail: "Loading the local transcript for this thread.",
+            action: null,
+          }
+        : !providersLoaded
+          ? {
+              title: "Checking providers…",
+              detail: "Discovering local CLIs and adapter packages.",
+              action: null,
+            }
+          : !providerReady
+            ? {
+                title: `${providerName} is not ready`,
+                detail: discoveryTimedOut
+                  ? PROVIDER_DISCOVERY_TIMEOUT_DETAIL
+                  : providerReadinessMessage ||
+                    `Finish setup for ${providerName}, then return here.`,
+                action: discoveryTimedOut ? (
+                  <Button
+                    variant="primary"
+                    size="lg"
                     onClick={() => {
-                      setDraft(prompt.value);
-                      composerRef.current?.focus();
+                      invalidateProviderDiscoveryCache();
+                      window.dispatchEvent(new Event("aldunis:providers-retry"));
                     }}
                   >
-                    {prompt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ),
-        };
+                    Retry provider check
+                  </Button>
+                ) : provider === "claude-code" ? (
+                  <Button variant="primary" size="lg" onClick={() => onOpenProfiles(provider)}>
+                    Configure Claude
+                  </Button>
+                ) : null,
+              }
+            : !worktree
+              ? {
+                  title: "Choose a worktree to continue",
+                  detail:
+                    "Select an available worktree below, then start with the outcome you want.",
+                  action: null,
+                }
+              : {
+                  title: "What should we build, fix, or review?",
+                  detail:
+                    "Start with the outcome you want. Aldunis keeps the conversation bound to this worktree.",
+                  action: (
+                    <div className="starter-prompts" aria-label="Example prompts">
+                      <span className="starter-prompts-label">Try a starting point</span>
+                      <div className="starter-prompts-list">
+                        {STARTER_PROMPTS.map((prompt) => (
+                          <button
+                            type="button"
+                            className="starter-prompt"
+                            key={prompt.label}
+                            onClick={() => {
+                              setDraft(prompt.value);
+                              composerRef.current?.focus();
+                            }}
+                          >
+                            {prompt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ),
+                };
   const stateCopy: Record<ProviderState, string> = {
     idle: repository ? "Ready" : "Open a repository to start",
     starting: `Starting ${providerName}…`,
@@ -2692,103 +2864,131 @@ export function Conversation({
     : !worktree
       ? "Select an available worktree before sending"
       : `${workspaceCopy.label} · ${hostLabel}`;
-  const selectableWorktrees = useMemo(() => repository?.worktrees.filter((item) => (
-    item.state === "available" || item.state === "detached"
-  )) ?? [], [repository?.worktrees]);
+  const selectableWorktrees = useMemo(
+    () =>
+      repository?.worktrees.filter(
+        (item) => item.state === "available" || item.state === "detached",
+      ) ?? [],
+    [repository?.worktrees],
+  );
   const filteredSelectableWorktrees = useMemo(
-    () => filterSelectableWorktrees(
-      selectableWorktrees,
-      worktreeFilter,
-      repository?.selectedWorktree ?? null,
-    ),
+    () =>
+      filterSelectableWorktrees(
+        selectableWorktrees,
+        worktreeFilter,
+        repository?.selectedWorktree ?? null,
+      ),
     [repository?.selectedWorktree, selectableWorktrees, worktreeFilter],
   );
-  const managedSelectableWorktrees = filteredSelectableWorktrees.filter((item) => item.ownership === "aldunis");
-  const userSelectableWorktrees = filteredSelectableWorktrees.filter((item) => item.ownership === "user");
-  const worktreeFilterHasNoMatches = worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
+  const managedSelectableWorktrees = filteredSelectableWorktrees.filter(
+    (item) => item.ownership === "aldunis",
+  );
+  const userSelectableWorktrees = filteredSelectableWorktrees.filter(
+    (item) => item.ownership === "user",
+  );
+  const worktreeFilterHasNoMatches =
+    worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
   const selectedWorktreePath = repository?.selectedWorktree ?? "";
-  const worktreeSelectValue = filteredSelectableWorktrees.some((item) => item.path === selectedWorktreePath)
+  const worktreeSelectValue = filteredSelectableWorktrees.some(
+    (item) => item.path === selectedWorktreePath,
+  )
     ? selectedWorktreePath
     : "";
-  const setupSteps = [
-    { label: "Project", complete: Boolean(repository), active: !repository },
-    { label: "Worktree", complete: Boolean(worktree), active: Boolean(repository) && !worktree },
-    { label: "Prompt", complete: Boolean(worktree && draft.trim()), active: Boolean(worktree && !draft.trim()) },
-  ];
   const renderTimeline = (
     events: ProviderEvent[],
     keyPrefix: string,
     unfinishedStatus: "running" | "cancelled" = "running",
-  ) => (
-    presentAssistantTimeline(events, unfinishedStatus, { showThinking }).map((block, blockIndex) => {
-      if (block.kind === "text") {
-        return <MarkdownBody key={`${keyPrefix}-text-${blockIndex}`} text={block.text} className="turn-md" />;
-      }
-      if (block.kind === "thinking") {
+  ) =>
+    presentAssistantTimeline(events, unfinishedStatus, { showThinking }).map(
+      (block, blockIndex) => {
+        if (block.kind === "text") {
+          return (
+            <MarkdownBody
+              key={`${keyPrefix}-text-${blockIndex}`}
+              text={block.text}
+              className="turn-md"
+            />
+          );
+        }
+        if (block.kind === "thinking") {
+          return (
+            <section
+              className="thinking-block"
+              aria-label={`${providerLabel} thinking`}
+              key={`${keyPrefix}-thinking-${blockIndex}`}
+            >
+              <div className="thinking-label">Thinking</div>
+              <MarkdownBody text={block.text} className="thinking-body" />
+            </section>
+          );
+        }
+        if (block.kind === "plan") {
+          const planKey = `${keyPrefix}-plan-${block.artifact.provider}-${block.artifact.id}`;
+          return (
+            <ProviderPlanCard
+              key={planKey}
+              plan={block.artifact}
+              providerLabel={providerDisplayName(
+                block.artifact.provider,
+                providers.find((item) => item.id === block.artifact.provider),
+              )}
+              onOpen={() => {
+                setSelectedPlanKey(planKey);
+                setPlanOpen(true);
+              }}
+            />
+          );
+        }
         return (
-          <section
-            className="thinking-block"
-            aria-label={`${providerLabel} thinking`}
-            key={`${keyPrefix}-thinking-${blockIndex}`}
+          <div
+            className="tools"
+            role="list"
+            aria-label={`${providerLabel} tool activity`}
+            key={`${keyPrefix}-tools-${blockIndex}`}
           >
-            <div className="thinking-label">Thinking</div>
-            <MarkdownBody text={block.text} className="thinking-body" />
-          </section>
+            {block.rows.map((row) => {
+              const statusLabel =
+                row.status === "running"
+                  ? "Running"
+                  : row.status === "failed"
+                    ? "Failed"
+                    : row.status === "cancelled"
+                      ? "Cancelled"
+                      : "Done";
+              const shortId = shortToolCallId(row.toolCallId);
+              return (
+                <div
+                  className={`tool tool-${row.status}`}
+                  role="listitem"
+                  key={row.toolCallId}
+                  aria-label={`${statusLabel} ${row.name} ${shortId}`}
+                >
+                  <span aria-hidden="true">{statusLabel}</span>
+                  <code aria-hidden="true">{row.name}</code>
+                  <span className="r" title={row.toolCallId} aria-hidden="true">
+                    {shortId}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         );
-      }
-      if (block.kind === "plan") {
-        const planKey = `${keyPrefix}-plan-${block.artifact.provider}-${block.artifact.id}`;
-        return (
-          <ProviderPlanCard
-            key={planKey}
-            plan={block.artifact}
-            providerLabel={providerDisplayName(
-              block.artifact.provider,
-              providers.find((item) => item.id === block.artifact.provider),
-            )}
-            onOpen={() => {
-              setSelectedPlanKey(planKey);
-              setPlanOpen(true);
-            }}
-          />
-        );
-      }
-      return (
-        <div className="tools" role="list" aria-label={`${providerLabel} tool activity`} key={`${keyPrefix}-tools-${blockIndex}`}>
-          {block.rows.map((row) => {
-            const statusLabel = row.status === "running"
-              ? "Running"
-              : row.status === "failed"
-                ? "Failed"
-                : row.status === "cancelled"
-                  ? "Cancelled"
-                  : "Done";
-            const shortId = shortToolCallId(row.toolCallId);
-            return (
-              <div
-                className={`tool tool-${row.status}`}
-                role="listitem"
-                key={row.toolCallId}
-                aria-label={`${statusLabel} ${row.name} ${shortId}`}
-              >
-                <span aria-hidden="true">{statusLabel}</span>
-                <code aria-hidden="true">{row.name}</code>
-                <span className="r" title={row.toolCallId} aria-hidden="true">{shortId}</span>
-              </div>
-            );
-          })}
-        </div>
-      );
-    })
-  );
+      },
+    );
   const renderArchivedFailure = (events: ProviderEvent[]) => {
     const event = events
-      .filter((candidate): candidate is Extract<ProviderEvent, { kind: "failed" }> => candidate.kind === "failed")
+      .filter(
+        (candidate): candidate is Extract<ProviderEvent, { kind: "failed" }> =>
+          candidate.kind === "failed",
+      )
       .at(-1);
     if (!event) return null;
     const view = parseProviderFailure(event.message);
     return (
-      <div className={`provider-error ${view.kind === "park" ? "provider-error-park" : ""}`} role="alert">
+      <div
+        className={`provider-error ${view.kind === "park" ? "provider-error-park" : ""}`}
+        role="alert"
+      >
         <p>
           {/^provider failed\.?$/i.test(view.summary.trim())
             ? `${providerName} failed.`
@@ -2825,15 +3025,59 @@ export function Conversation({
             repository ? workspaceCopy.shortLabel : null,
             effectiveModel !== "default" ? modelChipLabel : null,
             showReasoningEffort ? reasoningEffort : null,
-          ].filter(Boolean).join(" · ")}
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         >
-          <span className="crumb-title"><b>{conversation?.title ?? "New conversation"}</b></span>
+          <span className="crumb-title">
+            <b>{conversation?.title ?? "New conversation"}</b>
+          </span>
           <span className="crumb-meta">
-            {worktree && <span className="crumb-chip crumb-chip--branch" title={conversationBranch} aria-label={`Branch ${conversationBranch}`}>{conversationBranch}</span>}
-            {repository && <span className="crumb-chip" title={`Provider: ${providerListLabel(provider)}`} aria-label={`Provider ${providerListLabel(provider)}`}>{providerListLabel(provider)}</span>}
-            {repository && <span className="crumb-chip" title={`Workspace: ${workspaceCopy.label}`} aria-label={`Workspace ${workspaceCopy.label}`}>{workspaceCopy.shortLabel}</span>}
-            {effectiveModel !== "default" && <span className="crumb-chip crumb-chip--secondary" title={`Model: ${modelChipLabel}`} aria-label={`Model ${modelChipLabel}`}>{modelChipLabel}</span>}
-            {showReasoningEffort && <span className="crumb-chip crumb-chip--secondary" title={`Reasoning effort: ${reasoningEffort}`} aria-label={`Reasoning effort ${reasoningEffort}`}>{reasoningEffort}</span>}
+            {worktree && (
+              <span
+                className="crumb-chip crumb-chip--branch"
+                title={conversationBranch}
+                aria-label={`Branch ${conversationBranch}`}
+              >
+                {conversationBranch}
+              </span>
+            )}
+            {repository && (
+              <span
+                className="crumb-chip"
+                title={`Provider: ${providerListLabel(provider)}`}
+                aria-label={`Provider ${providerListLabel(provider)}`}
+              >
+                {providerListLabel(provider)}
+              </span>
+            )}
+            {repository && (
+              <span
+                className="crumb-chip"
+                title={`Workspace: ${workspaceCopy.label}`}
+                aria-label={`Workspace ${workspaceCopy.label}`}
+              >
+                {workspaceCopy.shortLabel}
+              </span>
+            )}
+            {effectiveModel !== "default" && (
+              <span
+                className="crumb-chip crumb-chip--secondary"
+                title={`Model: ${modelChipLabel}`}
+                aria-label={`Model ${modelChipLabel}`}
+              >
+                {modelChipLabel}
+              </span>
+            )}
+            {showReasoningEffort && (
+              <span
+                className="crumb-chip crumb-chip--secondary"
+                title={`Reasoning effort: ${reasoningEffort}`}
+                aria-label={`Reasoning effort ${reasoningEffort}`}
+              >
+                {reasoningEffort}
+              </span>
+            )}
           </span>
         </div>
         <div className="tb-r">
@@ -2857,7 +3101,9 @@ export function Conversation({
             role="group"
             aria-label={`Workspace panels, ${pane} pane`}
           >
-            <span className="workspace-panel-label" aria-hidden="true">Workspace</span>
+            <span className="workspace-panel-label" aria-hidden="true">
+              Workspace
+            </span>
             <button
               ref={filesPanelTriggerRef}
               type="button"
@@ -2866,7 +3112,11 @@ export function Conversation({
               disabled={!repository}
               tabIndex={workspacePanelStop === "files" ? 0 : -1}
               title={repository ? "Browse worktree files" : "Open a repository to browse files"}
-              aria-label={repository ? `Files, ${pane} pane` : `Files unavailable, ${pane} pane: open a repository`}
+              aria-label={
+                repository
+                  ? `Files, ${pane} pane`
+                  : `Files unavailable, ${pane} pane: open a repository`
+              }
               aria-pressed={activePanel === "files"}
               onKeyDown={(event) => moveWorkspacePanel(event, "files")}
               onClick={() => activateWorkspacePanel("files")}
@@ -2888,7 +3138,9 @@ export function Conversation({
                 repository ? "Preview" : "Preview unavailable: open a repository",
                 previewIndicator,
                 `${pane} pane`,
-              ].filter(Boolean).join(", ")}
+              ]
+                .filter(Boolean)
+                .join(", ")}
               aria-pressed={activePanel === "preview"}
               onKeyDown={(event) => moveWorkspacePanel(event, "preview")}
               onClick={() => activateWorkspacePanel("preview")}
@@ -2899,7 +3151,9 @@ export function Conversation({
               </svg>
               Preview
               {previewIndicator && (
-                <span className={`workspace-panel-status ${previewStatus.error || previewStatus.state === "failed" ? "error" : ""}`}>
+                <span
+                  className={`workspace-panel-status ${previewStatus.error || previewStatus.state === "failed" ? "error" : ""}`}
+                >
                   {previewIndicator}
                 </span>
               )}
@@ -2949,1479 +3203,1784 @@ export function Conversation({
             </button>
           )}
           {onClosePane && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={onClosePane} aria-label={`Close ${pane} pane`}>×</button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onClosePane}
+              aria-label={`Close ${pane} pane`}
+            >
+              ×
+            </button>
           )}
         </div>
       </div>
       <div className={`split ${activePanel === "changes" ? "with-review" : ""}`}>
-      <div className={`conv ${conversationWorktreeMissing ? "conv--blocked" : ""}`.trim()}>
-      <div className="thread-shell">
-      <div
-        className="thread"
-        ref={threadRef}
-        onScroll={onThreadScroll}
-        data-following={following ? "true" : "false"}
-      >
-        <div className="wrap">
-        {conversationEmpty
-          ? (
-            <section
-              className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""} ${conversationWorktreeMissing ? "conversation-empty--blocked" : ""}`.trim()}
-              aria-labelledby={`${pane}-empty-title`}
+        <div className={`conv ${conversationWorktreeMissing ? "conv--blocked" : ""}`.trim()}>
+          <div className="thread-shell">
+            <div
+              className="thread"
+              ref={threadRef}
+              onScroll={onThreadScroll}
+              data-following={following ? "true" : "false"}
             >
-              <span>
-                {conversation && !historyRestored
-                  ? "Restoring"
-                  : !providersLoaded
-                    ? "Checking"
-                    : conversation
-                      ? "Conversation"
-                      : "New conversation"}
-              </span>
-              <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
-              <p>{emptyState.detail}</p>
-              {emptyState.action}
-            </section>
-          )
-          : null}
-        {archivedTurns.map((turn, index) => (
-          <React.Fragment key={`archived-${turn.message.createdAt ?? index}`}>
-            <div className="turn user">
-              <div className="role">
-                <span className="av you">Y</span>
-                <span className="rname">You</span>
-                <span className="rtime">{turn.message.createdAt ? formatElapsed(turn.message.createdAt) : "now"}</span>
-              </div>
-              <p>{turn.message.text}</p>
-              {turn.contextReceipt && (
-                <ContextPackageSummary receipt={turn.contextReceipt} label="Submitted context" />
-              )}
-            </div>
-            <div className="turn">
-              <div className="role">
-                <span className="av">{providerAvatarInitials(provider, providerLabel)}</span>
-                <span className="rname">{providerLabel}</span>
-                <span className="rtime">{turn.assistantAt ? formatElapsed(turn.assistantAt) : "now"}</span>
-              </div>
-              {renderTimeline(
-                turn.events,
-                `archived-${index}`,
-                turn.state === "interrupted" || turn.state === "cancelled" ? "cancelled" : "running",
-              )}
-              <TurnChangesCard
-                checkpoint={turn.checkpoint}
-                pane={pane}
-                onOpen={openTurnChanges}
-              />
-              {renderArchivedFailure(turn.events)}
-              {turn.events
-                .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
-                  event.kind === "governance_correlation"
-                ))
-                .map((correlation) => (
-                  <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
+              <div className="wrap">
+                {conversationEmpty ? (
+                  <section
+                    className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""} ${conversationWorktreeMissing ? "conversation-empty--blocked" : ""}`.trim()}
+                    aria-labelledby={`${pane}-empty-title`}
+                  >
+                    <span>
+                      {conversation && !historyRestored
+                        ? "Restoring"
+                        : !providersLoaded
+                          ? "Checking"
+                          : conversation
+                            ? "Conversation"
+                            : "New conversation"}
+                    </span>
+                    <h2 id={`${pane}-empty-title`}>{emptyState.title}</h2>
+                    <p>{emptyState.detail}</p>
+                    {emptyState.action}
+                  </section>
+                ) : null}
+                {archivedTurns.map((turn, index) => (
+                  <React.Fragment key={`archived-${turn.message.createdAt ?? index}`}>
+                    <div className="turn user">
+                      <div className="role">
+                        <span className="av you">Y</span>
+                        <span className="rname">You</span>
+                        <span className="rtime">
+                          {turn.message.createdAt ? formatElapsed(turn.message.createdAt) : "now"}
+                        </span>
+                      </div>
+                      <p>{turn.message.text}</p>
+                      {turn.contextReceipt && (
+                        <ContextPackageSummary
+                          receipt={turn.contextReceipt}
+                          label="Submitted context"
+                        />
+                      )}
+                    </div>
+                    <div className="turn">
+                      <div className="role">
+                        <span className="av">
+                          {providerAvatarInitials(provider, providerLabel)}
+                        </span>
+                        <span className="rname">{providerLabel}</span>
+                        <span className="rtime">
+                          {turn.assistantAt ? formatElapsed(turn.assistantAt) : "now"}
+                        </span>
+                      </div>
+                      {renderTimeline(
+                        turn.events,
+                        `archived-${index}`,
+                        turn.state === "interrupted" || turn.state === "cancelled"
+                          ? "cancelled"
+                          : "running",
+                      )}
+                      <TurnChangesCard
+                        checkpoint={turn.checkpoint}
+                        pane={pane}
+                        onOpen={openTurnChanges}
+                      />
+                      {renderArchivedFailure(turn.events)}
+                      {turn.events
+                        .filter(
+                          (
+                            event,
+                          ): event is Extract<ProviderEvent, { kind: "governance_correlation" }> =>
+                            event.kind === "governance_correlation",
+                        )
+                        .map((correlation) => (
+                          <GovernanceCorrelationSummary
+                            key={correlation.operationId}
+                            correlation={correlation}
+                          />
+                        ))}
+                      {(turn.state === "interrupted" || turn.state === "cancelled") && (
+                        <p className="provider-state">{providerLabel} cancelled</p>
+                      )}
+                    </div>
+                  </React.Fragment>
                 ))}
-              {(turn.state === "interrupted" || turn.state === "cancelled") && (
-                <p className="provider-state">{providerLabel} cancelled</p>
-              )}
+                {latestMessage && (
+                  <div
+                    className="turn user"
+                    key={`${latestMessage.text}-${latestMessage.createdAt ?? "latest"}`}
+                  >
+                    <div className="role">
+                      <span className="av you">Y</span>
+                      <span className="rname">You</span>
+                      <span className="rtime">
+                        {latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}
+                      </span>
+                    </div>
+                    <p>{latestMessage.text}</p>
+                    {currentContextReceipt && (
+                      <ContextPackageSummary
+                        receipt={currentContextReceipt}
+                        label="Submitted context"
+                      />
+                    )}
+                  </div>
+                )}
+                {showAssistantTurn && (
+                  <div className="turn" aria-live="polite">
+                    <div className="role">
+                      <span className="av">{providerAvatarInitials(provider, providerLabel)}</span>
+                      <span className="rname">{providerLabel}</span>
+                      <span className="rtime">
+                        {runActive
+                          ? "now"
+                          : assistantTurnAt
+                            ? formatElapsed(assistantTurnAt)
+                            : "now"}
+                      </span>
+                    </div>
+                    {(providerState === "starting" ||
+                      providerState === "streaming" ||
+                      providerState === "waiting_for_approval" ||
+                      providerState === "waiting_for_input" ||
+                      providerState === "cancelling") && (
+                      <div className="thinking">
+                        <span />
+                        <span>{stateCopy[providerState]}</span>
+                      </div>
+                    )}
+                    {assistantTimeline.length > 0 &&
+                      renderTimeline(
+                        providerEvents,
+                        "current",
+                        providerState === "cancelled" ? "cancelled" : "running",
+                      )}
+                    <TurnChangesCard checkpoint={checkpoint} pane={pane} onOpen={openTurnChanges} />
+                    {providerEvents
+                      .filter(
+                        (
+                          event,
+                        ): event is Extract<ProviderEvent, { kind: "governance_correlation" }> =>
+                          event.kind === "governance_correlation",
+                      )
+                      .map((correlation) => (
+                        <GovernanceCorrelationSummary
+                          key={correlation.operationId}
+                          correlation={correlation}
+                        />
+                      ))}
+                    {approvals.map((approval) => (
+                      <section
+                        className={`approval-card ${approval.state}`}
+                        key={approval.id}
+                        aria-label={`${pane} pane approval required: ${approval.scope.summary}`}
+                      >
+                        <header>
+                          <span>
+                            <Icon name="shield" />
+                          </span>
+                          <div>
+                            <strong>{approval.scope.summary}</strong>
+                            <small>{approval.toolName} · one action only</small>
+                          </div>
+                          <em>{approval.state.replace("_", " ")}</em>
+                        </header>
+                        <dl className="approval-context">
+                          <div>
+                            <dt>Host</dt>
+                            <dd title={location.host}>{location.host}</dd>
+                          </div>
+                          <div>
+                            <dt>Repository</dt>
+                            <dd title={approval.repository}>{approval.repository}</dd>
+                          </div>
+                          <div>
+                            <dt>Worktree</dt>
+                            <dd title={approval.worktree}>{approval.worktree}</dd>
+                          </div>
+                          <div>
+                            <dt>Provider</dt>
+                            <dd title={providerListLabel(approval.provider)}>
+                              {providerListLabel(approval.provider)}
+                            </dd>
+                          </div>
+                        </dl>
+                        <p>{approval.scope.target}</p>
+                        {approval.scope.details.length > 0 && (
+                          <ul>
+                            {approval.scope.details.map((detail) => (
+                              <li key={detail}>{detail}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <small className="approval-binding">
+                          {location.host} · {pane} pane · conversation{" "}
+                          {approval.conversationId.slice(0, 8)} · {approval.repository} ·{" "}
+                          {approval.worktree} · {providerListLabel(approval.provider)} · direct ·{" "}
+                          {approval.toolName} · {approval.scope.target}
+                        </small>
+                        {approval.state === "pending" && (
+                          <footer>
+                            <button
+                              type="button"
+                              aria-label={`Deny ${approval.toolName}: ${approval.scope.summary}`}
+                              onClick={() => void decideApproval(approval, "deny")}
+                            >
+                              Deny
+                            </button>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              aria-label={`Allow once ${approval.toolName}: ${approval.scope.summary}`}
+                              onClick={() => void decideApproval(approval, "allow_once")}
+                            >
+                              Allow once
+                            </Button>
+                          </footer>
+                        )}
+                      </section>
+                    ))}
+                    {inputs.map((input) => (
+                      <section
+                        className="input-request-card"
+                        key={input.id}
+                        aria-label={`${pane} pane input required: ${input.question}`}
+                      >
+                        <header>
+                          <strong>{input.question}</strong>
+                          <span>
+                            {input.responseMode === "native_resume"
+                              ? "Resume stays in this conversation with a fresh approval scope"
+                              : "Response stays in this child conversation"}
+                          </span>
+                        </header>
+                        {input.responseMode === "native_resume" &&
+                        input.resumeState === "unavailable" ? (
+                          <p className="provider-error-hint" role="alert">
+                            {input.resumeError ??
+                              "Native Shikigami resume is unavailable. Start a new run to continue."}
+                          </p>
+                        ) : (
+                          <>
+                            {input.recommendation && <p>Recommendation: {input.recommendation}</p>}
+                            {input.choices.length > 0 && (
+                              <div className="input-request-choices">
+                                {input.choices.map((choice) => (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    key={choice.id}
+                                    title={choice.description ?? undefined}
+                                    onClick={() =>
+                                      setInputAnswers((current) => ({
+                                        ...current,
+                                        [input.id]: choice.label,
+                                      }))
+                                    }
+                                  >
+                                    {choice.label}
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
+                            <label htmlFor={`input-request-${pane}-${input.id}`}>
+                              Answer for this conversation
+                            </label>
+                            <textarea
+                              id={`input-request-${pane}-${input.id}`}
+                              maxLength={4_000}
+                              readOnly={!input.allowFreeForm}
+                              value={inputAnswers[input.id] ?? ""}
+                              onChange={(event) =>
+                                setInputAnswers((current) => ({
+                                  ...current,
+                                  [input.id]: event.target.value,
+                                }))
+                              }
+                            />
+                            <footer>
+                              <Button
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                disabled={
+                                  inputBusyId === input.id || !(inputAnswers[input.id] ?? "").trim()
+                                }
+                                onClick={() => void answerInput(input)}
+                              >
+                                Send answer
+                              </Button>
+                            </footer>
+                          </>
+                        )}
+                      </section>
+                    ))}
+                    {failureView && (
+                      <div
+                        className={`provider-error ${failureView.kind === "park" ? "provider-error-park" : ""}`}
+                        role="alert"
+                      >
+                        <p>
+                          {/^provider failed\.?$/i.test(failureView.summary.trim())
+                            ? `${providerName} failed.`
+                            : failureView.summary}
+                        </p>
+                        {failureView.question && (
+                          <p className="provider-error-question">
+                            Question: {failureView.question}
+                          </p>
+                        )}
+                        {failureRecovery.showSettings && !managedMode && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => onOpenProfiles(provider)}
+                          >
+                            Open provider settings
+                          </Button>
+                        )}
+                        {failureView.resumeCommand && (
+                          <div className="provider-error-resume">
+                            <code title={failureView.resumeCommand}>
+                              {failureView.resumeCommand}
+                            </code>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              aria-label={`Copy CLI resume command: ${failureView.resumeCommand}`}
+                              onClick={() => {
+                                void navigator.clipboard
+                                  ?.writeText(failureView.resumeCommand!)
+                                  .catch(() => undefined);
+                              }}
+                            >
+                              Copy CLI resume
+                            </button>
+                          </div>
+                        )}
+                        {failureView.kind === "park" && (
+                          <p className="provider-error-hint">
+                            Code can resume parked Shikigami runs only when the provider confirms
+                            the bound run identity; otherwise start a fresh run from this
+                            conversation.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {(providerState === "completed" ||
+                      providerState === "cancelled" ||
+                      providerState === "failed") && (
+                      <p className="provider-state">{stateCopy[providerState]}</p>
+                    )}
+                    {checkpoint && (
+                      <section
+                        className={`checkpoint-card ${checkpoint.state}`}
+                        aria-label={`Workspace checkpoint, ${pane} pane: ${checkpoint.state}`}
+                      >
+                        <header>
+                          <div>
+                            <strong>Workspace checkpoint</strong>
+                            <small>{checkpoint.state}</small>
+                          </div>
+                          {checkpoint.state === "completed" && !rewindPreview && (
+                            <button
+                              type="button"
+                              aria-label={`Preview workspace rewind, ${pane} pane`}
+                              onClick={() => void previewRewind()}
+                              disabled={checkpointBusy}
+                            >
+                              {checkpointBusy ? "Inspecting…" : "Preview rewind"}
+                            </button>
+                          )}
+                        </header>
+                        {checkpoint.message && <p>{checkpoint.message}</p>}
+                        {rewindPreview && (
+                          <>
+                            <p>
+                              This restores the turn baseline. Only these files will be affected:
+                            </p>
+                            <ul>
+                              {rewindPreview.files.map((file) => (
+                                <li key={`${file.path}-${file.previousPath ?? ""}`}>
+                                  <span>{file.state}</span>{" "}
+                                  {file.previousPath ? `${file.previousPath} → ` : ""}
+                                  {file.path}
+                                </li>
+                              ))}
+                            </ul>
+                            <footer>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => setRewindPreview(null)}
+                                disabled={checkpointBusy}
+                                aria-label={`Cancel workspace rewind, ${pane} pane`}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                className="rewind-confirm"
+                                aria-label={`Confirm workspace rewind, ${pane} pane`}
+                                onClick={() => void confirmRewind()}
+                                disabled={checkpointBusy}
+                              >
+                                {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
+                              </Button>
+                            </footer>
+                          </>
+                        )}
+                        {checkpointError && (
+                          <p className="checkpoint-error" role="alert">
+                            {checkpointError}
+                          </p>
+                        )}
+                      </section>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </React.Fragment>
-        ))}
-        {latestMessage && (
-          <div className="turn user" key={`${latestMessage.text}-${latestMessage.createdAt ?? "latest"}`}>
-            <div className="role">
-              <span className="av you">Y</span>
-              <span className="rname">You</span>
-              <span className="rtime">{latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}</span>
-            </div>
-            <p>{latestMessage.text}</p>
-            {currentContextReceipt && (
-              <ContextPackageSummary receipt={currentContextReceipt} label="Submitted context" />
+            {!following && !conversationEmpty && (
+              <button
+                type="button"
+                className="thread-follow-jump"
+                onClick={resumeThreadFollow}
+                aria-label={`Jump to latest messages, ${pane} pane`}
+              >
+                Jump to latest
+              </button>
             )}
           </div>
-        )}
-        {showAssistantTurn && (
-          <div className="turn" aria-live="polite">
-            <div className="role">
-              <span className="av">{providerAvatarInitials(provider, providerLabel)}</span>
-              <span className="rname">{providerLabel}</span>
-              <span className="rtime">
-                {runActive
-                  ? "now"
-                  : assistantTurnAt
-                    ? formatElapsed(assistantTurnAt)
-                    : "now"}
-              </span>
-            </div>
-              {(providerState === "starting" || providerState === "streaming" || providerState === "waiting_for_approval" || providerState === "waiting_for_input" || providerState === "cancelling") && (
-                <div className="thinking"><span /><span>{stateCopy[providerState]}</span></div>
-              )}
-              {assistantTimeline.length > 0 && renderTimeline(
-                providerEvents,
-                "current",
-                providerState === "cancelled" ? "cancelled" : "running",
-              )}
-              <TurnChangesCard checkpoint={checkpoint} pane={pane} onOpen={openTurnChanges} />
-              {providerEvents
-                .filter((event): event is Extract<ProviderEvent, { kind: "governance_correlation" }> => (
-                  event.kind === "governance_correlation"
-                ))
-                .map((correlation) => (
-                  <GovernanceCorrelationSummary key={correlation.operationId} correlation={correlation} />
-                ))}
-              {approvals.map((approval) => (
-                <section className={`approval-card ${approval.state}`} key={approval.id} aria-label={`${pane} pane approval required: ${approval.scope.summary}`}>
-                  <header>
-                    <span><Icon name="shield" /></span>
-                    <div>
-                      <strong>{approval.scope.summary}</strong>
-                      <small>{approval.toolName} · one action only</small>
-                    </div>
-                    <em>{approval.state.replace("_", " ")}</em>
-                  </header>
-                  <dl className="approval-context">
-                    <div><dt>Host</dt><dd title={location.host}>{location.host}</dd></div>
-                    <div><dt>Repository</dt><dd title={approval.repository}>{approval.repository}</dd></div>
-                    <div><dt>Worktree</dt><dd title={approval.worktree}>{approval.worktree}</dd></div>
-                    <div><dt>Provider</dt><dd title={providerListLabel(approval.provider)}>{providerListLabel(approval.provider)}</dd></div>
-                  </dl>
-                  <p>{approval.scope.target}</p>
-                  {approval.scope.details.length > 0 && (
-                    <ul>{approval.scope.details.map((detail) => <li key={detail}>{detail}</li>)}</ul>
-                  )}
-                  <small className="approval-binding">
-                    {location.host} · {pane} pane · conversation {approval.conversationId.slice(0, 8)} · {approval.repository} · {approval.worktree} · {providerListLabel(approval.provider)} · direct · {approval.toolName} · {approval.scope.target}
-                  </small>
-                  {approval.state === "pending" && (
-                    <footer>
-                      <button
-                        type="button"
-                        aria-label={`Deny ${approval.toolName}: ${approval.scope.summary}`}
-                        onClick={() => void decideApproval(approval, "deny")}
-                      >
-                        Deny
-                      </button>
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        aria-label={`Allow once ${approval.toolName}: ${approval.scope.summary}`}
-                        onClick={() => void decideApproval(approval, "allow_once")}
-                      >
-                        Allow once
-                      </Button>
-                    </footer>
-                  )}
-                </section>
-              ))}
-              {inputs.map((input) => (
-                <section
-                  className="input-request-card"
-                  key={input.id}
-                  aria-label={`${pane} pane input required: ${input.question}`}
-                >
-                  <header>
-                    <strong>{input.question}</strong>
-                    <span>
-                      {input.responseMode === "native_resume"
-                        ? "Resume stays in this conversation with a fresh approval scope"
-                        : "Response stays in this child conversation"}
-                    </span>
-                  </header>
-                  {input.responseMode === "native_resume" && input.resumeState === "unavailable" ? (
-                    <p className="provider-error-hint" role="alert">
-                      {input.resumeError ?? "Native Shikigami resume is unavailable. Start a new run to continue."}
-                    </p>
-                  ) : (
-                    <>
-                      {input.recommendation && <p>Recommendation: {input.recommendation}</p>}
-                      {input.choices.length > 0 && (
-                        <div className="input-request-choices">
-                          {input.choices.map((choice) => (
-                            <Button
-                              type="button"
-                              size="sm"
-                              key={choice.id}
-                              title={choice.description ?? undefined}
-                              onClick={() => setInputAnswers((current) => ({
-                                ...current,
-                                [input.id]: choice.label,
-                              }))}
-                            >
-                              {choice.label}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                      <label htmlFor={`input-request-${pane}-${input.id}`}>
-                        Answer for this conversation
-                      </label>
-                      <textarea
-                        id={`input-request-${pane}-${input.id}`}
-                        maxLength={4_000}
-                        readOnly={!input.allowFreeForm}
-                        value={inputAnswers[input.id] ?? ""}
-                        onChange={(event) => setInputAnswers((current) => ({
-                          ...current,
-                          [input.id]: event.target.value,
-                        }))}
-                      />
-                      <footer>
-                        <Button
-                          type="button"
-                          variant="primary"
-                          size="sm"
-                          disabled={inputBusyId === input.id || !(inputAnswers[input.id] ?? "").trim()}
-                          onClick={() => void answerInput(input)}
-                        >
-                          Send answer
-                        </Button>
-                      </footer>
-                    </>
-                  )}
-                </section>
-              ))}
-              {failureView && (
-                <div className={`provider-error ${failureView.kind === "park" ? "provider-error-park" : ""}`} role="alert">
-                  <p>
-                    {/^provider failed\.?$/i.test(failureView.summary.trim())
-                      ? `${providerName} failed.`
-                      : failureView.summary}
-                  </p>
-                  {failureView.question && (
-                    <p className="provider-error-question">Question: {failureView.question}</p>
-                  )}
-                  {failureRecovery.showSettings && !managedMode && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => onOpenProfiles(provider)}
-                    >
-                      Open provider settings
-                    </Button>
-                  )}
-                  {failureView.resumeCommand && (
-                    <div className="provider-error-resume">
-                      <code title={failureView.resumeCommand}>{failureView.resumeCommand}</code>
-                      <button
-                        type="button"
-                        className="btn btn-outline btn-sm"
-                        aria-label={`Copy CLI resume command: ${failureView.resumeCommand}`}
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(failureView.resumeCommand!).catch(() => undefined);
-                        }}
-                      >
-                        Copy CLI resume
-                      </button>
-                    </div>
-                  )}
-                  {failureView.kind === "park" && (
-                    <p className="provider-error-hint">
-                      Code can resume parked Shikigami runs only when the provider confirms the
-                      bound run identity; otherwise start a fresh run from this conversation.
-                    </p>
-                  )}
-                </div>
-              )}
-              {(providerState === "completed" || providerState === "cancelled" || providerState === "failed")
-                && <p className="provider-state">{stateCopy[providerState]}</p>}
-              {checkpoint && (
-                <section className={`checkpoint-card ${checkpoint.state}`} aria-label={`Workspace checkpoint, ${pane} pane: ${checkpoint.state}`}>
-                  <header>
-                    <div>
-                      <strong>Workspace checkpoint</strong>
-                      <small>{checkpoint.state}</small>
-                    </div>
-                    {checkpoint.state === "completed" && !rewindPreview && (
-                      <button
-                        type="button"
-                        aria-label={`Preview workspace rewind, ${pane} pane`}
-                        onClick={() => void previewRewind()}
-                        disabled={checkpointBusy}
-                      >
-                        {checkpointBusy ? "Inspecting…" : "Preview rewind"}
-                      </button>
-                    )}
-                  </header>
-                  {checkpoint.message && <p>{checkpoint.message}</p>}
-                  {rewindPreview && (
-                    <>
-                      <p>This restores the turn baseline. Only these files will be affected:</p>
-                      <ul>
-                        {rewindPreview.files.map((file) => (
-                          <li key={`${file.path}-${file.previousPath ?? ""}`}>
-                            <span>{file.state}</span> {file.previousPath ? `${file.previousPath} → ` : ""}{file.path}
-                          </li>
-                        ))}
-                      </ul>
-                      <footer>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => setRewindPreview(null)}
-                          disabled={checkpointBusy}
-                          aria-label={`Cancel workspace rewind, ${pane} pane`}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="primary"
-                          size="sm"
-                          className="rewind-confirm"
-                          aria-label={`Confirm workspace rewind, ${pane} pane`}
-                          onClick={() => void confirmRewind()}
-                          disabled={checkpointBusy}
-                        >
-                          {checkpointBusy ? "Rechecking…" : "Confirm rewind"}
-                        </Button>
-                      </footer>
-                    </>
-                  )}
-                  {checkpointError && <p className="checkpoint-error" role="alert">{checkpointError}</p>}
-                </section>
-              )}
-          </div>
-        )}
-        </div>
-      </div>
-      {!following && !conversationEmpty && (
-        <button
-          type="button"
-          className="thread-follow-jump"
-          onClick={resumeThreadFollow}
-          aria-label={`Jump to latest messages, ${pane} pane`}
-        >
-          Jump to latest
-        </button>
-      )}
-      </div>
-      <div className="cwrap">
-        {providerState === "completed" && threadId && !completionDismissed && (
-          <div className="done" role="status">
-            <div className="h">
-              <span className="pill completed"><span className="dot" />Completed</span>
-              <span className="ttl">Workspace still in use</span>
-            </div>
-            <p className="done-copy">
-              <span className="done-copy-label">Worktree</span>
-              <code title={worktree?.path ?? conversation?.worktree ?? undefined}>
-                {worktree?.path ?? conversation?.worktree}
-              </code>
-              <span>is still checked out. Settling keeps the worktree.</span>
-            </p>
-            <div className="acts">
-              <button
-                type="button"
-                className="btn btn-default btn-sm"
-                aria-label={`Settle thread, ${pane} pane`}
-                onClick={() => {
-                  void (async () => {
-                    const response = await fetch("/api/state/conversations/settle", {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ threadId }),
-                    });
-                    if (!response.ok) return;
-                    setCompletionDismissed(true);
-                    // Refresh sidebar so the thread moves into Settled.
-                    onConversationAvailable?.(threadId);
-                  })().catch(() => undefined);
-                }}
-              >
-                Settle thread
-              </button>
-              <button
-                type="button"
-                className="btn btn-outline btn-sm"
-                aria-label={`Settle and release worktree, ${pane} pane`}
-                title="Settle and release worktree"
-                onClick={() => setReleaseWorktreeOpen(true)}
-              >
-                Settle &amp; release
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                aria-label={`Keep conversation open, ${pane} pane`}
-                onClick={() => setCompletionDismissed(true)}
-              >
-                Keep open
-              </button>
-            </div>
-          </div>
-        )}
-        {canPickWorkspace && (
-          <section className={`new-chat-context ${workspaceSetupVisible ? "is-open" : "is-collapsed"}`} aria-labelledby={`${pane}-new-chat-context-title`}>
-            <h2 id={`${pane}-new-chat-context-title`} className="sr-only">Choose where this conversation works</h2>
-            <button
-              type="button"
-              className="new-chat-context-summary"
-              disabled={workspaceSetupRequired}
-              aria-expanded={workspaceSetupVisible}
-              aria-controls={`${pane}-new-chat-context-body`}
-              aria-label={workspaceSetupRequired
-                ? `Workspace: ${workspaceSummary}. Setup details are required until a project and worktree are selected.`
-                : `Workspace: ${workspaceSummary}. ${workspaceSetupVisible ? "Hide" : "Show"} setup details.`}
-              onClick={() => {
-                if (workspaceSetupRequired) return;
-                setWorkspaceSetupOpen((open) => !open);
-              }}
-            >
-              <span className="new-chat-context-summary-icon" aria-hidden="true"><Icon name="route" /></span>
-              <span className="new-chat-context-summary-copy">
-                <span className="new-chat-context-eyebrow">Workspace</span>
-                <strong title={workspaceSummary}>{workspaceSummary}</strong>
-                <small title={workspaceSummaryDetail}>{workspaceSummaryDetail}</small>
-              </span>
-              {workspaceSetupStatus.tone !== "ready" && (
-                <span
-                  className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
-                  aria-hidden="true"
-                >
-                  <span />
-                  {workspaceSetupStatus.label}
-                </span>
-              )}
-              <Icon name="chevron" />
-            </button>
-            {workspaceSetupVisible && <div className="new-chat-context-body" id={`${pane}-new-chat-context-body`}>
-              <div className="new-chat-context-header">
-                <div className="new-chat-context-heading">
-                  <span className="new-chat-context-eyebrow">Workspace setup</span>
-                  <p>Adjust the project, worktree, or ownership before sending.</p>
-                </div>
-              </div>
-              <div className="new-chat-context-rows">
-                <div className="new-chat-context-row new-chat-context-row--host" aria-label={`${hostLabel}, current Aldunis host`}>
-                  <Icon name="computer" />
-                  <span className="new-chat-context-copy">
-                    <strong>Execution host</strong>
-                    <small>{hostLabel}</small>
+          <div className="cwrap">
+            {providerState === "completed" && threadId && !completionDismissed && (
+              <div className="done" role="status">
+                <div className="h">
+                  <span className="pill completed">
+                    <span className="dot" />
+                    Completed
                   </span>
+                  <span className="ttl">Workspace still in use</span>
                 </div>
-                <div className="new-chat-context-control" ref={projectMenuRef}>
-                <button
-                  type="button"
-                  className="new-chat-context-row new-chat-context-row--button"
-                  onClick={openProjectMenu}
-                  title={repository?.root ?? "Choose a project"}
-                  aria-haspopup="listbox"
-                  aria-expanded={projectMenuOpen}
-                  aria-controls={projectMenuOpen ? "new-chat-project-menu" : undefined}
-                  aria-label={repository ? `Project ${repository.name}. Open project selector.` : "Choose a project."}
-                >
-                  <Icon name="folder" />
-                  <span className="new-chat-context-copy">
-                    <strong>{repository?.name ?? "Choose a project"}</strong>
-                    <small title={repository?.root}>{repository?.root ?? "Choose a project before sending"}</small>
-                  </span>
-                  <Icon name="chevron" />
-                </button>
-                {projectMenuOpen && (
-                  <div
-                    id="new-chat-project-menu"
-                    className="new-chat-context-menu composer-provider-menu"
-                    role="listbox"
-                    aria-label="Choose project"
-                  >
-                    {projects.map((project) => {
-                      const selected = project.id === repository?.projectId
-                        || project.memberIds?.includes(repository?.projectId ?? "")
-                        || project.root === repository?.root;
-                      return (
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          aria-label={`${project.name}: ${project.root}${selected ? ", selected" : ""}`}
-                          data-project-option=""
-                          data-project-id={project.id}
-                          key={project.id}
-                          className={`composer-provider-option ${selected ? "active" : ""}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            selectProject(project.id);
-                          }}
-                        >
-                          <span className="n">{project.name}{selected ? " · selected" : ""}</span>
-                          <span className="p">{project.root}</span>
-                        </button>
-                      );
-                    })}
-                    {projects.length === 0 && (
-                      <p className="new-chat-context-note" role="note">No registered projects yet.</p>
-                    )}
-                    <button
-                      type="button"
-                      className="composer-provider-option add"
-                      aria-label="Add project: Register a local repository once"
-                      onClick={() => {
-                        setProjectMenuOpen(false);
-                        onAddProject();
-                      }}
-                    >
-                      <span className="n">Add project…</span>
-                      <span className="p">Register a local repository once</span>
-                    </button>
-                  </div>
-                )}
-                </div>
-                <div className="new-chat-context-control" ref={workspaceMenuRef}>
-                <button
-                  type="button"
-                  className="new-chat-context-row new-chat-context-row--button"
-                  aria-haspopup="listbox"
-                  aria-expanded={workspaceMenuOpen}
-                  aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
-                  title={workspaceCopy.detail}
-                  aria-label={`Workspace strategy: ${workspaceCopy.label}. Open workspace strategy menu.`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openWorkspaceMenu();
-                  }}
-                >
-                  <Icon name="code" />
-                  <span className="new-chat-context-copy">
-                    <strong>{newConversationWorkspaceCopy.label}</strong>
-                    <small>{newConversationWorkspaceCopy.summary}</small>
-                  </span>
-                  <Icon name="chevron" />
-                </button>
-                {workspaceMenuOpen && (
-                  <div
-                    id="new-chat-workspace-menu"
-                    className="new-chat-context-menu composer-provider-menu"
-                    role="listbox"
-                    aria-label="Choose workspace strategy"
-                  >
-                    {NEW_CONVERSATION_WORKSPACE_MODES.map((item) => {
-                      const selected = item === workspaceMode;
-                      const native = item === "provider-native";
-                      const available = !native || providerNativeWorkspaceAvailable;
-                      const itemCopy = NEW_CONVERSATION_WORKSPACE_COPY[item];
-                      const detail = native && !available
-                        ? "Provider-owned workspaces are not available for this provider yet."
-                        : itemCopy.detail;
-                      return (
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          aria-disabled={!available}
-                          disabled={!available}
-                          aria-label={`${itemCopy.label}: ${detail}${selected ? ", selected" : ""}`}
-                          key={item}
-                          data-workspace-option=""
-                          data-workspace-mode={item}
-                          className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            selectWorkspaceMode(item, "menu");
-                          }}
-                        >
-                          <span className="n">{itemCopy.label}{selected ? " · selected" : ""}</span>
-                          <span className="p">{detail}</span>
-                        </button>
-                      );
-                    })}
-                    {!providerNativeWorkspaceAvailable && (
-                      <p className="new-chat-context-note" role="note">
-                        Provider-owned workspaces are unavailable for this provider. A dedicated worktree is ready to use.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="new-chat-context-worktree-picker" role="group" aria-label="Choose the conversation worktree">
-                {selectableWorktrees.length > 1 && (
-                  <div className="new-chat-worktree-tools">
-                    <label htmlFor={`${pane}-worktree-filter`} className="new-chat-worktree-filter-label">
-                      Filter branches
-                    </label>
-                    <input
-                      id={`${pane}-worktree-filter`}
-                      type="search"
-                      value={worktreeFilter}
-                      onChange={(event) => setWorktreeFilter(event.target.value)}
-                      placeholder="Filter branches…"
-                      aria-controls={`${pane}-worktree-select`}
-                    />
-                    <span className="new-chat-worktree-count" aria-live="polite">
-                      {worktreeFilterHasNoMatches
-                        ? "No matches"
-                        : `${filteredSelectableWorktrees.length} available`}
-                    </span>
-                  </div>
-                )}
-                <label className="new-chat-context-row new-chat-context-row--select">
-                  <Icon name="branch" />
-                  <span className="new-chat-context-copy">
-                    <strong>{worktree?.branch ?? (worktree ? "Detached HEAD" : "Choose a worktree")}</strong>
-                    <small title={worktree?.path}>{worktree?.path ?? "Select an available branch"}</small>
-                  </span>
-                  <Icon name="chevron" />
-                  <select
-                    id={`${pane}-worktree-select`}
-                    aria-label="Choose the conversation worktree"
-                    value={worktreeSelectValue}
-                    disabled={selectableWorktrees.length === 0 || worktreeFilterHasNoMatches}
-                    onChange={(event) => {
-                      if (event.target.value) onSelectWorktree(event.target.value);
-                    }}
-                  >
-                    {selectableWorktrees.length === 0 && <option value="">No available worktree</option>}
-                    {worktreeFilterHasNoMatches && <option value="">No matching worktree</option>}
-                    {managedSelectableWorktrees.length > 0 && (
-                      <optgroup label="Aldunis worktrees">
-                        {managedSelectableWorktrees.map((item) => (
-                          <option value={item.path} key={item.path}>
-                            {formatWorktreeOptionLabel(item)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {userSelectableWorktrees.length > 0 && (
-                      <optgroup label="Existing worktrees">
-                        {userSelectableWorktrees.map((item) => (
-                          <option value={item.path} key={item.path}>
-                            {formatWorktreeOptionLabel(item)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                </label>
-              </div>
-            </div>
-            </div>}
-          </section>
-        )}
-        <div className="cbox">
-          {elementReferences.length > 0 && (
-            <div className="composer-context" aria-label="Attached element context">
-              {elementReferences.map((reference, index) => (
-                <span key={`${reference.selector}-${index}`}>
-                  {reference.tag} · {reference.name ?? reference.selector}
-                  <button
-                    type="button"
-                    onClick={() => setElementReferences((current) => current.filter((_, item) => item !== index))}
-                    aria-label={`Remove element reference ${reference.name ?? reference.selector}`}
-                  >×</button>
-                </span>
-              ))}
-            </div>
-          )}
-          {attachments.length > 0 && (
-            <div className="context-chips" aria-label="Attached local context">
-              {attachments.map((path) => (
-                <span key={path}>@{path}<button type="button" onClick={() => setAttachments((current) => current.filter((item) => item !== path))} aria-label={`Remove ${path}`}>×</button></span>
-              ))}
-            </div>
-          )}
-          <button
-            type="button"
-            className="composer-context-summary"
-            onClick={() => {
-              setPlanOpen(false);
-              setContextOpen(true);
-            }}
-            aria-label="Inspect draft context package"
-          >
-            Context: {draftContextReceipt
-              ? `${draftContextReceipt.entries.filter((entry) => entry.omissionReason === null).length} files, approximately ${draftContextReceipt.estimatedTokens.toLocaleString()} tokens`
-              : contextPackageBusy ? "resolving…" : "unavailable"}
-          </button>
-          {suggestionMode && (
-            <div
-              className="composer-suggestions"
-              role="listbox"
-              aria-label={suggestionMode === "path"
-                ? "File suggestions"
-                : suggestionMode === "skill" ? "Skill suggestions" : "Command suggestions"}
-            >
-              {suggestionGroups.map((group) => (
-                <section className="composer-suggestions-group" key={group.id}>
-                  <div className="composer-suggestions-group-label">{group.label}</div>
-                  {group.items.map((suggestion) => {
-                    const index = orderedSuggestions.indexOf(suggestion);
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={index === suggestionIndex}
-                        aria-label={suggestion.label + ": " + suggestion.description}
-                        title={suggestion.label + " — " + suggestion.description}
-                        className={index === suggestionIndex ? "active" : ""}
-                        key={suggestion.id}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onMouseEnter={() => setSuggestionIndex(index)}
-                        onClick={() => selectSuggestion(suggestion)}
-                      >
-                        {suggestion.type === "path" && (
-                          <span className="composer-suggestion-kind" aria-hidden="true">@</span>
-                        )}
-                        <strong title={suggestion.label}>{suggestion.label}</strong>
-                        <small title={suggestion.description}>{suggestion.description}</small>
-                      </button>
-                    );
-                  })}
-                </section>
-              ))}
-              {suggestions.length === 0 && (
-                <p className="composer-suggestions-empty">
-                  {suggestionMode === "path"
-                    ? "No matching files or folders."
-                    : suggestionMode === "skill" ? "No matching skills." : "No matching commands."}
+                <p className="done-copy">
+                  <span className="done-copy-label">Worktree</span>
+                  <code title={worktree?.path ?? conversation?.worktree ?? undefined}>
+                    {worktree?.path ?? conversation?.worktree}
+                  </code>
+                  <span>is still checked out. Settling keeps the worktree.</span>
                 </p>
-              )}
-            </div>
-          )}
-          <textarea
-            ref={composerRef}
-            className="composer-input"
-            value={draft}
-            spellCheck
-            onChange={(event) => {
-              const value = event.target.value;
-              if (voiceInputState === "listening") stopVoiceInput();
-              setVoiceInputError(null);
-              setDraft(value);
-              // Typing while recalling a prior prompt exits history browse (live draft).
-              setPromptHistoryBrowse((current) => (
-                isBrowsingPromptHistory(current, promptHistory)
-                  ? resetPromptHistoryBrowse(promptHistory)
-                  : current
-              ));
-            }}
-            onPaste={() => {
-              setContextError(null);
-              setVoiceInputError(null);
-            }}
-            onKeyDown={(event) => {
-              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-                event.preventDefault();
-                setSuggestionIndex((current) => (
-                  event.key === "ArrowDown"
-                    ? (current + 1) % orderedSuggestions.length
-                    : (current - 1 + orderedSuggestions.length) % orderedSuggestions.length
-                ));
-                return;
-              }
-              if (suggestionMode && orderedSuggestions.length > 0 && (event.key === "Tab" || event.key === "Enter")) {
-                event.preventDefault();
-                selectSuggestion(orderedSuggestions[suggestionIndex]);
-                return;
-              }
-              if (event.key === "Escape" && suggestionMode) {
-                event.preventDefault();
-                setSuggestionMode(null);
-                return;
-              }
-              if (
-                event.key === "Escape"
-                && isBrowsingPromptHistory(promptHistoryBrowse, promptHistory)
-              ) {
-                event.preventDefault();
-                setDraft(promptHistoryBrowse.draftBeforeHistory);
-                setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
-                return;
-              }
-              // Shell-style prompt history: ↑ at start/empty (or while browsing), ↓ while browsing.
-              if (
-                !suggestionMode
-                && (event.key === "ArrowUp" || event.key === "ArrowDown")
-              ) {
-                const browsing = isBrowsingPromptHistory(promptHistoryBrowse, promptHistory);
-                if (event.key === "ArrowUp") {
-                  if (!browsing && !isComposerHistoryBoundary(event.currentTarget)) return;
-                  const next = stepPromptHistoryUp(
-                    promptHistory,
-                    promptHistoryBrowse,
-                    draft,
-                  );
-                  if (!next) return;
-                  event.preventDefault();
-                  setPromptHistoryBrowse(next);
-                  setDraft(draftForPromptHistoryIndex(promptHistory, next));
-                  return;
-                }
-                if (!browsing) return;
-                const next = stepPromptHistoryDown(promptHistory, promptHistoryBrowse);
-                if (!next) return;
-                event.preventDefault();
-                setPromptHistoryBrowse(next);
-                setDraft(draftForPromptHistoryIndex(promptHistory, next));
-                return;
-              }
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={
-              !historyRestored
-                ? "Restoring conversation session…"
-                : conversationWorktreeMissing
-                ? "Conversation worktree is not available for the open repository…"
-                : !providerReady
-                ? providerReadinessMessage
-                : worktree
-                ? readyComposerPlaceholder(providerName, threadId)
-                : "Choose a project and worktree to continue…"
-            }
-            id={`${pane}-composer`}
-            name={`${pane}-composer`}
-            aria-label={`Message ${providerName}`}
-            disabled={
-              !worktree
-              || !providerReady
-              || runActive
-              || !historyRestored
-            }
-          />
-          {voiceInputState === "listening" && (
-            <div className="voice-input-status" role="status" aria-live="polite">
-              <span className="voice-input-status-dot" aria-hidden="true" />
-              <span>
-                Listening… {voiceInputInterim ? `“${voiceInputInterim}”` : "Speak naturally."}
-              </span>
-            </div>
-          )}
-          {voiceInputError && (
-            <div className="context-error voice-input-error" role="alert">
-              {voiceInputError}
-            </div>
-          )}
-          {!providerReady && historyRestored && providersLoaded && (
-            <div className="context-error" role="status">{providerReadinessMessage}</div>
-          )}
-          {contextError && <div className="context-error" role="alert">{contextError}</div>}
-          {historyRestoreError && <div className="context-error" role="alert">{historyRestoreError}</div>}
-          <div className="crow">
-            <button
-              type="button"
-              className={`voice-input-toggle ${voiceInputState === "listening" ? "is-listening" : ""} ${voiceInputState === "error" ? "is-error" : ""}`}
-              aria-pressed={voiceInputState === "listening"}
-              aria-keyshortcuts="Meta+Shift+M Control+Shift+M"
-              aria-label={voiceInputState === "listening"
-                ? "Stop voice input"
-                : voiceInputState === "unsupported"
-                ? "Voice input unavailable"
-                : voiceInputState === "error"
-                ? "Try voice input again"
-                : "Start voice input"}
-              title={voiceInputState === "listening"
-                ? `Stop voice input (${VOICE_INPUT_SHORTCUT_LABEL})`
-                : voiceInputState === "unsupported"
-                ? "Voice input is not available in this browser"
-                : voiceInputState === "error"
-                ? `Try voice input again (${VOICE_INPUT_SHORTCUT_LABEL})`
-                : `Start voice input (${VOICE_INPUT_SHORTCUT_LABEL})`}
-              disabled={!worktree || !providerReady || runActive || !historyRestored}
-              onClick={() => {
-                if (voiceInputState === "listening") stopVoiceInput();
-                else startVoiceInput();
-              }}
-            >
-              <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="3" width="6" height="11" rx="3" />
-                <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
-              </svg>
-            </button>
-            <div className="composer-run-settings" role="group" aria-label="Run settings">
-              <span className="composer-run-settings-label">Run settings</span>
-            <div className="composer-provider" ref={providerMenuRef}>
-              <button
-                type="button"
-                className="cc"
-                disabled={runActive || managedMode}
-                aria-haspopup={managedMode ? undefined : canSwitchProvider ? "listbox" : undefined}
-                aria-expanded={managedMode ? undefined : canSwitchProvider ? providerMenuOpen : undefined}
-                title={
-                  managedMode
-                    ? "Managed hosted mode fixes Shikigami and does not allow provider selection."
-                    : !providersLoaded
-                    ? "Checking provider…"
-                    : !providerReady
-                    ? providerReadinessMessage
-                    : canSwitchProvider
-                    ? "Open the provider menu"
-                    : conversation
-                      ? "Provider is fixed for this conversation. Use Fork in the top bar to change providers. Click opens provider profiles."
-                      : "Open provider profiles"
-                }
-                aria-label={
-                  managedMode
-                    ? "Managed hosted mode: Shikigami"
-                    : !providersLoaded
-                    ? `Checking ${providerName}…`
-                    : !providerReady
-                    ? `${providerName} not ready: ${providerReadinessMessage}`
-                    : canSwitchProvider
-                    ? `Provider ${providerName}. Open menu to choose among ${availableProviders.length} providers.`
-                    : conversation
-                      ? "Open provider profiles. Provider is fixed — use Fork to change providers."
-                      : "Open provider profiles"
-                }
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (managedMode) return;
-                  if (!canSwitchProvider) {
-                    closeComposerMenus();
-                    onOpenProfiles(provider);
-                    return;
-                  }
-                  setModelMenuOpen(false);
-                  setModeMenuOpen(false);
-                  setProviderMenuOpen((open) => {
-                    if (open) return false;
-                    // Block accidental option activation from the open gesture.
-                    providerMenuOpenedAtRef.current = performance.now() + 200;
-                    return true;
-                  });
-                }}
-              >
-                <span className="pv" aria-hidden="true">
-                  {providerAvatarInitials(provider, providerLabel)}
-                </span>
-                {providerChipName}
-                {selectedProfileName && (
-                  <span className="composer-provider-profile-chip" title={`Profile: ${selectedProfileName}`}>
-                    · {selectedProfileName}
-                  </span>
-                )}
-                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
-              </button>
-              {providerMenuOpen && canSwitchProvider && (
-                <div
-                  className="composer-provider-menu"
-                  role="listbox"
-                  aria-label="Choose provider"
-                >
-                  {availableProviders.map((id) => {
-                    const discovery = providers.find((item) => item.id === id);
-                    const label = providerDisplayName(id, discovery);
-                    const chip = formatProviderChipName(id, discovery);
-                    const selected = id === provider;
-                    const shikigamiMenuDiscovery = id === "shikigami"
-                      ? providerDiscoveryForProfile(
-                          "shikigami",
-                          shikigamiProvider,
-                          shikigamiProfiles.some((profile) => profile.id === profileId)
-                            ? profileId
-                            : defaultShikigamiProfileId,
-                        )
-                      : undefined;
-                    const ready = id === "claude-code"
-                      ? Boolean(profileId)
-                      : id === "codex-cli"
-                      ? Boolean(codex?.installed && codex.authenticated)
-                      : id === "shikigami"
-                      ? Boolean(
-                          shikigamiMenuDiscovery?.installed
-                          && shikigamiMenuDiscovery.authenticated
-                          && shikigamiProfiles.length > 0,
-                        )
-                      : Boolean(
-                        discovery
-                        && discovery.installed !== false
-                        && discovery.enabled !== false
-                        && discovery.authenticated !== false,
-                      );
-                    const statusDiscovery = id === "shikigami"
-                      ? shikigamiMenuDiscovery
-                      : discovery;
-                    const status = ready
-                      ? (selected ? "selected" : "ready")
-                      : (statusDiscovery?.detail?.trim()
-                        || providerNotReadyMessage(id, statusDiscovery, {
-                          hasClaudeProfile: Boolean(profileId),
-                          providerName: label,
-                        }));
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        aria-label={`${label}: ${chip} · ${status}`}
-                        key={id}
-                        data-provider-option=""
-                        data-provider-id={id}
-                        className={`composer-provider-option ${selected ? "active" : ""} ${ready ? "" : "not-ready"}`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          selectProvider(id, "menu");
-                        }}
-                      >
-                        <span className="n">{label}</span>
-                        <span className="p">{chip} · {status}</span>
-                      </button>
-                    );
-                  })}
-                  {provider === "claude-code" && claudeProfiles.length > 1 && (
-                    <div className="composer-provider-profile">
-                      <label htmlFor="composer-claude-profile">Claude Code profile
-                        <select
-                          id="composer-claude-profile"
-                          value={profileId}
-                          aria-label="Claude Code profile"
-                          onChange={(event) => setProfileId(event.target.value)}
-                        >
-                          {claudeProfiles.map((profile) => (
-                            <option value={profile.id} key={profile.id}>{profile.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  )}
-                  {provider === "shikigami" && shikigamiProfiles.length > 1 && (
-                    <div className="composer-provider-profile">
-                      <label htmlFor="composer-shikigami-profile">Shikigami profile
-                        <select
-                          id="composer-shikigami-profile"
-                          value={profileId}
-                          onChange={(event) => {
-                            const nextProfileId = event.target.value;
-                            setProfileId(nextProfileId);
-                            setModel(resolveDefaultProviderModel(
-                              "shikigami",
-                              providerDiscoveryForProfile("shikigami", shikigamiProvider, nextProfileId),
-                            ));
-                          }}
-                        >
-                          {shikigamiProfiles.map((profile) => (
-                            <option value={profile.id} key={profile.id}>{profile.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  )}
-                  <div className="composer-menu-section composer-menu-section--separator" role="presentation">
-                    Provider setup
-                  </div>
+                <div className="acts">
                   <button
                     type="button"
-                    role="option"
-                    aria-selected={false}
-                    aria-label="Provider profiles: Manage binaries and env for each provider"
-                    className="composer-provider-option add"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setProviderMenuOpen(false);
-                      onOpenProfiles(provider);
+                    className="btn btn-default btn-sm"
+                    aria-label={`Settle thread, ${pane} pane`}
+                    onClick={() => {
+                      void (async () => {
+                        const response = await fetch("/api/state/conversations/settle", {
+                          method: "POST",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify({ threadId }),
+                        });
+                        if (!response.ok) return;
+                        setCompletionDismissed(true);
+                        // Refresh sidebar so the thread moves into Settled.
+                        onConversationAvailable?.(threadId);
+                      })().catch(() => undefined);
                     }}
                   >
-                    <span className="n">Provider profiles…</span>
-                    <span className="p">Manage binaries and env for each provider</span>
+                    Settle thread
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    aria-label={`Settle and release worktree, ${pane} pane`}
+                    title="Settle and release worktree"
+                    onClick={() => setReleaseWorktreeOpen(true)}
+                  >
+                    Settle &amp; release
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    aria-label={`Keep conversation open, ${pane} pane`}
+                    onClick={() => setCompletionDismissed(true)}
+                  >
+                    Keep open
                   </button>
                 </div>
-              )}
-            </div>
-            <div className="composer-provider" ref={modelMenuRef}>
-              <button
-                type="button"
-                className="cc"
-                disabled={!canPickModel}
-                aria-haspopup={managedMode ? undefined : "listbox"}
-                aria-expanded={managedMode ? undefined : modelMenuOpen}
-                title={
-                  managedMode ? "Managed hosted mode fixes the operator-approved model." : "Open the model menu"
-                }
-                aria-label={
-                  managedMode
-                    ? `Managed model ${modelChipDisplay}`
-                    : showReasoningEffort
-                    ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model or reasoning effort.`
-                    : `Model ${modelChipDisplay}. Open menu to choose a model.`
-                }
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (managedMode) return;
-                  if (!canPickModel) return;
-                  setProviderMenuOpen(false);
-                  setModeMenuOpen(false);
-                  setModelMenuOpen((open) => {
-                    if (open) return false;
-                    modelMenuOpenedAtRef.current = performance.now() + 200;
-                    return true;
-                  });
-                }}
+              </div>
+            )}
+            {canPickWorkspace && (
+              <section
+                className={`new-chat-context ${workspaceSetupVisible ? "is-open" : "is-collapsed"}`}
+                aria-labelledby={`${pane}-new-chat-context-title`}
               >
-                {showReasoningEffort
-                  ? `${modelChipDisplay} · ${reasoningEffort}`
-                  : modelChipDisplay}
-                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
-              </button>
-              {modelMenuOpen && canPickModel && (
-                <div
-                  className="composer-provider-menu"
-                  role="listbox"
-                  aria-label="Choose model"
+                <h2 id={`${pane}-new-chat-context-title`} className="sr-only">
+                  Choose where this conversation works
+                </h2>
+                <button
+                  type="button"
+                  className="new-chat-context-summary"
+                  disabled={workspaceSetupRequired}
+                  aria-expanded={workspaceSetupVisible}
+                  aria-controls={`${pane}-new-chat-context-body`}
+                  aria-label={
+                    workspaceSetupRequired
+                      ? `Workspace: ${workspaceSummary}. Setup details are required until a project and worktree are selected.`
+                      : `Workspace: ${workspaceSummary}. ${workspaceSetupVisible ? "Hide" : "Show"} setup details.`
+                  }
+                  onClick={() => {
+                    if (workspaceSetupRequired) return;
+                    setWorkspaceSetupOpen((open) => !open);
+                  }}
                 >
-                  {modelOptions.map((option) => {
-                    const selected = option.id === effectiveModel || option.id === model;
-                    const isDiscoveryDefault = selectedProvider?.models?.some(
-                      (entry) => entry.id === option.id && entry.isDefault,
-                    );
-                    const detail = [
-                      isDiscoveryDefault ? "Default model" : null,
-                      selected ? "Selected" : null,
-                    ].filter(Boolean).join(" · ") || "Available";
-                    return (
+                  <span className="new-chat-context-summary-icon" aria-hidden="true">
+                    <Icon name="route" />
+                  </span>
+                  <span className="new-chat-context-summary-copy">
+                    <span className="new-chat-context-eyebrow">Workspace</span>
+                    <strong title={workspaceSummary}>{workspaceSummary}</strong>
+                    <small title={workspaceSummaryDetail}>{workspaceSummaryDetail}</small>
+                  </span>
+                  {workspaceSetupStatus.tone !== "ready" && (
+                    <span
+                      className={`new-chat-context-status ${workspaceSetupStatus.tone}`}
+                      aria-hidden="true"
+                    >
+                      <span />
+                      {workspaceSetupStatus.label}
+                    </span>
+                  )}
+                  <Icon name="chevron" />
+                </button>
+                {workspaceSetupVisible && (
+                  <div className="new-chat-context-body" id={`${pane}-new-chat-context-body`}>
+                    <div className="new-chat-context-header">
+                      <div className="new-chat-context-heading">
+                        <span className="new-chat-context-eyebrow">Workspace setup</span>
+                        <p>Adjust the project, worktree, or ownership before sending.</p>
+                      </div>
+                    </div>
+                    <div className="new-chat-context-rows">
+                      <div
+                        className="new-chat-context-row new-chat-context-row--host"
+                        aria-label={`${hostLabel}, current Aldunis host`}
+                      >
+                        <Icon name="computer" />
+                        <span className="new-chat-context-copy">
+                          <strong>Execution host</strong>
+                          <small>{hostLabel}</small>
+                        </span>
+                      </div>
+                      <div className="new-chat-context-control" ref={projectMenuRef}>
+                        <button
+                          type="button"
+                          className="new-chat-context-row new-chat-context-row--button"
+                          onClick={openProjectMenu}
+                          title={repository?.root ?? "Choose a project"}
+                          aria-haspopup="listbox"
+                          aria-expanded={projectMenuOpen}
+                          aria-controls={projectMenuOpen ? "new-chat-project-menu" : undefined}
+                          aria-label={
+                            repository
+                              ? `Project ${repository.name}. Open project selector.`
+                              : "Choose a project."
+                          }
+                        >
+                          <Icon name="folder" />
+                          <span className="new-chat-context-copy">
+                            <strong>{repository?.name ?? "Choose a project"}</strong>
+                            <small title={repository?.root}>
+                              {repository?.root ?? "Choose a project before sending"}
+                            </small>
+                          </span>
+                          <Icon name="chevron" />
+                        </button>
+                        {projectMenuOpen && (
+                          <div
+                            id="new-chat-project-menu"
+                            className="new-chat-context-menu composer-provider-menu"
+                            role="listbox"
+                            aria-label="Choose project"
+                          >
+                            {projects.map((project) => {
+                              const selected =
+                                project.id === repository?.projectId ||
+                                project.memberIds?.includes(repository?.projectId ?? "") ||
+                                project.root === repository?.root;
+                              return (
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  aria-label={`${project.name}: ${project.root}${selected ? ", selected" : ""}`}
+                                  data-project-option=""
+                                  data-project-id={project.id}
+                                  key={project.id}
+                                  className={`composer-provider-option ${selected ? "active" : ""}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    selectProject(project.id);
+                                  }}
+                                >
+                                  <span className="n">
+                                    {project.name}
+                                    {selected ? " · selected" : ""}
+                                  </span>
+                                  <span className="p">{project.root}</span>
+                                </button>
+                              );
+                            })}
+                            {projects.length === 0 && (
+                              <p className="new-chat-context-note" role="note">
+                                No registered projects yet.
+                              </p>
+                            )}
+                            <button
+                              type="button"
+                              className="composer-provider-option add"
+                              aria-label="Add project: Register a local repository once"
+                              onClick={() => {
+                                setProjectMenuOpen(false);
+                                onAddProject();
+                              }}
+                            >
+                              <span className="n">Add project…</span>
+                              <span className="p">Register a local repository once</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="new-chat-context-control" ref={workspaceMenuRef}>
+                        <button
+                          type="button"
+                          className="new-chat-context-row new-chat-context-row--button"
+                          aria-haspopup="listbox"
+                          aria-expanded={workspaceMenuOpen}
+                          aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
+                          title={workspaceCopy.detail}
+                          aria-label={`Workspace strategy: ${workspaceCopy.label}. Open workspace strategy menu.`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openWorkspaceMenu();
+                          }}
+                        >
+                          <Icon name="code" />
+                          <span className="new-chat-context-copy">
+                            <strong>{newConversationWorkspaceCopy.label}</strong>
+                            <small>{newConversationWorkspaceCopy.summary}</small>
+                          </span>
+                          <Icon name="chevron" />
+                        </button>
+                        {workspaceMenuOpen && (
+                          <div
+                            id="new-chat-workspace-menu"
+                            className="new-chat-context-menu composer-provider-menu"
+                            role="listbox"
+                            aria-label="Choose workspace strategy"
+                          >
+                            {NEW_CONVERSATION_WORKSPACE_MODES.map((item) => {
+                              const selected = item === workspaceMode;
+                              const native = item === "provider-native";
+                              const available = !native || providerNativeWorkspaceAvailable;
+                              const itemCopy = NEW_CONVERSATION_WORKSPACE_COPY[item];
+                              const detail =
+                                native && !available
+                                  ? "Provider-owned workspaces are not available for this provider yet."
+                                  : itemCopy.detail;
+                              return (
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  aria-disabled={!available}
+                                  disabled={!available}
+                                  aria-label={`${itemCopy.label}: ${detail}${selected ? ", selected" : ""}`}
+                                  key={item}
+                                  data-workspace-option=""
+                                  data-workspace-mode={item}
+                                  className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    selectWorkspaceMode(item, "menu");
+                                  }}
+                                >
+                                  <span className="n">
+                                    {itemCopy.label}
+                                    {selected ? " · selected" : ""}
+                                  </span>
+                                  <span className="p">{detail}</span>
+                                </button>
+                              );
+                            })}
+                            {!providerNativeWorkspaceAvailable && (
+                              <p className="new-chat-context-note" role="note">
+                                Provider-owned workspaces are unavailable for this provider. A
+                                dedicated worktree is ready to use.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        className="new-chat-context-worktree-picker"
+                        role="group"
+                        aria-label="Choose the conversation worktree"
+                      >
+                        {selectableWorktrees.length > 1 && (
+                          <div className="new-chat-worktree-tools">
+                            <label
+                              htmlFor={`${pane}-worktree-filter`}
+                              className="new-chat-worktree-filter-label"
+                            >
+                              Filter branches
+                            </label>
+                            <input
+                              id={`${pane}-worktree-filter`}
+                              type="search"
+                              value={worktreeFilter}
+                              onChange={(event) => setWorktreeFilter(event.target.value)}
+                              placeholder="Filter branches…"
+                              aria-controls={`${pane}-worktree-select`}
+                            />
+                            <span className="new-chat-worktree-count" aria-live="polite">
+                              {worktreeFilterHasNoMatches
+                                ? "No matches"
+                                : `${filteredSelectableWorktrees.length} available`}
+                            </span>
+                          </div>
+                        )}
+                        <label className="new-chat-context-row new-chat-context-row--select">
+                          <Icon name="branch" />
+                          <span className="new-chat-context-copy">
+                            <strong>
+                              {worktree?.branch ??
+                                (worktree ? "Detached HEAD" : "Choose a worktree")}
+                            </strong>
+                            <small title={worktree?.path}>
+                              {worktree?.path ?? "Select an available branch"}
+                            </small>
+                          </span>
+                          <Icon name="chevron" />
+                          <select
+                            id={`${pane}-worktree-select`}
+                            aria-label="Choose the conversation worktree"
+                            value={worktreeSelectValue}
+                            disabled={
+                              selectableWorktrees.length === 0 || worktreeFilterHasNoMatches
+                            }
+                            onChange={(event) => {
+                              if (event.target.value) onSelectWorktree(event.target.value);
+                            }}
+                          >
+                            {selectableWorktrees.length === 0 && (
+                              <option value="">No available worktree</option>
+                            )}
+                            {worktreeFilterHasNoMatches && (
+                              <option value="">No matching worktree</option>
+                            )}
+                            {managedSelectableWorktrees.length > 0 && (
+                              <optgroup label="Aldunis worktrees">
+                                {managedSelectableWorktrees.map((item) => (
+                                  <option value={item.path} key={item.path}>
+                                    {formatWorktreeOptionLabel(item)}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {userSelectableWorktrees.length > 0 && (
+                              <optgroup label="Existing worktrees">
+                                {userSelectableWorktrees.map((item) => (
+                                  <option value={item.path} key={item.path}>
+                                    {formatWorktreeOptionLabel(item)}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                          </select>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+            <div className="cbox">
+              {elementReferences.length > 0 && (
+                <div className="composer-context" aria-label="Attached element context">
+                  {elementReferences.map((reference, index) => (
+                    <span key={`${reference.selector}-${index}`}>
+                      {reference.tag} · {reference.name ?? reference.selector}
                       <button
                         type="button"
-                        role="option"
-                        aria-selected={selected}
-                        aria-label={`${option.displayName} (${option.id}): ${detail}`}
-                        title={option.id}
-                        key={option.id}
-                        data-model-option=""
-                        data-model-id={option.id}
-                        className={`composer-provider-option ${selected ? "active" : ""}`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          selectModel(option.id, "menu");
-                        }}
+                        onClick={() =>
+                          setElementReferences((current) =>
+                            current.filter((_, item) => item !== index),
+                          )
+                        }
+                        aria-label={`Remove element reference ${reference.name ?? reference.selector}`}
                       >
-                        <span className="n">{option.displayName}</span>
-                        <span className="p">{detail}</span>
+                        ×
                       </button>
-                    );
-                  })}
-                  {showReasoningEffort && (
-                    <>
-                      <div className="composer-menu-section" role="presentation">Reasoning effort</div>
-                      {reasoningEfforts.map((effort) => {
-                        const selected = effort === reasoningEffort;
+                    </span>
+                  ))}
+                </div>
+              )}
+              {attachments.length > 0 && (
+                <div className="context-chips" aria-label="Attached local context">
+                  {attachments.map((path) => (
+                    <span key={path}>
+                      @{path}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAttachments((current) => current.filter((item) => item !== path))
+                        }
+                        aria-label={`Remove ${path}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                className="composer-context-summary"
+                onClick={() => {
+                  setPlanOpen(false);
+                  setContextOpen(true);
+                }}
+                aria-label="Inspect draft context package"
+              >
+                Context:{" "}
+                {draftContextReceipt
+                  ? `${draftContextReceipt.entries.filter((entry) => entry.omissionReason === null).length} files, approximately ${draftContextReceipt.estimatedTokens.toLocaleString()} tokens`
+                  : contextPackageBusy
+                    ? "resolving…"
+                    : "unavailable"}
+              </button>
+              {suggestionMode && (
+                <div
+                  className="composer-suggestions"
+                  role="listbox"
+                  aria-label={
+                    suggestionMode === "path"
+                      ? "File suggestions"
+                      : suggestionMode === "skill"
+                        ? "Skill suggestions"
+                        : "Command suggestions"
+                  }
+                >
+                  {suggestionGroups.map((group) => (
+                    <section className="composer-suggestions-group" key={group.id}>
+                      <div className="composer-suggestions-group-label">{group.label}</div>
+                      {group.items.map((suggestion) => {
+                        const index = orderedSuggestions.indexOf(suggestion);
                         return (
                           <button
                             type="button"
                             role="option"
-                            aria-selected={selected}
-                            aria-label={`Reasoning effort ${effort}${selected ? ", selected" : ""}`}
-                            key={`effort-${effort}`}
-                            className={`composer-provider-option ${selected ? "active" : ""}`}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              if (performance.now() < modelMenuOpenedAtRef.current) return;
-                              setReasoningEffort(effort);
-                              setModelMenuOpen(false);
-                            }}
+                            aria-selected={index === suggestionIndex}
+                            aria-label={suggestion.label + ": " + suggestion.description}
+                            title={suggestion.label + " — " + suggestion.description}
+                            className={index === suggestionIndex ? "active" : ""}
+                            key={suggestion.id}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onMouseEnter={() => setSuggestionIndex(index)}
+                            onClick={() => selectSuggestion(suggestion)}
                           >
-                            <span className="n">{effort}</span>
-                            <span className="p">{selected ? "selected" : "reasoning"}</span>
+                            {suggestion.type === "path" && (
+                              <span className="composer-suggestion-kind" aria-hidden="true">
+                                @
+                              </span>
+                            )}
+                            <strong title={suggestion.label}>{suggestion.label}</strong>
+                            <small title={suggestion.description}>{suggestion.description}</small>
                           </button>
                         );
                       })}
-                    </>
+                    </section>
+                  ))}
+                  {suggestions.length === 0 && (
+                    <p className="composer-suggestions-empty">
+                      {suggestionMode === "path"
+                        ? "No matching files or folders."
+                        : suggestionMode === "skill"
+                          ? "No matching skills."
+                          : "No matching commands."}
+                    </p>
                   )}
                 </div>
               )}
-            </div>
-            <span className="cdiv" />
-            {!managedMode && <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
-              {/* Single control: mode + tool scope. Dual Access/Mode chips both
-                  opened the same menu and "Access Read-only" read like privacy. */}
-              <button
-                type="button"
-                className={`cc ${accessScope.warning ? "scoped" : ""}`}
-                disabled={!canPickMode}
-                aria-haspopup={managedMode ? undefined : "listbox"}
-                aria-expanded={managedMode ? undefined : modeMenuOpen}
-                aria-controls={managedMode ? undefined : modeMenuOpen ? "composer-mode-menu" : undefined}
-                title={managedMode ? "Managed hosted mode fixes Build · Worktree write." : `${modeCopy[mode].label} · ${accessScope.detail}`}
-                aria-label={managedMode
-                  ? "Managed hosted mode: Build, Worktree write"
-                  : `Mode ${modeCopy[mode].label}, tool scope ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (managedMode) return;
-                  if (!canPickMode) return;
-                  openModeMenu();
+              <textarea
+                ref={composerRef}
+                className="composer-input"
+                value={draft}
+                spellCheck
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (voiceInputState === "listening") stopVoiceInput();
+                  setVoiceInputError(null);
+                  setDraft(value);
+                  // Typing while recalling a prior prompt exits history browse (live draft).
+                  setPromptHistoryBrowse((current) =>
+                    isBrowsingPromptHistory(current, promptHistory)
+                      ? resetPromptHistoryBrowse(promptHistory)
+                      : current,
+                  );
                 }}
-              >
-                <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="3" y="11" width="18" height="10" rx="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-                <span className="mode-chip-label">
-                  {modeCopy[mode].label}
-                  <span className="mode-chip-scope"> · {accessScope.label}</span>
-                </span>
-                {!managedMode && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
-              </button>
-              {modeMenuOpen && canPickMode && (
-                <div
-                  id="composer-mode-menu"
-                  className="composer-provider-menu"
-                  role="listbox"
-                  aria-label="Choose interaction mode"
-                >
-                  {INTERACTION_MODES.map((item) => {
-                    const selected = item === mode;
-                    const scopeLabel = item === "ask" ? "Read-only" : item === "plan" ? "Plan only" : "Worktree write";
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        aria-label={`${modeCopy[item].label} · ${scopeLabel}: ${modeCopy[item].authority}${selected ? ", selected" : ""}`}
-                        key={item}
-                        data-mode-option=""
-                        data-mode-id={item}
-                        className={`composer-provider-option ${selected ? "active" : ""}`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          selectMode(item, "menu");
-                        }}
-                      >
-                        <span className="n">{modeCopy[item].label} · {scopeLabel}</span>
-                        <span className="p">{modeCopy[item].authority}{selected ? " · selected" : ""}</span>
-                      </button>
+                onPaste={() => {
+                  setContextError(null);
+                  setVoiceInputError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    suggestionMode &&
+                    orderedSuggestions.length > 0 &&
+                    (event.key === "ArrowDown" || event.key === "ArrowUp")
+                  ) {
+                    event.preventDefault();
+                    setSuggestionIndex((current) =>
+                      event.key === "ArrowDown"
+                        ? (current + 1) % orderedSuggestions.length
+                        : (current - 1 + orderedSuggestions.length) % orderedSuggestions.length,
                     );
-                  })}
+                    return;
+                  }
+                  if (
+                    suggestionMode &&
+                    orderedSuggestions.length > 0 &&
+                    (event.key === "Tab" || event.key === "Enter")
+                  ) {
+                    event.preventDefault();
+                    selectSuggestion(orderedSuggestions[suggestionIndex]);
+                    return;
+                  }
+                  if (event.key === "Escape" && suggestionMode) {
+                    event.preventDefault();
+                    setSuggestionMode(null);
+                    return;
+                  }
+                  if (
+                    event.key === "Escape" &&
+                    isBrowsingPromptHistory(promptHistoryBrowse, promptHistory)
+                  ) {
+                    event.preventDefault();
+                    setDraft(promptHistoryBrowse.draftBeforeHistory);
+                    setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
+                    return;
+                  }
+                  // Shell-style prompt history: ↑ at start/empty (or while browsing), ↓ while browsing.
+                  if (!suggestionMode && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+                    const browsing = isBrowsingPromptHistory(promptHistoryBrowse, promptHistory);
+                    if (event.key === "ArrowUp") {
+                      if (!browsing && !isComposerHistoryBoundary(event.currentTarget)) return;
+                      const next = stepPromptHistoryUp(promptHistory, promptHistoryBrowse, draft);
+                      if (!next) return;
+                      event.preventDefault();
+                      setPromptHistoryBrowse(next);
+                      setDraft(draftForPromptHistoryIndex(promptHistory, next));
+                      return;
+                    }
+                    if (!browsing) return;
+                    const next = stepPromptHistoryDown(promptHistory, promptHistoryBrowse);
+                    if (!next) return;
+                    event.preventDefault();
+                    setPromptHistoryBrowse(next);
+                    setDraft(draftForPromptHistoryIndex(promptHistory, next));
+                    return;
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder={
+                  !historyRestored
+                    ? "Restoring conversation session…"
+                    : conversationWorktreeMissing
+                      ? "Conversation worktree is not available for the open repository…"
+                      : !providerReady
+                        ? providerReadinessMessage
+                        : worktree
+                          ? readyComposerPlaceholder(providerName, threadId)
+                          : "Choose a project and worktree to continue…"
+                }
+                id={`${pane}-composer`}
+                name={`${pane}-composer`}
+                aria-label={`Message ${providerName}`}
+                disabled={!worktree || !providerReady || runActive || !historyRestored}
+              />
+              {voiceInputState === "listening" && (
+                <div className="voice-input-status" role="status" aria-live="polite">
+                  <span className="voice-input-status-dot" aria-hidden="true" />
+                  <span>
+                    Listening… {voiceInputInterim ? `“${voiceInputInterim}”` : "Speak naturally."}
+                  </span>
                 </div>
               )}
-            </div>}
-            {!canPickWorkspace && <div className="composer-provider composer-workspace-group" ref={workspaceMenuRef}>
-              <button
-                type="button"
-                className="cc workspace-mode-chip"
-                disabled={!canPickWorkspace}
-                aria-haspopup={canPickWorkspace ? "listbox" : undefined}
-                aria-expanded={canPickWorkspace ? workspaceMenuOpen : undefined}
-                aria-controls={canPickWorkspace && workspaceMenuOpen ? "composer-workspace-menu" : undefined}
-                title={conversation
-                  ? `Workspace is fixed to ${workspaceCopy.label}. Use a reviewed fork to create another conversation.`
-                  : workspaceCopy.detail}
-                aria-label={conversation
-                  ? `Workspace ${workspaceCopy.label}. Fixed for this conversation.`
-                  : `Workspace ${workspaceCopy.label}. Opens workspace mode menu.`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (canPickWorkspace) openWorkspaceMenu();
-                }}
-              >
-                {workspaceCopy.shortLabel}
-                {canPickWorkspace && <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
-              </button>
-              {workspaceMenuOpen && canPickWorkspace && (
-                <div
-                  id="composer-workspace-menu"
-                  className="composer-provider-menu workspace-mode-menu"
-                  role="listbox"
-                  aria-label="Choose conversation workspace"
-                >
-                  {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
-                    const selected = item === workspaceMode;
-                    const native = item === "provider-native";
-                    const available = !native || providerNativeWorkspaceAvailable;
-                    const detail = native && !available
-                      ? capabilities?.workspace?.providerNativeDetail ?? "This provider adapter does not expose native worktree creation yet."
-                      : WORKSPACE_MODE_COPY[item].detail;
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        aria-disabled={!available}
-                        disabled={!available}
-                        aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
-                        key={item}
-                        data-workspace-option=""
-                        data-workspace-mode={item}
-                        className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          selectWorkspaceMode(item, "menu");
-                        }}
-                      >
-                        <span className="n">{WORKSPACE_MODE_COPY[item].label}{selected ? " · selected" : ""}</span>
-                        <span className="p">{detail}</span>
-                      </button>
-                    );
-                  })}
+              {voiceInputError && (
+                <div className="context-error voice-input-error" role="alert">
+                  {voiceInputError}
                 </div>
-                )}
-              </div>}
-            </div>
-            {runId
-              ? (
-                <button type="button" className="send" onClick={() => void cancel()} disabled={providerState === "cancelling"} aria-label={`Cancel, ${pane} pane`}>
-                  <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
-                </button>
-              )
-              : (
+              )}
+              {!providerReady && historyRestored && providersLoaded && (
+                <div className="context-error" role="status">
+                  {providerReadinessMessage}
+                </div>
+              )}
+              {contextError && (
+                <div className="context-error" role="alert">
+                  {contextError}
+                </div>
+              )}
+              {historyRestoreError && (
+                <div className="context-error" role="alert">
+                  {historyRestoreError}
+                </div>
+              )}
+              <div className="crow">
                 <button
                   type="button"
-                  className="send"
-                  onClick={() => void send()}
-                  disabled={!draft.trim() || !worktree || !providerReady || runActive || !historyRestored}
-                  aria-label={`${threadId ? "Send" : "Start"} conversation, ${pane} pane`}
+                  className={`voice-input-toggle ${voiceInputState === "listening" ? "is-listening" : ""} ${voiceInputState === "error" ? "is-error" : ""}`}
+                  aria-pressed={voiceInputState === "listening"}
+                  aria-keyshortcuts="Meta+Shift+M Control+Shift+M"
+                  aria-label={
+                    voiceInputState === "listening"
+                      ? "Stop voice input"
+                      : voiceInputState === "unsupported"
+                        ? "Voice input unavailable"
+                        : voiceInputState === "error"
+                          ? "Try voice input again"
+                          : "Start voice input"
+                  }
+                  title={
+                    voiceInputState === "listening"
+                      ? `Stop voice input (${VOICE_INPUT_SHORTCUT_LABEL})`
+                      : voiceInputState === "unsupported"
+                        ? "Voice input is not available in this browser"
+                        : voiceInputState === "error"
+                          ? `Try voice input again (${VOICE_INPUT_SHORTCUT_LABEL})`
+                          : `Start voice input (${VOICE_INPUT_SHORTCUT_LABEL})`
+                  }
+                  disabled={!worktree || !providerReady || runActive || !historyRestored}
+                  onClick={() => {
+                    if (voiceInputState === "listening") stopVoiceInput();
+                    else startVoiceInput();
+                  }}
                 >
-                  <svg className="ic ic-lg" viewBox="0 0 24 24" style={{ strokeWidth: 2 }} aria-hidden="true">
-                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="9" y="3" width="6" height="11" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
                   </svg>
-                  <span className="send-label">{threadId ? "Send" : "Start"}</span>
                 </button>
-              )}
+                <div className="composer-run-settings" role="group" aria-label="Run settings">
+                  <span className="composer-run-settings-label">Run settings</span>
+                  <div className="composer-provider" ref={providerMenuRef}>
+                    <button
+                      type="button"
+                      className="cc"
+                      disabled={runActive || managedMode}
+                      aria-haspopup={
+                        managedMode ? undefined : canSwitchProvider ? "listbox" : undefined
+                      }
+                      aria-expanded={
+                        managedMode ? undefined : canSwitchProvider ? providerMenuOpen : undefined
+                      }
+                      title={
+                        managedMode
+                          ? "Managed hosted mode fixes Shikigami and does not allow provider selection."
+                          : !providersLoaded
+                            ? "Checking provider…"
+                            : !providerReady
+                              ? providerReadinessMessage
+                              : canSwitchProvider
+                                ? "Open the provider menu"
+                                : conversation
+                                  ? "Provider is fixed for this conversation. Use Fork in the top bar to change providers. Click opens provider profiles."
+                                  : "Open provider profiles"
+                      }
+                      aria-label={
+                        managedMode
+                          ? "Managed hosted mode: Shikigami"
+                          : !providersLoaded
+                            ? `Checking ${providerName}…`
+                            : !providerReady
+                              ? `${providerName} not ready: ${providerReadinessMessage}`
+                              : canSwitchProvider
+                                ? `Provider ${providerName}. Open menu to choose among ${availableProviders.length} providers.`
+                                : conversation
+                                  ? "Open provider profiles. Provider is fixed — use Fork to change providers."
+                                  : "Open provider profiles"
+                      }
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (managedMode) return;
+                        if (!canSwitchProvider) {
+                          closeComposerMenus();
+                          onOpenProfiles(provider);
+                          return;
+                        }
+                        setModelMenuOpen(false);
+                        setModeMenuOpen(false);
+                        setProviderMenuOpen((open) => {
+                          if (open) return false;
+                          // Block accidental option activation from the open gesture.
+                          providerMenuOpenedAtRef.current = performance.now() + 200;
+                          return true;
+                        });
+                      }}
+                    >
+                      <span className="pv" aria-hidden="true">
+                        {providerAvatarInitials(provider, providerLabel)}
+                      </span>
+                      {providerChipName}
+                      {selectedProfileName && (
+                        <span
+                          className="composer-provider-profile-chip"
+                          title={`Profile: ${selectedProfileName}`}
+                        >
+                          · {selectedProfileName}
+                        </span>
+                      )}
+                      {!managedMode && (
+                        <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      )}
+                    </button>
+                    {providerMenuOpen && canSwitchProvider && (
+                      <div
+                        className="composer-provider-menu"
+                        role="listbox"
+                        aria-label="Choose provider"
+                      >
+                        {availableProviders.map((id) => {
+                          const discovery = providers.find((item) => item.id === id);
+                          const label = providerDisplayName(id, discovery);
+                          const chip = formatProviderChipName(id, discovery);
+                          const selected = id === provider;
+                          const shikigamiMenuDiscovery =
+                            id === "shikigami"
+                              ? providerDiscoveryForProfile(
+                                  "shikigami",
+                                  shikigamiProvider,
+                                  shikigamiProfiles.some((profile) => profile.id === profileId)
+                                    ? profileId
+                                    : defaultShikigamiProfileId,
+                                )
+                              : undefined;
+                          const ready =
+                            id === "claude-code"
+                              ? Boolean(profileId)
+                              : id === "codex-cli"
+                                ? Boolean(codex?.installed && codex.authenticated)
+                                : id === "shikigami"
+                                  ? Boolean(
+                                      shikigamiMenuDiscovery?.installed &&
+                                      shikigamiMenuDiscovery.authenticated &&
+                                      shikigamiProfiles.length > 0,
+                                    )
+                                  : Boolean(
+                                      discovery &&
+                                      discovery.installed !== false &&
+                                      discovery.enabled !== false &&
+                                      discovery.authenticated !== false,
+                                    );
+                          const statusDiscovery =
+                            id === "shikigami" ? shikigamiMenuDiscovery : discovery;
+                          const status = ready
+                            ? selected
+                              ? "selected"
+                              : "ready"
+                            : statusDiscovery?.detail?.trim() ||
+                              providerNotReadyMessage(id, statusDiscovery, {
+                                hasClaudeProfile: Boolean(profileId),
+                                providerName: label,
+                              });
+                          return (
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              aria-label={`${label}: ${chip} · ${status}`}
+                              key={id}
+                              data-provider-option=""
+                              data-provider-id={id}
+                              className={`composer-provider-option ${selected ? "active" : ""} ${ready ? "" : "not-ready"}`}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                selectProvider(id, "menu");
+                              }}
+                            >
+                              <span className="n">{label}</span>
+                              <span className="p">
+                                {chip} · {status}
+                              </span>
+                            </button>
+                          );
+                        })}
+                        {provider === "claude-code" && claudeProfiles.length > 1 && (
+                          <div className="composer-provider-profile">
+                            <label htmlFor="composer-claude-profile">
+                              Claude Code profile
+                              <select
+                                id="composer-claude-profile"
+                                value={profileId}
+                                aria-label="Claude Code profile"
+                                onChange={(event) => setProfileId(event.target.value)}
+                              >
+                                {claudeProfiles.map((profile) => (
+                                  <option value={profile.id} key={profile.id}>
+                                    {profile.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        )}
+                        {provider === "shikigami" && shikigamiProfiles.length > 1 && (
+                          <div className="composer-provider-profile">
+                            <label htmlFor="composer-shikigami-profile">
+                              Shikigami profile
+                              <select
+                                id="composer-shikigami-profile"
+                                value={profileId}
+                                onChange={(event) => {
+                                  const nextProfileId = event.target.value;
+                                  setProfileId(nextProfileId);
+                                  setModel(
+                                    resolveDefaultProviderModel(
+                                      "shikigami",
+                                      providerDiscoveryForProfile(
+                                        "shikigami",
+                                        shikigamiProvider,
+                                        nextProfileId,
+                                      ),
+                                    ),
+                                  );
+                                }}
+                              >
+                                {shikigamiProfiles.map((profile) => (
+                                  <option value={profile.id} key={profile.id}>
+                                    {profile.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          </div>
+                        )}
+                        <div
+                          className="composer-menu-section composer-menu-section--separator"
+                          role="presentation"
+                        >
+                          Provider setup
+                        </div>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={false}
+                          aria-label="Provider profiles: Manage binaries and env for each provider"
+                          className="composer-provider-option add"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setProviderMenuOpen(false);
+                            onOpenProfiles(provider);
+                          }}
+                        >
+                          <span className="n">Provider profiles…</span>
+                          <span className="p">Manage binaries and env for each provider</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="composer-provider" ref={modelMenuRef}>
+                    <button
+                      type="button"
+                      className="cc"
+                      disabled={!canPickModel}
+                      aria-haspopup={managedMode ? undefined : "listbox"}
+                      aria-expanded={managedMode ? undefined : modelMenuOpen}
+                      title={
+                        managedMode
+                          ? "Managed hosted mode fixes the operator-approved model."
+                          : "Open the model menu"
+                      }
+                      aria-label={
+                        managedMode
+                          ? `Managed model ${modelChipDisplay}`
+                          : showReasoningEffort
+                            ? `Model ${modelChipDisplay}, effort ${reasoningEffort}. Open menu to choose a model or reasoning effort.`
+                            : `Model ${modelChipDisplay}. Open menu to choose a model.`
+                      }
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (managedMode) return;
+                        if (!canPickModel) return;
+                        setProviderMenuOpen(false);
+                        setModeMenuOpen(false);
+                        setModelMenuOpen((open) => {
+                          if (open) return false;
+                          modelMenuOpenedAtRef.current = performance.now() + 200;
+                          return true;
+                        });
+                      }}
+                    >
+                      {showReasoningEffort
+                        ? `${modelChipDisplay} · ${reasoningEffort}`
+                        : modelChipDisplay}
+                      {!managedMode && (
+                        <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      )}
+                    </button>
+                    {modelMenuOpen && canPickModel && (
+                      <div
+                        className="composer-provider-menu"
+                        role="listbox"
+                        aria-label="Choose model"
+                      >
+                        {modelOptions.map((option) => {
+                          const selected = option.id === effectiveModel || option.id === model;
+                          const isDiscoveryDefault = selectedProvider?.models?.some(
+                            (entry) => entry.id === option.id && entry.isDefault,
+                          );
+                          const detail =
+                            [
+                              isDiscoveryDefault ? "Default model" : null,
+                              selected ? "Selected" : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || "Available";
+                          return (
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              aria-label={`${option.displayName} (${option.id}): ${detail}`}
+                              title={option.id}
+                              key={option.id}
+                              data-model-option=""
+                              data-model-id={option.id}
+                              className={`composer-provider-option ${selected ? "active" : ""}`}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                selectModel(option.id, "menu");
+                              }}
+                            >
+                              <span className="n">{option.displayName}</span>
+                              <span className="p">{detail}</span>
+                            </button>
+                          );
+                        })}
+                        {showReasoningEffort && (
+                          <>
+                            <div className="composer-menu-section" role="presentation">
+                              Reasoning effort
+                            </div>
+                            {reasoningEfforts.map((effort) => {
+                              const selected = effort === reasoningEffort;
+                              return (
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  aria-label={`Reasoning effort ${effort}${selected ? ", selected" : ""}`}
+                                  key={`effort-${effort}`}
+                                  className={`composer-provider-option ${selected ? "active" : ""}`}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    if (performance.now() < modelMenuOpenedAtRef.current) return;
+                                    setReasoningEffort(effort);
+                                    setModelMenuOpen(false);
+                                  }}
+                                >
+                                  <span className="n">{effort}</span>
+                                  <span className="p">{selected ? "selected" : "reasoning"}</span>
+                                </button>
+                              );
+                            })}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <span className="cdiv" />
+                  {!managedMode && (
+                    <div className="composer-provider composer-mode-group" ref={modeMenuRef}>
+                      {/* Single control: mode + tool scope. Dual Access/Mode chips both
+                  opened the same menu and "Access Read-only" read like privacy. */}
+                      <button
+                        type="button"
+                        className={`cc ${accessScope.warning ? "scoped" : ""}`}
+                        disabled={!canPickMode}
+                        aria-haspopup={managedMode ? undefined : "listbox"}
+                        aria-expanded={managedMode ? undefined : modeMenuOpen}
+                        aria-controls={
+                          managedMode ? undefined : modeMenuOpen ? "composer-mode-menu" : undefined
+                        }
+                        title={
+                          managedMode
+                            ? "Managed hosted mode fixes Build · Worktree write."
+                            : `${modeCopy[mode].label} · ${accessScope.detail}`
+                        }
+                        aria-label={
+                          managedMode
+                            ? "Managed hosted mode: Build, Worktree write"
+                            : `Mode ${modeCopy[mode].label}, tool scope ${accessScope.label}. ${accessScope.detail}. Opens the mode menu.`
+                        }
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (managedMode) return;
+                          if (!canPickMode) return;
+                          openModeMenu();
+                        }}
+                      >
+                        <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+                          <rect x="3" y="11" width="18" height="10" rx="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span className="mode-chip-label">
+                          {modeCopy[mode].label}
+                          <span className="mode-chip-scope"> · {accessScope.label}</span>
+                        </span>
+                        {!managedMode && (
+                          <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        )}
+                      </button>
+                      {modeMenuOpen && canPickMode && (
+                        <div
+                          id="composer-mode-menu"
+                          className="composer-provider-menu"
+                          role="listbox"
+                          aria-label="Choose interaction mode"
+                        >
+                          {INTERACTION_MODES.map((item) => {
+                            const selected = item === mode;
+                            const scopeLabel =
+                              item === "ask"
+                                ? "Read-only"
+                                : item === "plan"
+                                  ? "Plan only"
+                                  : "Worktree write";
+                            return (
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                aria-label={`${modeCopy[item].label} · ${scopeLabel}: ${modeCopy[item].authority}${selected ? ", selected" : ""}`}
+                                key={item}
+                                data-mode-option=""
+                                data-mode-id={item}
+                                className={`composer-provider-option ${selected ? "active" : ""}`}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  selectMode(item, "menu");
+                                }}
+                              >
+                                <span className="n">
+                                  {modeCopy[item].label} · {scopeLabel}
+                                </span>
+                                <span className="p">
+                                  {modeCopy[item].authority}
+                                  {selected ? " · selected" : ""}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!canPickWorkspace && (
+                    <div
+                      className="composer-provider composer-workspace-group"
+                      ref={workspaceMenuRef}
+                    >
+                      <button
+                        type="button"
+                        className="cc workspace-mode-chip"
+                        disabled={!canPickWorkspace}
+                        aria-haspopup={canPickWorkspace ? "listbox" : undefined}
+                        aria-expanded={canPickWorkspace ? workspaceMenuOpen : undefined}
+                        aria-controls={
+                          canPickWorkspace && workspaceMenuOpen
+                            ? "composer-workspace-menu"
+                            : undefined
+                        }
+                        title={
+                          conversation
+                            ? `Workspace is fixed to ${workspaceCopy.label}. Use a reviewed fork to create another conversation.`
+                            : workspaceCopy.detail
+                        }
+                        aria-label={
+                          conversation
+                            ? `Workspace ${workspaceCopy.label}. Fixed for this conversation.`
+                            : `Workspace ${workspaceCopy.label}. Opens workspace mode menu.`
+                        }
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (canPickWorkspace) openWorkspaceMenu();
+                        }}
+                      >
+                        {workspaceCopy.shortLabel}
+                        {canPickWorkspace && (
+                          <svg className="ic ic-sm" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                        )}
+                      </button>
+                      {workspaceMenuOpen && canPickWorkspace && (
+                        <div
+                          id="composer-workspace-menu"
+                          className="composer-provider-menu workspace-mode-menu"
+                          role="listbox"
+                          aria-label="Choose conversation workspace"
+                        >
+                          {(Object.keys(WORKSPACE_MODE_COPY) as WorkspaceMode[]).map((item) => {
+                            const selected = item === workspaceMode;
+                            const native = item === "provider-native";
+                            const available = !native || providerNativeWorkspaceAvailable;
+                            const detail =
+                              native && !available
+                                ? (capabilities?.workspace?.providerNativeDetail ??
+                                  "This provider adapter does not expose native worktree creation yet.")
+                                : WORKSPACE_MODE_COPY[item].detail;
+                            return (
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                aria-disabled={!available}
+                                disabled={!available}
+                                aria-label={`${WORKSPACE_MODE_COPY[item].label}: ${detail}${selected ? ", selected" : ""}`}
+                                key={item}
+                                data-workspace-option=""
+                                data-workspace-mode={item}
+                                className={`composer-provider-option ${selected ? "active" : ""} ${available ? "" : "not-ready"}`}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  selectWorkspaceMode(item, "menu");
+                                }}
+                              >
+                                <span className="n">
+                                  {WORKSPACE_MODE_COPY[item].label}
+                                  {selected ? " · selected" : ""}
+                                </span>
+                                <span className="p">{detail}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {runId ? (
+                  <button
+                    type="button"
+                    className="send"
+                    onClick={() => void cancel()}
+                    disabled={providerState === "cancelling"}
+                    aria-label={`Cancel, ${pane} pane`}
+                  >
+                    <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="6" y="6" width="12" height="12" rx="1" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="send"
+                    onClick={() => void send()}
+                    disabled={
+                      !draft.trim() || !worktree || !providerReady || runActive || !historyRestored
+                    }
+                    aria-label={`${threadId ? "Send" : "Start"} conversation, ${pane} pane`}
+                  >
+                    <svg
+                      className="ic ic-lg"
+                      viewBox="0 0 24 24"
+                      style={{ strokeWidth: 2 }}
+                      aria-hidden="true"
+                    >
+                      <path d="M12 19V5M5 12l7-7 7 7" />
+                    </svg>
+                    <span className="send-label">{threadId ? "Send" : "Start"}</span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-      {/* File browser and preview stay inside .conv; the selector guarantees
+          {/* File browser and preview stay inside .conv; the selector guarantees
           only one workspace destination is visible at a time. */}
-      {repository && (previewMounted || activePanel === "preview" || previewFloating || agentBrowserViewOpen) && (
-        <PreviewPanel
-          key={`${repository.root}:${repository.selectedWorktree}`}
-          repository={repository}
-          pane={pane}
-          active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
-          floating={previewFloating}
-          conversationId={conversation?.id ?? threadId}
-          agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
-          onClose={closePreview}
-          onToggleFloating={togglePreviewFloating}
-          onReference={(reference) => setElementReferences((current) => [...current.slice(-2), reference])}
-          onStatusChange={updatePreviewStatus}
-        />
-      )}
-      {activePanel === "files" && repository && (
-        <FileBrowserPanel
-          repository={repository}
-          pane={pane}
-          attached={attachments}
-          maxAttachments={100}
-          onAttach={(path) => {
-            if (!attachments.includes(path) && contextPins.length < 100) {
-              setAttachments((current) => [...current, path]);
-              setContextError(null);
-            }
-          }}
-          onClose={() => closeWorkspacePanel("files")}
-        />
-      )}
-      </div>
-      {activePanel === "changes" && repository && (
-        <aside className="rv review-dock" aria-label={`Review changes, ${pane} pane`}>
-          <ChangesPanel
+          {repository &&
+            (previewMounted ||
+              activePanel === "preview" ||
+              previewFloating ||
+              agentBrowserViewOpen) && (
+              <PreviewPanel
+                key={`${repository.root}:${repository.selectedWorktree}`}
+                repository={repository}
+                pane={pane}
+                active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
+                floating={previewFloating}
+                conversationId={conversation?.id ?? threadId}
+                agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+                onClose={closePreview}
+                onToggleFloating={togglePreviewFloating}
+                onReference={(reference) =>
+                  setElementReferences((current) => [...current.slice(-2), reference])
+                }
+                onStatusChange={updatePreviewStatus}
+              />
+            )}
+          {activePanel === "files" && repository && (
+            <FileBrowserPanel
+              repository={repository}
+              pane={pane}
+              attached={attachments}
+              maxAttachments={100}
+              onAttach={(path) => {
+                if (!attachments.includes(path) && contextPins.length < 100) {
+                  setAttachments((current) => [...current, path]);
+                  setContextError(null);
+                }
+              }}
+              onClose={() => closeWorkspacePanel("files")}
+            />
+          )}
+        </div>
+        {activePanel === "changes" && repository && (
+          <aside className="rv review-dock" aria-label={`Review changes, ${pane} pane`}>
+            <ChangesPanel
+              repository={repository}
+              threadId={threadId}
+              pane={pane}
+              files={turnChangesReview?.files ?? changes}
+              loading={turnChangesReview ? false : changesLoading}
+              error={turnChangesReview ? null : changesError}
+              onClose={() => closeWorkspacePanel("changes")}
+              onRefresh={onRefreshChanges}
+              canSendRevision={historyRestored && !runActive && providerReady}
+              mode={changesMode}
+              onModeChange={setChangesMode}
+              checkpointId={turnChangesReview?.checkpointId ?? null}
+              readOnly={turnChangesReview !== null}
+              panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
+              onSendRevision={(prompt) => {
+                closeWorkspacePanel("changes", false);
+                void send(prompt);
+              }}
+            />
+          </aside>
+        )}
+        {planOpen && panelPlan && (
+          <aside
+            id={`${pane}-provider-plan-panel`}
+            className="provider-plan-panel"
+            aria-label={`Latest plan, ${pane} pane`}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.stopPropagation();
+              setPlanOpen(false);
+              planTriggerRef.current?.focus();
+            }}
+          >
+            <header>
+              <div>
+                <small>
+                  {providerDisplayName(
+                    panelPlan.provider,
+                    providers.find((item) => item.id === panelPlan.provider),
+                  )}
+                </small>
+                <h2>{panelPlan.title?.trim() || "Plan"}</h2>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                autoFocus
+                onClick={() => {
+                  setPlanOpen(false);
+                  planTriggerRef.current?.focus();
+                }}
+                aria-label="Close plan panel"
+              >
+                ×
+              </button>
+            </header>
+            <div className="provider-plan-panel-body">
+              <ProviderPlanContent plan={panelPlan} />
+            </div>
+            <footer>
+              <ProviderPlanActions plan={panelPlan} />
+            </footer>
+          </aside>
+        )}
+        {contextOpen && (
+          <ContextPackagePanel
+            receipt={draftContextReceipt}
+            pins={contextPins}
+            busy={contextPackageBusy}
+            error={contextError}
+            onAdd={(pin) => {
+              if (contextPins.some((item) => item.kind === pin.kind && item.path === pin.path))
+                return;
+              if (contextPins.length >= 100) {
+                setContextError("Pin at most 100 file or folder paths.");
+                return;
+              }
+              if (pin.kind === "file") setAttachments((current) => [...current, pin.path]);
+              else setFolderPins((current) => [...current, pin.path]);
+            }}
+            onRemove={(pin) => {
+              if (pin.kind === "file") {
+                setAttachments((current) => current.filter((path) => path !== pin.path));
+              } else {
+                setFolderPins((current) => current.filter((path) => path !== pin.path));
+              }
+            }}
+            onClose={() => setContextOpen(false)}
+          />
+        )}
+        {workspaceDialogOpen && !conversation && repository && (
+          <ConversationWorkspaceDialog
             repository={repository}
-            threadId={threadId}
-            pane={pane}
-            files={turnChangesReview?.files ?? changes}
-            loading={turnChangesReview ? false : changesLoading}
-            error={turnChangesReview ? null : changesError}
-            onClose={() => closeWorkspacePanel("changes")}
-            onRefresh={onRefreshChanges}
-            canSendRevision={historyRestored && !runActive && providerReady}
-            mode={changesMode}
-            onModeChange={setChangesMode}
-            checkpointId={turnChangesReview?.checkpointId ?? null}
-            readOnly={turnChangesReview !== null}
-            panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
-            onSendRevision={(prompt) => {
-              closeWorkspacePanel("changes", false);
-              void send(prompt);
+            conversationId={conversationId}
+            onClose={() => setWorkspaceDialogOpen(false)}
+            onUseCurrentWorkspace={() => {
+              setPreparedWorkspaceRepository(null);
+              setWorkspaceApprovalPending(false);
+              setWorkspaceMode("shared");
+              setWorkspaceDialogOpen(false);
+            }}
+            onCreated={(next) => {
+              setPreparedWorkspaceRepository(next);
+              onRepositoryChanged?.(next);
+              setWorkspaceDialogOpen(false);
+              setWorkspaceApprovalPending(true);
             }}
           />
-        </aside>
-      )}
-      {planOpen && panelPlan && (
-        <aside
-          id={`${pane}-provider-plan-panel`}
-          className="provider-plan-panel"
-          aria-label={`Latest plan, ${pane} pane`}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            setPlanOpen(false);
-            planTriggerRef.current?.focus();
-          }}
-        >
-          <header>
-            <div>
-              <small>{providerDisplayName(
-                panelPlan.provider,
-                providers.find((item) => item.id === panelPlan.provider),
-              )}</small>
-              <h2>{panelPlan.title?.trim() || "Plan"}</h2>
-            </div>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              autoFocus
-              onClick={() => {
-                setPlanOpen(false);
-                planTriggerRef.current?.focus();
-              }}
-              aria-label="Close plan panel"
-            >
-              ×
-            </button>
-          </header>
-          <div className="provider-plan-panel-body">
-            <ProviderPlanContent plan={panelPlan} />
-          </div>
-          <footer><ProviderPlanActions plan={panelPlan} /></footer>
-        </aside>
-      )}
-      {contextOpen && (
-        <ContextPackagePanel
-          receipt={draftContextReceipt}
-          pins={contextPins}
-          busy={contextPackageBusy}
-          error={contextError}
-          onAdd={(pin) => {
-            if (contextPins.some((item) => item.kind === pin.kind && item.path === pin.path)) return;
-            if (contextPins.length >= 100) {
-              setContextError("Pin at most 100 file or folder paths.");
-              return;
-            }
-            if (pin.kind === "file") setAttachments((current) => [...current, pin.path]);
-            else setFolderPins((current) => [...current, pin.path]);
-          }}
-          onRemove={(pin) => {
-            if (pin.kind === "file") {
-              setAttachments((current) => current.filter((path) => path !== pin.path));
-            } else {
-              setFolderPins((current) => current.filter((path) => path !== pin.path));
-            }
-          }}
-          onClose={() => setContextOpen(false)}
-        />
-      )}
-      {workspaceDialogOpen && !conversation && repository && (
-        <ConversationWorkspaceDialog
-          repository={repository}
-          conversationId={conversationId}
-          onClose={() => setWorkspaceDialogOpen(false)}
-          onUseCurrentWorkspace={() => {
-            setPreparedWorkspaceRepository(null);
-            setWorkspaceApprovalPending(false);
-            setWorkspaceMode("shared");
-            setWorkspaceDialogOpen(false);
-          }}
-          onCreated={(next) => {
-            setPreparedWorkspaceRepository(next);
-            onRepositoryChanged?.(next);
-            setWorkspaceDialogOpen(false);
-            setWorkspaceApprovalPending(true);
-          }}
-        />
-      )}
+        )}
       </div>
       {forkOpen && threadId && !managedMode && repository && (
         <ForkConversationDialog
@@ -4452,15 +5011,17 @@ export function Conversation({
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ threadId }),
             });
-            const settleResult = await settle.json() as { error?: string };
-            if (!settle.ok) throw new Error(settleResult.error ?? "Conversation could not be settled.");
+            const settleResult = (await settle.json()) as { error?: string };
+            if (!settle.ok)
+              throw new Error(settleResult.error ?? "Conversation could not be settled.");
             const release = await fetch("/api/state/conversations/release-worktree", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ threadId, confirm: true }),
             });
-            const releaseResult = await release.json() as { error?: string };
-            if (!release.ok) throw new Error(releaseResult.error ?? "Managed worktree release failed.");
+            const releaseResult = (await release.json()) as { error?: string };
+            if (!release.ok)
+              throw new Error(releaseResult.error ?? "Managed worktree release failed.");
             setCompletionDismissed(true);
             onConversationAvailable?.(threadId);
           }}
