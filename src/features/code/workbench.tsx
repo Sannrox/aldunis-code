@@ -1754,6 +1754,16 @@ export function CodeWorkbench({
                           quietDelegatedChild={quietPrimaryChild}
                           projects={projects}
                           projectConversations={conversations}
+                          promptStashOperatorKey={
+                            managedAccount
+                              ? [
+                                  managedAccount.tenantId,
+                                  managedAccount.displayName,
+                                  managedAccount.sessionExpiresAt ?? "",
+                                  managedAccount.assertionExpiresAt,
+                                ].join("\0")
+                              : null
+                          }
                           onAddProject={onAddProject}
                           onSelectProject={onSelectProject}
                           profiles={profiles}
@@ -1845,6 +1855,16 @@ export function CodeWorkbench({
                               quietDelegatedChild={quietSecondaryChild}
                               projects={projects}
                               projectConversations={conversations}
+                              promptStashOperatorKey={
+                                managedAccount
+                                  ? [
+                                      managedAccount.tenantId,
+                                      managedAccount.displayName,
+                                      managedAccount.sessionExpiresAt ?? "",
+                                      managedAccount.assertionExpiresAt,
+                                    ].join("\0")
+                                  : null
+                              }
                               onAddProject={onAddProject}
                               onSelectProject={onSelectProject}
                               profiles={profiles}

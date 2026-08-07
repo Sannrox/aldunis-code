@@ -3,6 +3,7 @@ import type { Preferences } from "../../preferences";
 import { Button } from "../../components/ui";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { VOICE_INPUT_SHORTCUT_LABEL } from "../../lib/voice-input";
+import { PROMPT_STASH_SHORTCUT_LABEL } from "../../lib/composer-prompt-stash";
 import { shortcutLabel } from "../../lib/workspace-shortcuts";
 import {
   DesktopUpdateSettings,
@@ -561,6 +562,15 @@ export function PreferencesDialog({
                     <div className="fd">Toggle dictation in the active conversation pane.</div>
                   </div>
                   <div className="fc"><kbd>{VOICE_INPUT_SHORTCUT_LABEL}</kbd></div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <div className="fn">Prompt stash</div>
+                    <div className="fd">
+                      Park the current draft across threads, or open the stash when empty.
+                    </div>
+                  </div>
+                  <div className="fc"><kbd>{PROMPT_STASH_SHORTCUT_LABEL}</kbd></div>
                 </div>
                 <p className="search-scope">
                   Product switch: ⌘1–4 (with Ctrl on Windows/Linux).

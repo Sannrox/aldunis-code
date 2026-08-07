@@ -1,3 +1,5 @@
+import { clearRemotePromptStashes } from "./lib/composer-prompt-stash";
+
 interface RemoteSession {
   hostId: string;
   sessionId: string;
@@ -24,7 +26,16 @@ async function sha256(value: BufferSource): Promise<string> {
 function loadSession(): RemoteSession | null {
   try {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null") as RemoteSession | null;
-    return value && Date.parse(value.expiresAt) > Date.now() ? value : null;
+    if (!value) return null;
+    if (Date.parse(value.expiresAt) > Date.now()) return value;
+    // Expired locally: drop remote-scoped prompt stashes before discarding the session.
+    try {
+      clearRemotePromptStashes(localStorage);
+    } catch {
+      // best-effort
+    }
+    localStorage.removeItem(STORAGE_KEY);
+    return null;
   } catch {
     return null;
   }
@@ -90,6 +101,12 @@ async function pairFromFragment(): Promise<void> {
     ["sign"],
   );
   await storePrivateKey(body.hostId, nonExportablePrivateKey);
+  // Pairing replaces any prior remote operator on this origin.
+  try {
+    clearRemotePromptStashes(localStorage);
+  } catch {
+    // best-effort
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(body));
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 }
@@ -135,6 +152,11 @@ async function authorizedFetch(input: RequestInfo | URL, init: RequestInit = {})
   headers.set("x-aldunis-origin", location.origin);
   const response = await nativeFetch(new Request(request, { headers }));
   if (response.status === 401) {
+    try {
+      clearRemotePromptStashes(localStorage);
+    } catch {
+      // best-effort
+    }
     localStorage.removeItem(STORAGE_KEY);
     queueMicrotask(() => location.reload());
   }

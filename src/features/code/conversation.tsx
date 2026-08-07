@@ -62,6 +62,22 @@ import {
 } from "../../lib/composer-draft-stash";
 import { resolvePreviousWorktreeSeed } from "../../lib/previous-worktree";
 import {
+  clearManagedPromptStashes,
+  createPromptStashEntry,
+  getPromptStashBackend,
+  getPromptStashStorage,
+  insertStashEntry,
+  matchesPromptStashShortcut,
+  PROMPT_STASH_SHORTCUT_LABEL,
+  readPromptStash,
+  removeStashEntry,
+  resolveActivePromptStashScope,
+  stashEntrySnippet,
+  stashPromptRejectionReason,
+  writePromptStash,
+  type PromptStashEntry,
+} from "../../lib/composer-prompt-stash";
+import {
   draftForPromptHistoryIndex,
   isBrowsingPromptHistory,
   isComposerHistoryBoundary,
@@ -414,6 +430,7 @@ export function Conversation({
   initialPrompt,
   initialProvider,
   projectConversations = [],
+  promptStashOperatorKey = null,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -451,9 +468,44 @@ export function Conversation({
   initialProvider?: ProviderId;
   /** Project peers used for previous-worktree seed on new conversations. */
   projectConversations?: ConversationSummary[];
+  /**
+   * Managed-operator identity for the explicit prompt-stash queue. Includes
+   * assertion/session expiry so re-auth starts a fresh memory bucket.
+   */
+  promptStashOperatorKey?: string | null;
 }) {
   const [draft, setDraft] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const promptStashScope = useMemo(
+    () => resolveActivePromptStashScope(getPromptStashStorage(), promptStashOperatorKey),
+    [promptStashOperatorKey],
+  );
+  const previousManagedScopeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!promptStashScope.startsWith("managed:")) {
+      if (previousManagedScopeRef.current) {
+        clearManagedPromptStashes();
+        previousManagedScopeRef.current = null;
+      }
+      return;
+    }
+    if (
+      previousManagedScopeRef.current &&
+      previousManagedScopeRef.current !== promptStashScope
+    ) {
+      clearManagedPromptStashes();
+    }
+    previousManagedScopeRef.current = promptStashScope;
+  }, [promptStashScope]);
+  const [promptStash, setPromptStash] = useState<PromptStashEntry[]>(() => {
+    const scope = resolveActivePromptStashScope(getPromptStashStorage(), promptStashOperatorKey);
+    return readPromptStash(getPromptStashBackend(scope), scope);
+  });
+  const [stashMenuOpen, setStashMenuOpen] = useState(false);
+  const [stashStatus, setStashStatus] = useState<string | null>(null);
+  const [stashPulse, setStashPulse] = useState(false);
+  const stashPulseTimerRef = useRef<number | null>(null);
+  const stashMenuRef = useRef<HTMLDivElement | null>(null);
   const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
   const voicePrefixRef = useRef("");
   const voiceFinalTranscriptRef = useRef("");
@@ -872,6 +924,154 @@ export function Conversation({
   useEffect(() => {
     setWorktreeFilter("");
   }, [repository?.projectId]);
+  useEffect(() => {
+    return () => {
+      if (stashPulseTimerRef.current !== null) window.clearTimeout(stashPulseTimerRef.current);
+    };
+  }, []);
+  useEffect(() => {
+    if (!stashMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && stashMenuRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest(`[data-prompt-stash-badge="${pane}"]`)) {
+        return;
+      }
+      setStashMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setStashMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pane, stashMenuOpen]);
+  const pulseStashBadge = useCallback(() => {
+    setStashPulse(true);
+    if (stashPulseTimerRef.current !== null) window.clearTimeout(stashPulseTimerRef.current);
+    stashPulseTimerRef.current = window.setTimeout(() => {
+      setStashPulse(false);
+      stashPulseTimerRef.current = null;
+    }, 450);
+  }, []);
+  const loadLatestPromptStash = useCallback(() => {
+    const latest = readPromptStash(getPromptStashBackend(promptStashScope), promptStashScope);
+    setPromptStash(latest);
+    return latest;
+  }, [promptStashScope]);
+  const persistPromptStash = useCallback(
+    (entries: PromptStashEntry[]) => {
+      const written = writePromptStash(
+        getPromptStashBackend(promptStashScope),
+        entries,
+        promptStashScope,
+      );
+      if (written) setPromptStash(entries);
+      return written;
+    },
+    [promptStashScope],
+  );
+  useEffect(() => {
+    if (!active) return;
+    loadLatestPromptStash();
+  }, [active, loadLatestPromptStash, promptStashScope]);
+  const stashCurrentDraft = useCallback(() => {
+    const rejection = stashPromptRejectionReason(draft);
+    if (rejection) {
+      setStashStatus(rejection);
+      return false;
+    }
+    const entry = createPromptStashEntry(draft);
+    if (!entry) {
+      setStashStatus("Nothing to stash.");
+      return false;
+    }
+    const { entries } = insertStashEntry(loadLatestPromptStash(), entry);
+    if (!persistPromptStash(entries)) {
+      setStashStatus("Could not stash prompt (storage unavailable).");
+      return false;
+    }
+    setDraft("");
+    setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
+    setStashMenuOpen(false);
+    setStashStatus("Prompt stashed.");
+    pulseStashBadge();
+    return true;
+  }, [draft, loadLatestPromptStash, persistPromptStash, promptHistory, pulseStashBadge]);
+  const restoreStashEntry = useCallback(
+    (entryId: string) => {
+      const hadDraft = Boolean(draft.trim());
+      if (hadDraft) {
+        const rejection = stashPromptRejectionReason(draft);
+        if (rejection) {
+          setStashStatus(
+            `Cannot restore while the composer has a draft: ${rejection.replace(/\.$/, "")}.`,
+          );
+          return;
+        }
+      }
+      const { entries: withoutTarget, removed } = removeStashEntry(
+        loadLatestPromptStash(),
+        entryId,
+      );
+      if (!removed) {
+        setStashStatus("That stashed prompt is no longer available.");
+        return;
+      }
+      let nextEntries = withoutTarget;
+      if (hadDraft) {
+        const parked = createPromptStashEntry(draft);
+        if (!parked) {
+          setStashStatus("Cannot restore while the composer has a draft.");
+          return;
+        }
+        nextEntries = insertStashEntry(withoutTarget, parked).entries;
+      }
+      if (!persistPromptStash(nextEntries)) {
+        setStashStatus("Could not update stash (storage unavailable).");
+        return;
+      }
+      setDraft(removed.prompt);
+      setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
+      setStashMenuOpen(false);
+      setStashStatus(
+        hadDraft ? "Current draft parked; stashed prompt restored." : "Prompt restored.",
+      );
+      pulseStashBadge();
+      requestAnimationFrame(() => {
+        const composer = composerRef.current;
+        if (!composer) return;
+        composer.focus();
+        const end = removed.prompt.length;
+        composer.setSelectionRange(end, end);
+      });
+    },
+    [draft, loadLatestPromptStash, persistPromptStash, promptHistory, pulseStashBadge],
+  );
+  const deleteStashEntry = useCallback(
+    (entryId: string) => {
+      const latest = loadLatestPromptStash();
+      const { entries, removed } = removeStashEntry(latest, entryId);
+      if (!removed) {
+        setStashStatus("That stashed prompt is no longer available.");
+        if (latest.length === 0) setStashMenuOpen(false);
+        return;
+      }
+      if (!persistPromptStash(entries)) {
+        setStashStatus("Could not update stash (storage unavailable).");
+        return;
+      }
+      setStashStatus("Stashed prompt removed.");
+      if (entries.length === 0) setStashMenuOpen(false);
+    },
+    [loadLatestPromptStash, persistPromptStash],
+  );
   const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {
     if (next === "claude-code") {
@@ -2989,23 +3189,35 @@ export function Conversation({
   );
   const worktreeFilterHasNoMatches =
     worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
+  // Offer previous worktree whenever a new chat can pick a checkout — not only
+  // when already in shared mode. Selecting it switches to shared reuse.
   const previousWorktreeSeed = useMemo(() => {
-    if (!canPickWorkspace || workspaceMode !== "shared") return null;
-    return resolvePreviousWorktreeSeed({
+    if (!canPickWorkspace) return null;
+    const seed = resolvePreviousWorktreeSeed({
       conversations: projectConversations,
       projectId: repository?.projectId ?? null,
       currentWorktreePath: repository?.selectedWorktree ?? null,
     });
+    if (!seed) return null;
+    // Only surface seeds that are still selectable.
+    if (!selectableWorktrees.some((item) => item.path === seed.worktreePath)) return null;
+    return seed;
   }, [
     canPickWorkspace,
-    workspaceMode,
     projectConversations,
     repository?.projectId,
     repository?.selectedWorktree,
+    selectableWorktrees,
   ]);
   const previousWorktreeOption = previousWorktreeSeed
     ? (selectableWorktrees.find((item) => item.path === previousWorktreeSeed.worktreePath) ?? null)
     : null;
+  const selectPreviousWorktree = () => {
+    if (!previousWorktreeSeed) return;
+    setWorkspaceMode("shared");
+    setWorkspaceMenuOpen(false);
+    onSelectWorktree(previousWorktreeSeed.worktreePath);
+  };
   const selectedWorktreePath = repository?.selectedWorktree ?? "";
   const worktreeSelectValue = filteredSelectableWorktrees.some(
     (item) => item.path === selectedWorktreePath,
@@ -4057,13 +4269,14 @@ export function Conversation({
                           <button
                             type="button"
                             className="previous-worktree-seed"
-                            onClick={() => onSelectWorktree(previousWorktreeSeed.worktreePath)}
+                            onClick={selectPreviousWorktree}
                             title={previousWorktreeSeed.worktreePath}
-                            aria-label={`Use previous worktree ${formatWorktreeOptionLabel(previousWorktreeOption)}`}
+                            aria-label={`Use previous worktree ${formatWorktreeOptionLabel(previousWorktreeOption)}. Switches to shared checkout.`}
                           >
                             <span className="previous-worktree-seed__label">Previous worktree</span>
                             <span className="previous-worktree-seed__value">
                               {formatWorktreeOptionLabel(previousWorktreeOption)}
+                              {workspaceMode !== "shared" ? " · shared" : ""}
                             </span>
                           </button>
                         )}
@@ -4123,6 +4336,73 @@ export function Conversation({
               </section>
             )}
             <div className="cbox">
+              {promptStash.length > 0 && (
+                <button
+                  type="button"
+                  className={`composer-stash-badge${stashPulse ? " is-pulse" : ""}${stashMenuOpen ? " is-open" : ""}`}
+                  data-prompt-stash-badge={pane}
+                  aria-label={`Stashed prompts: ${promptStash.length}. Open stash.`}
+                  aria-expanded={stashMenuOpen}
+                  aria-controls={`${pane}-prompt-stash-menu`}
+                  title={`Stashed prompts (${PROMPT_STASH_SHORTCUT_LABEL})`}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                  }}
+                  onClick={() => {
+                    loadLatestPromptStash();
+                    setStashMenuOpen((open) => !open);
+                  }}
+                >
+                  <span className="composer-stash-badge-label">Stash</span>
+                  <span className="composer-stash-badge-count" aria-hidden="true">
+                    {promptStash.length}
+                  </span>
+                </button>
+              )}
+              {stashMenuOpen && promptStash.length > 0 && (
+                <div
+                  ref={stashMenuRef}
+                  id={`${pane}-prompt-stash-menu`}
+                  className="composer-stash-menu"
+                  role="listbox"
+                  aria-label="Stashed prompts"
+                >
+                  <div className="composer-stash-menu-label">Stashed prompts</div>
+                  <ul className="composer-stash-menu-list">
+                    {promptStash.map((entry) => (
+                      <li key={entry.id} className="composer-stash-menu-row">
+                        <button
+                          type="button"
+                          role="option"
+                          className="composer-stash-menu-item"
+                          aria-label={`Restore stashed prompt: ${stashEntrySnippet(entry)}`}
+                          onClick={() => restoreStashEntry(entry.id)}
+                        >
+                          <span className="composer-stash-menu-snippet">
+                            {stashEntrySnippet(entry)}
+                          </span>
+                          <small className="composer-stash-menu-time">
+                            {formatElapsed(entry.createdAt)}
+                          </small>
+                        </button>
+                        <button
+                          type="button"
+                          className="composer-stash-menu-delete"
+                          aria-label={`Delete stashed prompt: ${stashEntrySnippet(entry)}`}
+                          onClick={() => deleteStashEntry(entry.id)}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {stashStatus && (
+                <div className="composer-stash-status" role="status" aria-live="polite">
+                  {stashStatus}
+                </div>
+              )}
               {elementReferences.length > 0 && (
                 <div className="composer-context" aria-label="Attached element context">
                   {elementReferences.map((reference, index) => (
@@ -4252,6 +4532,19 @@ export function Conversation({
                   setVoiceInputError(null);
                 }}
                 onKeyDown={(event) => {
+                  if (matchesPromptStashShortcut(event)) {
+                    event.preventDefault();
+                    if (draft.trim()) {
+                      stashCurrentDraft();
+                      return;
+                    }
+                    const latest = loadLatestPromptStash();
+                    if (latest.length > 0) {
+                      setStashMenuOpen((open) => !open);
+                      setStashStatus(null);
+                    }
+                    return;
+                  }
                   if (
                     suggestionMode &&
                     orderedSuggestions.length > 0 &&
@@ -4272,6 +4565,11 @@ export function Conversation({
                   ) {
                     event.preventDefault();
                     selectSuggestion(orderedSuggestions[suggestionIndex]);
+                    return;
+                  }
+                  if (event.key === "Escape" && stashMenuOpen) {
+                    event.preventDefault();
+                    setStashMenuOpen(false);
                     return;
                   }
                   if (event.key === "Escape" && suggestionMode) {
@@ -4327,6 +4625,7 @@ export function Conversation({
                 id={`${pane}-composer`}
                 name={`${pane}-composer`}
                 aria-label={`Message ${providerName}`}
+                title={`Stash draft with ${PROMPT_STASH_SHORTCUT_LABEL}`}
                 disabled={!worktree || !providerReady || runActive || !historyRestored}
               />
               {voiceInputState === "listening" && (

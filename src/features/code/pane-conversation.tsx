@@ -41,6 +41,7 @@ export function PaneConversation({
   initialPrompt,
   initialProvider,
   projectConversations = [],
+  promptStashOperatorKey = null,
 }: {
   repository: RepositoryMetadata | null;
   conversation: ConversationSummary | null;
@@ -71,6 +72,7 @@ export function PaneConversation({
   initialPrompt?: string;
   initialProvider?: ProviderId;
   projectConversations?: ConversationSummary[];
+  promptStashOperatorKey?: string | null;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
@@ -155,6 +157,7 @@ export function PaneConversation({
       initialPrompt={initialPrompt}
       initialProvider={initialProvider}
       projectConversations={projectConversations}
+      promptStashOperatorKey={promptStashOperatorKey}
     />
   );
 }
