@@ -1,6 +1,6 @@
 # Portable UX from T3 Code
 
-Status: Partial implementation (#542–#553 T3 portable UX pack)
+Status: Implemented (#542–#554 T3 portable UX pack, including explicit Mod+S stash)
 
 Source: Comparison of [pingdotgg/t3code](https://github.com/pingdotgg/t3code)
 against Aldunis Code product boundaries and design system.
@@ -28,8 +28,9 @@ against Aldunis Code product boundaries and design system.
 | **Context window meter**     | High   | Implemented in #545. Codex/ACP usage → ephemeral composer ring; not durable history. |
 | **Message copy actions**     | Medium | Implemented in #548. Hover/focus copy for prompts and answers.                       |
 | **PR status on thread rows** | Medium | Implemented in #551. GitHub `gh pr view` projection; soft-fail without gh.           |
-| **Previous-worktree seed**   | Medium | Implemented in #553. One-click last non-current project worktree.                    |
-| **Composer draft stash**     | Medium | Implemented in #553. Local-only drafts per thread / new-chat pane.                   |
+| **Previous-worktree seed**   | Medium | Implemented in #553; #554 shows it for new chats and switches to shared on select.   |
+| **Composer draft recovery**  | Medium | Implemented in #553. Auto local drafts per thread / new-chat pane.                   |
+| **Explicit prompt stash**    | Medium | Implemented in #554. T3-style Mod+S queue across threads; scoped storage.            |
 
 ## Out of scope or constrained
 

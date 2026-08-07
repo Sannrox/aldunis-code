@@ -697,3 +697,13 @@ test("index.html must not load remote Google Fonts (local-first)", () => {
   const html = readFileSync(indexPath, "utf8");
   assert.doesNotMatch(html, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
 });
+
+test("explicit prompt stash surfaces are styled", () => {
+  assert.match(css, /\.composer-stash-badge\s*\{[^}]*min-height:\s*28px/s);
+  assert.match(css, /\.composer-stash-menu\s*\{[^}]*position:\s*absolute/s);
+  assert.match(css, /\.composer-stash-menu-item\s*\{[^}]*min-height:\s*40px/s);
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.composer-stash-badge\s*\{[^}]*transition:\s*none/s,
+  );
+});
