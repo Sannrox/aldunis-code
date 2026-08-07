@@ -150,6 +150,15 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Context window
+
+When a provider reports live token/context usage (Codex
+`thread/tokenUsage/updated`, ACP `usage_update`), the composer shows a compact
+ring meter beside the run controls. The control is muted at rest and only uses
+the status/warning hue above 90% fill. Details open on click and state that the
+snapshot is live stream data, not durable history. When usage is unknown, the
+meter is absent — nothing renders to report that context is fine.
+
 ## Voice input
 
 Voice input is a secondary action in the conversation composer. The microphone

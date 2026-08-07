@@ -2538,6 +2538,11 @@ export class LocalStateStore {
       // durable transcript, fork context, delegated outcome, or local journal.
       return;
     }
+    if (event.kind === "context_usage") {
+      // Context pressure is live-only for the composer meter. Do not journal
+      // token counts into durable history or fork context.
+      return;
+    }
     if (event.kind === "plan_updated") {
       const projection = await this.load();
       const turn = projection.turns.find(

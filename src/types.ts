@@ -618,6 +618,14 @@ export type ProviderEvent =
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | ({ kind: "browser_observation" } & ProviderBrowserObservation)
+  | {
+      kind: "context_usage";
+      usedTokens: number;
+      maxTokens: number | null;
+      totalProcessedTokens?: number | null;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+    }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {

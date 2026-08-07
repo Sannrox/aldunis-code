@@ -52,6 +52,8 @@ import {
   providerTextReportsAuthenticationFailure,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
+import { contextWindowFromUsage, type ContextWindowSnapshot } from "../../lib/context-window";
+import { ContextWindowMeter } from "./context-window-meter";
 import {
   draftForPromptHistoryIndex,
   isBrowsingPromptHistory,
@@ -584,6 +586,8 @@ export function Conversation({
     useState<RepositoryMetadata | null>(null);
   const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
   const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
+  /** Live context pressure from the provider stream — not durable history. */
+  const [contextUsage, setContextUsage] = useState<ContextWindowSnapshot | null>(null);
   const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
   const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
@@ -889,6 +893,7 @@ export function Conversation({
     if (next !== provider) {
       setProvider(next);
       applyProviderDefaults(next);
+      setContextUsage(null);
     }
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
@@ -900,6 +905,7 @@ export function Conversation({
     }
     if (nextModel !== model) {
       setModel(nextModel);
+      setContextUsage(null);
       if (
         (provider === "codex-cli" ||
           (typeof provider === "string" && provider.startsWith("adapter:"))) &&
@@ -1513,6 +1519,7 @@ export function Conversation({
     setMessages([]);
     setArchivedTurns([]);
     setProviderEvents([]);
+    setContextUsage(null);
     setAttachments([]);
     setFolderPins([]);
     setCurrentContextReceipt(null);
@@ -2246,6 +2253,7 @@ export function Conversation({
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
     setProviderEvents([]);
+    setContextUsage(null);
     setCurrentContextReceipt(draftContextReceipt);
     setProviderState("starting");
     setAssistantTurnAt(null);
@@ -2341,6 +2349,11 @@ export function Conversation({
                 ),
               );
               setProviderState("streaming");
+              newline = buffer.indexOf("\n");
+              continue;
+            }
+            if (event.kind === "context_usage") {
+              setContextUsage(contextWindowFromUsage(event));
               newline = buffer.indexOf("\n");
               continue;
             }
@@ -4279,6 +4292,7 @@ export function Conversation({
                     <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
                   </svg>
                 </button>
+                {contextUsage && <ContextWindowMeter usage={contextUsage} />}
                 <div className="composer-run-settings" role="group" aria-label="Run settings">
                   <span className="composer-run-settings-label">Run settings</span>
                   <div className="composer-provider" ref={providerMenuRef}>

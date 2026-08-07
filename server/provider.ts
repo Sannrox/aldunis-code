@@ -3,11 +3,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import {
-  type ApprovalSnapshot,
-  isMutatingTool,
-  PermissionBroker,
-} from "./permission.ts";
+import { type ApprovalSnapshot, isMutatingTool, PermissionBroker } from "./permission.ts";
 import { normalizeClaudeModelSlug } from "./profiles.ts";
 
 const execFileAsync = promisify(execFile);
@@ -24,8 +20,7 @@ export const CODEX_PROTOCOL_FALLBACK_MESSAGE =
   "Codex app-server emitted an incompatible protocol event.";
 export const CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE =
   "Codex app-server emitted an unsupported notification.";
-export const CODEX_UNSUPPORTED_ITEM_MESSAGE =
-  "Codex app-server emitted an unsupported item type.";
+export const CODEX_UNSUPPORTED_ITEM_MESSAGE = "Codex app-server emitted an unsupported item type.";
 export const CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE =
   "Codex app-server emitted an unsupported turn status.";
 export const CLAUDE_AUTHENTICATION_FAILURE_MESSAGE =
@@ -82,19 +77,19 @@ export interface ProviderInputRequest {
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | {
-    kind: "governance_correlation";
-    governance: "sekai-chisei";
-    runId: string;
-    operationId: string;
-    correlationId?: string;
-  }
+      kind: "governance_correlation";
+      governance: "sekai-chisei";
+      runId: string;
+      operationId: string;
+      correlationId?: string;
+    }
   | { kind: "assistant_text"; text: string }
   | { kind: "thinking"; text: string }
   | {
-    kind: "plan_updated";
-    artifact: ProviderPlanArtifact;
-    bodyMode?: "replace" | "append";
-  }
+      kind: "plan_updated";
+      artifact: ProviderPlanArtifact;
+      bodyMode?: "replace" | "append";
+    }
   | { kind: "tool_started"; toolCallId: string; name: string }
   | ({ kind: "approval_pending" } & ApprovalSnapshot)
   | { kind: "approval_resolved"; id: string; state: ApprovalSnapshot["state"] }
@@ -102,21 +97,33 @@ export type ProviderEvent =
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | ({ kind: "browser_observation" } & ProviderBrowserObservation)
+  /**
+   * Ephemeral context pressure for the active turn. Not durable history —
+   * adapters emit it for live UI only.
+   */
+  | {
+      kind: "context_usage";
+      usedTokens: number;
+      maxTokens: number | null;
+      totalProcessedTokens?: number | null;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+    }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
-    kind: "failed";
-    message: string;
-    sessionId?: string;
-    code?:
-      | "unsupported_external_tool"
-      | "provider_authentication"
-      | "provider_protocol_error"
-      | "provider_process_exit"
-      | typeof SHIKIGAMI_MODE_VIOLATION_CODE;
-    toolName?: string;
-    mode?: Exclude<InteractionMode, "build">;
-  };
+      kind: "failed";
+      message: string;
+      sessionId?: string;
+      code?:
+        | "unsupported_external_tool"
+        | "provider_authentication"
+        | "provider_protocol_error"
+        | "provider_process_exit"
+        | typeof SHIKIGAMI_MODE_VIOLATION_CODE;
+      toolName?: string;
+      mode?: Exclude<InteractionMode, "build">;
+    };
 
 export function persistedProviderFailureMessage(
   event: Extract<ProviderEvent, { kind: "failed" }>,
@@ -125,25 +132,25 @@ export function persistedProviderFailureMessage(
   if (event.code === "provider_authentication") return CLAUDE_AUTHENTICATION_FAILURE_MESSAGE;
   if (event.code === "provider_process_exit") return CODEX_PROCESS_EXIT_MESSAGE;
   if (
-    event.code === SHIKIGAMI_MODE_VIOLATION_CODE
-    && typeof event.toolName === "string"
-    && SAFE_PROVIDER_TOOL_NAME.test(event.toolName)
-    && (event.mode === "ask" || event.mode === "plan")
+    event.code === SHIKIGAMI_MODE_VIOLATION_CODE &&
+    typeof event.toolName === "string" &&
+    SAFE_PROVIDER_TOOL_NAME.test(event.toolName) &&
+    (event.mode === "ask" || event.mode === "plan")
   ) {
     return formatShikigamiModeViolation(event.toolName, event.mode);
   }
   if (event.code === "provider_protocol_error") {
     if (
-      event.message === CODEX_PROTOCOL_FALLBACK_MESSAGE
-      || event.message === CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE
-      || event.message === CODEX_UNSUPPORTED_ITEM_MESSAGE
-      || event.message === CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE
-      || event.message === "Shikigami emitted a malformed run identity."
-      || event.message === "Shikigami emitted conflicting run identities."
-      || event.message === "Shikigami resume reported a different run identity."
-      || event.message === "Shikigami resume did not confirm the requested run identity."
-      || event.message === "Shikigami completed without a provider-confirmed run identity."
-      || event.message === "Codex stream processing failed."
+      event.message === CODEX_PROTOCOL_FALLBACK_MESSAGE ||
+      event.message === CODEX_UNSUPPORTED_NOTIFICATION_MESSAGE ||
+      event.message === CODEX_UNSUPPORTED_ITEM_MESSAGE ||
+      event.message === CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE ||
+      event.message === "Shikigami emitted a malformed run identity." ||
+      event.message === "Shikigami emitted conflicting run identities." ||
+      event.message === "Shikigami resume reported a different run identity." ||
+      event.message === "Shikigami resume did not confirm the requested run identity." ||
+      event.message === "Shikigami completed without a provider-confirmed run identity." ||
+      event.message === "Codex stream processing failed."
     ) {
       return event.message;
     }
@@ -182,14 +189,19 @@ export interface ProviderStartOptions {
 
 export function modeArguments(mode: InteractionMode, help: string): string[] {
   const supportsTools = /--tools <tools\.\.\.>/.test(help);
-  const permissionModes = help.match(/--permission-mode <mode>[\s\S]*?\(choices: ([^)]+)\)/)?.[1] ?? "";
+  const permissionModes =
+    help.match(/--permission-mode <mode>[\s\S]*?\(choices: ([^)]+)\)/)?.[1] ?? "";
   const supportsPermissionMode = (value: string) => permissionModes.includes(`"${value}"`);
   if (!supportsPermissionMode("default") || !supportsPermissionMode("plan")) {
-    throw new ProviderProtocolError("Claude Code does not advertise the required interaction modes.");
+    throw new ProviderProtocolError(
+      "Claude Code does not advertise the required interaction modes.",
+    );
   }
   if (mode === "ask") {
     if (!supportsTools || !supportsPermissionMode("dontAsk")) {
-      throw new ProviderProtocolError("Claude Code does not advertise a fail-closed read-only mode.");
+      throw new ProviderProtocolError(
+        "Claude Code does not advertise a fail-closed read-only mode.",
+      );
     }
     return ["--permission-mode", "dontAsk", "--tools", READ_ONLY_TOOLS];
   }
@@ -206,7 +218,7 @@ interface ProviderToolRequest {
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
@@ -228,21 +240,25 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
     // Only init is required for session identity; other system lines are advisory
     // and must not fail the turn when Claude adds new subtypes.
     if (event.subtype === "init") {
-      return [{
-        kind: "session_started",
-        sessionId: requiredString(event.session_id, "session_id"),
-        model: typeof event.model === "string" ? event.model : null,
-      }];
+      return [
+        {
+          kind: "session_started",
+          sessionId: requiredString(event.session_id, "session_id"),
+          model: typeof event.model === "string" ? event.model : null,
+        },
+      ];
     }
     if (
-      event.subtype === "api_retry"
-      && (event.error_status === 401 || event.error === "authentication_failed")
+      event.subtype === "api_retry" &&
+      (event.error_status === 401 || event.error === "authentication_failed")
     ) {
-      return [{
-        kind: "failed",
-        code: "provider_authentication",
-        message: CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
-      }];
+      return [
+        {
+          kind: "failed",
+          code: "provider_authentication",
+          message: CLAUDE_AUTHENTICATION_FAILURE_MESSAGE,
+        },
+      ];
     }
     return [];
   }
@@ -266,12 +282,14 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
           : [];
       }
       if (block.type === "tool_use") {
-        return [{
-          kind: "tool_requested",
-          toolCallId: requiredString(block.id, "tool id"),
-          name: requiredString(block.name, "tool name"),
-          input: block.input,
-        }];
+        return [
+          {
+            kind: "tool_requested",
+            toolCallId: requiredString(block.id, "tool id"),
+            name: requiredString(block.name, "tool name"),
+            input: block.input,
+          },
+        ];
       }
       throw new ProviderProtocolError(`Unsupported Claude content block: ${block.type}.`);
     });
@@ -285,27 +303,34 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
     return message.content.flatMap((item): ProviderEvent[] => {
       const block = record(item);
       if (!block || block.type !== "tool_result") return [];
-      return [{
-        kind: "tool_finished",
-        toolCallId: requiredString(block.tool_use_id, "tool_use_id"),
-        failed: block.is_error === true,
-      }];
+      return [
+        {
+          kind: "tool_finished",
+          toolCallId: requiredString(block.tool_use_id, "tool_use_id"),
+          failed: block.is_error === true,
+        },
+      ];
     });
   }
 
   if (event.type === "result") {
     const sessionId = requiredString(event.session_id, "session_id");
     if (event.is_error === true) {
-      return [{
-        kind: "failed",
-        message: typeof event.result === "string" ? event.result : "Claude could not complete the turn.",
-      }];
+      return [
+        {
+          kind: "failed",
+          message:
+            typeof event.result === "string" ? event.result : "Claude could not complete the turn.",
+        },
+      ];
     }
-    return [{
-      kind: "turn_completed",
-      sessionId,
-      costUsd: typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
-    }];
+    return [
+      {
+        kind: "turn_completed",
+        sessionId,
+        costUsd: typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
+      },
+    ];
   }
 
   if (event.type === "stream_event") {
@@ -321,10 +346,7 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
 
   // Claude Code emits stream housekeeping events (rate limits, progress, …)
   // that must not abort an otherwise healthy turn.
-  if (
-    event.type === "rate_limit_event"
-    || event.type === "progress"
-  ) {
+  if (event.type === "rate_limit_event" || event.type === "progress") {
     return [];
   }
 
@@ -409,7 +431,8 @@ export class ClaudeCodeAdapter {
         shared: true,
         aldunisManaged: true,
         providerNative: false,
-        providerNativeDetail: "This adapter receives a canonical worktree from Aldunis Code and does not expose native worktree creation yet.",
+        providerNativeDetail:
+          "This adapter receives a canonical worktree from Aldunis Code and does not expose native worktree creation yet.",
       },
     };
   }
@@ -599,9 +622,10 @@ export class ClaudeCodeAdapter {
       active.child.kill("SIGTERM");
       yield {
         kind: "failed",
-        message: error instanceof ProviderProtocolError
-          ? error.message
-          : "Claude stream processing failed.",
+        message:
+          error instanceof ProviderProtocolError
+            ? error.message
+            : "Claude stream processing failed.",
       };
     }
 
