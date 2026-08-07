@@ -47,25 +47,20 @@ import {
   formatRevisionContext,
   MAX_ANNOTATION_TEXT,
 } from "./annotations.ts";
-import { DeliveryBroker, draftPullRequest, inspectDelivery, type DeliveryAction } from "./delivery.ts";
+import {
+  DeliveryBroker,
+  draftPullRequest,
+  inspectDelivery,
+  type DeliveryAction,
+} from "./delivery.ts";
 import {
   ReleaseDeliveryBroker,
   ReleaseDeliveryStore,
   type ReleaseWorkflowAction,
 } from "./release-delivery-workflow.ts";
-import {
-  PermissionBroker,
-  PermissionError,
-  type ApprovalSnapshot,
-} from "./permission.ts";
-import {
-  assertParentRoutedApproval,
-  projectDelegatedApprovals,
-} from "./delegated-approvals.ts";
-import {
-  assertParentRoutedInput,
-  projectDelegatedInputs,
-} from "./delegated-inputs.ts";
+import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
+import { assertParentRoutedApproval, projectDelegatedApprovals } from "./delegated-approvals.ts";
+import { assertParentRoutedInput, projectDelegatedInputs } from "./delegated-inputs.ts";
 import {
   canonicalizeRepositoryRoot,
   captureCheckpoint,
@@ -92,7 +87,6 @@ import {
 import {
   ClaudeProfileStore,
   DEFAULT_SHIKIGAMI_PROFILE_ID,
-  isAllowedClaudeModel,
   ProfileError,
   type AdapterProfileSeed,
   type ProfileProbeKind,
@@ -122,24 +116,15 @@ import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
 import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
-import {
-  BrowserError,
-  SharedBrowserBroker,
-  type BrowserHost,
-} from "./browser.ts";
-import {
-  ChiseiClientError,
-  ChiseiProjectionClient,
-} from "./chisei-client.ts";
+import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.ts";
+import { ChiseiClientError, ChiseiProjectionClient } from "./chisei-client.ts";
 import type { WorkspaceMode } from "../src/types.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 function normalizeAddress(address: string | undefined): string | undefined {
   if (!address) return undefined;
-  return address
-    .replace(/^::ffff:/i, "")
-    .replace(/^\[(.*)\]$/, "$1");
+  return address.replace(/^::ffff:/i, "").replace(/^\[(.*)\]$/, "$1");
 }
 
 function isLoopbackAddress(address: string | undefined): boolean {
@@ -168,9 +153,13 @@ export function isLocalControlRequest(
   publicOrigin?: string,
 ): boolean {
   const forwarded = request.headers["x-forwarded-for"];
-  const forwardedAddresses = typeof forwarded === "string"
-    ? forwarded.split(",").map((value) => value.trim()).filter(Boolean)
-    : [];
+  const forwardedAddresses =
+    typeof forwarded === "string"
+      ? forwarded
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : [];
   if (!forwardedAddresses.every((address) => isLoopbackAddress(address))) return false;
   if (isLoopbackAddress(request.socket.remoteAddress) && isLoopbackHostHeader(request)) return true;
   const boundAddress = normalizeAddress(localBindHost);
@@ -184,12 +173,10 @@ export function isLocalControlRequest(
   }
   const requestHost = requestHostName(request);
   return Boolean(
-    boundAddress
-      && normalizeAddress(request.socket.remoteAddress) === boundAddress
-      && (
-        requestHost === boundAddress
-        || (!isLoopbackAddress(boundAddress) && requestHost === publicOriginHost)
-      ),
+    boundAddress &&
+    normalizeAddress(request.socket.remoteAddress) === boundAddress &&
+    (requestHost === boundAddress ||
+      (!isLoopbackAddress(boundAddress) && requestHost === publicOriginHost)),
   );
 }
 
@@ -266,30 +253,38 @@ function filterManagedProjection(
     turns,
     messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
     activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
-    plans: projection.plans.filter((plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId)),
+    plans: projection.plans.filter(
+      (plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId),
+    ),
     contextReceipts: projection.contextReceipts.filter(
       (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
     ),
-    governanceCorrelations: projection.governanceCorrelations.filter(
-      (receipt) => threadIds.has(receipt.threadId),
+    governanceCorrelations: projection.governanceCorrelations.filter((receipt) =>
+      threadIds.has(receipt.threadId),
     ),
-    providerSessions: projection.providerSessions.filter((session) => threadIds.has(session.threadId)),
+    providerSessions: projection.providerSessions.filter((session) =>
+      threadIds.has(session.threadId),
+    ),
     checkpoints: projection.checkpoints.filter(
       (checkpoint) => threadIds.has(checkpoint.threadId) && turnIds.has(checkpoint.turnId),
     ),
     annotations: projection.annotations.filter((annotation) => threadIds.has(annotation.threadId)),
     fileReviews: projection.fileReviews.filter((review) => threadIds.has(review.threadId)),
-    conversationDeletions: projection.conversationDeletions.filter((deletion) => threadIds.has(deletion.threadId)),
+    conversationDeletions: projection.conversationDeletions.filter((deletion) =>
+      threadIds.has(deletion.threadId),
+    ),
     forks: projection.forks.filter(
       (fork) => threadIds.has(fork.sourceThreadId) && threadIds.has(fork.destinationThreadId),
     ),
     delegatedRelationships: projection.delegatedRelationships.filter(
-      (relationship) => threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
+      (relationship) =>
+        threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
     ),
     inputRequests: projection.inputRequests.filter((request) => threadIds.has(request.threadId)),
     inputReceipts: projection.inputReceipts.filter(
-      (receipt) => threadIds.has(receipt.childThreadId)
-        && (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
+      (receipt) =>
+        threadIds.has(receipt.childThreadId) &&
+        (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
     ),
   };
 }
@@ -398,13 +393,15 @@ async function selectWorktreeForRepository(
   const root = await canonicalizeRepositoryRoot(rootInput);
   const selected = await realpath(worktreeInput);
   const worktrees = await discoverWorktrees(root);
-  const allowed = await Promise.all(worktrees.map(async (worktree) => {
-    try {
-      return await realpath(worktree.path);
-    } catch {
-      return null;
-    }
-  }));
+  const allowed = await Promise.all(
+    worktrees.map(async (worktree) => {
+      try {
+        return await realpath(worktree.path);
+      } catch {
+        return null;
+      }
+    }),
+  );
   if (!allowed.includes(selected)) {
     throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
   }
@@ -420,11 +417,13 @@ async function managedWorktreePath(root: string, branch: string): Promise<string
       403,
     );
   }
-  const safeBranch = branch.trim()
-    .replaceAll("/", "-")
-    .replace(/[^A-Za-z0-9._-]/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, 120) || "worktree";
+  const safeBranch =
+    branch
+      .trim()
+      .replaceAll("/", "-")
+      .replace(/[^A-Za-z0-9._-]/g, "-")
+      .replace(/^-+/, "")
+      .slice(0, 120) || "worktree";
   return join(parent, ".aldunis-worktrees", basename(root), safeBranch);
 }
 
@@ -436,8 +435,8 @@ async function selectedReleaseProject(
   const projection = await state.load();
   const project = projection.projects.find((item) => item.id === projectId);
   if (
-    !project
-    || await repositoryCommonDir(project.root) !== await repositoryCommonDir(context.root)
+    !project ||
+    (await repositoryCommonDir(project.root)) !== (await repositoryCommonDir(context.root))
   ) {
     throw new RepositoryError("The selected release project is unavailable.", 404);
   }
@@ -445,8 +444,8 @@ async function selectedReleaseProject(
   for (const candidate of projection.projects) {
     try {
       if (
-        await repositoryCommonDir(candidate.root) === await repositoryCommonDir(context.root)
-        && await realpath(candidate.root) === context.worktree
+        (await repositoryCommonDir(candidate.root)) === (await repositoryCommonDir(context.root)) &&
+        (await realpath(candidate.root)) === context.worktree
       ) {
         exactWorktreeProjects.push(candidate.id);
       }
@@ -457,7 +456,7 @@ async function selectedReleaseProject(
   if (exactWorktreeProjects.length > 0 && !exactWorktreeProjects.includes(project.id)) {
     throw new RepositoryError("The selected release project does not own this worktree.", 404);
   }
-  if (exactWorktreeProjects.length === 0 && await realpath(project.root) !== context.root) {
+  if (exactWorktreeProjects.length === 0 && (await realpath(project.root)) !== context.root) {
     throw new RepositoryError("The selected release project does not own this worktree.", 404);
   }
   return project;
@@ -473,17 +472,17 @@ function createInternalPermissionCallback(permissions: PermissionBroker): {
       return;
     }
     try {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         runId?: unknown;
         toolName?: unknown;
         input?: unknown;
       };
       const authorization = request.headers.authorization;
       if (
-        typeof body.runId !== "string"
-        || typeof body.toolName !== "string"
-        || typeof authorization !== "string"
-        || !authorization.startsWith("Bearer ")
+        typeof body.runId !== "string" ||
+        typeof body.toolName !== "string" ||
+        typeof authorization !== "string" ||
+        !authorization.startsWith("Bearer ")
       ) {
         throw new PermissionError("A valid provider permission request is required.", 403);
       }
@@ -499,7 +498,8 @@ function createInternalPermissionCallback(permissions: PermissionBroker): {
       );
     } catch (error) {
       const status = error instanceof PermissionError ? error.status : 500;
-      const message = error instanceof PermissionError ? error.message : "Permission request failed.";
+      const message =
+        error instanceof PermissionError ? error.message : "Permission request failed.";
       sendJson(response, status, { error: message });
     }
   });
@@ -565,19 +565,13 @@ async function handleApi(
   const selectedWorktree = managedHost
     ? (root: string, worktree: string) => managedHost.selectWorktree(root, worktree)
     : selectWorktreeForRepository;
-  const assertManagedProject = (
-    projection: StateProjection,
-    projectId: string,
-  ) => {
+  const assertManagedProject = (projection: StateProjection, projectId: string) => {
     const project = projection.projects.find((candidate) => candidate.id === projectId);
     if (!project) throw new LocalStateError("The selected project is not available.", 404);
     if (managedHost) managedHost.repositoryForRoot(project.root);
     return project;
   };
-  const assertManagedThread = (
-    projection: StateProjection,
-    threadId: string,
-  ) => {
+  const assertManagedThread = (projection: StateProjection, threadId: string) => {
     const thread = projection.threads.find((candidate) => candidate.id === threadId);
     if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
     const project = assertManagedProject(projection, thread.projectId);
@@ -585,90 +579,137 @@ async function handleApi(
   };
   const assertBrowserContext = async (body: Record<string, unknown>) => {
     if (
-      typeof body.root !== "string"
-      || typeof body.worktree !== "string"
-      || typeof body.conversationId !== "string"
-      || !body.conversationId
+      typeof body.root !== "string" ||
+      typeof body.worktree !== "string" ||
+      typeof body.conversationId !== "string" ||
+      !body.conversationId
     ) {
       throw new BrowserError("A repository, worktree, and conversation are required.");
     }
     const context = await selectedWorktree(body.root, body.worktree);
     const projection = await state.load();
     const thread = projection.threads.find((candidate) => candidate.id === body.conversationId);
-    const project = thread ? projection.projects.find((candidate) => candidate.id === thread.projectId) : undefined;
-    if (!thread || !project || project.root !== context.root || thread.worktree !== context.worktree) {
-      throw new BrowserError("The selected conversation is not bound to this repository and worktree.", 403);
+    const project = thread
+      ? projection.projects.find((candidate) => candidate.id === thread.projectId)
+      : undefined;
+    if (
+      !thread ||
+      !project ||
+      project.root !== context.root ||
+      thread.worktree !== context.worktree
+    ) {
+      throw new BrowserError(
+        "The selected conversation is not bound to this repository and worktree.",
+        403,
+      );
     }
     return { context, conversationId: body.conversationId };
   };
-    if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
+  if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
-    }
+  }
 
   try {
     if (route === "/api/browser/tools") {
       if (!browser || remoteRequest || managedHost) {
-        throw new BrowserError("Shared browser tools are available in the local desktop host only.", 403);
+        throw new BrowserError(
+          "Shared browser tools are available in the local desktop host only.",
+          403,
+        );
       }
       const authorization = request.headers.authorization;
       if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
-        throw new BrowserError("Browser tool authorization is required.", 403, "browser_authorization_denied");
+        throw new BrowserError(
+          "Browser tool authorization is required.",
+          403,
+          "browser_authorization_denied",
+        );
       }
-      const body = await readJson(request) as { conversationId?: unknown; operation?: unknown };
+      const body = (await readJson(request)) as { conversationId?: unknown; operation?: unknown };
       if (typeof body.conversationId !== "string") {
         throw new BrowserError("A browser conversation is required.");
       }
       sendJson(
         response,
         200,
-        await browser.executeProvider(body.conversationId, authorization.slice("Bearer ".length), body.operation),
+        await browser.executeProvider(
+          body.conversationId,
+          authorization.slice("Bearer ".length),
+          body.operation,
+        ),
       );
       return true;
     }
     if (route === "/api/browser/sessions/open") {
-      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
-      const body = await readJson(request) as Record<string, unknown>;
+      if (!browser)
+        throw new BrowserError(
+          "Shared browser sessions are available in the desktop application only.",
+          503,
+        );
+      const body = (await readJson(request)) as Record<string, unknown>;
       const { conversationId } = await assertBrowserContext(body);
-      if (typeof body.origin !== "string") throw new BrowserError("A loopback browser origin is required.");
+      if (typeof body.origin !== "string")
+        throw new BrowserError("A loopback browser origin is required.");
       sendJson(response, 200, browser.open(conversationId, body.origin));
       return true;
     }
     if (route === "/api/browser/sessions/status") {
-      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
-      const body = await readJson(request) as Record<string, unknown>;
+      if (!browser)
+        throw new BrowserError(
+          "Shared browser sessions are available in the desktop application only.",
+          503,
+        );
+      const body = (await readJson(request)) as Record<string, unknown>;
       const { conversationId } = await assertBrowserContext(body);
       if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
         throw new BrowserError("A browser session and loopback origin are required.");
       }
       const snapshot = await browser.snapshot(body.sessionId);
       if (snapshot.conversationId !== conversationId || snapshot.origin !== body.origin) {
-        throw new BrowserError("The browser session is bound to a different conversation or origin.", 403);
+        throw new BrowserError(
+          "The browser session is bound to a different conversation or origin.",
+          403,
+        );
       }
       sendJson(response, 200, snapshot);
       return true;
     }
     if (route === "/api/browser/sessions/control") {
-      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
-      const body = await readJson(request) as Record<string, unknown>;
+      if (!browser)
+        throw new BrowserError(
+          "Shared browser sessions are available in the desktop application only.",
+          503,
+        );
+      const body = (await readJson(request)) as Record<string, unknown>;
       const { conversationId } = await assertBrowserContext(body);
       if (
-        typeof body.sessionId !== "string"
-        || typeof body.origin !== "string"
-        || typeof body.enabled !== "boolean"
+        typeof body.sessionId !== "string" ||
+        typeof body.origin !== "string" ||
+        typeof body.enabled !== "boolean"
       ) {
-        throw new BrowserError("A browser session, loopback origin, and control state are required.");
+        throw new BrowserError(
+          "A browser session, loopback origin, and control state are required.",
+        );
       }
       sendJson(
         response,
         200,
-        await browser.setAgentControl(body.sessionId, { conversationId, origin: body.origin }, body.enabled),
+        await browser.setAgentControl(
+          body.sessionId,
+          { conversationId, origin: body.origin },
+          body.enabled,
+        ),
       );
       return true;
     }
     if (route === "/api/browser/sessions/close") {
-      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
-      const body = await readJson(request) as Record<string, unknown>;
+      if (!browser)
+        throw new BrowserError(
+          "Shared browser sessions are available in the desktop application only.",
+          503,
+        );
+      const body = (await readJson(request)) as Record<string, unknown>;
       const { conversationId } = await assertBrowserContext(body);
       if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
         throw new BrowserError("A browser session and loopback origin are required.");
@@ -681,15 +722,21 @@ async function handleApi(
       return true;
     }
     if (route === "/api/browser/sessions/picture-in-picture") {
-      if (!browser) throw new BrowserError("Shared browser sessions are available in the desktop application only.", 503);
-      const body = await readJson(request) as Record<string, unknown>;
+      if (!browser)
+        throw new BrowserError(
+          "Shared browser sessions are available in the desktop application only.",
+          503,
+        );
+      const body = (await readJson(request)) as Record<string, unknown>;
       const { conversationId } = await assertBrowserContext(body);
       if (
-        typeof body.sessionId !== "string"
-        || typeof body.origin !== "string"
-        || typeof body.open !== "boolean"
+        typeof body.sessionId !== "string" ||
+        typeof body.origin !== "string" ||
+        typeof body.open !== "boolean"
       ) {
-        throw new BrowserError("A browser session, loopback origin, and picture-in-picture state are required.");
+        throw new BrowserError(
+          "A browser session, loopback origin, and picture-in-picture state are required.",
+        );
       }
       sendJson(
         response,
@@ -716,12 +763,15 @@ async function handleApi(
           response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
           return;
         }
-        void state.load().then((projection) => {
-          if (response.writableEnded) return;
-          const visible = filterManagedProjection(projection, managedHost);
-          if (!visible.threads.some((thread) => thread.id === event.threadId)) return;
-          response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
-        }).catch(() => undefined);
+        void state
+          .load()
+          .then((projection) => {
+            if (response.writableEnded) return;
+            const visible = filterManagedProjection(projection, managedHost);
+            if (!visible.threads.some((thread) => thread.id === event.threadId)) return;
+            response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+          })
+          .catch(() => undefined);
       });
       const heartbeat = setInterval(() => {
         if (response.writableEnded) return;
@@ -736,53 +786,64 @@ async function handleApi(
       return true;
     }
     if (route === "/api/host/capabilities") {
-      sendJson(response, 200, managedHost
-        ? managedHost.capabilities(managedIdentity)
-        : {
-            mode: remoteAuth ? "remote" : "local",
-            managed: false,
-            tenantScoped: false,
-            capabilities: {
-              providerSelection: true,
-              profileAdministration: !remoteRequest,
-              adapterAdministration: !remoteRequest,
-              modelSelection: true,
-              modeSelection: true,
-              arbitraryRepositorySelection: !remoteRequest,
-              directoryBrowsing: !remoteAuth,
+      sendJson(
+        response,
+        200,
+        managedHost
+          ? managedHost.capabilities(managedIdentity)
+          : {
+              mode: remoteAuth ? "remote" : "local",
+              managed: false,
+              tenantScoped: false,
+              capabilities: {
+                providerSelection: true,
+                profileAdministration: !remoteRequest,
+                adapterAdministration: !remoteRequest,
+                modelSelection: true,
+                modeSelection: true,
+                arbitraryRepositorySelection: !remoteRequest,
+                directoryBrowsing: !remoteAuth,
+              },
             },
-          });
+      );
       return true;
     }
     if (route === "/api/providers/discover") {
       const body = await readOptionalJson(request);
-      if (!isRecord(body)) throw new RepositoryError("Provider discovery context must be an object.");
+      if (!isRecord(body))
+        throw new RepositoryError("Provider discovery context must be an object.");
       const hasRoot = body.root !== undefined;
       const hasWorktree = body.worktree !== undefined;
-      if (hasRoot !== hasWorktree || (hasRoot && (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-      ))) {
-        throw new RepositoryError("Provider discovery requires both a repository root and worktree.");
+      if (
+        hasRoot !== hasWorktree ||
+        (hasRoot && (typeof body.root !== "string" || typeof body.worktree !== "string"))
+      ) {
+        throw new RepositoryError(
+          "Provider discovery requires both a repository root and worktree.",
+        );
       }
       const discoveryCwd = hasRoot
         ? (await selectedWorktree(body.root as string, body.worktree as string)).worktree
         : process.cwd();
       if (managedHost) {
         sendJson(response, 200, {
-          providers: [{
-            id: "shikigami",
-            installed: true,
-            authenticated: true,
-            version: "1.0.5+",
-            name: "Shikigami",
-            detail: null,
-            models: [{
-              id: managedHost.shikigami.model,
-              displayName: managedHost.shikigami.model,
-              isDefault: true,
-            }],
-          }],
+          providers: [
+            {
+              id: "shikigami",
+              installed: true,
+              authenticated: true,
+              version: "1.0.5+",
+              name: "Shikigami",
+              detail: null,
+              models: [
+                {
+                  id: managedHost.shikigami.model,
+                  displayName: managedHost.shikigami.model,
+                  isDefault: true,
+                },
+              ],
+            },
+          ],
         });
         return true;
       }
@@ -851,8 +912,9 @@ async function handleApi(
           };
         }),
       );
-      const shikigamiProfiles = (await profiles.list().catch(() => []))
-        .filter((profile) => profile.provider === "shikigami");
+      const shikigamiProfiles = (await profiles.list().catch(() => [])).filter(
+        (profile) => profile.provider === "shikigami",
+      );
       const shikigamiProfileDiscoveries = await Promise.all(
         shikigamiProfiles.map(async (profile) => {
           let readiness: ShikigamiReadiness;
@@ -929,26 +991,34 @@ async function handleApi(
       sendJson(response, 200, {
         adapters: remoteRequest
           ? catalog.map((entry) => ({
-            ...entry,
-            source: "Reviewed package available on host only",
-            package: null,
-            executablePath: entry.executableFound ? "available on host" : null,
-          }))
+              ...entry,
+              source: "Reviewed package available on host only",
+              package: null,
+              executablePath: entry.executableFound ? "available on host" : null,
+            }))
           : catalog,
         administrationAvailable: !remoteRequest,
       });
       return true;
     }
     if (route === "/api/provider/adapters/catalog/prepare") {
-      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
-      const body = await readJson(request) as { slug?: unknown };
+      if (remoteRequest || managedHost)
+        throw new ProviderAdapterError(
+          "This host cannot administer provider adapters in the active mode.",
+          403,
+        );
+      const body = (await readJson(request)) as { slug?: unknown };
       const prepared = await prepareReviewedAdapter(adapters, body.slug);
       sendJson(response, 200, prepared);
       return true;
     }
     if (route === "/api/provider/adapters/inspect") {
-      if (managedHost) throw new ProviderAdapterError("Provider adapter administration is unavailable in managed hosted mode.", 403);
-      const body = await readJson(request) as {
+      if (managedHost)
+        throw new ProviderAdapterError(
+          "Provider adapter administration is unavailable in managed hosted mode.",
+          403,
+        );
+      const body = (await readJson(request)) as {
         source?: unknown;
         digest?: unknown;
         manifest?: unknown;
@@ -957,14 +1027,19 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/adapters/install" || route === "/api/provider/adapters/update") {
-      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
-      const body = await readJson(request) as {
+      if (remoteRequest || managedHost)
+        throw new ProviderAdapterError(
+          "This host cannot administer provider adapters in the active mode.",
+          403,
+        );
+      const body = (await readJson(request)) as {
         source?: unknown;
         digest?: unknown;
         manifest?: unknown;
         approved?: unknown;
       };
-      if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
+      if (body.approved !== true)
+        throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
       const installed = route.endsWith("/install")
         ? await adapters.install(body)
         : await adapters.update(body);
@@ -977,9 +1052,14 @@ async function handleApi(
       /^\/api\/provider\/adapters\/([a-z0-9.-]+)\/(enable|disable|rollback|uninstall)$/,
     );
     if (adapterAction) {
-      if (remoteRequest || managedHost) throw new ProviderAdapterError("This host cannot administer provider adapters in the active mode.", 403);
-      const body = await readJson(request) as { approved?: unknown };
-      if (body.approved !== true) throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
+      if (remoteRequest || managedHost)
+        throw new ProviderAdapterError(
+          "This host cannot administer provider adapters in the active mode.",
+          403,
+        );
+      const body = (await readJson(request)) as { approved?: unknown };
+      if (body.approved !== true)
+        throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
       const [, id, action] = adapterAction;
       if (action === "uninstall") {
         await adapters.uninstall(id);
@@ -994,7 +1074,10 @@ async function handleApi(
     const remoteAdminAction = route.match(/^\/api\/remote\/admin\/(status|pair|revoke)$/);
     if (remoteAdminAction) {
       if (!localControlRequest || managedHost) {
-        throw new RemoteAuthError("Remote access administration is available only from the local host.", 403);
+        throw new RemoteAuthError(
+          "Remote access administration is available only from the local host.",
+          403,
+        );
       }
       const action = remoteAdminAction[1];
       if (action === "status") {
@@ -1026,7 +1109,7 @@ async function handleApi(
         });
         return true;
       }
-      const body = await readJson(request) as { sessionId?: unknown };
+      const body = (await readJson(request)) as { sessionId?: unknown };
       if (typeof body.sessionId !== "string" || !body.sessionId.trim()) {
         throw new RemoteAuthError("A remote session is required.", 400);
       }
@@ -1034,9 +1117,10 @@ async function handleApi(
       return true;
     }
     if (route === "/api/remote/pair") {
-      if (managedHost) throw new RemoteAuthError("Remote pairing is unavailable in managed hosted mode.", 404);
+      if (managedHost)
+        throw new RemoteAuthError("Remote pairing is unavailable in managed hosted mode.", 404);
       if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         credential?: unknown;
         label?: unknown;
         publicKey?: unknown;
@@ -1059,9 +1143,9 @@ async function handleApi(
       return true;
     }
     if (route === "/api/repositories/open") {
-      const body = await readJson(request) as { path?: unknown; repositoryId?: unknown };
+      const body = (await readJson(request)) as { path?: unknown; repositoryId?: unknown };
       let managedRepositoryId: string | undefined;
-      let repository = managedHost
+      const repository = managedHost
         ? await (async () => {
             if (typeof body.repositoryId !== "string" || body.path !== undefined) {
               throw new RepositoryError("Select a repository from the managed catalogue.", 403);
@@ -1091,7 +1175,7 @@ async function handleApi(
         if (commonDir) {
           for (const candidate of projection.projects) {
             try {
-              if (await repositoryCommonDir(candidate.root) === commonDir) {
+              if ((await repositoryCommonDir(candidate.root)) === commonDir) {
                 existing = candidate;
                 break;
               }
@@ -1146,10 +1230,10 @@ async function handleApi(
           403,
         );
       }
-      const body = await readJson(request) as { projectId?: unknown; namespace?: unknown };
+      const body = (await readJson(request)) as { projectId?: unknown; namespace?: unknown };
       if (
-        typeof body.projectId !== "string"
-        || (body.namespace !== null && typeof body.namespace !== "string")
+        typeof body.projectId !== "string" ||
+        (body.namespace !== null && typeof body.namespace !== "string")
       ) {
         throw new LocalStateError("A project and Chisei namespace are required.", 400);
       }
@@ -1164,47 +1248,20 @@ async function handleApi(
       return true;
     }
     if (route === "/api/integrations/chisei/actions/list") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         projectId?: unknown;
         typeId?: unknown;
         status?: unknown;
         limit?: unknown;
       };
       if (
-        typeof body.projectId !== "string"
-        || (body.typeId !== undefined && typeof body.typeId !== "string")
-        || (body.status !== undefined && typeof body.status !== "string")
-        || (body.limit !== undefined && (
-          typeof body.limit !== "number" || !Number.isInteger(body.limit)
-        ))
+        typeof body.projectId !== "string" ||
+        (body.typeId !== undefined && typeof body.typeId !== "string") ||
+        (body.status !== undefined && typeof body.status !== "string") ||
+        (body.limit !== undefined &&
+          (typeof body.limit !== "number" || !Number.isInteger(body.limit)))
       ) {
         throw new LocalStateError("A valid local project and bounded filters are required.", 400);
-      }
-      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
-      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
-      if (!project.chiseiNamespace) {
-        throw new ChiseiClientError(
-          "This project is not bound to a Chisei namespace.",
-          409,
-          "unconfigured",
-        );
-      }
-      sendJson(response, 200, await chisei.listActions(project.id, project.chiseiNamespace, {
-        typeId: body.typeId?.trim().slice(0, 200),
-        status: body.status?.trim().slice(0, 50),
-        limit: body.limit as number | undefined,
-      }));
-      return true;
-    }
-    if (route === "/api/integrations/chisei/actions/detail") {
-      const body = await readJson(request) as { projectId?: unknown; instanceId?: unknown };
-      if (
-        typeof body.projectId !== "string"
-        || typeof body.instanceId !== "string"
-        || !body.instanceId
-        || body.instanceId.length > 200
-      ) {
-        throw new LocalStateError("A valid local project and Action id are required.", 400);
       }
       const project = (await state.load()).projects.find((item) => item.id === body.projectId);
       if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
@@ -1218,20 +1275,49 @@ async function handleApi(
       sendJson(
         response,
         200,
-        await chisei.actionDetail(project.chiseiNamespace, body.instanceId),
+        await chisei.listActions(project.id, project.chiseiNamespace, {
+          typeId: body.typeId?.trim().slice(0, 200),
+          status: body.status?.trim().slice(0, 50),
+          limit: body.limit as number | undefined,
+        }),
       );
       return true;
     }
-    if (route === "/api/integrations/chisei/observations/detail") {
-      const body = await readJson(request) as { projectId?: unknown; requestId?: unknown };
+    if (route === "/api/integrations/chisei/actions/detail") {
+      const body = (await readJson(request)) as { projectId?: unknown; instanceId?: unknown };
       if (
-        typeof body.projectId !== "string"
-        || typeof body.requestId !== "string"
-        || !body.requestId
-        || body.requestId.length > 512
-        || body.requestId.includes("\0")
+        typeof body.projectId !== "string" ||
+        typeof body.instanceId !== "string" ||
+        !body.instanceId ||
+        body.instanceId.length > 200
       ) {
-        throw new LocalStateError("A local project and bounded observation identity are required.", 400);
+        throw new LocalStateError("A valid local project and Action id are required.", 400);
+      }
+      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
+      if (!project.chiseiNamespace) {
+        throw new ChiseiClientError(
+          "This project is not bound to a Chisei namespace.",
+          409,
+          "unconfigured",
+        );
+      }
+      sendJson(response, 200, await chisei.actionDetail(project.chiseiNamespace, body.instanceId));
+      return true;
+    }
+    if (route === "/api/integrations/chisei/observations/detail") {
+      const body = (await readJson(request)) as { projectId?: unknown; requestId?: unknown };
+      if (
+        typeof body.projectId !== "string" ||
+        typeof body.requestId !== "string" ||
+        !body.requestId ||
+        body.requestId.length > 512 ||
+        body.requestId.includes("\0")
+      ) {
+        throw new LocalStateError(
+          "A local project and bounded observation identity are required.",
+          400,
+        );
       }
       const project = (await state.load()).projects.find((item) => item.id === body.projectId);
       if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
@@ -1244,13 +1330,16 @@ async function handleApi(
       }
       const observation = await chisei.sampleObservation(project.chiseiNamespace, body.requestId);
       if (!observation) {
-        throw new LocalStateError("The Chisei observation is unavailable on the read surface.", 404);
+        throw new LocalStateError(
+          "The Chisei observation is unavailable on the read surface.",
+          404,
+        );
       }
       sendJson(response, 200, observation);
       return true;
     }
     if (route === "/api/integrations/chisei/operations/detail") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         projectId?: unknown;
         correlationId?: unknown;
       };
@@ -1277,7 +1366,7 @@ async function handleApi(
           403,
         );
       }
-      const body = await readJson(request) as { path?: unknown; includeHidden?: unknown };
+      const body = (await readJson(request)) as { path?: unknown; includeHidden?: unknown };
       if (body.path !== undefined && typeof body.path !== "string") {
         throw new RepositoryError("A directory path must be a string.");
       }
@@ -1289,25 +1378,29 @@ async function handleApi(
       response.once("close", () => {
         if (!response.writableEnded) controller.abort();
       });
-      sendJson(response, 200, await directories.browse({
-        path: body.path,
-        includeHidden: body.includeHidden,
-        signal: controller.signal,
-      }));
+      sendJson(
+        response,
+        200,
+        await directories.browse({
+          path: body.path,
+          includeHidden: body.includeHidden,
+          signal: controller.signal,
+        }),
+      );
       return true;
     }
     if (route === "/api/worktrees/create/preview") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         base?: unknown;
         branch?: unknown;
         path?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.base !== "string"
-        || typeof body.branch !== "string"
-        || (body.path !== undefined && typeof body.path !== "string")
+        typeof body.root !== "string" ||
+        typeof body.base !== "string" ||
+        typeof body.branch !== "string" ||
+        (body.path !== undefined && typeof body.path !== "string")
       ) {
         throw new RepositoryError("A repository, base revision, and new branch are required.");
       }
@@ -1315,34 +1408,44 @@ async function handleApi(
         ? (await managedHost.selectWorktree(body.root, body.root)).root
         : body.root;
       if (managedHost && body.path !== undefined) {
-        throw new RepositoryError("Managed hosted mode does not accept arbitrary worktree paths.", 403);
+        throw new RepositoryError(
+          "Managed hosted mode does not accept arbitrary worktree paths.",
+          403,
+        );
       }
       const managedPath = managedHost
         ? await managedWorktreePath(managedRoot, body.branch)
         : undefined;
       const { preferences: currentPreferences } = await preferences.load();
-      sendJson(response, 200, await worktrees.previewCreate({
-        repository: managedRoot,
-        base: body.base,
-        branch: body.branch,
-        ...(managedPath ? { path: managedPath } : {}),
-        ...(typeof body.path === "string" ? { path: body.path } : {}),
-        limit: currentPreferences.managedWorktreeLimit,
-      }));
+      sendJson(
+        response,
+        200,
+        await worktrees.previewCreate({
+          repository: managedRoot,
+          base: body.base,
+          branch: body.branch,
+          ...(managedPath ? { path: managedPath } : {}),
+          ...(typeof body.path === "string" ? { path: body.path } : {}),
+          limit: currentPreferences.managedWorktreeLimit,
+        }),
+      );
       return true;
     }
     if (route === "/api/worktrees/create") {
-      const body = await readJson(request) as { planId?: unknown; confirm?: unknown };
+      const body = (await readJson(request)) as { planId?: unknown; confirm?: unknown };
       if (typeof body.planId !== "string" || body.confirm !== true) {
         throw new RepositoryError("A complete scoped worktree approval is required.");
       }
-      if (managedHost) await managedHost.verifyRepositoryRoot(worktrees.creationPlan(body.planId).repository);
+      if (managedHost)
+        await managedHost.verifyRepositoryRoot(worktrees.creationPlan(body.planId).repository);
       const { preferences: currentPreferences } = await preferences.load();
       const created = await worktrees.create(body.planId, currentPreferences.managedWorktreeLimit);
       const repository = await openRepository(created.repository);
       repository.worktrees = await worktrees.list(created.repository);
       const projection = await state.load();
-      const project = projection.projects.find((candidate) => candidate.root === created.repository);
+      const project = projection.projects.find(
+        (candidate) => candidate.root === created.repository,
+      );
       const managedRepositoryId = managedHost
         ? managedHost.repositoryForRoot(created.repository).id
         : undefined;
@@ -1355,7 +1458,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/worktrees/remove/preview") {
-      const body = await readJson(request) as { root?: unknown; path?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; path?: unknown };
       if (typeof body.root !== "string" || typeof body.path !== "string") {
         throw new RepositoryError("A repository and managed worktree are required.");
       }
@@ -1371,7 +1474,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/worktrees/remove") {
-      const body = await readJson(request) as { planId?: unknown; confirm?: unknown };
+      const body = (await readJson(request)) as { planId?: unknown; confirm?: unknown };
       if (typeof body.planId !== "string" || body.confirm !== true) {
         throw new RepositoryError("A complete scoped worktree removal approval is required.");
       }
@@ -1382,7 +1485,10 @@ async function handleApi(
       let projectLockAcquired = false;
       try {
         if (project && activeCheckpointProjects.has(project.id)) {
-          throw new LocalStateError("Wait for the active conversation operation before removing its worktree.", 409);
+          throw new LocalStateError(
+            "Wait for the active conversation operation before removing its worktree.",
+            409,
+          );
         }
         if (project) {
           activeCheckpointProjects.add(project.id);
@@ -1419,17 +1525,19 @@ async function handleApi(
           : [],
         delegatedApprovals: currentPreferences.orchestrationThreadsBeta
           ? projectDelegatedApprovals(
-            visibleProjection,
-            permissions.approvals().filter((approval) => {
-              if (!managedHost) return true;
-              try {
-                managedHost.repositoryForRoot(approval.repository);
-                return visibleProjection.threads.some((thread) => thread.id === approval.conversationId);
-              } catch {
-                return false;
-              }
-            }),
-          )
+              visibleProjection,
+              permissions.approvals().filter((approval) => {
+                if (!managedHost) return true;
+                try {
+                  managedHost.repositoryForRoot(approval.repository);
+                  return visibleProjection.threads.some(
+                    (thread) => thread.id === approval.conversationId,
+                  );
+                } catch {
+                  return false;
+                }
+              }),
+            )
           : [],
         delegatedInputs: currentPreferences.orchestrationThreadsBeta
           ? projectDelegatedInputs(visibleProjection)
@@ -1440,9 +1548,12 @@ async function handleApi(
     }
     if (route === "/api/forks/preview") {
       if (managedHost) {
-        throw new LocalStateError("Conversation forks are unavailable in managed hosted mode.", 403);
+        throw new LocalStateError(
+          "Conversation forks are unavailable in managed hosted mode.",
+          403,
+        );
       }
-      const body = await readJson(request) as { sourceThreadId?: unknown };
+      const body = (await readJson(request)) as { sourceThreadId?: unknown };
       if (typeof body.sourceThreadId !== "string") {
         throw new LocalStateError("A source conversation is required.", 400);
       }
@@ -1454,7 +1565,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/forks/create") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         sourceThreadId?: unknown;
         provider?: unknown;
         profileId?: unknown;
@@ -1464,31 +1575,32 @@ async function handleApi(
         workspaceMode?: unknown;
       };
       const providerValue = typeof body.provider === "string" ? body.provider : null;
-      const supportedProvider = providerValue === "claude-code"
-        || providerValue === "codex-cli"
-        || providerValue === "shikigami"
-        || (providerValue !== null && isAdapterProviderId(providerValue));
+      const supportedProvider =
+        providerValue === "claude-code" ||
+        providerValue === "codex-cli" ||
+        providerValue === "shikigami" ||
+        (providerValue !== null && isAdapterProviderId(providerValue));
       if (
-        typeof body.sourceThreadId !== "string"
-        || !supportedProvider
-        || typeof body.model !== "string"
-        || !body.model
-        || typeof body.expectedDigest !== "string"
-        || (body.worktree !== undefined && typeof body.worktree !== "string")
-        || (body.workspaceMode !== undefined
-          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
-        || (providerValue === "claude-code" && typeof body.profileId !== "string")
-        || (providerValue === "codex-cli" && body.profileId !== null)
-        || (providerValue !== "claude-code"
-          && providerValue !== "shikigami"
-          && providerValue !== "codex-cli"
-          && body.profileId !== null)
-        || (
-          providerValue === "shikigami"
-          && body.profileId !== undefined
-          && body.profileId !== null
-          && typeof body.profileId !== "string"
-        )
+        typeof body.sourceThreadId !== "string" ||
+        !supportedProvider ||
+        typeof body.model !== "string" ||
+        !body.model ||
+        typeof body.expectedDigest !== "string" ||
+        (body.worktree !== undefined && typeof body.worktree !== "string") ||
+        (body.workspaceMode !== undefined &&
+          !["shared", "aldunis-managed", "provider-native"].includes(
+            body.workspaceMode as string,
+          )) ||
+        (providerValue === "claude-code" && typeof body.profileId !== "string") ||
+        (providerValue === "codex-cli" && body.profileId !== null) ||
+        (providerValue !== "claude-code" &&
+          providerValue !== "shikigami" &&
+          providerValue !== "codex-cli" &&
+          body.profileId !== null) ||
+        (providerValue === "shikigami" &&
+          body.profileId !== undefined &&
+          body.profileId !== null &&
+          typeof body.profileId !== "string")
       ) {
         throw new LocalStateError(
           "A source conversation, destination provider, profile, model, and reviewed context size are required.",
@@ -1496,19 +1608,24 @@ async function handleApi(
         );
       }
       if (managedHost) {
-        throw new LocalStateError("Conversation forks are unavailable in managed hosted mode.", 403);
+        throw new LocalStateError(
+          "Conversation forks are unavailable in managed hosted mode.",
+          403,
+        );
       }
       const projection = await state.load();
       const source = projection.threads.find((thread) => thread.id === body.sourceThreadId);
       const project = source
         ? projection.projects.find((candidate) => candidate.id === source.projectId)
         : undefined;
-      if (!source || !project) throw new LocalStateError("The source conversation is unavailable.", 404);
+      if (!source || !project)
+        throw new LocalStateError("The source conversation is unavailable.", 404);
       await selectedWorktree(project.root, source.worktree);
       const sourceWorkspaceMode = source.workspaceMode ?? "shared";
       const requestedWorkspaceMode = body.workspaceMode as WorkspaceMode | undefined;
-      const destinationWorkspaceMode = requestedWorkspaceMode
-        ?? (sourceWorkspaceMode === "aldunis-managed" ? "aldunis-managed" : "shared");
+      const destinationWorkspaceMode =
+        requestedWorkspaceMode ??
+        (sourceWorkspaceMode === "aldunis-managed" ? "aldunis-managed" : "shared");
       let destinationWorktree = source.worktree;
       if (sourceWorkspaceMode === "aldunis-managed") {
         if (destinationWorkspaceMode !== "aldunis-managed" || typeof body.worktree !== "string") {
@@ -1527,11 +1644,7 @@ async function handleApi(
         const selected = (await worktrees.list(project.root)).find(
           (candidate) => candidate.path === destinationWorktree,
         );
-        if (
-          !selected
-          || selected.ownership !== "aldunis"
-          || selected.recovery !== "available"
-        ) {
+        if (!selected || selected.ownership !== "aldunis" || selected.recovery !== "available") {
           throw new LocalStateError(
             "The fork destination must be an available Aldunis-owned worktree.",
             409,
@@ -1550,9 +1663,10 @@ async function handleApi(
         );
       }
       const provider = providerValue as ProviderId;
-      const shikigamiProfile = provider === "shikigami" && typeof body.profileId === "string"
-        ? await profiles.runtime(body.profileId)
-        : null;
+      const shikigamiProfile =
+        provider === "shikigami" && typeof body.profileId === "string"
+          ? await profiles.runtime(body.profileId)
+          : null;
       if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
         throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
       }
@@ -1576,14 +1690,11 @@ async function handleApi(
       if (provider === "claude-code") {
         await profiles.runtime(body.profileId as string);
       } else if (provider === "shikigami") {
-        const readiness = await shikigami.readiness(
-          shikigamiProfile?.environment ?? process.env,
-          {
-            executable: shikigamiProfile?.executable,
-            configPath: shikigamiProfile?.configPath,
-            cwd: destinationWorktree,
-          },
-        );
+        const readiness = await shikigami.readiness(shikigamiProfile?.environment ?? process.env, {
+          executable: shikigamiProfile?.executable,
+          configPath: shikigamiProfile?.configPath,
+          cwd: destinationWorktree,
+        });
         if (!readiness.installed || !readiness.authenticated) {
           throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
         }
@@ -1607,9 +1718,13 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/search") {
-      const body = await readJson(request) as { query?: unknown; archived?: unknown };
-      if (typeof body.query !== "string") throw new LocalStateError("A search query is required.", 400);
-      if (body.archived !== undefined && !["exclude", "include", "only"].includes(String(body.archived))) {
+      const body = (await readJson(request)) as { query?: unknown; archived?: unknown };
+      if (typeof body.query !== "string")
+        throw new LocalStateError("A search query is required.", 400);
+      if (
+        body.archived !== undefined &&
+        !["exclude", "include", "only"].includes(String(body.archived))
+      ) {
         throw new LocalStateError("A valid archived conversation scope is required.", 400);
       }
       const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
@@ -1624,9 +1739,12 @@ async function handleApi(
           if (archived === "exclude" && thread.archivedAt) return false;
           if (archived === "only" && !thread.archivedAt) return false;
           const project = projects.get(thread.projectId);
-          return !query || thread.title.toLocaleLowerCase().includes(query)
-            || thread.worktree.toLocaleLowerCase().includes(query)
-            || project?.name.toLocaleLowerCase().includes(query);
+          return (
+            !query ||
+            thread.title.toLocaleLowerCase().includes(query) ||
+            thread.worktree.toLocaleLowerCase().includes(query) ||
+            project?.name.toLocaleLowerCase().includes(query)
+          );
         })
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, 50)
@@ -1646,7 +1764,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/rename") {
-      const body = await readJson(request) as { threadId?: unknown; title?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown; title?: unknown };
       if (typeof body.threadId !== "string" || typeof body.title !== "string") {
         throw new LocalStateError("A conversation and title are required.", 400);
       }
@@ -1655,7 +1773,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/pin") {
-      const body = await readJson(request) as { threadId?: unknown; pinned?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown; pinned?: unknown };
       if (typeof body.threadId !== "string" || typeof body.pinned !== "boolean") {
         throw new LocalStateError("A conversation and pin state are required.", 400);
       }
@@ -1664,7 +1782,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/archive") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1673,7 +1791,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/restore") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1682,7 +1800,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/settle") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1691,7 +1809,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/unsettle") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1699,8 +1817,29 @@ async function handleApi(
       sendJson(response, 200, await state.unsettleConversation(body.threadId));
       return true;
     }
+    if (route === "/api/state/conversations/snooze") {
+      const body = (await readJson(request)) as { threadId?: unknown; snoozedUntil?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      if (typeof body.snoozedUntil !== "string") {
+        throw new LocalStateError("A snooze wake time is required.", 400);
+      }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      sendJson(response, 200, await state.snoozeConversation(body.threadId, body.snoozedUntil));
+      return true;
+    }
+    if (route === "/api/state/conversations/unsnooze") {
+      const body = (await readJson(request)) as { threadId?: unknown };
+      if (typeof body.threadId !== "string") {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      sendJson(response, 200, await state.unsnoozeConversation(body.threadId));
+      return true;
+    }
     if (route === "/api/state/conversations/visit") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1709,7 +1848,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/release-worktree") {
-      const body = await readJson(request) as { threadId?: unknown; confirm?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown; confirm?: unknown };
       if (typeof body.threadId !== "string" || body.confirm !== true) {
         throw new LocalStateError("A confirmed conversation worktree release is required.", 400);
       }
@@ -1722,10 +1861,11 @@ async function handleApi(
         if (!project) throw new LocalStateError("The selected conversation is not available.", 404);
         await managedHost.selectWorktree(project.root, thread.worktree);
       }
-      const blocking = projection.turns.find((turn) => (
-        turn.threadId === thread.id
-        && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
-      ));
+      const blocking = projection.turns.find(
+        (turn) =>
+          turn.threadId === thread.id &&
+          ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
+      );
       if (blocking) {
         throw new LocalStateError(
           "This conversation cannot release its worktree while provider work is active. Stop or resolve it, then retry.",
@@ -1743,7 +1883,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/delete/preview") {
-      const body = await readJson(request) as { threadId?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown };
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
@@ -1756,7 +1896,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/conversations/delete") {
-      const body = await readJson(request) as { threadId?: unknown; confirm?: unknown };
+      const body = (await readJson(request)) as { threadId?: unknown; confirm?: unknown };
       if (typeof body.threadId !== "string" || body.confirm !== true) {
         throw new LocalStateError("A confirmed conversation deletion is required.", 400);
       }
@@ -1771,7 +1911,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/delegated-conversations/link") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         parentThreadId?: unknown;
         childThreadId?: unknown;
       };
@@ -1797,7 +1937,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/delegated-conversations/unlink") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         parentThreadId?: unknown;
         childThreadId?: unknown;
       };
@@ -1843,10 +1983,12 @@ async function handleApi(
       }
       const items = await automations.list();
       sendJson(response, 200, {
-        automations: await Promise.all(items.map(async (automation) => ({
-          ...automation,
-          lastFire: await state.latestAutomationFire(automation.id),
-        }))),
+        automations: await Promise.all(
+          items.map(async (automation) => ({
+            ...automation,
+            lastFire: await state.latestAutomationFire(automation.id),
+          })),
+        ),
       });
       return true;
     }
@@ -1855,7 +1997,7 @@ async function handleApi(
       if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot create automations.", 403);
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         name?: unknown;
         threadId?: unknown;
         prompt?: unknown;
@@ -1864,11 +2006,11 @@ async function handleApi(
         schedule?: unknown;
       };
       if (
-        typeof body.name !== "string"
-        || typeof body.threadId !== "string"
-        || typeof body.prompt !== "string"
-        || !body.schedule
-        || typeof body.schedule !== "object"
+        typeof body.name !== "string" ||
+        typeof body.threadId !== "string" ||
+        typeof body.prompt !== "string" ||
+        !body.schedule ||
+        typeof body.schedule !== "object"
       ) {
         throw new AutomationError("name, threadId, prompt, and schedule are required.");
       }
@@ -1876,21 +2018,25 @@ async function handleApi(
       if (!projection.threads.some((thread) => thread.id === body.threadId)) {
         throw new AutomationError("Target conversation was not found.", 404);
       }
-      sendJson(response, 200, await automations.create({
-        name: body.name,
-        threadId: body.threadId,
-        prompt: body.prompt,
-        mode: body.mode as InteractionMode | undefined,
-        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-        schedule: body.schedule as AutomationSchedule,
-      }));
+      sendJson(
+        response,
+        200,
+        await automations.create({
+          name: body.name,
+          threadId: body.threadId,
+          prompt: body.prompt,
+          mode: body.mode as InteractionMode | undefined,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+          schedule: body.schedule as AutomationSchedule,
+        }),
+      );
       return true;
     }
     if (route === "/api/automations/update") {
       if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot update automations.", 403);
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         id?: unknown;
         name?: unknown;
         prompt?: unknown;
@@ -1899,20 +2045,24 @@ async function handleApi(
         schedule?: unknown;
       };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-      sendJson(response, 200, await automations.update(body.id, {
-        name: typeof body.name === "string" ? body.name : undefined,
-        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
-        mode: body.mode as InteractionMode | undefined,
-        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-        schedule: body.schedule as AutomationSchedule | undefined,
-      }));
+      sendJson(
+        response,
+        200,
+        await automations.update(body.id, {
+          name: typeof body.name === "string" ? body.name : undefined,
+          prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+          mode: body.mode as InteractionMode | undefined,
+          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+          schedule: body.schedule as AutomationSchedule | undefined,
+        }),
+      );
       return true;
     }
     if (route === "/api/automations/delete") {
       if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot delete automations.", 403);
       }
-      const body = await readJson(request) as { id?: unknown };
+      const body = (await readJson(request)) as { id?: unknown };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
       await automations.remove(body.id);
       sendJson(response, 200, { ok: true });
@@ -1922,38 +2072,32 @@ async function handleApi(
       if (remoteRequest || managedHost) {
         throw new AutomationError("Remote clients cannot run automations.", 403);
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         id?: unknown;
         idempotencyKey?: unknown;
         retryOf?: unknown;
       };
       if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
       if (
-        body.idempotencyKey !== undefined
-        && (
-          typeof body.idempotencyKey !== "string"
-          || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(body.idempotencyKey)
-        )
+        body.idempotencyKey !== undefined &&
+        (typeof body.idempotencyKey !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(body.idempotencyKey))
       ) {
         throw new AutomationError("A bounded automation idempotency key is required.");
       }
       if (
-        body.retryOf !== undefined
-        && (
-          typeof body.retryOf !== "string"
-          || !/^[0-9a-f-]{36}$/i.test(body.retryOf)
-        )
+        body.retryOf !== undefined &&
+        (typeof body.retryOf !== "string" || !/^[0-9a-f-]{36}$/i.test(body.retryOf))
       ) {
         throw new AutomationError("A valid automation fire retry identity is required.");
       }
       if (typeof body.retryOf === "string") {
         const original = await state.getAutomationFireById(body.retryOf);
-        if (
-          !original
-          || original.automationId !== body.id
-          || original.status !== "unknown"
-        ) {
-          throw new AutomationError("Only an unknown fire for this automation can be retried.", 409);
+        if (!original || original.automationId !== body.id || original.status !== "unknown") {
+          throw new AutomationError(
+            "Only an unknown fire for this automation can be retried.",
+            409,
+          );
         }
       }
       const result = await automationScheduler.runNow(
@@ -1968,7 +2112,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/projects/delete") {
-      const body = await readJson(request) as { projectId?: unknown };
+      const body = (await readJson(request)) as { projectId?: unknown };
       if (typeof body.projectId !== "string") {
         throw new RepositoryError("A project is required.");
       }
@@ -1977,13 +2121,21 @@ async function handleApi(
         if (managedHost) {
           assertManagedProject(projection, body.projectId as string);
         }
-        if (activeCheckpointProjects.has(body.projectId as string) || projectHasActiveCheckpoint(body.projectId as string)) {
-          throw new LocalStateError("Wait for the active turn to finish before deleting this project.", 409);
+        if (
+          activeCheckpointProjects.has(body.projectId as string) ||
+          projectHasActiveCheckpoint(body.projectId as string)
+        ) {
+          throw new LocalStateError(
+            "Wait for the active turn to finish before deleting this project.",
+            409,
+          );
         }
         activeCheckpointProjects.add(body.projectId as string);
         try {
           const threadIds = new Set(
-            projection.threads.filter((thread) => thread.projectId === body.projectId).map((thread) => thread.id),
+            projection.threads
+              .filter((thread) => thread.projectId === body.projectId)
+              .map((thread) => thread.id),
           );
           const checkpoints = projection.checkpoints.filter((item) => threadIds.has(item.threadId));
           for (const checkpoint of checkpoints) {
@@ -2008,9 +2160,12 @@ async function handleApi(
     }
     if (route === "/api/state/retention") {
       if (managedHost) {
-        throw new LocalStateError("Retention administration is unavailable in managed hosted mode.", 403);
+        throw new LocalStateError(
+          "Retention administration is unavailable in managed hosted mode.",
+          403,
+        );
       }
-      const body = await readJson(request) as { olderThan?: unknown };
+      const body = (await readJson(request)) as { olderThan?: unknown };
       if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
         throw new RepositoryError("A valid retention cutoff is required.");
       }
@@ -2018,21 +2173,31 @@ async function handleApi(
         const cutoff = new Date(body.olderThan as string);
         const projection = await state.load();
         const expiredThreads = new Set(
-          projection.threads.filter((thread) => new Date(thread.updatedAt) < cutoff).map((thread) => thread.id),
+          projection.threads
+            .filter((thread) => new Date(thread.updatedAt) < cutoff)
+            .map((thread) => thread.id),
         );
         const expiredProjectIds = new Set(
           projection.threads
             .filter((thread) => expiredThreads.has(thread.id))
             .map((thread) => thread.projectId),
         );
-        if ([...expiredProjectIds].some((projectId) => (
-          activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId)
-        ))) {
-          throw new LocalStateError("Retention cannot run while an affected project has an active turn.", 409);
+        if (
+          [...expiredProjectIds].some(
+            (projectId) =>
+              activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId),
+          )
+        ) {
+          throw new LocalStateError(
+            "Retention cannot run while an affected project has an active turn.",
+            409,
+          );
         }
         for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
         try {
-          const checkpoints = projection.checkpoints.filter((item) => expiredThreads.has(item.threadId));
+          const checkpoints = projection.checkpoints.filter((item) =>
+            expiredThreads.has(item.threadId),
+          );
           for (const checkpoint of checkpoints) {
             await state.saveCheckpoint({
               ...checkpoint,
@@ -2055,7 +2220,7 @@ async function handleApi(
     }
     const previewMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/preview$/);
     if (previewMatch) {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new RepositoryError("A repository and worktree are required.");
       }
@@ -2067,22 +2232,28 @@ async function handleApi(
       const checkpointThread = checkpoint
         ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
         : undefined;
-      if (checkpointThread && (
-        activeCheckpointProjects.has(checkpointThread.projectId)
-        || activeCheckpointWorktrees.has(checkpointWorktreeKey(checkpointThread.projectId, context.worktree))
-      )) {
-        throw new LocalStateError("Wait for the active turn to finish before previewing a rewind.", 409);
+      if (
+        checkpointThread &&
+        (activeCheckpointProjects.has(checkpointThread.projectId) ||
+          activeCheckpointWorktrees.has(
+            checkpointWorktreeKey(checkpointThread.projectId, context.worktree),
+          ))
+      ) {
+        throw new LocalStateError(
+          "Wait for the active turn to finish before previewing a rewind.",
+          409,
+        );
       }
       if (
-        !checkpoint
-        || checkpoint.state !== "completed"
-        || !checkpoint.baselineIdentity
-        || !checkpoint.baselineIndexIdentity
-        || !checkpoint.baselineHead
-        || !checkpoint.completedIdentity
-        || !checkpoint.completedIndexIdentity
-        || !checkpoint.completedHead
-        || checkpoint.baselineHead !== checkpoint.completedHead
+        !checkpoint ||
+        checkpoint.state !== "completed" ||
+        !checkpoint.baselineIdentity ||
+        !checkpoint.baselineIndexIdentity ||
+        !checkpoint.baselineHead ||
+        !checkpoint.completedIdentity ||
+        !checkpoint.completedIndexIdentity ||
+        !checkpoint.completedHead ||
+        checkpoint.baselineHead !== checkpoint.completedHead
       ) {
         throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
       }
@@ -2119,15 +2290,15 @@ async function handleApi(
     }
     const checkpointDiffMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/diff$/);
     if (checkpointDiffMatch) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         path?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.path !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.path !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and changed path are required.");
       }
@@ -2143,30 +2314,36 @@ async function handleApi(
         throw new LocalStateError("The checkpoint conversation is unavailable.", 404);
       }
       if (
-        !checkpoint
-        || (checkpoint.state !== "completed" && checkpoint.state !== "superseded")
-        || !checkpoint.baselineIdentity
-        || !checkpoint.completedIdentity
+        !checkpoint ||
+        (checkpoint.state !== "completed" && checkpoint.state !== "superseded") ||
+        !checkpoint.baselineIdentity ||
+        !checkpoint.completedIdentity
       ) {
         throw new RepositoryError("This turn diff is unavailable.", 409);
       }
-      const files = checkpoint.files?.length ? checkpoint.files : await checkpointDiff(
-        context.worktree,
-        checkpoint.baselineIdentity,
-        checkpoint.completedIdentity,
+      const files = checkpoint.files?.length
+        ? checkpoint.files
+        : await checkpointDiff(
+            context.worktree,
+            checkpoint.baselineIdentity,
+            checkpoint.completedIdentity,
+          );
+      sendJson(
+        response,
+        200,
+        await readCheckpointFileDiff(
+          context.worktree,
+          checkpoint.baselineIdentity,
+          checkpoint.completedIdentity,
+          body.path,
+          files,
+        ),
       );
-      sendJson(response, 200, await readCheckpointFileDiff(
-        context.worktree,
-        checkpoint.baselineIdentity,
-        checkpoint.completedIdentity,
-        body.path,
-        files,
-      ));
       return true;
     }
     const rewindMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/rewind$/);
     if (rewindMatch) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         currentIdentity?: unknown;
@@ -2174,11 +2351,11 @@ async function handleApi(
         confirm?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.currentIdentity !== "string"
-        || typeof body.currentIndexIdentity !== "string"
-        || body.confirm !== true
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.currentIdentity !== "string" ||
+        typeof body.currentIndexIdentity !== "string" ||
+        body.confirm !== true
       ) {
         throw new RepositoryError("Preview and confirm the exact rewind before continuing.");
       }
@@ -2193,24 +2370,25 @@ async function handleApi(
       const rewindLock = checkpointThread
         ? checkpointWorktreeKey(checkpointThread.projectId, context.worktree)
         : null;
-      if (checkpointThread && (
-        activeCheckpointProjects.has(checkpointThread.projectId)
-        || (rewindLock && activeCheckpointWorktrees.has(rewindLock))
-      )) {
+      if (
+        checkpointThread &&
+        (activeCheckpointProjects.has(checkpointThread.projectId) ||
+          (rewindLock && activeCheckpointWorktrees.has(rewindLock)))
+      ) {
         throw new LocalStateError("Wait for the active turn to finish before rewinding.", 409);
       }
       if (
-        !checkpoint
-        || checkpoint.state !== "completed"
-        || !checkpoint.baselineIdentity
-        || !checkpoint.baselineIndexIdentity
-        || !checkpoint.baselineHead
-        || !checkpoint.completedIdentity
-        || !checkpoint.completedIndexIdentity
-        || !checkpoint.completedHead
-        || checkpoint.baselineHead !== checkpoint.completedHead
-        || body.currentIdentity !== checkpoint.completedIdentity
-        || body.currentIndexIdentity !== checkpoint.completedIndexIdentity
+        !checkpoint ||
+        checkpoint.state !== "completed" ||
+        !checkpoint.baselineIdentity ||
+        !checkpoint.baselineIndexIdentity ||
+        !checkpoint.baselineHead ||
+        !checkpoint.completedIdentity ||
+        !checkpoint.completedIndexIdentity ||
+        !checkpoint.completedHead ||
+        checkpoint.baselineHead !== checkpoint.completedHead ||
+        body.currentIdentity !== checkpoint.completedIdentity ||
+        body.currentIndexIdentity !== checkpoint.completedIndexIdentity
       ) {
         throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
       }
@@ -2249,7 +2427,8 @@ async function handleApi(
             shared: true,
             aldunisManaged: true,
             providerNative: false,
-            providerNativeDetail: "Managed hosted mode supplies the workspace; provider-native worktree creation is unavailable.",
+            providerNativeDetail:
+              "Managed hosted mode supplies the workspace; provider-native worktree creation is unavailable.",
           },
         });
         return true;
@@ -2261,15 +2440,15 @@ async function handleApi(
       if (managedHost) {
         throw new LocalStateError("Codex skills are unavailable in managed hosted mode.", 403);
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         provider?: unknown;
         root?: unknown;
         worktree?: unknown;
       };
       if (
-        body.provider !== "codex-cli"
-        || typeof body.root !== "string"
-        || typeof body.worktree !== "string"
+        body.provider !== "codex-cli" ||
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string"
       ) {
         throw new RepositoryError("A Codex provider, repository, and worktree are required.");
       }
@@ -2278,7 +2457,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/approvals/list") {
-      const body = await readJson(request) as { runId?: unknown };
+      const body = (await readJson(request)) as { runId?: unknown };
       if (typeof body.runId !== "string") {
         throw new PermissionError("A provider run is required.");
       }
@@ -2286,15 +2465,15 @@ async function handleApi(
       return true;
     }
     if (route === "/api/context/files") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         query?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.query !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.query !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and file query are required.");
       }
@@ -2305,15 +2484,15 @@ async function handleApi(
       return true;
     }
     if (route === "/api/context/browse") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         query?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.query !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.query !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and search query are required.");
       }
@@ -2328,17 +2507,19 @@ async function handleApi(
       return true;
     }
     if (route === "/api/context/preview") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         path?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.path !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.path !== "string"
       ) {
-        throw new RepositoryError("A repository, worktree, and repository-relative path are required.");
+        throw new RepositoryError(
+          "A repository, worktree, and repository-relative path are required.",
+        );
       }
       const context = await selectedWorktree(body.root, body.worktree);
       sendJson(response, 200, {
@@ -2347,24 +2528,27 @@ async function handleApi(
       return true;
     }
     if (route === "/api/context/package/preview") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         pins?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || !Array.isArray(body.pins)
-        || body.pins.length > 100
-        || body.pins.some((pin) => (
-          typeof pin !== "object"
-          || pin === null
-          || typeof (pin as { path?: unknown }).path !== "string"
-          || !["file", "folder"].includes(String((pin as { kind?: unknown }).kind))
-        ))
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        !Array.isArray(body.pins) ||
+        body.pins.length > 100 ||
+        body.pins.some(
+          (pin) =>
+            typeof pin !== "object" ||
+            pin === null ||
+            typeof (pin as { path?: unknown }).path !== "string" ||
+            !["file", "folder"].includes(String((pin as { kind?: unknown }).kind)),
+        )
       ) {
-        throw new RepositoryError("A repository, worktree, and bounded context pin list are required.");
+        throw new RepositoryError(
+          "A repository, worktree, and bounded context pin list are required.",
+        );
       }
       const pins = body.pins as ContextPin[];
       if (remoteRequest && pins.some((pin) => pin.kind === "folder")) {
@@ -2402,8 +2586,12 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/profiles/save") {
-      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
-      const body = await readJson(request) as {
+      if (remoteRequest || managedHost)
+        throw new ProfileError(
+          "Provider profile administration is unavailable in the active host mode.",
+          403,
+        );
+      const body = (await readJson(request)) as {
         id?: unknown;
         provider?: unknown;
         name?: unknown;
@@ -2415,11 +2603,11 @@ async function handleApi(
       const environment = Array.isArray(body.environment)
         ? body.environment.map((value) => {
             if (
-              !isRecord(value)
-              || typeof value.name !== "string"
-              || typeof value.sensitive !== "boolean"
-              || (value.value !== undefined && typeof value.value !== "string")
-              || (value.valueSet !== undefined && typeof value.valueSet !== "boolean")
+              !isRecord(value) ||
+              typeof value.name !== "string" ||
+              typeof value.sensitive !== "boolean" ||
+              (value.value !== undefined && typeof value.value !== "string") ||
+              (value.valueSet !== undefined && typeof value.valueSet !== "boolean")
             ) {
               throw new ProfileError("Profile environment variables must be valid.");
             }
@@ -2432,43 +2620,55 @@ async function handleApi(
           })
         : undefined;
       if (
-        (body.id !== undefined && typeof body.id !== "string")
-        || typeof body.name !== "string"
-        || (body.provider !== undefined && typeof body.provider !== "string")
-        || (body.binaryPath !== undefined && typeof body.binaryPath !== "string")
-        || (body.homePath !== undefined && typeof body.homePath !== "string")
-        || (body.configPath !== undefined && typeof body.configPath !== "string")
-        || (body.environment !== undefined && !Array.isArray(body.environment))
+        (body.id !== undefined && typeof body.id !== "string") ||
+        typeof body.name !== "string" ||
+        (body.provider !== undefined && typeof body.provider !== "string") ||
+        (body.binaryPath !== undefined && typeof body.binaryPath !== "string") ||
+        (body.homePath !== undefined && typeof body.homePath !== "string") ||
+        (body.configPath !== undefined && typeof body.configPath !== "string") ||
+        (body.environment !== undefined && !Array.isArray(body.environment))
       ) {
         throw new ProfileError("A valid provider profile is required.");
       }
-      sendJson(response, 200, await profiles.save({
-        ...(typeof body.id === "string" ? { id: body.id } : {}),
-        ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
-        name: body.name,
-        ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
-        ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
-        ...(typeof body.configPath === "string" ? { configPath: body.configPath } : {}),
-        ...(environment ? { environment } : {}),
-      }));
+      sendJson(
+        response,
+        200,
+        await profiles.save({
+          ...(typeof body.id === "string" ? { id: body.id } : {}),
+          ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
+          name: body.name,
+          ...(typeof body.binaryPath === "string" ? { binaryPath: body.binaryPath } : {}),
+          ...(typeof body.homePath === "string" ? { homePath: body.homePath } : {}),
+          ...(typeof body.configPath === "string" ? { configPath: body.configPath } : {}),
+          ...(environment ? { environment } : {}),
+        }),
+      );
       return true;
     }
     if (route === "/api/provider/profiles/delete") {
-      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
-      const body = await readJson(request) as { id?: unknown };
+      if (remoteRequest || managedHost)
+        throw new ProfileError(
+          "Provider profile administration is unavailable in the active host mode.",
+          403,
+        );
+      const body = (await readJson(request)) as { id?: unknown };
       if (typeof body.id !== "string") throw new ProfileError("A provider profile is required.");
       await profiles.delete(body.id);
       sendJson(response, 200, { status: "deleted" });
       return true;
     }
     if (route === "/api/provider/profiles/refresh") {
-      if (remoteRequest || managedHost) throw new ProfileError("Provider profile administration is unavailable in the active host mode.", 403);
-      const body = await readJson(request) as { id?: unknown; kind?: unknown };
+      if (remoteRequest || managedHost)
+        throw new ProfileError(
+          "Provider profile administration is unavailable in the active host mode.",
+          403,
+        );
+      const body = (await readJson(request)) as { id?: unknown; kind?: unknown };
       const kinds: ProfileProbeKind[] = ["availability", "version", "authentication", "models"];
       if (
-        typeof body.id !== "string"
-        || typeof body.kind !== "string"
-        || !kinds.includes(body.kind as ProfileProbeKind)
+        typeof body.id !== "string" ||
+        typeof body.kind !== "string" ||
+        !kinds.includes(body.kind as ProfileProbeKind)
       ) {
         throw new ProfileError("A profile and refresh kind are required.");
       }
@@ -2476,7 +2676,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/runs") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         prompt?: unknown;
@@ -2516,7 +2716,10 @@ async function handleApi(
           "worktreePath",
         ];
         if (forbiddenManagedOverrides.some((key) => Object.hasOwn(body, key))) {
-          throw new RepositoryError("Managed runs cannot override provider, model, executable, endpoint, credential, or path configuration.", 403);
+          throw new RepositoryError(
+            "Managed runs cannot override provider, model, executable, endpoint, credential, or path configuration.",
+            403,
+          );
         }
         if (body.provider !== undefined && body.provider !== "shikigami") {
           throw new RepositoryError("Managed hosted mode runs only Shikigami.", 403);
@@ -2525,13 +2728,19 @@ async function handleApi(
           throw new RepositoryError("Managed hosted mode runs only Build mode.", 403);
         }
         if (body.model !== undefined && body.model !== managedHost.shikigami.model) {
-          throw new RepositoryError("The managed model is selected by the host configuration.", 403);
+          throw new RepositoryError(
+            "The managed model is selected by the host configuration.",
+            403,
+          );
         }
         if (body.profileId !== undefined && body.profileId !== null) {
           throw new RepositoryError("Managed hosted mode does not accept provider profiles.", 403);
         }
         if (body.reasoningEffort !== undefined) {
-          throw new RepositoryError("Managed hosted mode does not accept model tuning overrides.", 403);
+          throw new RepositoryError(
+            "Managed hosted mode does not accept model tuning overrides.",
+            403,
+          );
         }
         body.provider = "shikigami";
         body.mode = "build";
@@ -2539,73 +2748,80 @@ async function handleApi(
         body.profileId = null;
       }
       const providerId = (body.provider ?? "claude-code") as ProviderId;
-      const isDeclarativeAdapter = typeof providerId === "string" && providerId.startsWith("adapter:");
-      const nativeResumePayload = internalRequest
-        && providerId === "shikigami"
-        && typeof body.inputRequestId === "string"
-        && typeof body.resumeSessionId === "string"
-        && typeof body.resumeAnswer === "string";
-      const reasoningEfforts = new Set<ReasoningEffort>(["minimal", "low", "medium", "high", "xhigh"]);
+      const isDeclarativeAdapter =
+        typeof providerId === "string" && providerId.startsWith("adapter:");
+      const nativeResumePayload =
+        internalRequest &&
+        providerId === "shikigami" &&
+        typeof body.inputRequestId === "string" &&
+        typeof body.resumeSessionId === "string" &&
+        typeof body.resumeAnswer === "string";
+      const reasoningEfforts = new Set<ReasoningEffort>([
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ]);
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.prompt !== "string"
-        || (!body.prompt.trim() && !nativeResumePayload)
-        || typeof body.conversationId !== "string"
-        || !body.conversationId
-        || (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string")
-        || (body.resumeAnswer !== undefined && typeof body.resumeAnswer !== "string")
-        || (body.projectId !== undefined && typeof body.projectId !== "string")
-        || (body.threadId !== undefined && typeof body.threadId !== "string")
-        || (body.parentThreadId !== undefined && (
-          typeof body.parentThreadId !== "string"
-          || !body.parentThreadId
-        ))
-        || (body.inputRequestId !== undefined && typeof body.inputRequestId !== "string")
-        || (body.automationFireId !== undefined && (
-          !internalRequest
-          || typeof body.automationFireId !== "string"
-          || !/^[0-9a-f-]{36}$/i.test(body.automationFireId)
-        ))
-        || !["ask", "plan", "build"].includes(body.mode as string)
-        || (body.attachments !== undefined && (
-          !Array.isArray(body.attachments)
-          || body.attachments.length > 100
-          || body.attachments.some((path) => typeof path !== "string")
-        ))
-        || (body.contextPins !== undefined && (
-          !Array.isArray(body.contextPins)
-          || body.contextPins.length > 100
-          || body.contextPins.some((pin) => (
-            typeof pin !== "object"
-            || pin === null
-            || typeof (pin as { path?: unknown }).path !== "string"
-            || !["file", "folder"].includes(String((pin as { kind?: unknown }).kind))
-          ))
-        ))
-        || (providerId !== "claude-code" && providerId !== "codex-cli" && providerId !== "shikigami" && !isDeclarativeAdapter)
-        || (providerId === "claude-code" && typeof body.profileId !== "string")
-        || (
-          providerId === "shikigami"
-          && body.profileId !== undefined
-          && body.profileId !== null
-          && typeof body.profileId !== "string"
-        )
-        || typeof body.model !== "string"
-        || (body.reasoningEffort !== undefined
-          && !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort))
-        || (body.workspaceMode !== undefined
-          && !["shared", "aldunis-managed", "provider-native"].includes(body.workspaceMode as string))
-        || (body.elementReferences !== undefined && (
-          !Array.isArray(body.elementReferences)
-          || body.elementReferences.length > 3
-          || body.elementReferences.some((value) => (
-            typeof value !== "object"
-            || value === null
-            || typeof (value as { selector?: unknown }).selector !== "string"
-            || typeof (value as { tag?: unknown }).tag !== "string"
-          ))
-        ))
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.prompt !== "string" ||
+        (!body.prompt.trim() && !nativeResumePayload) ||
+        typeof body.conversationId !== "string" ||
+        !body.conversationId ||
+        (body.resumeSessionId !== undefined && typeof body.resumeSessionId !== "string") ||
+        (body.resumeAnswer !== undefined && typeof body.resumeAnswer !== "string") ||
+        (body.projectId !== undefined && typeof body.projectId !== "string") ||
+        (body.threadId !== undefined && typeof body.threadId !== "string") ||
+        (body.parentThreadId !== undefined &&
+          (typeof body.parentThreadId !== "string" || !body.parentThreadId)) ||
+        (body.inputRequestId !== undefined && typeof body.inputRequestId !== "string") ||
+        (body.automationFireId !== undefined &&
+          (!internalRequest ||
+            typeof body.automationFireId !== "string" ||
+            !/^[0-9a-f-]{36}$/i.test(body.automationFireId))) ||
+        !["ask", "plan", "build"].includes(body.mode as string) ||
+        (body.attachments !== undefined &&
+          (!Array.isArray(body.attachments) ||
+            body.attachments.length > 100 ||
+            body.attachments.some((path) => typeof path !== "string"))) ||
+        (body.contextPins !== undefined &&
+          (!Array.isArray(body.contextPins) ||
+            body.contextPins.length > 100 ||
+            body.contextPins.some(
+              (pin) =>
+                typeof pin !== "object" ||
+                pin === null ||
+                typeof (pin as { path?: unknown }).path !== "string" ||
+                !["file", "folder"].includes(String((pin as { kind?: unknown }).kind)),
+            ))) ||
+        (providerId !== "claude-code" &&
+          providerId !== "codex-cli" &&
+          providerId !== "shikigami" &&
+          !isDeclarativeAdapter) ||
+        (providerId === "claude-code" && typeof body.profileId !== "string") ||
+        (providerId === "shikigami" &&
+          body.profileId !== undefined &&
+          body.profileId !== null &&
+          typeof body.profileId !== "string") ||
+        typeof body.model !== "string" ||
+        (body.reasoningEffort !== undefined &&
+          !reasoningEfforts.has(body.reasoningEffort as ReasoningEffort)) ||
+        (body.workspaceMode !== undefined &&
+          !["shared", "aldunis-managed", "provider-native"].includes(
+            body.workspaceMode as string,
+          )) ||
+        (body.elementReferences !== undefined &&
+          (!Array.isArray(body.elementReferences) ||
+            body.elementReferences.length > 3 ||
+            body.elementReferences.some(
+              (value) =>
+                typeof value !== "object" ||
+                value === null ||
+                typeof (value as { selector?: unknown }).selector !== "string" ||
+                typeof (value as { tag?: unknown }).tag !== "string",
+            )))
       ) {
         throw new RepositoryError(
           "A repository, worktree, prompt, interaction mode, provider, and model are required.",
@@ -2613,23 +2829,21 @@ async function handleApi(
       }
       const mode = body.mode as InteractionMode;
       const context = await selectedWorktree(body.root, body.worktree);
-      const delegatedParentThreadId = typeof body.parentThreadId === "string"
-        ? body.parentThreadId
-        : null;
-      const contextPins = body.contextPins !== undefined
-        ? body.contextPins as ContextPin[]
-        : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
+      const delegatedParentThreadId =
+        typeof body.parentThreadId === "string" ? body.parentThreadId : null;
+      const contextPins =
+        body.contextPins !== undefined
+          ? (body.contextPins as ContextPin[])
+          : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
       if (remoteRequest && contextPins.some((pin) => pin.kind === "folder")) {
         throw new RepositoryError(
           "Remote folder pinning requires an authenticated repository grant and is unavailable.",
           403,
         );
       }
-      const assembledContext = await assembleContextPackage(
-        context.worktree,
-        contextPins,
-        { includeProviderInstructions: !remoteRequest && !managedHost },
-      );
+      const assembledContext = await assembleContextPackage(context.worktree, contextPins, {
+        includeProviderInstructions: !remoteRequest && !managedHost,
+      });
       const providerPrompt = composePrompt(
         nativeResumePayload ? "" : body.prompt.trim(),
         assembledContext.attachments,
@@ -2642,22 +2856,27 @@ async function handleApi(
         }>,
       );
       const projection = await state.load();
-      const project = typeof body.projectId === "string"
-        ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
-        : projection.projects.find((item) => item.root === context.root);
-      if (!project) throw new LocalStateError("Open the repository before starting a conversation.", 404);
-      const existingThread = typeof body.threadId === "string"
-        ? projection.threads.find((thread) => thread.id === body.threadId)
-        : undefined;
+      const project =
+        typeof body.projectId === "string"
+          ? projection.projects.find(
+              (item) => item.id === body.projectId && item.root === context.root,
+            )
+          : projection.projects.find((item) => item.root === context.root);
+      if (!project)
+        throw new LocalStateError("Open the repository before starting a conversation.", 404);
+      const existingThread =
+        typeof body.threadId === "string"
+          ? projection.threads.find((thread) => thread.id === body.threadId)
+          : undefined;
       if (body.threadId !== undefined && !existingThread) {
         throw new LocalStateError("The selected conversation is not available.", 404);
       }
       if (existingThread && existingThread.projectId !== project.id) {
         throw new LocalStateError("The selected conversation is not available.", 404);
       }
-      const workspaceMode = (body.workspaceMode
-        ?? existingThread?.workspaceMode
-        ?? "shared") as WorkspaceMode;
+      const workspaceMode = (body.workspaceMode ??
+        existingThread?.workspaceMode ??
+        "shared") as WorkspaceMode;
       if (managedHost && workspaceMode !== "shared") {
         throw new LocalStateError(
           "Managed hosted mode supplies the workspace and only supports the shared workspace mode.",
@@ -2674,17 +2893,16 @@ async function handleApi(
         const selected = (await worktrees.list(context.root)).find(
           (candidate) => candidate.path === context.worktree,
         );
-        if (
-          !selected
-          || selected.ownership !== "aldunis"
-          || selected.recovery !== "available"
-        ) {
+        if (!selected || selected.ownership !== "aldunis" || selected.recovery !== "available") {
           throw new LocalStateError(
             "An Aldunis-managed conversation must use an available Aldunis-owned worktree.",
             409,
           );
         }
-        if (!body.threadId && projection.threads.some((thread) => thread.worktree === context.worktree)) {
+        if (
+          !body.threadId &&
+          projection.threads.some((thread) => thread.worktree === context.worktree)
+        ) {
           throw new LocalStateError(
             "Each Aldunis-managed conversation needs its own worktree. Create a new one before starting this chat.",
             409,
@@ -2695,7 +2913,8 @@ async function handleApi(
         const providerSession = projection.providerSessions.find(
           (session) => session.threadId === existingThread.id,
         );
-        const existingProvider = existingThread.provider ?? providerSession?.provider ?? "claude-code";
+        const existingProvider =
+          existingThread.provider ?? providerSession?.provider ?? "claude-code";
         if (existingProvider !== providerId) {
           throw new LocalStateError(
             `This conversation belongs to ${existingProvider} and cannot switch providers.`,
@@ -2711,10 +2930,7 @@ async function handleApi(
       }
       if (delegatedParentThreadId) {
         if (body.threadId !== undefined) {
-          throw new LocalStateError(
-            "A delegated child must start as a new conversation.",
-            400,
-          );
+          throw new LocalStateError("A delegated child must start as a new conversation.", 400);
         }
         const { preferences: currentPreferences } = await preferences.load();
         if (!currentPreferences.orchestrationThreadsBeta) {
@@ -2741,9 +2957,9 @@ async function handleApi(
             (worktree) => worktree.path === context.worktree,
           );
           if (
-            !selectedChildWorktree
-            || selectedChildWorktree.ownership !== "aldunis"
-            || selectedChildWorktree.recovery !== "available"
+            !selectedChildWorktree ||
+            selectedChildWorktree.ownership !== "aldunis" ||
+            selectedChildWorktree.recovery !== "available"
           ) {
             throw new LocalStateError(
               "A Build child requires an available Aldunis-managed worktree. Create one through the worktree approval flow.",
@@ -2758,58 +2974,72 @@ async function handleApi(
           }
         }
       }
-      const shikigamiProfile = providerId === "shikigami" && typeof body.profileId === "string"
-        ? await profiles.runtime(body.profileId)
-        : null;
+      const shikigamiProfile =
+        providerId === "shikigami" && typeof body.profileId === "string"
+          ? await profiles.runtime(body.profileId)
+          : null;
       if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
-        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+        throw new ProfileError(
+          "The selected profile does not belong to the requested provider.",
+          400,
+        );
       }
       const effectiveModel = managedHost
         ? managedHost.shikigami.model
         : await validateProviderModel(
-          providerId,
-          body.model,
-          {
-            codex,
-            shikigami,
-            shikigamiProfile: shikigamiProfile
-              ? {
-                  executable: shikigamiProfile.executable,
-                  environment: shikigamiProfile.environment,
-                  configPath: shikigamiProfile.configPath,
-                }
-              : undefined,
-            adapters,
-          },
-          context.worktree,
-        );
-      const previousSession = typeof body.threadId === "string"
-        ? projection.providerSessions.find(
-          (session) => session.threadId === body.threadId && session.provider === providerId,
-        )
-        : undefined;
-      const resumedInput = typeof body.inputRequestId === "string"
-        ? projection.inputRequests.find((item) => (
-          item.id === body.inputRequestId
-          && item.threadId === body.threadId
-          && item.state === "answered"
-          && item.responseMode === "child_follow_up"
-        ))
-        : undefined;
+            providerId,
+            body.model,
+            {
+              codex,
+              shikigami,
+              shikigamiProfile: shikigamiProfile
+                ? {
+                    executable: shikigamiProfile.executable,
+                    environment: shikigamiProfile.environment,
+                    configPath: shikigamiProfile.configPath,
+                  }
+                : undefined,
+              adapters,
+            },
+            context.worktree,
+          );
+      const previousSession =
+        typeof body.threadId === "string"
+          ? projection.providerSessions.find(
+              (session) => session.threadId === body.threadId && session.provider === providerId,
+            )
+          : undefined;
+      const resumedInput =
+        typeof body.inputRequestId === "string"
+          ? projection.inputRequests.find(
+              (item) =>
+                item.id === body.inputRequestId &&
+                item.threadId === body.threadId &&
+                item.state === "answered" &&
+                item.responseMode === "child_follow_up",
+            )
+          : undefined;
       const nativeResumeInput = nativeResumePayload
-        ? projection.inputRequests.find((item) => (
-          item.id === body.inputRequestId
-          && item.threadId === body.threadId
-          && item.state === "answered"
-          && item.responseMode === "native_resume"
-          && item.resumeState === "starting"
-          && item.providerRequestId === body.resumeSessionId
-        ))
+        ? projection.inputRequests.find(
+            (item) =>
+              item.id === body.inputRequestId &&
+              item.threadId === body.threadId &&
+              item.state === "answered" &&
+              item.responseMode === "native_resume" &&
+              item.resumeState === "starting" &&
+              item.providerRequestId === body.resumeSessionId,
+          )
         : undefined;
       if (nativeResumePayload && (!nativeResumeInput || !body.resumeAnswer?.trim())) {
-        throw new LocalStateError("The native Shikigami resume request is no longer available.", 409);
+        throw new LocalStateError(
+          "The native Shikigami resume request is no longer available.",
+          409,
+        );
       }
-      if (body.inputRequestId !== undefined && (!internalRequest || (!resumedInput && !nativeResumeInput))) {
+      if (
+        body.inputRequestId !== undefined &&
+        (!internalRequest || (!resumedInput && !nativeResumeInput))
+      ) {
         throw new LocalStateError("The provider input request is no longer available.", 409);
       }
       const nativeResumeSourceTurn = nativeResumeInput
@@ -2818,62 +3048,73 @@ async function handleApi(
       const nativeResumeThread = nativeResumeInput
         ? projection.threads.find((item) => item.id === nativeResumeInput.threadId)
         : undefined;
-      if (nativeResumeInput && (
-        !nativeResumeSourceTurn
-        || !nativeResumeThread
-        || nativeResumeThread.provider !== "shikigami"
-        || nativeResumeThread.worktree !== context.worktree
-        || nativeResumeSourceTurn.mode !== mode
-        || nativeResumeSourceTurn.providerRunId !== nativeResumeInput.providerRunId
-        || nativeResumeThread.model && nativeResumeThread.model !== effectiveModel
-        || (previousSession?.profileId ?? null) !== (body.profileId ?? null)
-        || (nativeResumeThread.workspaceMode ?? "shared") !== workspaceMode
-        || body.conversationId !== nativeResumeThread.id
-        || body.threadId !== nativeResumeThread.id
-        || body.projectId !== project.id
-        || body.parentThreadId !== undefined
-      )) {
-        throw new LocalStateError("The native Shikigami resume binding does not match the parked turn.", 409);
-      }
-      const resumedCheckpoint = (nativeResumeInput ?? resumedInput)
-        ? projection.checkpoints.find((item) => (
-          item.turnId === (nativeResumeInput ?? resumedInput)!.turnId
-          && item.threadId === body.threadId
-          && item.worktree === context.worktree
-          && item.state === "baseline"
-        ))
-        : undefined;
-      if ((resumedInput || nativeResumeInput) && !resumedCheckpoint) {
-        throw new LocalStateError("The parked provider turn has no usable baseline checkpoint.", 409);
-      }
-      const pendingFork = typeof body.threadId === "string"
-        ? projection.forks.find((fork) => (
-            fork.destinationThreadId === body.threadId && fork.status === "pending"
-          ))
-        : undefined;
       if (
-        pendingFork
-        && (
-          pendingFork.provider !== providerId
-          || pendingFork.model !== effectiveModel
-          || pendingFork.profileId !== (
-            providerId === "claude-code" || providerId === "shikigami"
-              ? (body.profileId ?? null) as string | null
-              : null
-          )
-          || pendingFork.worktree !== context.worktree
-        )
+        nativeResumeInput &&
+        (!nativeResumeSourceTurn ||
+          !nativeResumeThread ||
+          nativeResumeThread.provider !== "shikigami" ||
+          nativeResumeThread.worktree !== context.worktree ||
+          nativeResumeSourceTurn.mode !== mode ||
+          nativeResumeSourceTurn.providerRunId !== nativeResumeInput.providerRunId ||
+          (nativeResumeThread.model && nativeResumeThread.model !== effectiveModel) ||
+          (previousSession?.profileId ?? null) !== (body.profileId ?? null) ||
+          (nativeResumeThread.workspaceMode ?? "shared") !== workspaceMode ||
+          body.conversationId !== nativeResumeThread.id ||
+          body.threadId !== nativeResumeThread.id ||
+          body.projectId !== project.id ||
+          body.parentThreadId !== undefined)
+      ) {
+        throw new LocalStateError(
+          "The native Shikigami resume binding does not match the parked turn.",
+          409,
+        );
+      }
+      const resumedCheckpoint =
+        (nativeResumeInput ?? resumedInput)
+          ? projection.checkpoints.find(
+              (item) =>
+                item.turnId === (nativeResumeInput ?? resumedInput)!.turnId &&
+                item.threadId === body.threadId &&
+                item.worktree === context.worktree &&
+                item.state === "baseline",
+            )
+          : undefined;
+      if ((resumedInput || nativeResumeInput) && !resumedCheckpoint) {
+        throw new LocalStateError(
+          "The parked provider turn has no usable baseline checkpoint.",
+          409,
+        );
+      }
+      const pendingFork =
+        typeof body.threadId === "string"
+          ? projection.forks.find(
+              (fork) => fork.destinationThreadId === body.threadId && fork.status === "pending",
+            )
+          : undefined;
+      if (
+        pendingFork &&
+        (pendingFork.provider !== providerId ||
+          pendingFork.model !== effectiveModel ||
+          pendingFork.profileId !==
+            (providerId === "claude-code" || providerId === "shikigami"
+              ? ((body.profileId ?? null) as string | null)
+              : null) ||
+          pendingFork.worktree !== context.worktree)
       ) {
         throw new LocalStateError(
           "The destination provider, profile, model, or worktree changed after the fork was reviewed.",
           409,
         );
       }
-      const profile = providerId === "claude-code"
-        ? await profiles.runtime(body.profileId as string)
-        : shikigamiProfile;
+      const profile =
+        providerId === "claude-code"
+          ? await profiles.runtime(body.profileId as string)
+          : shikigamiProfile;
       if (profile && profile.profile.provider !== providerId) {
-        throw new ProfileError("The selected profile does not belong to the requested provider.", 400);
+        throw new ProfileError(
+          "The selected profile does not belong to the requested provider.",
+          400,
+        );
       }
       const installedAdapter = isDeclarativeAdapter ? await adapters.version(providerId) : null;
       if (isDeclarativeAdapter && !installedAdapter) {
@@ -2886,10 +3127,9 @@ async function handleApi(
         throw new ProviderAdapterError("The selected adapter is disabled.", 409);
       }
       if (
-        profile
-        &&
-        previousSession?.continuationKey
-        && previousSession.continuationKey !== profile.continuationKey
+        profile &&
+        previousSession?.continuationKey &&
+        previousSession.continuationKey !== profile.continuationKey
       ) {
         throw new ProfileError(
           "This thread can only continue with the same provider profile.",
@@ -2903,9 +3143,9 @@ async function handleApi(
         );
       }
       if (
-        body.resumeSessionId !== undefined
-        && !nativeResumeInput
-        && (!previousSession || body.resumeSessionId !== previousSession.sessionId)
+        body.resumeSessionId !== undefined &&
+        !nativeResumeInput &&
+        (!previousSession || body.resumeSessionId !== previousSession.sessionId)
       ) {
         throw new LocalStateError(
           "The provider session does not belong to the selected conversation.",
@@ -2914,461 +3154,509 @@ async function handleApi(
       }
       const activeWorktreeKey = checkpointWorktreeKey(project.id, context.worktree);
       if (
-        activeCheckpointProjects.has(project.id)
-        || activeCheckpointWorktrees.has(activeWorktreeKey)
+        activeCheckpointProjects.has(project.id) ||
+        activeCheckpointWorktrees.has(activeWorktreeKey)
       ) {
         throw new LocalStateError("This worktree already has an active checkpoint capture.", 409);
       }
       activeCheckpointWorktrees.add(activeWorktreeKey);
       try {
-      const nativeResumeClaim = nativeResumeInput
-        ? await state.claimNativeShikigamiResume(
-          nativeResumeInput.id,
-          nativeResumeInput.threadId,
-          body.resumeSessionId as string,
-        )
-        : null;
-      const persisted = nativeResumeClaim
-        ? { thread: nativeResumeClaim.thread, turn: nativeResumeClaim.turn }
-        : await state.startTurn({
-          projectId: project.id,
-          worktree: context.worktree,
-          prompt: body.prompt.trim(),
-          mode,
-          provider: providerId,
-          model: effectiveModel,
-          reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
-          threadId: body.threadId,
-          contextPins: assembledContext.pins,
-          workspaceMode,
-        });
-      if (!nativeResumeClaim && typeof body.automationFireId === "string") {
-        await state.bindAutomationFireTurn(body.automationFireId, persisted.turn.id);
-      }
-      if (!nativeResumeClaim) {
-        await state.saveContextReceipt({
-          threadId: persisted.thread.id,
-          turnId: persisted.turn.id,
-          pins: assembledContext.pins,
-          entries: assembledContext.entries,
-          totalBytes: assembledContext.totalBytes,
-          estimatedTokens: assembledContext.estimatedTokens,
-          digest: assembledContext.digest,
-        });
-      }
-      if (!nativeResumeClaim && delegatedParentThreadId) {
-        await withDelegatedControlLock(() => state.linkDelegatedConversation(
-          delegatedParentThreadId,
-          persisted.thread.id,
-        ));
-      }
-      const forkPrompt = nativeResumeClaim ? null : await state.pendingForkPrompt(persisted.thread.id);
-      const effectiveProviderPrompt = nativeResumeClaim
-        ? ""
-        : forkPrompt
-          ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
-          : providerPrompt;
-      const checkpointId = resumedCheckpoint?.id ?? randomUUID();
-      const checkpointCreatedAt = new Date().toISOString();
-      let baselineIdentity: string | null = resumedCheckpoint?.baselineIdentity ?? null;
-      let commonGitDirectory: string | null = resumedCheckpoint?.gitDirectory ?? null;
-      try {
-        commonGitDirectory = await checkpointGitDirectory(context.worktree);
-      } catch {
-        // Capture below records a visible unavailable state without creating refs.
-      }
-      const checkpointIntent = resumedCheckpoint ?? await state.saveCheckpoint({
-        id: checkpointId,
-        turnId: persisted.turn.id,
-        threadId: persisted.thread.id,
-        worktree: context.worktree,
-        gitDirectory: commonGitDirectory,
-        baselineHead: null,
-        baselineIdentity: null,
-        baselineIndexIdentity: null,
-        completedIdentity: null,
-        completedIndexIdentity: null,
-        completedHead: null,
-        state: "unavailable",
-        message: "Baseline capture did not complete.",
-        createdAt: checkpointCreatedAt,
-      });
-      if (!resumedCheckpoint) try {
-        const baseline = await captureCheckpoint(
-          context.worktree,
-          false,
-          checkpointReference(checkpointId, "baseline"),
-        );
-        baselineIdentity = baseline.identity;
-        await state.saveCheckpoint({
-          ...checkpointIntent,
-          gitDirectory: baseline.gitDirectory,
-          baselineHead: baseline.head,
-          baselineIdentity,
-          baselineIndexIdentity: baseline.indexIdentity,
-          state: "baseline",
-          message: null,
-        });
-      } catch (error) {
-        await state.saveCheckpoint({
-          ...checkpointIntent,
-          state: "unavailable",
-          message: error instanceof RepositoryError ? error.message : "Baseline capture failed.",
-        });
-      }
-      const port = request.socket.localPort;
-      const approvalUrl = internalApprovalUrl ?? (
-        port
-          ? Promise.resolve(`http://127.0.0.1:${port}/api/provider/permissions/request`)
-          : Promise.reject(new RepositoryError("The local permission broker is unavailable.", 503))
-      );
-      const browserAutomationAllowed = providerId === "codex-cli"
-        || (installedAdapter?.manifest.capabilities.browserAutomation === true);
-      const browserMcp = browserAutomationAllowed && browser && browserMcpPath && port
-        ? browser.providerMcpConfiguration({
-            conversationId: persisted.thread.id,
-            endpoint: `http://127.0.0.1:${port}/api/browser/tools`,
-            command: process.execPath,
-            script: browserMcpPath,
-          })
-        : undefined;
-      const effectiveProviderPromptWithBrowser = browserMcp
-        ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
-        : effectiveProviderPrompt;
-      let run;
-      try {
-        run = providerId === "codex-cli"
-          ? await codex.start({
-            repository: context.root,
-            worktree: context.worktree,
-            conversationId: persisted.thread.id,
-            prompt: effectiveProviderPromptWithBrowser,
-            approvalUrl: await approvalUrl,
-            mode,
-            resumeSessionId: body.resumeSessionId,
-            model: effectiveModel,
-            reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
-            browserMcp,
-          })
-          : providerId === "shikigami"
-          ? await (nativeResumeClaim
-            ? shikigami.resumeParked({
-              repository: context.root,
+        const nativeResumeClaim = nativeResumeInput
+          ? await state.claimNativeShikigamiResume(
+              nativeResumeInput.id,
+              nativeResumeInput.threadId,
+              body.resumeSessionId as string,
+            )
+          : null;
+        const persisted = nativeResumeClaim
+          ? { thread: nativeResumeClaim.thread, turn: nativeResumeClaim.turn }
+          : await state.startTurn({
+              projectId: project.id,
               worktree: context.worktree,
-              conversationId: persisted.thread.id,
-              prompt: "",
-              approvalUrl: await approvalUrl,
+              prompt: body.prompt.trim(),
               mode,
-              resumeSessionId: body.resumeSessionId as string,
+              provider: providerId,
               model: effectiveModel,
-            }, body.resumeAnswer as string, process.env, managedHost
-              ? {
-                  ...managedHost.shikigami,
-                  stateRoot: join(state.directory, "managed-shikigami"),
-                }
-              : undefined,
-              profile
-                ? {
-                    executable: profile.executable,
-                    environment: profile.environment,
-                    configPath: profile.configPath,
-                  } satisfies ShikigamiProfileRuntime
-                : undefined)
-            : shikigami.start({
-              repository: context.root,
-              worktree: context.worktree,
-              conversationId: persisted.thread.id,
-              prompt: effectiveProviderPrompt,
-              approvalUrl: await approvalUrl,
-              mode,
-              resumeSessionId: undefined,
-              model: effectiveModel,
-            }, process.env, managedHost
-              ? {
-                  ...managedHost.shikigami,
-                  stateRoot: join(state.directory, "managed-shikigami"),
-                }
-              : undefined,
-              profile
-                ? {
-                    executable: profile.executable,
-                    environment: profile.environment,
-                    configPath: profile.configPath,
-                  } satisfies ShikigamiProfileRuntime
-                : undefined))
-          : installedAdapter
-          ? await (async () => {
-              const executable = await adapters.resolveExecutable(installedAdapter);
-              const adapter = new AcpProviderAdapter(installedAdapter, executable, permissions);
-              const started = await adapter.start({
-                repository: context.root,
-                worktree: context.worktree,
-                conversationId: persisted.thread.id,
-            prompt: effectiveProviderPromptWithBrowser,
-                approvalUrl: await approvalUrl,
-                mode,
-                resumeSessionId: body.resumeSessionId,
-                model: effectiveModel,
-                reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
-                browserMcp,
-              });
-              activeAcp.set(started.id, adapter);
-              return started;
-            })()
-          : await provider.start(
-            context.root,
-            context.worktree,
-            persisted.thread.id,
-            effectiveProviderPrompt,
-            await approvalUrl,
-            mode,
-            body.resumeSessionId,
-            {
-              executable: profile!.executable,
-              environment: profile!.environment,
-              model: effectiveModel,
-            },
-          );
-      } catch (error) {
-        if (nativeResumeClaim) {
-          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+              reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+              threadId: body.threadId,
+              contextPins: assembledContext.pins,
+              workspaceMode,
+            });
+        if (!nativeResumeClaim && typeof body.automationFireId === "string") {
+          await state.bindAutomationFireTurn(body.automationFireId, persisted.turn.id);
         }
-        await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
-          kind: "failed",
-          message: error instanceof ProviderProtocolError
-            ? error.message
-            : "The provider could not be started.",
-        }, profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined);
-        await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
-        const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
-        if (!resumedCheckpoint && checkpoint && checkpoint.state === "baseline") {
-          await state.saveCheckpoint({
-            ...checkpoint,
-            state: "failed",
-            message: "Provider startup failed before checkpoint completion.",
+        if (!nativeResumeClaim) {
+          await state.saveContextReceipt({
+            threadId: persisted.thread.id,
+            turnId: persisted.turn.id,
+            pins: assembledContext.pins,
+            entries: assembledContext.entries,
+            totalBytes: assembledContext.totalBytes,
+            estimatedTokens: assembledContext.estimatedTokens,
+            digest: assembledContext.digest,
           });
         }
-        response.setHeader("x-thread-id", persisted.thread.id);
-        response.setHeader("x-turn-id", persisted.turn.id);
-        throw error;
-      }
-      response.setHeader("x-thread-id", persisted.thread.id);
-      response.setHeader("x-turn-id", persisted.turn.id);
-      try {
-        if (resumedCheckpoint) {
-          await state.saveCheckpoint({ ...resumedCheckpoint, turnId: persisted.turn.id });
+        if (!nativeResumeClaim && delegatedParentThreadId) {
+          await withDelegatedControlLock(() =>
+            state.linkDelegatedConversation(delegatedParentThreadId, persisted.thread.id),
+          );
         }
-        await state.bindProviderRun(persisted.turn.id, run.id);
-        if (nativeResumeClaim) {
-          await state.markNativeShikigamiResumeStarted(nativeResumeClaim.request.id);
-        }
-        await state.markForkStarted(persisted.thread.id);
-      } catch (error) {
-        if (nativeResumeClaim) {
-          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
-        }
-        if (providerId === "codex-cli") codex.cancel(run.id);
-        else if (providerId === "shikigami") shikigami.cancel(run.id);
-        else if (isDeclarativeAdapter) {
-          activeAcp.get(run.id)?.cancel(run.id);
-          activeAcp.delete(run.id);
-        } else provider.cancel(run.id);
-        throw error;
-      }
-      beginProviderEventStream(response, {
-        runId: run.id,
-        threadId: persisted.thread.id,
-        turnId: persisted.turn.id,
-      });
-      let completed = false;
-      let historyFailed = false;
-      let previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
-      // Starting a turn moves the thread to running before the first event.
-      await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
-      previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
-      for await (const event of run.events) {
-        let outgoingEvent = event;
+        const forkPrompt = nativeResumeClaim
+          ? null
+          : await state.pendingForkPrompt(persisted.thread.id);
+        const effectiveProviderPrompt = nativeResumeClaim
+          ? ""
+          : forkPrompt
+            ? `${forkPrompt}\n\nNew request:\n${providerPrompt}`
+            : providerPrompt;
+        const checkpointId = resumedCheckpoint?.id ?? randomUUID();
+        const checkpointCreatedAt = new Date().toISOString();
+        let baselineIdentity: string | null = resumedCheckpoint?.baselineIdentity ?? null;
+        let commonGitDirectory: string | null = resumedCheckpoint?.gitDirectory ?? null;
         try {
+          commonGitDirectory = await checkpointGitDirectory(context.worktree);
+        } catch {
+          // Capture below records a visible unavailable state without creating refs.
+        }
+        const checkpointIntent =
+          resumedCheckpoint ??
+          (await state.saveCheckpoint({
+            id: checkpointId,
+            turnId: persisted.turn.id,
+            threadId: persisted.thread.id,
+            worktree: context.worktree,
+            gitDirectory: commonGitDirectory,
+            baselineHead: null,
+            baselineIdentity: null,
+            baselineIndexIdentity: null,
+            completedIdentity: null,
+            completedIndexIdentity: null,
+            completedHead: null,
+            state: "unavailable",
+            message: "Baseline capture did not complete.",
+            createdAt: checkpointCreatedAt,
+          }));
+        if (!resumedCheckpoint)
+          try {
+            const baseline = await captureCheckpoint(
+              context.worktree,
+              false,
+              checkpointReference(checkpointId, "baseline"),
+            );
+            baselineIdentity = baseline.identity;
+            await state.saveCheckpoint({
+              ...checkpointIntent,
+              gitDirectory: baseline.gitDirectory,
+              baselineHead: baseline.head,
+              baselineIdentity,
+              baselineIndexIdentity: baseline.indexIdentity,
+              state: "baseline",
+              message: null,
+            });
+          } catch (error) {
+            await state.saveCheckpoint({
+              ...checkpointIntent,
+              state: "unavailable",
+              message:
+                error instanceof RepositoryError ? error.message : "Baseline capture failed.",
+            });
+          }
+        const port = request.socket.localPort;
+        const approvalUrl =
+          internalApprovalUrl ??
+          (port
+            ? Promise.resolve(`http://127.0.0.1:${port}/api/provider/permissions/request`)
+            : Promise.reject(
+                new RepositoryError("The local permission broker is unavailable.", 503),
+              ));
+        const browserAutomationAllowed =
+          providerId === "codex-cli" ||
+          installedAdapter?.manifest.capabilities.browserAutomation === true;
+        const browserMcp =
+          browserAutomationAllowed && browser && browserMcpPath && port
+            ? browser.providerMcpConfiguration({
+                conversationId: persisted.thread.id,
+                endpoint: `http://127.0.0.1:${port}/api/browser/tools`,
+                command: process.execPath,
+                script: browserMcpPath,
+              })
+            : undefined;
+        const effectiveProviderPromptWithBrowser = browserMcp
+          ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
+          : effectiveProviderPrompt;
+        let run;
+        try {
+          run =
+            providerId === "codex-cli"
+              ? await codex.start({
+                  repository: context.root,
+                  worktree: context.worktree,
+                  conversationId: persisted.thread.id,
+                  prompt: effectiveProviderPromptWithBrowser,
+                  approvalUrl: await approvalUrl,
+                  mode,
+                  resumeSessionId: body.resumeSessionId,
+                  model: effectiveModel,
+                  reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+                  browserMcp,
+                })
+              : providerId === "shikigami"
+                ? await (nativeResumeClaim
+                    ? shikigami.resumeParked(
+                        {
+                          repository: context.root,
+                          worktree: context.worktree,
+                          conversationId: persisted.thread.id,
+                          prompt: "",
+                          approvalUrl: await approvalUrl,
+                          mode,
+                          resumeSessionId: body.resumeSessionId as string,
+                          model: effectiveModel,
+                        },
+                        body.resumeAnswer as string,
+                        process.env,
+                        managedHost
+                          ? {
+                              ...managedHost.shikigami,
+                              stateRoot: join(state.directory, "managed-shikigami"),
+                            }
+                          : undefined,
+                        profile
+                          ? ({
+                              executable: profile.executable,
+                              environment: profile.environment,
+                              configPath: profile.configPath,
+                            } satisfies ShikigamiProfileRuntime)
+                          : undefined,
+                      )
+                    : shikigami.start(
+                        {
+                          repository: context.root,
+                          worktree: context.worktree,
+                          conversationId: persisted.thread.id,
+                          prompt: effectiveProviderPrompt,
+                          approvalUrl: await approvalUrl,
+                          mode,
+                          resumeSessionId: undefined,
+                          model: effectiveModel,
+                        },
+                        process.env,
+                        managedHost
+                          ? {
+                              ...managedHost.shikigami,
+                              stateRoot: join(state.directory, "managed-shikigami"),
+                            }
+                          : undefined,
+                        profile
+                          ? ({
+                              executable: profile.executable,
+                              environment: profile.environment,
+                              configPath: profile.configPath,
+                            } satisfies ShikigamiProfileRuntime)
+                          : undefined,
+                      ))
+                : installedAdapter
+                  ? await (async () => {
+                      const executable = await adapters.resolveExecutable(installedAdapter);
+                      const adapter = new AcpProviderAdapter(
+                        installedAdapter,
+                        executable,
+                        permissions,
+                      );
+                      const started = await adapter.start({
+                        repository: context.root,
+                        worktree: context.worktree,
+                        conversationId: persisted.thread.id,
+                        prompt: effectiveProviderPromptWithBrowser,
+                        approvalUrl: await approvalUrl,
+                        mode,
+                        resumeSessionId: body.resumeSessionId,
+                        model: effectiveModel,
+                        reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+                        browserMcp,
+                      });
+                      activeAcp.set(started.id, adapter);
+                      return started;
+                    })()
+                  : await provider.start(
+                      context.root,
+                      context.worktree,
+                      persisted.thread.id,
+                      effectiveProviderPrompt,
+                      await approvalUrl,
+                      mode,
+                      body.resumeSessionId,
+                      {
+                        executable: profile!.executable,
+                        environment: profile!.environment,
+                        model: effectiveModel,
+                      },
+                    );
+        } catch (error) {
+          if (nativeResumeClaim) {
+            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+          }
           await state.recordProviderEvent(
             persisted.thread.id,
             persisted.turn.id,
             providerId,
-            event,
-            profile ? { profileId: profile.profile.id, continuationKey: profile.continuationKey } : undefined,
+            {
+              kind: "failed",
+              message:
+                error instanceof ProviderProtocolError
+                  ? error.message
+                  : "The provider could not be started.",
+            },
+            profile
+              ? { profileId: profile.profile.id, continuationKey: profile.continuationKey }
+              : undefined,
           );
-          if (nativeResumeClaim && (event.kind === "failed" || event.kind === "cancelled")) {
-            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
-          }
-          if (event.kind === "approval_resolved") {
-            const sibling = permissions.approvalsFor(run.id).find(
-              (approval) => approval.state === "pending",
-            );
-            if (sibling) {
-              await state.recordProviderEvent(
-                persisted.thread.id,
-                persisted.turn.id,
-                providerId,
-                { kind: "approval_pending", ...sibling },
-              );
-            }
-          }
-          if (event.kind === "input_requested" && event.expiresAt) {
-            const timeout = setTimeout(() => {
-              if (!codex.expireInput(run.id, event.id)) return;
-              void state.recordProviderEvent(
-                persisted.thread.id,
-                persisted.turn.id,
-                providerId,
-                { kind: "input_resolved", id: event.id, state: "cancelled" },
-              ).then(async () => {
-                if (!response.destroyed && !response.writableEnded) {
-                  response.write(`${JSON.stringify({
-                    kind: "input_resolved",
-                    id: event.id,
-                    state: "cancelled",
-                  })}\n`);
-                }
-                await publishThreadStatusTransition(
-                  wake,
-                  state,
-                  persisted.thread.id,
-                  null,
-                  true,
-                );
-              }).catch(() => undefined);
-            }, Math.max(0, Date.parse(event.expiresAt) - Date.now()));
-            timeout.unref();
-          }
-          await publishThreadStatusTransition(
-            wake,
-            state,
-            persisted.thread.id,
-            previousStatus,
-            event.kind === "approval_pending"
-              || event.kind === "approval_resolved"
-              || event.kind === "input_requested"
-              || event.kind === "input_resolved",
+          await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
+          const checkpoint = (await state.load()).checkpoints.find(
+            (item) => item.id === checkpointId,
           );
-          previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
-          if (event.kind === "governance_correlation") {
-            const correlation = (await state.load()).governanceCorrelations.find(
-              (item) => item.turnId === persisted.turn.id,
-            );
-            if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
+          if (!resumedCheckpoint && checkpoint && checkpoint.state === "baseline") {
+            await state.saveCheckpoint({
+              ...checkpoint,
+              state: "failed",
+              message: "Provider startup failed before checkpoint completion.",
+            });
           }
-        } catch {
+          response.setHeader("x-thread-id", persisted.thread.id);
+          response.setHeader("x-turn-id", persisted.turn.id);
+          throw error;
+        }
+        response.setHeader("x-thread-id", persisted.thread.id);
+        response.setHeader("x-turn-id", persisted.turn.id);
+        try {
+          if (resumedCheckpoint) {
+            await state.saveCheckpoint({ ...resumedCheckpoint, turnId: persisted.turn.id });
+          }
+          await state.bindProviderRun(persisted.turn.id, run.id);
+          if (nativeResumeClaim) {
+            await state.markNativeShikigamiResumeStarted(nativeResumeClaim.request.id);
+          }
+          await state.markForkStarted(persisted.thread.id);
+        } catch (error) {
           if (nativeResumeClaim) {
             await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
           }
           if (providerId === "codex-cli") codex.cancel(run.id);
           else if (providerId === "shikigami") shikigami.cancel(run.id);
-          else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
-          else provider.cancel(run.id);
-          response.write(`${JSON.stringify({
-            kind: "failed",
-            message: "Local history could not be updated. The provider run was stopped.",
-          })}\n`);
-          historyFailed = true;
-          break;
+          else if (isDeclarativeAdapter) {
+            activeAcp.get(run.id)?.cancel(run.id);
+            activeAcp.delete(run.id);
+          } else provider.cancel(run.id);
+          throw error;
         }
-        if (event.kind === "turn_completed") completed = true;
-        response.write(`${JSON.stringify(outgoingEvent)}\n`);
-      }
-      const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
-      if (checkpoint?.state === "baseline" && baselineIdentity) {
-        if (historyFailed) {
-          await state.saveCheckpoint({
-            ...checkpoint,
-            state: "failed",
-            message: "Local history failed and the provider turn was stopped.",
-          });
-        } else if (completed) {
+        beginProviderEventStream(response, {
+          runId: run.id,
+          threadId: persisted.thread.id,
+          turnId: persisted.turn.id,
+        });
+        let completed = false;
+        let historyFailed = false;
+        let previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+        // Starting a turn moves the thread to running before the first event.
+        await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
+        previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+        for await (const event of run.events) {
+          let outgoingEvent = event;
           try {
-            const captured = await captureCheckpoint(
-              context.worktree,
-              true,
-              checkpointReference(checkpointId, "completed"),
+            await state.recordProviderEvent(
+              persisted.thread.id,
+              persisted.turn.id,
+              providerId,
+              event,
+              profile
+                ? { profileId: profile.profile.id, continuationKey: profile.continuationKey }
+                : undefined,
             );
-            if (captured.head !== checkpoint.baselineHead) {
-              await deleteCheckpointReferences(captured.gitDirectory, checkpointId);
+            if (nativeResumeClaim && (event.kind === "failed" || event.kind === "cancelled")) {
+              await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+            }
+            if (event.kind === "approval_resolved") {
+              const sibling = permissions
+                .approvalsFor(run.id)
+                .find((approval) => approval.state === "pending");
+              if (sibling) {
+                await state.recordProviderEvent(
+                  persisted.thread.id,
+                  persisted.turn.id,
+                  providerId,
+                  { kind: "approval_pending", ...sibling },
+                );
+              }
+            }
+            if (event.kind === "input_requested" && event.expiresAt) {
+              const timeout = setTimeout(
+                () => {
+                  if (!codex.expireInput(run.id, event.id)) return;
+                  void state
+                    .recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
+                      kind: "input_resolved",
+                      id: event.id,
+                      state: "cancelled",
+                    })
+                    .then(async () => {
+                      if (!response.destroyed && !response.writableEnded) {
+                        response.write(
+                          `${JSON.stringify({
+                            kind: "input_resolved",
+                            id: event.id,
+                            state: "cancelled",
+                          })}\n`,
+                        );
+                      }
+                      await publishThreadStatusTransition(
+                        wake,
+                        state,
+                        persisted.thread.id,
+                        null,
+                        true,
+                      );
+                    })
+                    .catch(() => undefined);
+                },
+                Math.max(0, Date.parse(event.expiresAt) - Date.now()),
+              );
+              timeout.unref();
+            }
+            await publishThreadStatusTransition(
+              wake,
+              state,
+              persisted.thread.id,
+              previousStatus,
+              event.kind === "approval_pending" ||
+                event.kind === "approval_resolved" ||
+                event.kind === "input_requested" ||
+                event.kind === "input_resolved",
+            );
+            previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+            if (event.kind === "governance_correlation") {
+              const correlation = (await state.load()).governanceCorrelations.find(
+                (item) => item.turnId === persisted.turn.id,
+              );
+              if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
+            }
+          } catch {
+            if (nativeResumeClaim) {
+              await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+            }
+            if (providerId === "codex-cli") codex.cancel(run.id);
+            else if (providerId === "shikigami") shikigami.cancel(run.id);
+            else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
+            else provider.cancel(run.id);
+            response.write(
+              `${JSON.stringify({
+                kind: "failed",
+                message: "Local history could not be updated. The provider run was stopped.",
+              })}\n`,
+            );
+            historyFailed = true;
+            break;
+          }
+          if (event.kind === "turn_completed") completed = true;
+          response.write(`${JSON.stringify(outgoingEvent)}\n`);
+        }
+        const checkpoint = (await state.load()).checkpoints.find(
+          (item) => item.id === checkpointId,
+        );
+        if (checkpoint?.state === "baseline" && baselineIdentity) {
+          if (historyFailed) {
+            await state.saveCheckpoint({
+              ...checkpoint,
+              state: "failed",
+              message: "Local history failed and the provider turn was stopped.",
+            });
+          } else if (completed) {
+            try {
+              const captured = await captureCheckpoint(
+                context.worktree,
+                true,
+                checkpointReference(checkpointId, "completed"),
+              );
+              if (captured.head !== checkpoint.baselineHead) {
+                await deleteCheckpointReferences(captured.gitDirectory, checkpointId);
+                await state.saveCheckpoint({
+                  ...checkpoint,
+                  state: "unavailable",
+                  message: "HEAD changed during the turn; rewind does not rewrite Git history.",
+                });
+              } else {
+                let files: Awaited<ReturnType<typeof checkpointDiff>> = [];
+                try {
+                  files = await checkpointDiff(
+                    context.worktree,
+                    baselineIdentity,
+                    captured.identity,
+                  );
+                } catch {
+                  // The tree identities remain authoritative even if the
+                  // optional inline summary cannot be computed.
+                }
+                const saved = await state.saveCheckpoint({
+                  ...checkpoint,
+                  completedIdentity: captured.identity,
+                  completedIndexIdentity: captured.indexIdentity,
+                  completedHead: captured.head,
+                  state: "completed",
+                  message: null,
+                  files,
+                });
+                await state.supersedeCompletedCheckpoints(
+                  persisted.thread.id,
+                  context.worktree,
+                  saved.id,
+                );
+              }
+            } catch (error) {
               await state.saveCheckpoint({
                 ...checkpoint,
                 state: "unavailable",
-                message: "HEAD changed during the turn; rewind does not rewrite Git history.",
+                message:
+                  error instanceof RepositoryError
+                    ? error.message
+                    : "Completed checkpoint capture failed.",
               });
-            } else {
-              let files: Awaited<ReturnType<typeof checkpointDiff>> = [];
-              try {
-                files = await checkpointDiff(
-                  context.worktree,
-                  baselineIdentity,
-                  captured.identity,
-                );
-              } catch {
-                // The tree identities remain authoritative even if the
-                // optional inline summary cannot be computed.
-              }
-              const saved = await state.saveCheckpoint({
-                ...checkpoint,
-                completedIdentity: captured.identity,
-                completedIndexIdentity: captured.indexIdentity,
-                completedHead: captured.head,
-                state: "completed",
-                message: null,
-                files,
-              });
-              await state.supersedeCompletedCheckpoints(
-                persisted.thread.id,
-                context.worktree,
-                saved.id,
-              );
             }
-          } catch (error) {
+          } else if (
+            (await state.load()).inputRequests.some(
+              (item) =>
+                item.turnId === persisted.turn.id &&
+                item.state === "pending" &&
+                (item.responseMode === "child_follow_up" || item.responseMode === "native_resume"),
+            )
+          ) {
+            // Preserve the original baseline while a parked run awaits an
+            // explicit answer; that answer rebinds and finalizes this checkpoint.
+          } else {
             await state.saveCheckpoint({
               ...checkpoint,
-              state: "unavailable",
-              message: error instanceof RepositoryError
-                ? error.message
-                : "Completed checkpoint capture failed.",
+              state: "failed",
+              message: "The turn did not complete; its baseline remains inspectable.",
             });
           }
-        } else if ((await state.load()).inputRequests.some((item) => (
-          item.turnId === persisted.turn.id
-          && item.state === "pending"
-          && (
-            item.responseMode === "child_follow_up"
-            || item.responseMode === "native_resume"
-          )
-        ))) {
-          // Preserve the original baseline while a parked run awaits an
-          // explicit answer; that answer rebinds and finalizes this checkpoint.
-        } else {
-          await state.saveCheckpoint({
-            ...checkpoint,
-            state: "failed",
-            message: "The turn did not complete; its baseline remains inspectable.",
-          });
         }
-      }
-      response.end();
-      activeAcp.delete(run.id);
-      return true;
+        response.end();
+        activeAcp.delete(run.id);
+        return true;
       } finally {
         activeCheckpointWorktrees.delete(activeWorktreeKey);
       }
     }
     if (route === "/api/provider/permissions/request") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         runId?: unknown;
         toolName?: unknown;
         input?: unknown;
       };
       const authorization = request.headers.authorization;
       if (
-        typeof body.runId !== "string"
-        || typeof body.toolName !== "string"
-        || typeof authorization !== "string"
-        || !authorization.startsWith("Bearer ")
+        typeof body.runId !== "string" ||
+        typeof body.toolName !== "string" ||
+        typeof authorization !== "string" ||
+        !authorization.startsWith("Bearer ")
       ) {
         throw new PermissionError("A valid provider permission request is required.", 403);
       }
@@ -3386,7 +3674,7 @@ async function handleApi(
     }
     const approvalMatch = route.match(/^\/api\/provider\/approvals\/([0-9a-f-]+)\/decide$/);
     if (approvalMatch) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         runId?: unknown;
         conversationId?: unknown;
         repository?: unknown;
@@ -3396,16 +3684,13 @@ async function handleApi(
         parentThreadId?: unknown;
       };
       if (
-        typeof body.runId !== "string"
-        || typeof body.conversationId !== "string"
-        || typeof body.repository !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.toolCallId !== "string"
-        || (
-          body.parentThreadId !== undefined
-          && typeof body.parentThreadId !== "string"
-        )
-        || (body.decision !== "allow_once" && body.decision !== "deny")
+        typeof body.runId !== "string" ||
+        typeof body.conversationId !== "string" ||
+        typeof body.repository !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.toolCallId !== "string" ||
+        (body.parentThreadId !== undefined && typeof body.parentThreadId !== "string") ||
+        (body.decision !== "allow_once" && body.decision !== "deny")
       ) {
         throw new PermissionError("A complete scoped approval decision is required.");
       }
@@ -3429,10 +3714,7 @@ async function handleApi(
             approvalId: approvalMatch[1],
           });
         }
-        const previousStatus = projectThreadStatus(
-          await state.load(),
-          conversationId,
-        ).status;
+        const previousStatus = projectThreadStatus(await state.load(), conversationId).status;
         const decided = await permissions.decideAfter(
           approvalMatch[1],
           { runId, conversationId, repository, worktree, toolCallId },
@@ -3446,15 +3728,14 @@ async function handleApi(
             if (!turn || !thread) {
               throw new LocalStateError("The provider turn is missing from local history.", 404);
             }
-            await state.recordProviderEvent(
-              thread.id,
-              turn.id,
-              thread.provider ?? "claude-code",
-              { kind: "approval_resolved", id: resolution.id, state: resolution.state },
-            );
-            const sibling = permissions.approvalsFor(runId).find(
-              (approval) => approval.state === "pending",
-            );
+            await state.recordProviderEvent(thread.id, turn.id, thread.provider ?? "claude-code", {
+              kind: "approval_resolved",
+              id: resolution.id,
+              state: resolution.state,
+            });
+            const sibling = permissions
+              .approvalsFor(runId)
+              .find((approval) => approval.state === "pending");
             if (sibling) {
               await state.recordProviderEvent(
                 thread.id,
@@ -3465,18 +3746,13 @@ async function handleApi(
             }
           },
         );
-        await publishThreadStatusTransition(
-          wake,
-          state,
-          conversationId,
-          previousStatus,
-          true,
-        );
+        await publishThreadStatusTransition(wake, state, conversationId, previousStatus, true);
         return decided;
       };
-      const decided = typeof parentThreadId === "string"
-        ? await withDelegatedControlLock(resolveApproval)
-        : await resolveApproval();
+      const decided =
+        typeof parentThreadId === "string"
+          ? await withDelegatedControlLock(resolveApproval)
+          : await resolveApproval();
       sendJson(response, 200, decided);
       return true;
     }
@@ -3484,15 +3760,15 @@ async function handleApi(
       /^\/api\/provider\/input-requests\/([0-9a-f-]+)\/respond$/,
     );
     if (inputResponseMatch) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         childThreadId?: unknown;
         parentThreadId?: unknown;
         answer?: unknown;
       };
       if (
-        typeof body.childThreadId !== "string"
-        || typeof body.answer !== "string"
-        || (body.parentThreadId !== undefined && typeof body.parentThreadId !== "string")
+        typeof body.childThreadId !== "string" ||
+        typeof body.answer !== "string" ||
+        (body.parentThreadId !== undefined && typeof body.parentThreadId !== "string")
       ) {
         throw new LocalStateError("A complete child-bound input response is required.", 400);
       }
@@ -3520,11 +3796,12 @@ async function handleApi(
         } else {
           const inputProjection = await state.load();
           if (managedHost) assertManagedThread(inputProjection, body.childThreadId as string);
-          const requestProjection = inputProjection.inputRequests.find((item) => (
-            item.id === inputResponseMatch[1]
-            && item.threadId === body.childThreadId
-            && item.state === "pending"
-          ));
+          const requestProjection = inputProjection.inputRequests.find(
+            (item) =>
+              item.id === inputResponseMatch[1] &&
+              item.threadId === body.childThreadId &&
+              item.state === "pending",
+          );
           if (!requestProjection) {
             throw new LocalStateError("The input request is not pending for this child.", 403);
           }
@@ -3534,9 +3811,9 @@ async function handleApi(
         if (selectedRequest.responseMode === "child_follow_up") {
           const projection = await state.load();
           const child = projection.threads.find((item) => item.id === body.childThreadId);
-          const childSession = projection.providerSessions.find((item) => (
-            item.threadId === body.childThreadId && item.provider === child?.provider
-          ));
+          const childSession = projection.providerSessions.find(
+            (item) => item.threadId === body.childThreadId && item.provider === child?.provider,
+          );
           const sourceTurn = projection.turns.find((item) => item.id === selectedRequest.turnId);
           const project = child
             ? projection.projects.find((item) => item.id === child.projectId)
@@ -3581,25 +3858,31 @@ async function handleApi(
               await new Promise((resolve) => setTimeout(resolve, 100));
             }
           }
-          await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
+          await publishThreadStatusTransition(
+            wake,
+            state,
+            body.childThreadId as string,
+            null,
+            true,
+          );
           return result;
         }
         if (selectedRequest.responseMode === "native_resume") {
           const projection = await state.load();
           const child = projection.threads.find((item) => item.id === body.childThreadId);
-          const childSession = projection.providerSessions.find((item) => (
-            item.threadId === body.childThreadId && item.provider === child?.provider
-          ));
+          const childSession = projection.providerSessions.find(
+            (item) => item.threadId === body.childThreadId && item.provider === child?.provider,
+          );
           const sourceTurn = projection.turns.find((item) => item.id === selectedRequest.turnId);
           const project = child
             ? projection.projects.find((item) => item.id === child.projectId)
             : undefined;
           if (
-            !child
-            || child.provider !== "shikigami"
-            || !project
-            || !sourceTurn
-            || !selectedRequest.providerRequestId
+            !child ||
+            child.provider !== "shikigami" ||
+            !project ||
+            !sourceTurn ||
+            !selectedRequest.providerRequestId
           ) {
             throw new LocalStateError("The native Shikigami resume route is unavailable.", 409);
           }
@@ -3640,7 +3923,13 @@ async function handleApi(
             await state.markNativeShikigamiResumeUnavailable(selectedRequest.id);
             throw error;
           }
-          await publishThreadStatusTransition(wake, state, body.childThreadId as string, null, true);
+          await publishThreadStatusTransition(
+            wake,
+            state,
+            body.childThreadId as string,
+            null,
+            true,
+          );
           return result;
         }
         const result = await state.resolveInputRequest(
@@ -3666,7 +3955,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/changes") {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new RepositoryError("A repository and worktree are required.");
       }
@@ -3675,7 +3964,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/reviews/set") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         threadId?: unknown;
         path?: unknown;
         previousPath?: unknown;
@@ -3683,11 +3972,13 @@ async function handleApi(
         reviewed?: unknown;
       };
       if (
-        typeof body.threadId !== "string"
-        || typeof body.path !== "string"
-        || typeof body.diffIdentity !== "string"
-        || typeof body.reviewed !== "boolean"
-        || (body.previousPath !== undefined && body.previousPath !== null && typeof body.previousPath !== "string")
+        typeof body.threadId !== "string" ||
+        typeof body.path !== "string" ||
+        typeof body.diffIdentity !== "string" ||
+        typeof body.reviewed !== "boolean" ||
+        (body.previousPath !== undefined &&
+          body.previousPath !== null &&
+          typeof body.previousPath !== "string")
       ) {
         throw new LocalStateError(
           "A conversation, file path, content identity, and reviewed flag are required.",
@@ -3695,25 +3986,29 @@ async function handleApi(
         );
       }
       if (managedHost) assertManagedThread(await state.load(), body.threadId);
-      sendJson(response, 200, await state.setFileReview({
-        threadId: body.threadId,
-        path: body.path,
-        previousPath: typeof body.previousPath === "string" ? body.previousPath : null,
-        diffIdentity: body.diffIdentity,
-        reviewed: body.reviewed,
-      }));
+      sendJson(
+        response,
+        200,
+        await state.setFileReview({
+          threadId: body.threadId,
+          path: body.path,
+          previousPath: typeof body.previousPath === "string" ? body.previousPath : null,
+          diffIdentity: body.diffIdentity,
+          reviewed: body.reviewed,
+        }),
+      );
       return true;
     }
     if (route === "/api/annotations/list") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         threadId?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.threadId !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.threadId !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and conversation are required.");
       }
@@ -3721,9 +4016,10 @@ async function handleApi(
       const projection = await state.load();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
-        (item) => item.id === body.threadId
-          && item.projectId === project?.id
-          && item.worktree === context.worktree,
+        (item) =>
+          item.id === body.threadId &&
+          item.projectId === project?.id &&
+          item.worktree === context.worktree,
       );
       if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
       const annotations = projection.annotations.filter((item) => item.threadId === thread.id);
@@ -3741,7 +4037,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/annotations/create") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         threadId?: unknown;
@@ -3752,16 +4048,17 @@ async function handleApi(
         text?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.threadId !== "string"
-        || typeof body.path !== "string"
-        || typeof body.diffIdentity !== "string"
-        || (body.scope !== "file" && body.scope !== "line")
-        || (body.scope === "line" && (!Number.isInteger(body.lineIndex) || (body.lineIndex as number) < 0))
-        || typeof body.text !== "string"
-        || !body.text.trim()
-        || body.text.trim().length > MAX_ANNOTATION_TEXT
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.threadId !== "string" ||
+        typeof body.path !== "string" ||
+        typeof body.diffIdentity !== "string" ||
+        (body.scope !== "file" && body.scope !== "line") ||
+        (body.scope === "line" &&
+          (!Number.isInteger(body.lineIndex) || (body.lineIndex as number) < 0)) ||
+        typeof body.text !== "string" ||
+        !body.text.trim() ||
+        body.text.trim().length > MAX_ANNOTATION_TEXT
       ) {
         throw new RepositoryError("A valid annotation target and comment are required.");
       }
@@ -3769,16 +4066,20 @@ async function handleApi(
       const projection = await state.load();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
-        (item) => item.id === body.threadId
-          && item.projectId === project?.id
-          && item.worktree === context.worktree,
+        (item) =>
+          item.id === body.threadId &&
+          item.projectId === project?.id &&
+          item.worktree === context.worktree,
       );
       if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
       const diff = await readFileDiff(context.worktree, body.path);
       if (diff.identity !== body.diffIdentity) {
-        throw new RepositoryError("The diff changed before the annotation was saved. Refresh and select it again.", 409);
+        throw new RepositoryError(
+          "The diff changed before the annotation was saved. Refresh and select it again.",
+          409,
+        );
       }
-      const lineIndex = body.scope === "line" ? body.lineIndex as number : null;
+      const lineIndex = body.scope === "line" ? (body.lineIndex as number) : null;
       const line = lineIndex === null ? null : diff.lines.find((item) => item.index === lineIndex);
       if (body.scope === "line" && (!line || line.side === "metadata")) {
         throw new RepositoryError("Select an added, deleted, or context line.", 409);
@@ -3787,70 +4088,81 @@ async function handleApi(
         .filter((item) => item.threadId === thread.id && item.state === "completed")
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
       const now = new Date().toISOString();
-      sendJson(response, 201, await state.saveAnnotation({
-        id: randomUUID(),
-        threadId: thread.id,
-        checkpointId: checkpoint?.id ?? null,
-        diffIdentity: diff.identity,
-        path: diff.path,
-        previousPath: diff.previousPath,
-        targetState: diff.state,
-        scope: body.scope,
-        side: line?.side ?? null,
-        oldLine: line?.oldLine ?? null,
-        newLine: line?.newLine ?? null,
-        text: body.text.trim(),
-        capturedContext: captureAnnotationContext(diff, lineIndex),
-        resolution: "unresolved",
-        createdAt: now,
-      }));
+      sendJson(
+        response,
+        201,
+        await state.saveAnnotation({
+          id: randomUUID(),
+          threadId: thread.id,
+          checkpointId: checkpoint?.id ?? null,
+          diffIdentity: diff.identity,
+          path: diff.path,
+          previousPath: diff.previousPath,
+          targetState: diff.state,
+          scope: body.scope,
+          side: line?.side ?? null,
+          oldLine: line?.oldLine ?? null,
+          newLine: line?.newLine ?? null,
+          text: body.text.trim(),
+          capturedContext: captureAnnotationContext(diff, lineIndex),
+          resolution: "unresolved",
+          createdAt: now,
+        }),
+      );
       return true;
     }
     const annotationResolutionMatch = route.match(/^\/api\/annotations\/([0-9a-f-]+)\/resolution$/);
     if (annotationResolutionMatch) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         threadId?: unknown;
         resolved?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.threadId !== "string"
-        || typeof body.resolved !== "boolean"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.threadId !== "string" ||
+        typeof body.resolved !== "boolean"
       ) {
-        throw new RepositoryError("A repository, worktree, conversation, and resolution state are required.");
+        throw new RepositoryError(
+          "A repository, worktree, conversation, and resolution state are required.",
+        );
       }
       const context = await selectedWorktree(body.root, body.worktree);
       const projection = await state.load();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
-        (item) => item.id === body.threadId
-          && item.projectId === project?.id
-          && item.worktree === context.worktree,
+        (item) =>
+          item.id === body.threadId &&
+          item.projectId === project?.id &&
+          item.worktree === context.worktree,
       );
       if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
-      sendJson(response, 200, await state.setAnnotationResolution(
-        annotationResolutionMatch[1],
-        thread.id,
-        body.resolved ? "resolved" : "unresolved",
-      ));
+      sendJson(
+        response,
+        200,
+        await state.setAnnotationResolution(
+          annotationResolutionMatch[1],
+          thread.id,
+          body.resolved ? "resolved" : "unresolved",
+        ),
+      );
       return true;
     }
     if (route === "/api/annotations/preview") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         threadId?: unknown;
         annotationIds?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.threadId !== "string"
-        || !Array.isArray(body.annotationIds)
-        || body.annotationIds.some((id) => typeof id !== "string")
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.threadId !== "string" ||
+        !Array.isArray(body.annotationIds) ||
+        body.annotationIds.some((id) => typeof id !== "string")
       ) {
         throw new RepositoryError("A conversation and selected annotations are required.");
       }
@@ -3858,9 +4170,10 @@ async function handleApi(
       const projection = await state.load();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
-        (item) => item.id === body.threadId
-          && item.projectId === project?.id
-          && item.worktree === context.worktree,
+        (item) =>
+          item.id === body.threadId &&
+          item.projectId === project?.id &&
+          item.worktree === context.worktree,
       );
       if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
       const requested = new Set(body.annotationIds as string[]);
@@ -3884,11 +4197,15 @@ async function handleApi(
       return true;
     }
     if (route === "/api/changes/diff") {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown; path?: unknown };
+      const body = (await readJson(request)) as {
+        root?: unknown;
+        worktree?: unknown;
+        path?: unknown;
+      };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.path !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.path !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and changed file are required.");
       }
@@ -3897,7 +4214,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/delivery/inspect") {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new RepositoryError("A repository and worktree are required.");
       }
@@ -3906,15 +4223,15 @@ async function handleApi(
       return true;
     }
     if (route === "/api/delivery/pr-draft") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         base?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.base !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.base !== "string"
       ) {
         throw new RepositoryError("A repository, worktree, and base branch are required.");
       }
@@ -3924,17 +4241,20 @@ async function handleApi(
     }
     if (route === "/api/release-delivery/inspect") {
       if (remoteRequest || managedHost) {
-        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+        throw new RepositoryError(
+          "Release delivery is available only on the loopback workbench.",
+          403,
+        );
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         projectId?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.projectId !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.projectId !== "string"
       ) {
         throw new RepositoryError("A project, repository, and worktree are required.");
       }
@@ -3949,9 +4269,12 @@ async function handleApi(
     }
     if (route === "/api/release-delivery/plans") {
       if (remoteRequest || managedHost) {
-        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+        throw new RepositoryError(
+          "Release delivery is available only on the loopback workbench.",
+          403,
+        );
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         projectId?: unknown;
@@ -3969,12 +4292,12 @@ async function handleApi(
         "rollback",
       ]);
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.projectId !== "string"
-        || typeof body.action !== "string"
-        || !actions.has(body.action as ReleaseWorkflowAction)
-        || !isRecord(body.input)
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.projectId !== "string" ||
+        typeof body.action !== "string" ||
+        !actions.has(body.action as ReleaseWorkflowAction) ||
+        !isRecord(body.input)
       ) {
         throw new RepositoryError("A complete release-delivery action is required.");
       }
@@ -3999,17 +4322,20 @@ async function handleApi(
     );
     if (releaseDeliveryMatch) {
       if (remoteRequest || managedHost) {
-        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+        throw new RepositoryError(
+          "Release delivery is available only on the loopback workbench.",
+          403,
+        );
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         projectId?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.projectId !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.projectId !== "string"
       ) {
         throw new RepositoryError("A project, repository, and worktree are required.");
       }
@@ -4036,19 +4362,22 @@ async function handleApi(
     }
     if (route === "/api/release-delivery/receipt") {
       if (remoteRequest || managedHost) {
-        throw new RepositoryError("Release delivery is available only on the loopback workbench.", 403);
+        throw new RepositoryError(
+          "Release delivery is available only on the loopback workbench.",
+          403,
+        );
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         projectId?: unknown;
         sessionId?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.projectId !== "string"
-        || typeof body.sessionId !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.projectId !== "string" ||
+        typeof body.sessionId !== "string"
       ) {
         throw new RepositoryError("A complete release receipt request is required.");
       }
@@ -4057,12 +4386,7 @@ async function handleApi(
       sendJson(
         response,
         200,
-        await releaseDelivery.receipt(
-          body.sessionId,
-          project.id,
-          context.root,
-          context.worktree,
-        ),
+        await releaseDelivery.receipt(body.sessionId, project.id, context.root, context.worktree),
       );
       return true;
     }
@@ -4070,7 +4394,7 @@ async function handleApi(
       if (managedHost) {
         throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
       }
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         action?: unknown;
@@ -4078,23 +4402,27 @@ async function handleApi(
       };
       const actions = new Set<DeliveryAction>(["stage", "commit", "push", "pull_request"]);
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.action !== "string"
-        || !actions.has(body.action as DeliveryAction)
-        || typeof body.input !== "object"
-        || body.input === null
-        || Array.isArray(body.input)
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.action !== "string" ||
+        !actions.has(body.action as DeliveryAction) ||
+        typeof body.input !== "object" ||
+        body.input === null ||
+        Array.isArray(body.input)
       ) {
         throw new RepositoryError("A complete delivery action is required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await delivery.plan(
-        context.root,
-        context.worktree,
-        body.action as DeliveryAction,
-        body.input as Record<string, unknown>,
-      ));
+      sendJson(
+        response,
+        200,
+        await delivery.plan(
+          context.root,
+          context.worktree,
+          body.action as DeliveryAction,
+          body.input as Record<string, unknown>,
+        ),
+      );
       return true;
     }
     const deliveryMatch = route.match(/^\/api\/delivery\/plans\/([0-9a-f-]+)\/execute$/);
@@ -4102,24 +4430,28 @@ async function handleApi(
       if (managedHost) {
         throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
       }
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new RepositoryError("A repository and worktree are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await delivery.execute(deliveryMatch[1], context.root, context.worktree));
+      sendJson(
+        response,
+        200,
+        await delivery.execute(deliveryMatch[1], context.root, context.worktree),
+      );
       return true;
     }
     if (route === "/api/previews/request") {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         origin?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || typeof body.origin !== "string"
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        typeof body.origin !== "string"
       ) {
         throw new PreviewError("A repository, worktree, and loopback origin are required.");
       }
@@ -4133,15 +4465,15 @@ async function handleApi(
     }
     const previewDecision = route.match(/^\/api\/previews\/([0-9a-f-]+)\/decide$/);
     if (previewDecision) {
-      const body = await readJson(request) as {
+      const body = (await readJson(request)) as {
         root?: unknown;
         worktree?: unknown;
         decision?: unknown;
       };
       if (
-        typeof body.root !== "string"
-        || typeof body.worktree !== "string"
-        || (body.decision !== "allow_once" && body.decision !== "deny")
+        typeof body.root !== "string" ||
+        typeof body.worktree !== "string" ||
+        (body.decision !== "allow_once" && body.decision !== "deny")
       ) {
         throw new PreviewError("A scoped preview decision is required.");
       }
@@ -4164,7 +4496,7 @@ async function handleApi(
     }
     const previewStop = route.match(/^\/api\/previews\/([0-9a-f-]+)\/stop$/);
     if (previewStop) {
-      const body = await readJson(request) as { root?: unknown; worktree?: unknown };
+      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
       if (typeof body.root !== "string" || typeof body.worktree !== "string") {
         throw new PreviewError("A repository and worktree are required.");
       }
@@ -4172,17 +4504,22 @@ async function handleApi(
       sendJson(
         response,
         200,
-        await previews.stop(
-          previewStop[1],
-          { repository: context.root, worktree: context.worktree },
-        ),
+        await previews.stop(previewStop[1], {
+          repository: context.root,
+          worktree: context.worktree,
+        }),
       );
       return true;
     }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
       const acp = activeAcp.get(cancelMatch[1]);
-      if (!provider.cancel(cancelMatch[1]) && !codex.cancel(cancelMatch[1]) && !shikigami.cancel(cancelMatch[1]) && !acp?.cancel(cancelMatch[1])) {
+      if (
+        !provider.cancel(cancelMatch[1]) &&
+        !codex.cancel(cancelMatch[1]) &&
+        !shikigami.cancel(cancelMatch[1]) &&
+        !acp?.cancel(cancelMatch[1])
+      ) {
         throw new RepositoryError("The provider run is no longer active.", 404);
       }
       sendJson(response, 202, { status: "cancelling" });
@@ -4190,37 +4527,39 @@ async function handleApi(
     }
     sendJson(response, 404, { error: "API route not found." });
   } catch (error) {
-    const status = error instanceof RepositoryError
-      || error instanceof PermissionError
-      || error instanceof LocalStateError
-      || error instanceof ProfileError
-      || error instanceof PreferencesError
-      || error instanceof AutomationError
-      || error instanceof PreviewError
-      || error instanceof ProviderAdapterError
-      || error instanceof ProviderModelError
-      || error instanceof ChiseiClientError
-      || error instanceof RemoteAuthError
-      || error instanceof ManagedHostError
-      || error instanceof BrowserError
-      ? error.status
-      : 500;
-    const message = error instanceof RepositoryError
-      || error instanceof ProviderProtocolError
-      || error instanceof PermissionError
-      || error instanceof LocalStateError
-      || error instanceof ProfileError
-      || error instanceof PreferencesError
-      || error instanceof AutomationError
-      || error instanceof PreviewError
-      || error instanceof ProviderAdapterError
-      || error instanceof ProviderModelError
-      || error instanceof ChiseiClientError
-      || error instanceof RemoteAuthError
-      || error instanceof ManagedHostError
-      || error instanceof BrowserError
-      ? error.message
-      : "The local operation failed.";
+    const status =
+      error instanceof RepositoryError ||
+      error instanceof PermissionError ||
+      error instanceof LocalStateError ||
+      error instanceof ProfileError ||
+      error instanceof PreferencesError ||
+      error instanceof AutomationError ||
+      error instanceof PreviewError ||
+      error instanceof ProviderAdapterError ||
+      error instanceof ProviderModelError ||
+      error instanceof ChiseiClientError ||
+      error instanceof RemoteAuthError ||
+      error instanceof ManagedHostError ||
+      error instanceof BrowserError
+        ? error.status
+        : 500;
+    const message =
+      error instanceof RepositoryError ||
+      error instanceof ProviderProtocolError ||
+      error instanceof PermissionError ||
+      error instanceof LocalStateError ||
+      error instanceof ProfileError ||
+      error instanceof PreferencesError ||
+      error instanceof AutomationError ||
+      error instanceof PreviewError ||
+      error instanceof ProviderAdapterError ||
+      error instanceof ProviderModelError ||
+      error instanceof ChiseiClientError ||
+      error instanceof RemoteAuthError ||
+      error instanceof ManagedHostError ||
+      error instanceof BrowserError
+        ? error.message
+        : "The local operation failed.";
     sendJson(response, status, { error: message });
   }
   return true;
@@ -4233,7 +4572,11 @@ const contentTypes: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-async function serveStatic(request: IncomingMessage, response: ServerResponse, dist: string): Promise<void> {
+async function serveStatic(
+  request: IncomingMessage,
+  response: ServerResponse,
+  dist: string,
+): Promise<void> {
   const rawPath = new URL(request.url ?? "/", "http://localhost").pathname;
   const requested = rawPath === "/" ? "index.html" : rawPath.slice(1);
   const safePath = normalize(requested).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -4266,14 +4609,16 @@ export function createLocalHost(
   localBindHost?: string,
   allowLocalControl = true,
 ) {
-  const internalPermissionCallback = remoteAuth || managedHost
-    ? createInternalPermissionCallback(permissions)
-    : undefined;
+  const internalPermissionCallback =
+    remoteAuth || managedHost ? createInternalPermissionCallback(permissions) : undefined;
   const delivery = new DeliveryBroker();
   const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
   const provider = new ClaudeCodeAdapter("claude", permissions);
   const codex = new CodexCliAdapter("codex", permissions);
-  const shikigami = new ShikigamiAdapter(managedHost?.shikigami.executable ?? "shikigami", permissions);
+  const shikigami = new ShikigamiAdapter(
+    managedHost?.shikigami.executable ?? "shikigami",
+    permissions,
+  );
   const previews = new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const automations = new AutomationStore(state.directory);
@@ -4304,28 +4649,23 @@ export function createLocalHost(
   ): Promise<void> => {
     const projection = await state.load();
     const turn = projection.turns.find((item) => item.providerRunId === approval.runId);
-    const thread = turn
-      ? projection.threads.find((item) => item.id === turn.threadId)
-      : undefined;
+    const thread = turn ? projection.threads.find((item) => item.id === turn.threadId) : undefined;
     if (!turn || !thread) return;
     if (recordResolution) {
-      await state.recordProviderEvent(
-        thread.id,
-        turn.id,
-        thread.provider ?? "claude-code",
-        { kind: "approval_resolved", id: approval.id, state: approval.state },
-      );
+      await state.recordProviderEvent(thread.id, turn.id, thread.provider ?? "claude-code", {
+        kind: "approval_resolved",
+        id: approval.id,
+        state: approval.state,
+      });
     }
-    const sibling = permissions.approvalsFor(approval.runId).find(
-      (candidate) => candidate.state === "pending",
-    );
+    const sibling = permissions
+      .approvalsFor(approval.runId)
+      .find((candidate) => candidate.state === "pending");
     if (sibling) {
-      await state.recordProviderEvent(
-        thread.id,
-        turn.id,
-        thread.provider ?? "claude-code",
-        { kind: "approval_pending", ...sibling },
-      );
+      await state.recordProviderEvent(thread.id, turn.id, thread.provider ?? "claude-code", {
+        kind: "approval_pending",
+        ...sibling,
+      });
     }
     await publishThreadStatusTransition(wake, state, approval.conversationId, null, true);
   };
@@ -4334,18 +4674,17 @@ export function createLocalHost(
   });
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
-  const recovery = state.recoverInterruptedTurns().then(
-    () => state.reconcileAutomationFires(),
-  );
+  const recovery = state.recoverInterruptedTurns().then(() => state.reconcileAutomationFires());
 
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
 
   async function isThreadBusy(threadId: string): Promise<boolean> {
     const projection = await state.load();
-    return projection.turns.some((turn) => (
-      turn.threadId === threadId
-      && ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status)
-    ));
+    return projection.turns.some(
+      (turn) =>
+        turn.threadId === threadId &&
+        ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
+    );
   }
 
   async function runChildFollowUp(body: Record<string, unknown>): Promise<void> {
@@ -4355,46 +4694,52 @@ export function createLocalHost(
       throw new LocalStateError("The child follow-up route is unavailable.", 503);
     }
     const payload = Buffer.from(JSON.stringify(body), "utf8");
-    const internalHost = address.address === "::"
-      ? "::1"
-      : address.address === "0.0.0.0"
-        ? "127.0.0.1"
-        : address.address;
+    const internalHost =
+      address.address === "::"
+        ? "::1"
+        : address.address === "0.0.0.0"
+          ? "127.0.0.1"
+          : address.address;
     await new Promise<void>((resolve, reject) => {
       const send = tls ? httpsRequest : httpRequest;
-      const outgoing = send({
-        host: internalHost,
-        port: address.port,
-        path: "/api/provider/runs",
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "content-length": String(payload.length),
-          "x-aldunis-internal-request": internalRequestToken,
+      const outgoing = send(
+        {
+          host: internalHost,
+          port: address.port,
+          path: "/api/provider/runs",
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(payload.length),
+            "x-aldunis-internal-request": internalRequestToken,
+          },
+          ...(tls ? { rejectUnauthorized: false } : {}),
         },
-        ...(tls ? { rejectUnauthorized: false } : {}),
-      }, (incoming) => {
-        if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
-          // The run endpoint sends headers immediately after provider startup.
-          // Resolve on those headers and drain the event stream independently so
-          // the delegated-control lock never spans the child turn's lifetime.
-          incoming.resume();
-          resolve();
-          return;
-        }
-        const chunks: Buffer[] = [];
-        incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-        incoming.on("end", () => {
-          let message = `Child follow-up failed (${incoming.statusCode ?? 500}).`;
-          try {
-            const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { error?: string };
-            if (parsed.error) message = parsed.error;
-          } catch {
-            // Keep the bounded repository-owned fallback.
+        (incoming) => {
+          if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
+            // The run endpoint sends headers immediately after provider startup.
+            // Resolve on those headers and drain the event stream independently so
+            // the delegated-control lock never spans the child turn's lifetime.
+            incoming.resume();
+            resolve();
+            return;
           }
-          reject(new LocalStateError(message, incoming.statusCode ?? 500));
-        });
-      });
+          const chunks: Buffer[] = [];
+          incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+          incoming.on("end", () => {
+            let message = `Child follow-up failed (${incoming.statusCode ?? 500}).`;
+            try {
+              const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+                error?: string;
+              };
+              if (parsed.error) message = parsed.error;
+            } catch {
+              // Keep the bounded repository-owned fallback.
+            }
+            reject(new LocalStateError(message, incoming.statusCode ?? 500));
+          });
+        },
+      );
       outgoing.once("error", reject);
       outgoing.end(payload);
     });
@@ -4419,47 +4764,61 @@ export function createLocalHost(
     if (!project) throw new AutomationError("Target project was not found.", 404);
     const session = projection.providerSessions.find((item) => item.threadId === thread.id);
     const providerId = thread.provider ?? session?.provider ?? "claude-code";
-    const model = thread.model
-      ?? session?.model
-      ?? (providerId === "claude-code" ? "default" : providerId === "shikigami" ? "scripted" : "default");
-    const profileId = thread.profileId
-      ?? session?.profileId
-      ?? (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
-    const internalHost = address.address === "::"
-      ? "::1"
-      : address.address === "0.0.0.0"
-        ? "127.0.0.1"
-        : address.address;
-    const payload = Buffer.from(JSON.stringify({
-      root: project.root,
-      worktree: thread.worktree,
-      prompt: automation.prompt,
-      mode: automation.mode,
-      conversationId: thread.id,
-      projectId: project.id,
-      threadId: thread.id,
-      resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
-      provider: providerId,
-      model,
-      profileId: providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
-      automationFireId: fire.id,
-    }), "utf8");
+    const model =
+      thread.model ??
+      session?.model ??
+      (providerId === "claude-code"
+        ? "default"
+        : providerId === "shikigami"
+          ? "scripted"
+          : "default");
+    const profileId =
+      thread.profileId ??
+      session?.profileId ??
+      (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
+    const internalHost =
+      address.address === "::"
+        ? "::1"
+        : address.address === "0.0.0.0"
+          ? "127.0.0.1"
+          : address.address;
+    const payload = Buffer.from(
+      JSON.stringify({
+        root: project.root,
+        worktree: thread.worktree,
+        prompt: automation.prompt,
+        mode: automation.mode,
+        conversationId: thread.id,
+        projectId: project.id,
+        threadId: thread.id,
+        resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
+        provider: providerId,
+        model,
+        profileId:
+          providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
+        automationFireId: fire.id,
+      }),
+      "utf8",
+    );
     let incoming: IncomingMessage;
     try {
       const send = tls ? httpsRequest : httpRequest;
       incoming = await new Promise<IncomingMessage>((resolve, reject) => {
-        const outgoing = send({
-          host: internalHost,
-          port: address.port,
-          path: "/api/provider/runs",
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "content-length": String(payload.length),
-            "x-aldunis-internal-request": internalRequestToken,
+        const outgoing = send(
+          {
+            host: internalHost,
+            port: address.port,
+            path: "/api/provider/runs",
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "content-length": String(payload.length),
+              "x-aldunis-internal-request": internalRequestToken,
+            },
+            ...(tls ? { rejectUnauthorized: false } : {}),
           },
-          ...(tls ? { rejectUnauthorized: false } : {}),
-        }, resolve);
+          resolve,
+        );
         outgoing.once("error", reject);
         outgoing.end(payload);
       });
@@ -4517,47 +4876,47 @@ export function createLocalHost(
     await profileBootstrap;
     const route = new URL(request.url ?? "/", "http://localhost").pathname;
     const listeningAddress = serverRef?.address();
-    const internalRequest = request.socket.remoteAddress !== undefined
-      && (
-        LOOPBACK_HOSTS.has(request.socket.remoteAddress)
-        || (
-          listeningAddress
-          && typeof listeningAddress !== "string"
-          && request.socket.remoteAddress === listeningAddress.address
-        )
-      )
-      && request.headers["x-aldunis-internal-request"] === internalRequestToken;
-    const configuredPublicOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
-    const localControlRequest = allowLocalControl
-      && isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
+    const internalRequest =
+      request.socket.remoteAddress !== undefined &&
+      (LOOPBACK_HOSTS.has(request.socket.remoteAddress) ||
+        (listeningAddress &&
+          typeof listeningAddress !== "string" &&
+          request.socket.remoteAddress === listeningAddress.address)) &&
+      request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    const configuredPublicOrigin =
+      typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
+    const localControlRequest =
+      allowLocalControl && isLocalControlRequest(request, localBindHost, configuredPublicOrigin);
     let managedIdentity: ManagedIdentity | undefined;
     if (
-      managedHost
-      && !internalRequest
-      && route.startsWith("/api/")
-      && route !== "/api/remote/descriptor"
+      managedHost &&
+      !internalRequest &&
+      route.startsWith("/api/") &&
+      route !== "/api/remote/descriptor"
     ) {
       try {
         managedIdentity = await managedHost.verify(request, await bufferRequest(request));
       } catch (error) {
         const status = error instanceof ManagedHostError ? error.status : 500;
-        const message = error instanceof ManagedHostError ? error.message : "Managed authentication failed.";
+        const message =
+          error instanceof ManagedHostError ? error.message : "Managed authentication failed.";
         sendJson(response, status, { error: message });
         return;
       }
     } else if (
-      remoteAuth
-      && !internalRequest
-      && route.startsWith("/api/")
-      && route !== "/api/remote/pair"
-      && route !== "/api/remote/descriptor"
-      && !(localControlRequest && route.startsWith("/api/remote/admin/"))
+      remoteAuth &&
+      !internalRequest &&
+      route.startsWith("/api/") &&
+      route !== "/api/remote/pair" &&
+      route !== "/api/remote/descriptor" &&
+      !(localControlRequest && route.startsWith("/api/remote/admin/"))
     ) {
       try {
         await remoteAuth.verify(request, await bufferRequest(request));
       } catch (error) {
         const status = error instanceof RemoteAuthError ? error.status : 500;
-        const message = error instanceof RemoteAuthError ? error.message : "Remote authentication failed.";
+        const message =
+          error instanceof RemoteAuthError ? error.message : "Remote authentication failed.";
         sendJson(response, status, { error: message });
         return;
       }
@@ -4598,16 +4957,19 @@ export function createLocalHost(
         publicOrigin,
         localBindHost,
       )
-    ) return;
+    )
+      return;
     await serveStatic(request, response, dist);
   };
   const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
   serverRef = server;
   if (!managedHost) {
     server.once("listening", () => {
-      void recovery.then(() => {
-        if (server.listening) automationScheduler.start();
-      }).catch(() => undefined);
+      void recovery
+        .then(() => {
+          if (server.listening) automationScheduler.start();
+        })
+        .catch(() => undefined);
     });
   }
   server.once("close", () => {

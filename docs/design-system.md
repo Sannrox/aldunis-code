@@ -40,14 +40,14 @@ primary.
 something wants a decision, or something failed. It is never applied to
 things that are merely in progress or merely finished.
 
-| Meaning | Treatment |
-| --- | --- |
-| Pending approval | amber label |
-| Awaiting input | indigo label |
-| Failed | red label |
-| Working | muted spinner, no label |
-| Completed | faint check, no label |
-| Diff added / removed | green / red, retained |
+| Meaning              | Treatment               |
+| -------------------- | ----------------------- |
+| Pending approval     | amber label             |
+| Awaiting input       | indigo label            |
+| Failed               | red label               |
+| Working              | muted spinner, no label |
+| Completed            | faint check, no label   |
+| Diff added / removed | green / red, retained   |
 
 Diff coloring stays even under a monochrome system. Glyphs and tinted rows
 do some of the work, but scanning a long diff without hue is measurably
@@ -80,6 +80,16 @@ Settling moves a finished thread to a collapsed `Settled (N)` shelf at the
 bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
+
+**Snooze** is a separate temporary hide, inspired by T3 Code. Row actions
+offer presets (in 1 hour, this evening when meaningful, tomorrow morning,
+next week). Snoozed threads leave Active/Attention and appear in a
+`Snoozed (N)` shelf with a compact wake label (`20m` / `3h` / `2d`). When
+the wake time elapses the row returns without a server write. Pending
+approval or awaiting input cannot be snoozed and, if they arise while
+snoozed, surface immediately in Needs attention. Running provider work may
+remain snoozed — snooze never stops the agent, archives history, or
+releases a worktree. Settling clears snooze; snoozing clears settle.
 
 The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
 macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
@@ -196,15 +206,15 @@ is a user mistaking a local action for an authoritative one.
 
 Use the live application and automated checks as the source of truth:
 
-| Concern | Source |
-| --- | --- |
-| Semantic tokens and component styling | `src/styles.css` |
-| Shell layout | `src/mock-shell.css` |
-| Shared UI primitives | `src/components/ui/` |
-| Sidebar and settled shelf | `src/features/code/sidebar.tsx` |
-| Preferences and worktree limits | `src/features/dialogs/preferences-dialog.tsx` |
-| Structural style checks | `src/styles.verification.test.ts` |
-| Exploratory reference mock | `docs/design/workbench-mock.html` |
+| Concern                               | Source                                        |
+| ------------------------------------- | --------------------------------------------- |
+| Semantic tokens and component styling | `src/styles.css`                              |
+| Shell layout                          | `src/mock-shell.css`                          |
+| Shared UI primitives                  | `src/components/ui/`                          |
+| Sidebar and settled shelf             | `src/features/code/sidebar.tsx`               |
+| Preferences and worktree limits       | `src/features/dialogs/preferences-dialog.tsx` |
+| Structural style checks               | `src/styles.verification.test.ts`             |
+| Exploratory reference mock            | `docs/design/workbench-mock.html`             |
 
 The HTML mock is design evidence, not a runtime contract. When it differs from
 the shipped application, update or annotate the mock rather than documenting

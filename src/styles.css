@@ -4080,6 +4080,25 @@ select.ui-input {
 [data-density="compact"] .row-main {
   padding-block: 6px;
 }
+
+/* Temporary inbox hide (T3-inspired snooze). */
+.shelf--snoozed {
+  border-top-style: dashed;
+}
+.row-menu-snooze {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.row-menu-snooze__when {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 [data-motion="reduce"] *,
 [data-motion="reduce"] *::before,
 [data-motion="reduce"] *::after {
