@@ -4,6 +4,7 @@ import { lstat, readFile, stat } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { RepositoryError, constrainPath } from "./repository.ts";
+import { isLocalRuntimePath } from "./local-runtime.ts";
 
 const execFileAsync = promisify(execFile);
 export const MAX_CONTEXT_FILES = 8;
@@ -35,11 +36,6 @@ const CREDENTIAL_BASENAME_MARKER =
   /(?:^|[-_.])(?:api|access|auth|bearer|client|credential|database|db|deploy|gateway|oauth|private|refresh|service|session|ssh|user)(?:[-_.]?(?:secret|secrets|token|tokens))(?:$|\.(?:json|yaml|yml|toml|ini|conf|config|env|txt|key|pem|p12|pfx)$)/i;
 const DOCUMENTED_SECRET_BASENAME =
   /(?:\.env|\.(?:json|txt|data|db|env|sock|yaml|yml|conf|config|toml|ini|cfg|properties))\.(?:example|template|md)$/i;
-// Local databases and known data-directory runtime artifacts can be unignored in a user's checkout; context discovery must still keep them private.
-const LOCAL_DATABASE_PATH = /(?:^|\/)[^/]+\.(?:db|sqlite|sqlite3)(?:[-.](?:journal|shm|wal))?$/i;
-const GENERATED_RUNTIME_PATH =
-  /(?:^|\/)data\/(?:[^/]+-state\.json(?:\.[^/]*)?|[^/]+\.state(?:\.[^/]*)?|[^/]+\.lock|[^/]+\.sock(?:\.[^/]*)?)$/i;
-
 function isSecretLikePath(path: string): boolean {
   const components = path.split("/");
   const basename = components.at(-1) ?? "";
@@ -52,10 +48,6 @@ function isSecretLikePath(path: string): boolean {
     SECRET_NAME_PART.test(basename) ||
     CREDENTIAL_BASENAME_MARKER.test(basename)
   );
-}
-
-function isLocalRuntimePath(path: string): boolean {
-  return LOCAL_DATABASE_PATH.test(path) || GENERATED_RUNTIME_PATH.test(path);
 }
 
 async function isTrackedRepositoryPath(worktree: string, path: string): Promise<boolean> {
