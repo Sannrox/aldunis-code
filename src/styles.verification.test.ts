@@ -105,6 +105,22 @@ test("macOS desktop shell integrates the native titlebar without swallowing cont
   );
   assert.match(
     shellCss,
+    /html\[data-desktop-shell="macos"\] \.settings\s*\{[^}]*inset:\s*var\(--desktop-shell-titlebar-height\)\s+0\s+0\s*!important/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.app:has\(\.settings\)\s*\{[^}]*--desktop-shell-sidebar-width:\s*214px/s,
+  );
+  assert.match(
+    shellCss,
+    /html\[data-desktop-shell="macos"\] \.app:has\(\.settings\) \.desktop-titlebar\[data-sidebar-state="collapsed"\]::after\s*\{[^}]*display:\s*block/s,
+  );
+  assert.match(
+    shellCss,
+    /@media\s*\(max-width:\s*680px\)\s*\{[\s\S]*?html\[data-desktop-shell="macos"\] \.app:has\(\.settings\) \.desktop-titlebar::after,[\s\S]*?display:\s*none/s,
+  );
+  assert.match(
+    shellCss,
     /html\[data-desktop-shell="macos"\] \.sidebar-toggle--open\s*\{[^}]*top:\s*12px[^}]*left:\s*100px[^}]*width:\s*36px[^}]*height:\s*36px[^}]*pointer-events:\s*auto[^}]*background:\s*transparent[^}]*-webkit-app-region:\s*no-drag/s,
   );
   assert.match(
