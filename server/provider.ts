@@ -30,6 +30,17 @@ export const CODEX_UNSUPPORTED_TURN_STATUS_MESSAGE =
   "Codex app-server emitted an unsupported turn status.";
 export const CLAUDE_AUTHENTICATION_FAILURE_MESSAGE =
   "Claude Code authentication failed. Re-authenticate in Claude Code and try again.";
+export const SHIKIGAMI_MODE_VIOLATION_CODE = "provider_mode_violation" as const;
+const SAFE_PROVIDER_TOOL_NAME = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+export function formatShikigamiModeViolation(
+  toolName: string,
+  mode: Exclude<InteractionMode, "build">,
+): string {
+  return SAFE_PROVIDER_TOOL_NAME.test(toolName)
+    ? `Shikigami requested mutating tool ${toolName} while ${mode} mode was active.`
+    : `Shikigami requested a mutating tool while ${mode} mode was active.`;
+}
 
 export type ProviderId = "claude-code" | "codex-cli" | "shikigami" | `adapter:${string}@${string}`;
 export type ProviderPlanStepStatus = "pending" | "active" | "completed" | "neutral";
@@ -101,7 +112,10 @@ export type ProviderEvent =
       | "unsupported_external_tool"
       | "provider_authentication"
       | "provider_protocol_error"
-      | "provider_process_exit";
+      | "provider_process_exit"
+      | typeof SHIKIGAMI_MODE_VIOLATION_CODE;
+    toolName?: string;
+    mode?: Exclude<InteractionMode, "build">;
   };
 
 export function persistedProviderFailureMessage(
@@ -110,6 +124,14 @@ export function persistedProviderFailureMessage(
   if (event.code === "unsupported_external_tool") return UNSUPPORTED_EXTERNAL_TOOL_MESSAGE;
   if (event.code === "provider_authentication") return CLAUDE_AUTHENTICATION_FAILURE_MESSAGE;
   if (event.code === "provider_process_exit") return CODEX_PROCESS_EXIT_MESSAGE;
+  if (
+    event.code === SHIKIGAMI_MODE_VIOLATION_CODE
+    && typeof event.toolName === "string"
+    && SAFE_PROVIDER_TOOL_NAME.test(event.toolName)
+    && (event.mode === "ask" || event.mode === "plan")
+  ) {
+    return formatShikigamiModeViolation(event.toolName, event.mode);
+  }
   if (event.code === "provider_protocol_error") {
     if (
       event.message === CODEX_PROTOCOL_FALLBACK_MESSAGE

@@ -705,6 +705,9 @@ process.exit(1);
   const failed = events.find((event) => event.kind === "failed");
   assert.equal(failed?.kind, "failed");
   if (failed?.kind === "failed") {
+    assert.equal(failed.code, "provider_mode_violation");
+    assert.equal(failed.toolName, "write_file");
+    assert.equal(failed.mode, "ask");
     assert.match(failed.message, /write_file/);
     assert.match(failed.message, /ask mode/);
   }

@@ -19,6 +19,27 @@ async function fixture() {
   await mkdir(join(root, "src"), { recursive: true });
   await writeFile(join(root, "src", "main.ts"), "export const ready = true;\n");
   await writeFile(join(root, ".env"), "TOKEN=secret\n");
+  await mkdir(join(root, "data"));
+  await writeFile(join(root, "data", "sekai.sock.gateway-token"), "secret\n");
+  await mkdir(join(root, "secret"));
+  await writeFile(join(root, "secret", "config.json"), "{\"token\":\"secret\"}\n");
+  await mkdir(join(root, "secrets"));
+  await writeFile(join(root, "secrets", "clientSecret.json"), "{\"value\":\"secret\"}\n");
+  await writeFile(join(root, "tokens.yaml"), "access_token: secret\n");
+  await writeFile(join(root, "apiToken.txt"), "secret\n");
+  await mkdir(join(root, "design-tokens"));
+  await writeFile(join(root, "design-tokens", "theme.css"), ":root { --color-token: red; }\n");
+  await writeFile(join(root, "tokenizer.ts"), "export const tokenize = true;\n");
+  await writeFile(join(root, "token-table.md"), "| token | value |\n");
+  await writeFile(join(root, "designTokens.ts"), "export const designTokens = {};\n");
+  await writeFile(join(root, "src", "secret-manager.ts"), "export const manager = true;\n");
+  await writeFile(join(root, "secret_store.go"), "package secret_store\n");
+  await writeFile(join(root, "oauth-token-flow.md"), "OAuth token flow documentation\n");
+  await mkdir(join(root, "docs"));
+  await writeFile(join(root, "docs", "secret-handling.md"), "Secret handling guidance\n");
+  await writeFile(join(root, "clientSecret.json.example"), "{}\n");
+  await writeFile(join(root, "api-token.txt.template"), "token=\n");
+  await writeFile(join(root, "oauth-token.json.md"), "OAuth token format\n");
   await writeFile(join(root, "binary.dat"), Buffer.from([1, 0, 2]));
   await writeFile(join(root, "image.png"), Buffer.from([137, 80, 78, 71]));
   await writeFile(join(root, "oversized.txt"), "x".repeat(64 * 1024 + 1));
@@ -38,7 +59,24 @@ async function fixture() {
 test("file discovery is repository-scoped and hides secret-like names", async () => {
   const { root } = await fixture();
   assert.deepEqual(await searchRepositoryFiles(root, "main"), ["src/main.ts"]);
-  assert.equal((await searchRepositoryFiles(root, "")).includes(".env"), false);
+  const files = await searchRepositoryFiles(root, "");
+  assert.equal(files.includes(".env"), false);
+  assert.equal(files.includes("data/sekai.sock.gateway-token"), false);
+  assert.equal(files.includes("secret/config.json"), false);
+  assert.equal(files.includes("secrets/clientSecret.json"), false);
+  assert.equal(files.includes("tokens.yaml"), false);
+  assert.equal(files.includes("apiToken.txt"), false);
+  assert.equal(files.includes("design-tokens/theme.css"), true);
+  assert.equal(files.includes("tokenizer.ts"), true);
+  assert.equal(files.includes("token-table.md"), true);
+  assert.equal(files.includes("designTokens.ts"), true);
+  assert.equal(files.includes("src/secret-manager.ts"), true);
+  assert.equal(files.includes("secret_store.go"), true);
+  assert.equal(files.includes("oauth-token-flow.md"), true);
+  assert.equal(files.includes("docs/secret-handling.md"), true);
+  assert.equal(files.includes("clientSecret.json.example"), true);
+  assert.equal(files.includes("api-token.txt.template"), true);
+  assert.equal(files.includes("oauth-token.json.md"), true);
 });
 
 test("browsing searches names and bounded text deterministically", async () => {
@@ -107,7 +145,10 @@ test("context packages resolve folders deterministically and retain metadata onl
     { path: "src", kind: "folder" },
     { path: "generated", kind: "folder" },
   ]);
-  assert.deepEqual(assembled.attachments.map((attachment) => attachment.path), ["src/main.ts"]);
+  assert.deepEqual(assembled.attachments.map((attachment) => attachment.path), [
+    "src/main.ts",
+    "src/secret-manager.ts",
+  ]);
   assert.equal(assembled.entries.find((entry) => entry.path === "src/main.ts")?.digest?.length, 64);
   assert.equal(
     assembled.entries.find((entry) => entry.path === "src/linked.txt")?.omissionReason,
@@ -122,7 +163,11 @@ test("context packages resolve folders deterministically and retain metadata onl
     "provider_managed_instruction",
   );
   assert.equal(JSON.stringify(assembled.entries).includes("export const ready"), false);
-  assert.equal(assembled.totalBytes, Buffer.byteLength("export const ready = true;\n"));
+  assert.equal(
+    assembled.totalBytes,
+    Buffer.byteLength("export const ready = true;\n")
+      + Buffer.byteLength("export const manager = true;\n"),
+  );
   assert.equal(assembled.estimatedTokens, Math.ceil(assembled.totalBytes / 4));
 });
 
@@ -270,6 +315,14 @@ test("missing, binary, oversized, secret-like, excessive, and escaping inputs fa
   await assert.rejects(() => resolveContextAttachments(root, ["binary.dat"]), /binary/);
   await assert.rejects(() => resolveContextAttachments(root, ["oversized.txt"]), /exceeds/);
   await assert.rejects(() => resolveContextAttachments(root, [".env"]), /secret-like/);
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["data/sekai.sock.gateway-token"]),
+    /secret-like/,
+  );
+  await assert.rejects(() => resolveContextAttachments(root, ["secret/config.json"]), /secret-like/);
+  await assert.rejects(() => resolveContextAttachments(root, ["secrets/clientSecret.json"]), /secret-like/);
+  await assert.rejects(() => resolveContextAttachments(root, ["tokens.yaml"]), /secret-like/);
+  await assert.rejects(() => resolveContextAttachments(root, ["apiToken.txt"]), /secret-like/);
   await assert.rejects(
     () => resolveContextAttachments(root, Array.from({ length: MAX_CONTEXT_FILES + 1 }, (_, index) => `${index}.ts`)),
     /Attach at most/,

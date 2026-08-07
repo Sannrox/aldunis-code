@@ -13,6 +13,8 @@ coverage/
 vite.config.js
 vite.config.d.ts
 knowledge.db
+# Local ontology and provider control-plane runtime state.
+/data/
 
 # The pinned Chisei SDK is vendored as built runtime output.
 !vendor/sekai-chisei-sdk/dist/

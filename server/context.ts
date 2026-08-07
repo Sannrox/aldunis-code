@@ -23,6 +23,9 @@ const IMAGE_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 const SECRET_NAMES = /(^|\/)(\.env(?:\.|$)|id_(?:rsa|dsa|ecdsa|ed25519)$|credentials(?:\.json)?$|.*\.(?:key|pem|p12|pfx))$/i;
+const SECRET_COMPONENT_MARKER = /^(?:secret|secrets|token|tokens)$/i;
+const SENSITIVE_FILENAME_MARKER = /^(?:secret|secrets|token|tokens)\.(?:json|yaml|yml|toml|ini|conf|config|env|txt|key|pem|p12|pfx)$/i;
+const CREDENTIAL_BASENAME_MARKER = /(?:^|[-_.])(?:api|access|auth|bearer|client|credential|database|db|deploy|gateway|oauth|private|refresh|service|session|ssh|user)(?:[-_.]?(?:secret|secrets|token|tokens))(?:$|\.(?:json|yaml|yml|toml|ini|conf|config|env|txt|key|pem|p12|pfx)$)/i;
 
 export interface ContextAttachment {
   path: string;
@@ -99,9 +102,18 @@ function relativeFilePath(worktree: string, input: string): string {
 }
 
 function assertNotSecretLike(path: string): void {
-  if (SECRET_NAMES.test(path)) {
+  if (isSecretLikePath(path)) {
     throw new RepositoryError(`${path} looks secret-like and cannot be attached.`, 403);
   }
+}
+
+function isSecretLikePath(path: string): boolean {
+  const components = path.split("/");
+  const basename = components.at(-1) ?? "";
+  return SECRET_NAMES.test(path)
+    || components.some((component) => SECRET_COMPONENT_MARKER.test(component))
+    || SENSITIVE_FILENAME_MARKER.test(basename)
+    || CREDENTIAL_BASENAME_MARKER.test(basename);
 }
 
 function isHidden(path: string): boolean {
@@ -126,7 +138,7 @@ async function repositoryPaths(worktree: string, signal?: AbortSignal): Promise<
   return stdout
     .split("\0")
     .filter(Boolean)
-    .filter((path) => !isHidden(path) && !SECRET_NAMES.test(path))
+    .filter((path) => !isHidden(path) && !isSecretLikePath(path))
     .sort((left, right) => left.localeCompare(right));
 }
 
@@ -182,7 +194,7 @@ export async function assembleContextPackage(
   const entries: ContextReceiptEntry[] = [];
 
   for (const pin of uniquePins) {
-    if (pin.path !== "." && (SECRET_NAMES.test(pin.path) || isHidden(pin.path))) {
+    if (pin.path !== "." && (isSecretLikePath(pin.path) || isHidden(pin.path))) {
       entries.push(omittedEntry(pin.path, pin.kind === "folder" ? "aldunis_folder" : "aldunis_attachment", "ignored or secret-like path"));
       continue;
     }
