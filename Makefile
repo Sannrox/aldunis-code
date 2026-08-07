@@ -8,24 +8,24 @@ WHAT ?=
 
 .PHONY: all
 all:
-	./scripts/make-targets/build.sh $(WHAT)
+	bash ./scripts/make-targets/build.sh $(WHAT)
 
 .PHONY: validate
 validate:
-	./scripts/make-targets/validate.sh
+	bash ./scripts/make-targets/validate.sh
 
 .PHONY: update
 update:
-	./scripts/make-targets/update.sh
+	bash ./scripts/make-targets/update.sh
 
 .PHONY: test
 test:
-	./scripts/make-targets/test.sh $(WHAT)
+	bash ./scripts/make-targets/test.sh $(WHAT)
 
 .PHONY: test-integration
 test-integration:
-	./scripts/make-targets/test-integration.sh $(WHAT)
+	bash ./scripts/make-targets/test-integration.sh $(WHAT)
 
 .PHONY: coverage
 coverage:
-	./scripts/make-targets/coverage.sh
+	bash ./scripts/make-targets/coverage.sh

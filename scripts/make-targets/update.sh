@@ -21,5 +21,5 @@ fi
 
 for script in "${update_scripts[@]}"; do
   echo "Updating $(basename "${script}")"
-  "${script}"
+  bash "${script}"
 done

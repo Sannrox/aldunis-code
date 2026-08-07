@@ -21,5 +21,5 @@ fi
 
 for script in "${validation_scripts[@]}"; do
   echo "Validating $(basename "${script}")"
-  "${script}"
+  bash "${script}"
 done
