@@ -66,6 +66,18 @@ test("workspace checkpoint title and state stay spaced in the card header", () =
   assert.match(css, /\.checkpoint-card header small\s*\{[^}]*color:\s*var\(--muted-foreground\)/s);
 });
 
+test("snooze menu items keep flex layout over row-menu button block display", () => {
+  // mock-shell sets `.row-menu-pop > button { display: block }`, which collapsed
+  // "Snooze · Tomorrow" + "9:00 AM" into "Snooze · Tomorrow9:00 AM" until the
+  // more-specific flex rule wins.
+  assert.match(
+    css,
+    /\.row-menu-pop\s*>\s*button\.row-menu-snooze\s*\{[^}]*display:\s*flex[^}]*justify-content:\s*space-between[^}]*gap:\s*12px/s,
+  );
+  assert.match(css, /\.row-menu-snooze__when\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(shellCss, /\.row-menu-pop\s*>\s*button\s*\{[^}]*display:\s*block/s);
+});
+
 test("styles must not load remote Google Fonts (local-first)", () => {
   assert.doesNotMatch(css, /fonts\.googleapis\.com|fonts\.gstatic\.com/i);
   assert.doesNotMatch(css, /@import\s+url\(/i);

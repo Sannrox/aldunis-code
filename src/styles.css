@@ -4452,7 +4452,8 @@ select.ui-input {
 .shelf--snoozed {
   border-top-style: dashed;
 }
-.row-menu-snooze {
+/* Beat `.row-menu-pop > button { display: block }` so label + wake time stay spaced. */
+.row-menu-pop > button.row-menu-snooze {
   display: flex;
   align-items: center;
   justify-content: space-between;
