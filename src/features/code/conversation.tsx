@@ -137,6 +137,7 @@ import {
   type WorkspacePanel,
   type WorkspacePanelDestination,
 } from "../../lib/workspace-panel";
+import { isRepositoryRelativeContextPinPath } from "../../lib/context-pins";
 import {
   presentAssistantTimeline,
   type AssistantTimelineBlock,
@@ -4643,7 +4644,7 @@ export function Conversation({
                   {providerReadinessMessage}
                 </div>
               )}
-              {contextError && (
+              {contextError && !contextOpen && (
                 <div className="context-error" role="alert">
                   {contextError}
                 </div>
@@ -5355,6 +5356,10 @@ export function Conversation({
                 return;
               if (contextPins.length >= 100) {
                 setContextError("Pin at most 100 file or folder paths.");
+                return;
+              }
+              if (!isRepositoryRelativeContextPinPath(pin.path)) {
+                setContextError("Use a repository-relative path inside the selected worktree.");
                 return;
               }
               if (pin.kind === "file") setAttachments((current) => [...current, pin.path]);
