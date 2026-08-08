@@ -103,6 +103,9 @@ test("Codex version and native lifecycle events normalize without provider paylo
         totalProcessedTokens: 40_000,
         inputTokens: 10_000,
         outputTokens: 2_500,
+        cachedInputTokens: 1_000,
+        cacheWriteInputTokens: 0,
+        reasoningOutputTokens: 200,
       },
     ],
   );

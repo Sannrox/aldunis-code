@@ -55,6 +55,7 @@ test("new conversations wait for registered projects to restore", () => {
     /class="empty-list-action" title="Restoring projects…" aria-label="Restoring projects…" disabled="">Restoring projects…<\/button>/,
   );
   assert.match(html, /data-sidebar-state="expanded"/);
+  assert.match(html, /aria-label="Usage">Usage<\/button>/);
   assert.match(html, /aldunis-brand-mark--compact/);
   assert.match(
     html,

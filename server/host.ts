@@ -20,6 +20,7 @@ import {
 } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
+import { buildUsageReport, isUsageRangeDays } from "../src/lib/usage.ts";
 import {
   ShikigamiAdapter,
   type ShikigamiProfileRuntime,
@@ -267,6 +268,9 @@ function filterManagedProjection(
       (plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId),
     ),
     contextReceipts: projection.contextReceipts.filter(
+      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
+    ),
+    usageReceipts: projection.usageReceipts.filter(
       (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
     ),
     governanceCorrelations: projection.governanceCorrelations.filter((receipt) =>
@@ -639,6 +643,20 @@ async function handleApi(
   }
 
   try {
+    if (route === "/api/usage/summary") {
+      const body = await readOptionalJson(request);
+      const requestedRange = isRecord(body) ? body.rangeDays : undefined;
+      const rangeDays = requestedRange === undefined ? 30 : requestedRange;
+      if (!isUsageRangeDays(rangeDays)) {
+        throw new LocalStateError("Usage range must be 7, 30, or 90 days.", 400);
+      }
+      const projection = await state.load();
+      const visibleProjection = managedHost
+        ? filterManagedProjection(projection, managedHost)
+        : projection;
+      sendJson(response, 200, buildUsageReport(visibleProjection.usageReceipts, rangeDays));
+      return true;
+    }
     if (route === "/api/browser/tools") {
       if (!browser || remoteRequest || managedHost) {
         throw new BrowserError(

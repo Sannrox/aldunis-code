@@ -144,6 +144,10 @@
       ]
     },
     {
+      "name": "LocalUsageReceipt",
+      "description": "A bounded, provider-reported numeric observation for one Aldunis Code turn. It contains token and optional cost fields only, supports the local Usage view, excludes prompts, tool payloads, repository content, and credentials, and is not billing truth or Chisei usage authority."
+    },
+    {
       "name": "TurnChangeSummary",
       "description": "A persisted metadata-only summary of one completed Aldunis Code turn's checkpoint diff, including changed paths, states, rename sources, and line counts; it exposes no source content and grants no mutation or delivery authority."
     },
@@ -395,6 +399,16 @@
       "cardinality": {
         "min": 0,
         "max": 1
+      }
+    },
+    {
+      "name": "records_local_usage_receipt",
+      "description": "Records bounded provider-reported token and optional cost observations for local Code turns so the Usage view can aggregate them without importing native provider history or transferring usage authority to Chisei.",
+      "domain": "LocalConversation",
+      "range": "LocalUsageReceipt",
+      "cardinality": {
+        "min": 0,
+        "max": null
       }
     },
     {
@@ -1029,6 +1043,18 @@
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",
       "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalUsageReceipt",
+      "source": "Aldunis Code local usage dashboard boundary",
+      "locator": "src/lib/usage.ts#UsageReceipt; server/state.ts#usage_receipt_saved; server/host.ts#/api/usage/summary",
+      "confidence": 1.0
+    },
+    {
+      "subject": "records_local_usage_receipt",
+      "source": "Aldunis Code local usage dashboard boundary",
+      "locator": "server/state.ts#LocalStateStore.recordProviderEvent; src/features/code/usage-page.tsx#UsagePage",
       "confidence": 1.0
     },
     {

@@ -15,6 +15,7 @@ import type {
 } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
+import { UsagePage } from "./usage-page";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import {
@@ -730,6 +731,10 @@ export function CodeWorkbench({
       setChiseiCorrelationId(null);
     }
     previousProduct.current = product;
+  }, [product]);
+  const [usageOpen, setUsageOpen] = useState(false);
+  useEffect(() => {
+    if (product !== "code") setUsageOpen(false);
   }, [product]);
   useEffect(() => {
     const inspect = (event: Event) => {
@@ -1475,19 +1480,26 @@ export function CodeWorkbench({
           onOpenPalette();
           closeSidebarBeforeMobileDialog();
         }}
+        onShowUsage={() => {
+          setUsageOpen(true);
+          closeSidebarAfterMobileNavigation();
+        }}
         conversations={listedConversations}
         prStatusByWorktree={prStatusByWorktree}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
         onOpenConversation={(id) => {
+          setUsageOpen(false);
           openConversation(id);
           closeSidebarAfterMobileNavigation();
         }}
         onOpenBeside={(id) => {
+          setUsageOpen(false);
           openBeside(id);
           closeSidebarAfterMobileNavigation();
         }}
         onNewConversation={() => {
+          setUsageOpen(false);
           if (!repository && projects.length === 0) closeSidebarBeforeMobileDialog();
           else closeSidebarAfterMobileNavigation();
           // New thread uses the active/filter project for runs — never opens a path tree,
@@ -1612,6 +1624,8 @@ export function CodeWorkbench({
             chiseiCorrelationId={chiseiCorrelationId}
             repository={repository}
           />
+        ) : usageOpen ? (
+          <UsagePage onBack={() => setUsageOpen(false)} />
         ) : (
           <div
             className="code-view conversation-workspace"

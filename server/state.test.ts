@@ -41,6 +41,17 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     model: "sonnet",
   });
   await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "context_usage",
+    usedTokens: 900,
+    maxTokens: 200_000,
+    totalProcessedTokens: 1_200,
+    inputTokens: 1_000,
+    outputTokens: 200,
+    cachedInputTokens: 100,
+    cacheWriteInputTokens: 20,
+    reasoningOutputTokens: 30,
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "assistant_text",
     text: "The change is safe.",
   });
@@ -73,11 +84,91 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
     ["user", "assistant"],
   );
   assert.equal(rebuilt.activities[0].name, "Read");
+  assert.deepEqual(rebuilt.usageReceipts, [
+    {
+      schemaVersion: 2,
+      id: `usage:${turn.id}`,
+      threadId: thread.id,
+      turnId: turn.id,
+      provider: "claude-code",
+      model: "sonnet",
+      status: "completed",
+      inputTokens: 1_000,
+      outputTokens: 200,
+      cachedInputTokens: 100,
+      cacheWriteInputTokens: 20,
+      reasoningOutputTokens: 30,
+      totalProcessedTokens: null,
+      reportedCostUsd: 0.01,
+      createdAt: rebuilt.usageReceipts[0].createdAt,
+      updatedAt: rebuilt.usageReceipts[0].updatedAt,
+    },
+  ]);
+  assert.notEqual(rebuilt.usageReceipts[0].createdAt, rebuilt.usageReceipts[0].updatedAt);
   assert.ok(
     rebuilt.messages[1]!.eventSequence! < rebuilt.activities[0]!.eventSequence!,
     "provider records retain their shared event-log order across collections",
   );
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
+});
+
+test("terminal events without usage do not create empty receipts", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Complete without provider usage",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "context_usage",
+    usedTokens: 100,
+    maxTokens: 200_000,
+    totalProcessedTokens: 100,
+    inputTokens: null,
+    outputTokens: null,
+  });
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: null,
+  });
+
+  const projection = await store.load();
+  assert.equal(projection.turns[0].status, "completed");
+  assert.deepEqual(projection.usageReceipts, []);
+});
+
+test("usage receipts reject out-of-bound provider metrics", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Reject oversized provider usage",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "context_usage",
+    usedTokens: Number.MAX_VALUE,
+    maxTokens: null,
+    totalProcessedTokens: Number.MAX_VALUE,
+    inputTokens: Number.MAX_VALUE,
+    outputTokens: Number.MAX_VALUE,
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: Number.MAX_VALUE,
+  });
+
+  assert.deepEqual((await store.load()).usageReceipts, []);
 });
 
 test("provider thinking stays live-only and is excluded from local history", async () => {
@@ -509,6 +600,28 @@ test("typed provider failures survive reload without arbitrary error text", asyn
   );
 });
 
+test("failed provider cost remains a bounded usage observation", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Fail after partial provider work",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "claude-code", {
+    kind: "failed",
+    costUsd: 0.04,
+    message: "untrusted provider text",
+  });
+
+  const receipt = (await store.load()).usageReceipts[0];
+  assert.equal(receipt?.status, "failed");
+  assert.equal(receipt?.reportedCostUsd, 0.04);
+});
+
 test("provider mode rejections retain a safe actionable diagnostic", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -851,6 +964,7 @@ test("project deletion and retention physically remove sensitive conversation da
     activities: [],
     plans: [],
     contextReceipts: [],
+    usageReceipts: [],
     governanceCorrelations: [],
     providerSessions: [],
     checkpoints: [],
@@ -1040,6 +1154,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     activities: 0,
     plans: 0,
     contextReceipts: 0,
+    usageReceipts: 1,
     governanceCorrelations: 0,
     providerSessions: 1,
     checkpoints: 0,

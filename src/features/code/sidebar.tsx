@@ -51,6 +51,7 @@ export function CodeSidebar({
   onShowChanges,
   onBrowseFiles,
   onOpenPalette,
+  onShowUsage = () => undefined,
   conversations,
   primaryConversationId,
   secondaryConversationId,
@@ -95,6 +96,7 @@ export function CodeSidebar({
   onShowChanges: () => void;
   onBrowseFiles: () => void;
   onOpenPalette: () => void;
+  onShowUsage?: () => void;
   conversations: ConversationSummary[];
   primaryConversationId: string | null;
   secondaryConversationId: string | null;
@@ -804,10 +806,19 @@ export function CodeSidebar({
 
       <div className="sb-ft">
         {managedAccount && <ManagedAccountPanel account={managedAccount} />}
+        {product === "code" && (
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs sidebar-footer-link"
+            onClick={onShowUsage}
+            aria-label="Usage"
+          >
+            Usage
+          </button>
+        )}
         <button
           type="button"
-          className="btn btn-ghost btn-xs"
-          style={{ marginLeft: "auto" }}
+          className="btn btn-ghost btn-xs sidebar-footer-link sidebar-footer-link--settings"
           onClick={onSettings}
           aria-label="Settings"
         >

@@ -641,6 +641,9 @@ export type ProviderEvent =
       totalProcessedTokens?: number | null;
       inputTokens?: number | null;
       outputTokens?: number | null;
+      cachedInputTokens?: number | null;
+      cacheWriteInputTokens?: number | null;
+      reasoningOutputTokens?: number | null;
     }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
