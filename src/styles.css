@@ -1631,6 +1631,22 @@ select.ui-input {
 .autonomy-dialog-body > :first-child {
   margin-top: 0;
 }
+.autonomy-dialog-body .row {
+  display: flex;
+  width: auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+.autonomy-dialog-body .autonomy-card > .row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.autonomy-dialog-body .autonomy-card > .row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .autonomy-tabs {
   display: flex;
   gap: 4px;
