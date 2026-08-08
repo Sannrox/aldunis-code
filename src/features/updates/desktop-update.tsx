@@ -19,6 +19,12 @@ function channelDescription(channel: DesktopUpdateSnapshot["channel"]): string {
     : "Stable channel · follows signed stable releases.";
 }
 
+function errorTitle(snapshot: DesktopUpdateSnapshot): string {
+  if (snapshot.errorStage === "download") return "Update download failed";
+  if (snapshot.errorStage === "install") return "Update installation failed";
+  return "Update check failed";
+}
+
 function disabledMessage(reason: DesktopUpdateSnapshot["disabledReason"]): string {
   switch (reason) {
     case "development":
@@ -35,7 +41,7 @@ function disabledMessage(reason: DesktopUpdateSnapshot["disabledReason"]): strin
 }
 
 function bannerTitle(snapshot: DesktopUpdateSnapshot): string {
-  if (snapshot.phase === "error") return "Update check failed";
+  if (snapshot.phase === "error") return errorTitle(snapshot);
   if (snapshot.phase === "downloaded") return "Update ready";
   if (snapshot.phase === "downloading") return `Downloading ${updateVersion(snapshot)}`;
   if (snapshot.phase === "installing") return "Restarting to install update";
@@ -135,7 +141,11 @@ export function DesktopUpdateSettings({
       <div className="desktop-update-settings-status" role="status" aria-live="polite">
         <strong>
           {snapshot.phase === "error"
-            ? "Could not check for updates"
+            ? snapshot.errorStage === "download"
+              ? "Could not download update"
+              : snapshot.errorStage === "install"
+                ? "Could not install update"
+                : "Could not check for updates"
             : snapshot.phase === "downloaded"
               ? `${updateVersion(snapshot)} ready to install`
               : snapshot.phase === "available"

@@ -166,12 +166,49 @@ test("desktop updater sanitizes feed errors and can be retried", async () => {
   const failed = await updater.checkForUpdate();
   assert.equal(failed.phase, "error");
   assert.equal(failed.error, "The update check failed. Check your connection and try again.");
+  assert.equal(failed.errorStage, "check");
   assert.doesNotMatch(failed.error ?? "", /token|private-feed/);
 
   engine.checkError = null;
   engine.checkResult = { updateInfo: null };
   const retried = await updater.checkForUpdate();
   assert.equal(retried.phase, "idle");
+});
+
+test("desktop updater reports download failures separately from check failures", async () => {
+  const engine = new FakeUpdaterEngine();
+  const { updater } = createUpdater(engine);
+  updater.start();
+  await updater.checkForUpdate();
+
+  engine.downloadError = new Error("asset not found");
+  const failed = await updater.downloadUpdate();
+
+  assert.equal(failed.phase, "error");
+  assert.equal(failed.errorStage, "download");
+  assert.equal(failed.error, "The update download failed. Check your connection and try again.");
+});
+
+test("desktop updater classifies asynchronous installation errors correctly", async () => {
+  const engine = new FakeUpdaterEngine();
+  const { updater } = createUpdater(engine, {
+    prepareForInstall: async () => {
+      engine.emit("error");
+    },
+  });
+  updater.start();
+  await updater.checkForUpdate();
+
+  engine.downloadUpdate = async () => {
+    engine.emit("update-downloaded", { version: "0.2.0" });
+  };
+  await updater.downloadUpdate();
+  const failed = await updater.installUpdate();
+
+  assert.equal(failed.phase, "error");
+  assert.equal(failed.errorStage, "install");
+  assert.equal(failed.error, "The update could not be installed. Try again later.");
+  assert.equal(engine.quitArguments, null);
 });
 
 test("desktop updater cleans event listeners and scheduled work", () => {

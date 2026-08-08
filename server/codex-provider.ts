@@ -86,7 +86,7 @@ export interface CodexSkill {
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
@@ -101,13 +101,9 @@ export function isRecoverableCodexResumeError(value: unknown): boolean {
   const error = record(value);
   const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
   if (!message.includes("thread")) return false;
-  return [
-    "not found",
-    "does not exist",
-    "missing",
-    "unknown",
-    "no rollout",
-  ].some((snippet) => message.includes(snippet));
+  return ["not found", "does not exist", "missing", "unknown", "no rollout"].some((snippet) =>
+    message.includes(snippet),
+  );
 }
 
 /**
@@ -120,7 +116,9 @@ function tomlString(value: string): string {
 }
 
 function tomlInlineTable(value: Record<string, string>): string {
-  return `{${Object.entries(value).map(([key, entry]) => `${key}=${tomlString(entry)}`).join(",")}}`;
+  return `{${Object.entries(value)
+    .map(([key, entry]) => `${key}=${tomlString(entry)}`)
+    .join(",")}}`;
 }
 
 function codexMcpOverride(configuration: ProviderBrowserMcpConfiguration): string {
@@ -134,10 +132,7 @@ export function codexAppServerArguments(
   const minor = Number(version.split(".")[1] ?? 0);
   const args = ["app-server"];
   if (minor >= 144) {
-    args.push(
-      "--stdio",
-      "--strict-config",
-    );
+    args.push("--stdio", "--strict-config");
   }
   args.push("-c", "mcp_servers={}");
   if (browserMcp) args.push("-c", codexMcpOverride(browserMcp));
@@ -175,19 +170,17 @@ export function codexFileChangePaths(itemValue: unknown): string[] {
     const entry = record(change);
     const kind = record(entry?.kind);
     if (
-      !entry
-      || typeof entry.path !== "string"
-      || !kind
-      || (kind.type !== "add" && kind.type !== "delete" && kind.type !== "update")
-      || (kind.type === "update" && kind.move_path != null && typeof kind.move_path !== "string")
+      !entry ||
+      typeof entry.path !== "string" ||
+      !kind ||
+      (kind.type !== "add" && kind.type !== "delete" && kind.type !== "update") ||
+      (kind.type === "update" && kind.move_path != null && typeof kind.move_path !== "string")
     ) {
       throw new ProviderProtocolError("Codex emitted a malformed file change.");
     }
     paths.push(
       entry.path,
-      ...(kind.type === "update" && typeof kind.move_path === "string"
-        ? [kind.move_path]
-        : []),
+      ...(kind.type === "update" && typeof kind.move_path === "string" ? [kind.move_path] : []),
     );
   }
   return paths;
@@ -221,10 +214,11 @@ export async function pathsWithinWorktree(worktree: string, paths: string[]): Pr
     }
     const canonicalRelative = relative(root, canonical);
     if (
-      canonicalRelative === ".."
-      || canonicalRelative.startsWith(`..${sep}`)
-      || isAbsolute(canonicalRelative)
-    ) return false;
+      canonicalRelative === ".." ||
+      canonicalRelative.startsWith(`..${sep}`) ||
+      isAbsolute(canonicalRelative)
+    )
+      return false;
   }
   return true;
 }
@@ -243,14 +237,16 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   }
   if (item.type === "plan") {
     return completed
-      ? [{
-          kind: "plan_updated",
-          artifact: {
-            id: `item:${id}`,
-            provider: "codex-cli",
-            body: string(item.text, "plan text"),
+      ? [
+          {
+            kind: "plan_updated",
+            artifact: {
+              id: `item:${id}`,
+              provider: "codex-cli",
+              body: string(item.text, "plan text"),
+            },
           },
-        }]
+        ]
       : [];
   }
   if (item.type === "commandExecution") {
@@ -283,20 +279,24 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
     return observation ? [observation] : [];
   }
   if (item.type === "mcpToolCall" || item.type === "dynamicToolCall") {
-    const tool = typeof item.tool === "string" && item.tool
-      ? item.tool
-      : typeof item.name === "string" && item.name
-      ? item.name
-      : "browser tool";
-    const approved = item.type === "mcpToolCall"
-      && item.server === BROWSER_MCP_NAME
-      && APPROVED_BROWSER_TOOLS.has(tool);
+    const tool =
+      typeof item.tool === "string" && item.tool
+        ? item.tool
+        : typeof item.name === "string" && item.name
+          ? item.name
+          : "browser tool";
+    const approved =
+      item.type === "mcpToolCall" &&
+      item.server === BROWSER_MCP_NAME &&
+      APPROVED_BROWSER_TOOLS.has(tool);
     if (!approved) {
-      return [{
-        kind: "failed",
-        code: "unsupported_external_tool",
-        message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
-      }];
+      return [
+        {
+          kind: "failed",
+          code: "unsupported_external_tool",
+          message: UNSUPPORTED_EXTERNAL_TOOL_MESSAGE,
+        },
+      ];
     }
     const failed = item.status === "failed" || item.status === "error";
     return completed
@@ -341,6 +341,46 @@ function safeCodexProtocolFailureMessage(error: ProviderProtocolError): string {
   return CODEX_PROTOCOL_FALLBACK_MESSAGE;
 }
 
+function finiteNonNegative(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return value;
+}
+
+/**
+ * Map Codex app-server `thread/tokenUsage/updated` into ephemeral context
+ * pressure for the composer meter. Malformed usage is ignored (not fatal).
+ *
+ * usedTokens is last-turn context occupancy: totalTokens minus reasoning
+ * output (matching Codex's tokens-in-context estimate). Cumulative session
+ * totals are never used as occupancy — they overstate fill after multi-turn
+ * work and compaction. maxTokens is modelContextWindow when present.
+ */
+export function normalizeCodexTokenUsage(params: JsonRecord): ProviderEvent[] {
+  const tokenUsage = record(params.tokenUsage);
+  if (!tokenUsage) return [];
+  const last = record(tokenUsage.last);
+  if (!last) return [];
+  const lastTotal = finiteNonNegative(last.totalTokens);
+  if (lastTotal === null) return [];
+  const reasoning = finiteNonNegative(last.reasoningOutputTokens) ?? 0;
+  const usedTokens = Math.max(0, lastTotal - reasoning);
+  const total = record(tokenUsage.total);
+  const sessionTotal = finiteNonNegative(total?.totalTokens);
+  const maxTokens = finiteNonNegative(tokenUsage.modelContextWindow);
+  const inputTokens = finiteNonNegative(last.inputTokens);
+  const outputTokens = finiteNonNegative(last.outputTokens);
+  return [
+    {
+      kind: "context_usage",
+      usedTokens,
+      maxTokens,
+      totalProcessedTokens: sessionTotal,
+      inputTokens,
+      outputTokens,
+    },
+  ];
+}
+
 export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   const message = record(value);
   const method = string(message?.method, "method");
@@ -349,16 +389,19 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   if (method === "item/started") return itemEvents(params.item, false);
   if (method === "item/completed") return itemEvents(params.item, true);
   if (
-    method === "item/reasoning/textDelta"
-    || method === "item/reasoning/summaryTextDelta"
-    || method === "item/reasoning/summaryPartAdded"
+    method === "item/reasoning/textDelta" ||
+    method === "item/reasoning/summaryTextDelta" ||
+    method === "item/reasoning/summaryPartAdded"
   ) {
     const part = record(params.part);
-    const delta = typeof params.delta === "string"
-      ? params.delta
-      : typeof params.text === "string"
-        ? params.text
-        : typeof part?.text === "string" ? part.text : "";
+    const delta =
+      typeof params.delta === "string"
+        ? params.delta
+        : typeof params.text === "string"
+          ? params.text
+          : typeof part?.text === "string"
+            ? part.text
+            : "";
     return delta ? [{ kind: "thinking", text: delta }] : [];
   }
   if (method === "turn/plan/updated") {
@@ -376,37 +419,47 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
       }
       return { content: string(step.step, "plan step"), status };
     });
-    return [{
-      kind: "plan_updated",
-      artifact: {
-        id: `turn:${turnId}`,
-        provider: "codex-cli",
-        ...(typeof params.explanation === "string" && params.explanation
-          ? { body: params.explanation }
-          : {}),
-        steps,
+    return [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: `turn:${turnId}`,
+          provider: "codex-cli",
+          ...(typeof params.explanation === "string" && params.explanation
+            ? { body: params.explanation }
+            : {}),
+          steps,
+        },
       },
-    }];
+    ];
   }
   if (method === "item/plan/delta") {
-    return [{
-      kind: "plan_updated",
-      artifact: {
-        id: `item:${string(params.itemId, "item id")}`,
-        provider: "codex-cli",
-        body: string(params.delta, "plan delta"),
+    return [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: `item:${string(params.itemId, "item id")}`,
+          provider: "codex-cli",
+          body: string(params.delta, "plan delta"),
+        },
+        bodyMode: "append",
       },
-      bodyMode: "append",
-    }];
+    ];
   }
   if (method === "turn/completed") {
     const turn = record(params.turn);
     if (!turn) throw new ProviderProtocolError("Codex emitted a malformed completed turn.");
     const error = record(turn.error);
     if (turn.status === "failed") {
-      return [{ kind: "failed", message: typeof error?.message === "string"
-        ? error.message
-        : "Codex could not complete the turn." }];
+      return [
+        {
+          kind: "failed",
+          message:
+            typeof error?.message === "string"
+              ? error.message
+              : "Codex could not complete the turn.",
+        },
+      ];
     }
     if (turn.status === "interrupted") return [{ kind: "cancelled" }];
     if (turn.status === "completed") return [];
@@ -414,9 +467,16 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   }
   if (method === "error") {
     const error = record(params.error);
-    return [{ kind: "failed", message: typeof error?.message === "string"
-      ? error.message
-      : "Codex reported a provider error." }];
+    return [
+      {
+        kind: "failed",
+        message:
+          typeof error?.message === "string" ? error.message : "Codex reported a provider error.",
+      },
+    ];
+  }
+  if (method === "thread/tokenUsage/updated") {
+    return normalizeCodexTokenUsage(params);
   }
   const informational = new Set([
     "turn/started",
@@ -426,7 +486,6 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
     "thread/status/changed",
     "thread/goal/updated",
     "thread/goal/cleared",
-    "thread/tokenUsage/updated",
     "skills/changed",
     "item/agentMessage/delta",
     "item/commandExecution/outputDelta",
@@ -477,9 +536,8 @@ export class CodexCliAdapter {
       try {
         version = assertSupportedCodexVersion(result.stdout.trim());
       } catch (error) {
-        const detail = error instanceof ProviderProtocolError
-          ? error.message
-          : "Unsupported Codex CLI version.";
+        const detail =
+          error instanceof ProviderProtocolError ? error.message : "Unsupported Codex CLI version.";
         return {
           id: this.id,
           installed: true,
@@ -503,7 +561,9 @@ export class CodexCliAdapter {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let spawnFailed = false;
-    child.once("error", () => { spawnFailed = true; });
+    child.once("error", () => {
+      spawnFailed = true;
+    });
     child.stdin.on("error", () => {});
     child.stderr.resume();
     const lines = this.#lines(child);
@@ -520,9 +580,13 @@ export class CodexCliAdapter {
     }, 5_000);
     timeout.unref();
     try {
-      this.#send(child, { method: "initialize", id: 0, params: {
-        clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
-      } });
+      this.#send(child, {
+        method: "initialize",
+        id: 0,
+        params: {
+          clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+        },
+      });
       for await (const message of lines) {
         if (message.id === 0) {
           if (message.error) break;
@@ -544,21 +608,30 @@ export class CodexCliAdapter {
             if (!model || typeof model.id !== "string" || model.hidden === true) return [];
             const efforts = Array.isArray(model.supportedReasoningEfforts)
               ? model.supportedReasoningEfforts.flatMap((entry): ReasoningEffort[] => {
-                const option = record(entry);
-                const effort = option?.reasoningEffort;
-                return effort === "minimal" || effort === "low" || effort === "medium"
-                  || effort === "high" || effort === "xhigh" ? [effort] : [];
-              })
+                  const option = record(entry);
+                  const effort = option?.reasoningEffort;
+                  return effort === "minimal" ||
+                    effort === "low" ||
+                    effort === "medium" ||
+                    effort === "high" ||
+                    effort === "xhigh"
+                    ? [effort]
+                    : [];
+                })
               : [];
-            return [{
-              id: model.id,
-              displayName: typeof model.displayName === "string" ? model.displayName : model.id,
-              isDefault: model.isDefault === true,
-              reasoningEfforts: efforts,
-              defaultReasoningEffort: efforts.includes(model.defaultReasoningEffort as ReasoningEffort)
-                ? model.defaultReasoningEffort as ReasoningEffort
-                : efforts[0] ?? "medium",
-            }];
+            return [
+              {
+                id: model.id,
+                displayName: typeof model.displayName === "string" ? model.displayName : model.id,
+                isDefault: model.isDefault === true,
+                reasoningEfforts: efforts,
+                defaultReasoningEffort: efforts.includes(
+                  model.defaultReasoningEffort as ReasoningEffort,
+                )
+                  ? (model.defaultReasoningEffort as ReasoningEffort)
+                  : (efforts[0] ?? "medium"),
+              },
+            ];
           });
           gotModels = true;
         }
@@ -614,7 +687,9 @@ export class CodexCliAdapter {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let spawnFailed = false;
-    child.once("error", () => { spawnFailed = true; });
+    child.once("error", () => {
+      spawnFailed = true;
+    });
     child.stdin.on("error", () => {});
     child.stderr.resume();
     const timeout = setTimeout(() => {
@@ -628,9 +703,13 @@ export class CodexCliAdapter {
     let received = false;
     let skills: CodexSkill[] = [];
     try {
-      this.#send(child, { method: "initialize", id: 0, params: {
-        clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
-      } });
+      this.#send(child, {
+        method: "initialize",
+        id: 0,
+        params: {
+          clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+        },
+      });
       for await (const message of this.#lines(child)) {
         if (message.id === 0) {
           if (message.error) break;
@@ -649,27 +728,29 @@ export class CodexCliAdapter {
           throw new ProviderProtocolError("Codex emitted a malformed skills list.");
         }
         const seen = new Set<string>();
-        skills = result.data.flatMap((entryValue): CodexSkill[] => {
-          const entry = record(entryValue);
-          if (!entry || !Array.isArray(entry.skills)) {
-            throw new ProviderProtocolError("Codex emitted a malformed skills list.");
-          }
-          return entry.skills.flatMap((skillValue): CodexSkill[] => {
-            const skill = record(skillValue);
-            if (
-              !skill
-              || typeof skill.name !== "string"
-              || !skill.name
-              || typeof skill.description !== "string"
-              || typeof skill.enabled !== "boolean"
-            ) {
-              throw new ProviderProtocolError("Codex emitted malformed skill metadata.");
+        skills = result.data
+          .flatMap((entryValue): CodexSkill[] => {
+            const entry = record(entryValue);
+            if (!entry || !Array.isArray(entry.skills)) {
+              throw new ProviderProtocolError("Codex emitted a malformed skills list.");
             }
-            if (!skill.enabled || seen.has(skill.name)) return [];
-            seen.add(skill.name);
-            return [{ name: skill.name, description: skill.description }];
-          });
-        }).sort((left, right) => left.name.localeCompare(right.name));
+            return entry.skills.flatMap((skillValue): CodexSkill[] => {
+              const skill = record(skillValue);
+              if (
+                !skill ||
+                typeof skill.name !== "string" ||
+                !skill.name ||
+                typeof skill.description !== "string" ||
+                typeof skill.enabled !== "boolean"
+              ) {
+                throw new ProviderProtocolError("Codex emitted malformed skill metadata.");
+              }
+              if (!skill.enabled || seen.has(skill.name)) return [];
+              seen.add(skill.name);
+              return [{ name: skill.name, description: skill.description }];
+            });
+          })
+          .sort((left, right) => left.name.localeCompare(right.name));
         received = true;
         break;
       }
@@ -686,12 +767,12 @@ export class CodexCliAdapter {
   async start(options: ProviderStartOptions): Promise<ProviderRun> {
     const existing = this.#sessions.get(options.conversationId);
     if (
-      existing
-      && existing.child.exitCode === null
-      && !existing.spawnFailed
-      && existing.currentRunId === null
-      && existing.worktree === options.worktree
-      && (!options.resumeSessionId || options.resumeSessionId === existing.threadId)
+      existing &&
+      existing.child.exitCode === null &&
+      !existing.spawnFailed &&
+      existing.currentRunId === null &&
+      existing.worktree === options.worktree &&
+      (!options.resumeSessionId || options.resumeSessionId === existing.threadId)
     ) {
       const id = randomUUID();
       existing.cancelled = false;
@@ -710,7 +791,8 @@ export class CodexCliAdapter {
     let version: string;
     try {
       const result = await execFileAsync(this.executable, ["--version"], {
-        encoding: "utf8", timeout: 5_000,
+        encoding: "utf8",
+        timeout: 5_000,
       });
       version = assertSupportedCodexVersion(result.stdout.trim());
     } catch {
@@ -719,9 +801,7 @@ export class CodexCliAdapter {
     const id = randomUUID();
     const child = spawn(this.executable, this.#appServerArguments(version, options.browserMcp), {
       cwd: options.worktree,
-      env: options.browserMcp
-        ? { ...process.env, ...options.browserMcp.environment }
-        : undefined,
+      env: options.browserMcp ? { ...process.env, ...options.browserMcp.environment } : undefined,
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.on("error", () => {});
@@ -740,7 +820,9 @@ export class CodexCliAdapter {
       activeToolCalls: new Set(),
       pendingInputs: new Map(),
     };
-    child.once("error", () => { active.spawnFailed = true; });
+    child.once("error", () => {
+      active.spawnFailed = true;
+    });
     child.once("exit", () => {
       if (this.#sessions.get(options.conversationId) === active) {
         this.#sessions.delete(options.conversationId);
@@ -758,7 +840,8 @@ export class CodexCliAdapter {
     this.permissions.closeRun(id, "cancelled");
     if (active.threadId && active.turnId) {
       this.#send(active.child, {
-        method: "turn/interrupt", id: 99,
+        method: "turn/interrupt",
+        id: 99,
         params: { threadId: active.threadId, turnId: active.turnId },
       });
       const terminate = setTimeout(() => {
@@ -847,7 +930,9 @@ export class CodexCliAdapter {
         buffer = buffer.slice(newline + 1);
         if (line) {
           let value: unknown;
-          try { value = JSON.parse(line); } catch {
+          try {
+            value = JSON.parse(line);
+          } catch {
             throw new ProviderProtocolError("Codex emitted malformed JSON.");
           }
           const message = record(value);
@@ -868,22 +953,31 @@ export class CodexCliAdapter {
   ): AsyncIterable<ProviderEvent> {
     const token = this.permissions.createRunToken(id);
     const startTurn = () => {
-      if (!active.threadId) throw new ProviderProtocolError("Codex session is missing its thread id.");
-      this.#send(active.child, { method: "turn/start", id: 2, params: {
-        threadId: active.threadId,
-        input: [{ type: "text", text: options.prompt, text_elements: [] }],
-        cwd: options.worktree,
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
-        model: options.model ?? null,
-        effort: options.reasoningEffort ?? null,
-      } });
+      if (!active.threadId)
+        throw new ProviderProtocolError("Codex session is missing its thread id.");
+      this.#send(active.child, {
+        method: "turn/start",
+        id: 2,
+        params: {
+          threadId: active.threadId,
+          input: [{ type: "text", text: options.prompt, text_elements: [] }],
+          cwd: options.worktree,
+          approvalPolicy: "on-request",
+          approvalsReviewer: "user",
+          model: options.model ?? null,
+          effort: options.reasoningEffort ?? null,
+        },
+      });
     };
     if (active.initialized) startTurn();
     else {
-      this.#send(active.child, { method: "initialize", id: 0, params: {
-        clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
-      } });
+      this.#send(active.child, {
+        method: "initialize",
+        id: 0,
+        params: {
+          clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+        },
+      });
     }
     let protocolFailed = false;
     let terminalEmitted = false;
@@ -892,7 +986,8 @@ export class CodexCliAdapter {
     try {
       for await (const message of this.#lines(active.child)) {
         if (message.id === 0) {
-          if (message.error) throw new ProviderProtocolError("Codex app-server initialization failed.");
+          if (message.error)
+            throw new ProviderProtocolError("Codex app-server initialization failed.");
           active.initialized = true;
           this.#send(active.child, { method: "initialized", params: {} });
           this.#send(active.child, {
@@ -916,10 +1011,10 @@ export class CodexCliAdapter {
         }
         if (message.id === 1) {
           if (
-            message.error
-            && options.resumeSessionId
-            && !resumeFallbackAttempted
-            && isRecoverableCodexResumeError(message.error)
+            message.error &&
+            options.resumeSessionId &&
+            !resumeFallbackAttempted &&
+            isRecoverableCodexResumeError(message.error)
           ) {
             resumeFallbackAttempted = true;
             this.#send(active.child, {
@@ -938,14 +1033,15 @@ export class CodexCliAdapter {
             });
             continue;
           }
-          if (message.error) throw new ProviderProtocolError("Codex could not start or resume the thread.");
+          if (message.error)
+            throw new ProviderProtocolError("Codex could not start or resume the thread.");
           const result = record(message.result);
           const thread = record(result?.thread);
           active.threadId = string(thread?.id, "thread id");
           yield {
             kind: "session_started",
             sessionId: active.threadId,
-            model: typeof result?.model === "string" ? result.model : options.model ?? null,
+            model: typeof result?.model === "string" ? result.model : (options.model ?? null),
           };
           startTurn();
           continue;
@@ -959,7 +1055,8 @@ export class CodexCliAdapter {
         }
         if (message.id !== undefined && typeof message.method === "string") {
           const params = record(message.params);
-          if (!params) throw new ProviderProtocolError("Codex emitted malformed approval parameters.");
+          if (!params)
+            throw new ProviderProtocolError("Codex emitted malformed approval parameters.");
           if (message.method === "item/tool/call") {
             this.#send(active.child, {
               id: message.id as RpcId,
@@ -980,17 +1077,21 @@ export class CodexCliAdapter {
               ? params.questions.map(record).filter((item): item is JsonRecord => item !== null)
               : [];
             if (
-              questions.length !== 1
-              || questions.some((question) => (
-                typeof question.id !== "string"
-                || typeof question.question !== "string"
-                || question.isSecret === true
-              ))
+              questions.length !== 1 ||
+              questions.some(
+                (question) =>
+                  typeof question.id !== "string" ||
+                  typeof question.question !== "string" ||
+                  question.isSecret === true,
+              )
             ) {
-              this.#send(active.child, { id: message.id as RpcId, error: {
-                code: -32602,
-                message: "Aldunis Code cannot safely render this input request.",
-              } });
+              this.#send(active.child, {
+                id: message.id as RpcId,
+                error: {
+                  code: -32602,
+                  message: "Aldunis Code cannot safely render this input request.",
+                },
+              });
               continue;
             }
             const requestId = randomUUID();
@@ -1005,23 +1106,25 @@ export class CodexCliAdapter {
               kind: "input_requested",
               id: requestId,
               question: questions.map((question) => question.question).join("\n\n"),
-              choices: firstOptions.slice(0, 12).flatMap((option, index) => (
+              choices: firstOptions.slice(0, 12).flatMap((option, index) =>
                 typeof option.label === "string"
-                  ? [{
-                    id: `${questions[0].id}:${index}`,
-                    label: option.label,
-                    description: typeof option.description === "string"
-                      ? option.description
-                      : null,
-                  }]
-                  : []
-              )),
+                  ? [
+                      {
+                        id: `${questions[0].id}:${index}`,
+                        label: option.label,
+                        description:
+                          typeof option.description === "string" ? option.description : null,
+                      },
+                    ]
+                  : [],
+              ),
               recommendation: null,
               responseMode: "native_resume",
               providerRequestId: String(message.id),
-              expiresAt: typeof params.autoResolutionMs === "number"
-                ? new Date(Date.now() + params.autoResolutionMs).toISOString()
-                : null,
+              expiresAt:
+                typeof params.autoResolutionMs === "number"
+                  ? new Date(Date.now() + params.autoResolutionMs).toISOString()
+                  : null,
               allowFreeForm: questions[0].isOther === true || firstOptions.length === 0,
             };
             continue;
@@ -1029,9 +1132,13 @@ export class CodexCliAdapter {
           const isCommand = message.method === "item/commandExecution/requestApproval";
           const isFile = message.method === "item/fileChange/requestApproval";
           if (!isCommand && !isFile) {
-            this.#send(active.child, { id: message.id as RpcId, error: {
-              code: -32601, message: "Aldunis Code does not support this provider request.",
-            } });
+            this.#send(active.child, {
+              id: message.id as RpcId,
+              error: {
+                code: -32601,
+                message: "Aldunis Code does not support this provider request.",
+              },
+            });
             continue;
           }
           if (options.mode !== "build") {
@@ -1053,14 +1160,17 @@ export class CodexCliAdapter {
             continue;
           }
           const itemId = string(params.itemId, "approval item id");
-          const toolCallId = isCommand && typeof params.approvalId === "string"
-            ? `${itemId}:${params.approvalId}`
-            : itemId;
+          const toolCallId =
+            isCommand && typeof params.approvalId === "string"
+              ? `${itemId}:${params.approvalId}`
+              : itemId;
           const toolName = isCommand ? "Bash" : "Edit";
           const network = record(params.networkApprovalContext);
-          if (isCommand && params.command == null && (
-            typeof network?.host !== "string" || typeof network.protocol !== "string"
-          )) {
+          if (
+            isCommand &&
+            params.command == null &&
+            (typeof network?.host !== "string" || typeof network.protocol !== "string")
+          ) {
             this.#send(active.child, {
               id: message.id as RpcId,
               result: { decision: "decline" },
@@ -1069,13 +1179,11 @@ export class CodexCliAdapter {
           }
           const changedPaths = active.fileChanges.get(toolCallId);
           if (
-            isFile
-            && (
-              !changedPaths
-              || changedPaths.length === 0
-              || changedPaths.length > MAX_APPROVAL_PATHS
-              || !(await pathsWithinWorktree(options.worktree, changedPaths))
-            )
+            isFile &&
+            (!changedPaths ||
+              changedPaths.length === 0 ||
+              changedPaths.length > MAX_APPROVAL_PATHS ||
+              !(await pathsWithinWorktree(options.worktree, changedPaths)))
           ) {
             this.#send(active.child, {
               id: message.id as RpcId,
@@ -1086,10 +1194,10 @@ export class CodexCliAdapter {
           const input = isCommand
             ? { host: network?.host, protocol: network?.protocol, reason: params.reason }
             : {
-              path: changedPaths?.[0],
-              paths: changedPaths,
-              reason: params.reason,
-            };
+                path: changedPaths?.[0],
+                paths: changedPaths,
+                reason: params.reason,
+              };
           const approval = this.permissions.register({
             runId: id,
             conversationId: options.conversationId,
@@ -1102,23 +1210,24 @@ export class CodexCliAdapter {
           });
           if (!approval) throw new ProviderProtocolError("Codex approval could not be registered.");
           yield { kind: "approval_pending", ...approval };
-          const approvalTask = this.permissions.awaitRegisteredDecision(id, token, approval.id)
+          const approvalTask = this.permissions
+            .awaitRegisteredDecision(id, token, approval.id)
             .then(async (decision) => {
-              const currentPaths = isFile ? active.fileChanges.get(toolCallId) ?? [] : [];
-              const scopeUnchanged = !isFile || (
-                currentPaths.length === changedPaths?.length
-                && currentPaths.every((path, index) => path === changedPaths[index])
-              );
-              const remainsWithinWorktree = currentPaths.length === 0
-                || await pathsWithinWorktree(options.worktree, currentPaths);
+              const currentPaths = isFile ? (active.fileChanges.get(toolCallId) ?? []) : [];
+              const scopeUnchanged =
+                !isFile ||
+                (currentPaths.length === changedPaths?.length &&
+                  currentPaths.every((path, index) => path === changedPaths[index]));
+              const remainsWithinWorktree =
+                currentPaths.length === 0 ||
+                (await pathsWithinWorktree(options.worktree, currentPaths));
               this.#send(active.child, {
                 id: message.id as RpcId,
                 result: {
-                  decision: decision.behavior === "allow"
-                    && scopeUnchanged
-                    && remainsWithinWorktree
-                    ? "accept"
-                    : "decline",
+                  decision:
+                    decision.behavior === "allow" && scopeUnchanged && remainsWithinWorktree
+                      ? "accept"
+                      : "decline",
                 },
               });
             })
@@ -1144,19 +1253,22 @@ export class CodexCliAdapter {
           } else if (message.method === "item/fileChange/patchUpdated") {
             const params = record(message.params);
             if (typeof params?.itemId === "string" && Array.isArray(params.changes)) {
-              active.fileChanges.set(params.itemId, codexFileChangePaths({
-                type: "fileChange",
-                changes: params.changes,
-              }));
+              active.fileChanges.set(
+                params.itemId,
+                codexFileChangePaths({
+                  type: "fileChange",
+                  changes: params.changes,
+                }),
+              );
             }
           }
           for (const event of normalizeCodexNotification(message)) {
             if (event.kind === "tool_started") active.activeToolCalls.add(event.toolCallId);
             if (event.kind === "tool_finished") active.activeToolCalls.delete(event.toolCallId);
             if (
-              event.kind === "failed"
-              || event.kind === "cancelled"
-              || event.kind === "turn_completed"
+              event.kind === "failed" ||
+              event.kind === "cancelled" ||
+              event.kind === "turn_completed"
             ) {
               for (const settled of settleActiveToolCalls(active)) yield settled;
             }
@@ -1205,8 +1317,7 @@ export class CodexCliAdapter {
     if (active.cancelled && !protocolFailed && !terminalEmitted) {
       for (const settled of settleActiveToolCalls(active)) yield settled;
       yield { kind: "cancelled" };
-    }
-    else if (active.spawnFailed && !protocolFailed) {
+    } else if (active.spawnFailed && !protocolFailed) {
       yield { kind: "failed", message: "Codex CLI is not installed or could not be started." };
     } else if (!protocolFailed && !terminalEmitted) {
       for (const settled of settleActiveToolCalls(active)) yield settled;

@@ -24,6 +24,8 @@ import {
   PermissionBroker,
 } from "./permission.ts";
 import {
+  formatShikigamiModeViolation,
+  SHIKIGAMI_MODE_VIOLATION_CODE,
   type InteractionMode,
   type ProviderEvent,
   type ProviderRun,
@@ -1077,7 +1079,10 @@ export class ShikigamiAdapter {
                   pendingTerminal = null;
                   yield {
                     kind: "failed",
-                    message: `Shikigami requested mutating tool ${event.name} while ${options.mode} mode was active.`,
+                    code: SHIKIGAMI_MODE_VIOLATION_CODE,
+                    message: formatShikigamiModeViolation(event.name, options.mode),
+                    toolName: event.name,
+                    mode: options.mode,
                   };
                   active.cancelled = true;
                   this.permissions.closeRun(id, "provider_failed");
