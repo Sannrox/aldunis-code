@@ -5,12 +5,14 @@
 ```sh
 lsof -nP -iTCP:4174 -sTCP:LISTEN
 lsof -nP -iTCP:4175 -sTCP:LISTEN
+lsof -nP -iTCP:4177 -sTCP:LISTEN
+lsof -nP -iTCP:4178 -sTCP:LISTEN
 ```
 
 Stop the conflicting process or choose another port:
 
 ```sh
-npm run cli -- serve --port 4176
+npm run cli -- serve --port 4178
 ```
 
 ## “Refusing non-loopback bind”
@@ -19,6 +21,11 @@ The host defaults to loopback. Do not pass a public `--host` unless you intend
 [remote mode](remote-workbench.md) with TLS and pairing.
 
 ## Provider not listed or not ready
+
+The desktop app imports a bounded `PATH` from the user's login shell before
+provider discovery starts. Restart the desktop app after changing shell
+configuration. If the provider is installed outside the shell's `PATH`, set
+an absolute binary path in Settings → Provider profiles.
 
 1. Confirm the binary is on `PATH` (`claude`, `codex`, `shikigami`, `kiro-cli`,
    `grok`, `opencode`).

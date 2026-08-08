@@ -35,6 +35,12 @@ it on the next list. Installing or updating an adapter creates
 `default:adapter:<package-id>` with required/sensitive env slots from the
 manifest (values remain empty until you set them).
 
+The Electron desktop hydrates a bounded, non-secret environment from the
+user's login shell before starting the local host. This keeps provider
+discovery and provider subprocesses aligned with the CLI environment when the
+desktop app is launched outside a shell. A profile may still use an absolute
+binary path when a provider is installed in a non-standard location.
+
 Sensitive environment values live in the host secret store (write-only in the UI).
 
 ### Composer commands, skills, and files
@@ -101,6 +107,12 @@ approvals are never replayed. If the installed binary cannot prove native
 resume support, or the host restarts before the resume starts, Code shows an
 explicit unavailable state rather than tracking an unowned process. The
 child-conversation and parent-coordination cards use the same route.
+
+Shikigami 1.0.5+ is required for live model catalog discovery. Aldunis Code
+invokes the read-only 'doctor --models --json' command for governed profiles
+and presents the models currently advertised by Sekai-Chisei, including the
+synthetic 'auto' route. Older Shikigami versions or unavailable governance
+leave the configured model visible as a bounded fallback.
 
 - The built-in Shikigami profile uses Shikigami's native config resolution:
   `SHIKIGAMI_CONFIG`, `$SHIKIGAMI_STATE/shikigami.toml`, then the selected

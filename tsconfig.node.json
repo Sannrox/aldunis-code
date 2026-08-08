@@ -12,6 +12,15 @@
     "vite.config.ts",
     "desktop/lifecycle.ts",
     "desktop/lifecycle.test.ts",
-    "scripts/verify-desktop-release-tag.ts"
+    "desktop/shell-environment.ts",
+    "desktop/shell-environment.test.ts",
+    "desktop/window-chrome.ts",
+    "scripts/changed-files.ts",
+    "scripts/check-changed.ts",
+    "scripts/check-whitespace.ts",
+    "scripts/run-affected-tests.test.ts",
+    "scripts/run-affected-tests.ts",
+    "scripts/verify-desktop-release-tag.ts",
+    "scripts/preview-version.ts"
   ]
 }

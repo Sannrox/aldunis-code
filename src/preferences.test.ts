@@ -29,6 +29,10 @@ test("preferences response rejects missing and incompatible payloads", () => {
     recovered: false,
   }), null);
   assert.equal(readPreferencesResponse({
+    preferences: { ...DEFAULT_PREFERENCES, conversationSearchShortcut: undefined },
+    recovered: false,
+  })?.preferences.conversationSearchShortcut, DEFAULT_PREFERENCES.conversationSearchShortcut);
+  assert.equal(readPreferencesResponse({
     preferences: { ...DEFAULT_PREFERENCES, commandPaletteShortcut: undefined },
     recovered: false,
   }), null);
@@ -48,4 +52,5 @@ test("preferences response migrates version-one beta and worktree defaults", () 
   assert.equal(migrated?.managedWorktreeLimit, 10);
   assert.equal(migrated?.orchestrationThreadsBeta, false);
   assert.equal(migrated?.showThinking, false);
+  assert.equal(migrated?.conversationSearchShortcut, "mod+shift+f");
 });

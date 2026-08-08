@@ -92,8 +92,24 @@ function shouldScanPath(path: string): boolean {
   if (lower.startsWith("node_modules/") || lower.startsWith(".git/")) return false;
   if (/(^|\/)(\.env(?:\.|$)|.*\.(pem|key|p12|pfx|kdbx))$/i.test(path)) return false;
   return [
-    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md", ".mdx",
-    ".yml", ".yaml", ".toml", ".css", ".html", ".sh", ".py", ".go", ".rs",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".json",
+    ".md",
+    ".mdx",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".css",
+    ".html",
+    ".sh",
+    ".py",
+    ".go",
+    ".rs",
   ].includes(extname(lower));
 }
 
@@ -113,7 +129,11 @@ function finding(
     path: path ? path.slice(0, 400) : null,
     summary: bounded(summary, 300, "Maintenance finding"),
     risk: bounded(risk, 300, "The maintenance signal may become harder to understand over time."),
-    suggestedAction: bounded(suggestedAction, 300, "Review this finding in an approved provider turn."),
+    suggestedAction: bounded(
+      suggestedAction,
+      300,
+      "Review this finding in an approved provider turn.",
+    ),
   };
 }
 
@@ -152,7 +172,10 @@ function sortFindings(findings: MaintenanceFinding[]): MaintenanceFinding[] {
     info: 3,
   };
   return [...findings]
-    .sort((left, right) => priority[left.severity] - priority[right.severity] || left.id.localeCompare(right.id))
+    .sort(
+      (left, right) =>
+        priority[left.severity] - priority[right.severity] || left.id.localeCompare(right.id),
+    )
     .slice(0, 100);
 }
 
@@ -180,10 +203,18 @@ export class AutonomyEngine {
         .slice()
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, 500),
-      flows: projection.autonomyFlows.slice().sort((left, right) => left.name.localeCompare(right.name)),
-      heartbeatMonitors: projection.heartbeatMonitors.slice().sort((left, right) => left.name.localeCompare(right.name)),
-      standingOrders: projection.standingOrders.slice().sort((left, right) => left.name.localeCompare(right.name)),
-      hooks: projection.autonomyHooks.slice().sort((left, right) => left.name.localeCompare(right.name)),
+      flows: projection.autonomyFlows
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      heartbeatMonitors: projection.heartbeatMonitors
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      standingOrders: projection.standingOrders
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      hooks: projection.autonomyHooks
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
     };
   }
 
@@ -206,7 +237,10 @@ export class AutonomyEngine {
     });
   }
 
-  async startHeartbeat(monitor: HeartbeatMonitor, trigger: AutonomyTrigger = "heartbeat"): Promise<AutonomyRun> {
+  async startHeartbeat(
+    monitor: HeartbeatMonitor,
+    trigger: AutonomyTrigger = "heartbeat",
+  ): Promise<AutonomyRun> {
     return this.startFlow({
       kind: monitor.flowId === NIGHTLY_GARDENER_FLOW_ID ? "maintenance" : "heartbeat",
       flowId: monitor.flowId,
@@ -222,12 +256,20 @@ export class AutonomyEngine {
     await this.ensureBuiltInFlows();
     const projection = await this.state.load();
     const flow = projection.autonomyFlows.find((candidate) => candidate.id === input.flowId);
-    if (!flow || !flow.enabled) throw new AutonomyError("The requested autonomy workflow is unavailable.", 404);
-    if (!flow.readOnly) throw new AutonomyError("Only read-only autonomy workflows are enabled in this host.", 403);
-    const resolvedWorktree = await this.resolveWorktree(projection.projects, input.projectId, input.worktree);
+    if (!flow || !flow.enabled)
+      throw new AutonomyError("The requested autonomy workflow is unavailable.", 404);
+    if (!flow.readOnly)
+      throw new AutonomyError("Only read-only autonomy workflows are enabled in this host.", 403);
+    const resolvedWorktree = await this.resolveWorktree(
+      projection.projects,
+      input.projectId,
+      input.worktree,
+    );
     const now = new Date().toISOString();
     const runId = randomUUID();
-    const tasks = flow.steps.map((flowStep) => this.newTask(runId, flowStep, now, input.projectId, resolvedWorktree));
+    const tasks = flow.steps.map((flowStep) =>
+      this.newTask(runId, flowStep, now, input.projectId, resolvedWorktree),
+    );
     const run: AutonomyRun = {
       schemaVersion: AUTONOMY_SCHEMA_VERSION,
       id: runId,
@@ -259,7 +301,8 @@ export class AutonomyEngine {
   async resumeRun(runId: string): Promise<AutonomyRun> {
     const run = (await this.state.load()).autonomyRuns.find((candidate) => candidate.id === runId);
     if (!run) throw new AutonomyError("The autonomy run is unavailable.", 404);
-    if (run.status !== "queued") throw new AutonomyError("The autonomy run is not queued for resumption.", 409);
+    if (run.status !== "queued")
+      throw new AutonomyError("The autonomy run is not queued for resumption.", 409);
     this.#queueRun(run.id);
     return run;
   }
@@ -275,45 +318,53 @@ export class AutonomyEngine {
       if (existing && !isTerminal(existing.status)) continue;
       const run = await this.startHeartbeat(monitor);
       await this.state.saveAutonomyRecords({
-        heartbeatMonitors: [{
-          ...monitor,
-          lastRunAt: now.toISOString(),
-          lastRunId: run.id,
-          lastStatus: "queued",
-          updatedAt: now.toISOString(),
-        }],
+        heartbeatMonitors: [
+          {
+            ...monitor,
+            lastRunAt: now.toISOString(),
+            lastRunId: run.id,
+            lastStatus: "queued",
+            updatedAt: now.toISOString(),
+          },
+        ],
       });
     }
   }
 
-  async dispatch(event: AutonomyHookEvent, projectId: string | null = null): Promise<AutonomyRun[]> {
+  async dispatch(
+    event: AutonomyHookEvent,
+    projectId: string | null = null,
+  ): Promise<AutonomyRun[]> {
     const projection = await this.state.load();
     const now = Date.now();
     const started: AutonomyRun[] = [];
     for (const hook of projection.autonomyHooks) {
-      if (!hook.enabled || hook.event !== event || (hook.projectId && hook.projectId !== projectId)) continue;
-      if (hook.flowId !== NIGHTLY_GARDENER_FLOW_ID && hook.flowId !== HEARTBEAT_AWARENESS_FLOW_ID) continue;
+      if (!hook.enabled || hook.event !== event || (hook.projectId && hook.projectId !== projectId))
+        continue;
+      if (hook.flowId !== NIGHTLY_GARDENER_FLOW_ID && hook.flowId !== HEARTBEAT_AWARENESS_FLOW_ID)
+        continue;
       const last = hook.lastTriggeredAt ? Date.parse(hook.lastTriggeredAt) : Number.NaN;
       if (Number.isFinite(last) && now < last + hook.cooldownSeconds * 1000) continue;
       const key = `${hook.id}:${event}:${projectId ?? "global"}`;
       if (this.#dispatchKeys.has(key)) continue;
       this.#dispatchKeys.add(key);
       try {
-        const run = hook.flowId === NIGHTLY_GARDENER_FLOW_ID
-          ? await this.startGardener({
-              projectId: projectId ?? hook.projectId ?? "",
-              trigger: "hook",
-              goal: `Hook reaction: ${hook.name}`,
-            })
-          : await this.startFlow({
-              kind: "heartbeat",
-              flowId: HEARTBEAT_AWARENESS_FLOW_ID,
-              name: hook.name,
-              projectId: projectId ?? hook.projectId,
-              worktree: null,
-              goal: `Hook reaction: ${hook.name}`,
-              trigger: "hook",
-            });
+        const run =
+          hook.flowId === NIGHTLY_GARDENER_FLOW_ID
+            ? await this.startGardener({
+                projectId: projectId ?? hook.projectId ?? "",
+                trigger: "hook",
+                goal: `Hook reaction: ${hook.name}`,
+              })
+            : await this.startFlow({
+                kind: "heartbeat",
+                flowId: HEARTBEAT_AWARENESS_FLOW_ID,
+                name: hook.name,
+                projectId: projectId ?? hook.projectId,
+                worktree: null,
+                goal: `Hook reaction: ${hook.name}`,
+                trigger: "hook",
+              });
         const updated = {
           ...hook,
           lastTriggeredAt: new Date().toISOString(),
@@ -395,8 +446,11 @@ export class AutonomyEngine {
     cooldownSeconds?: number;
   }): Promise<AutonomyHook> {
     await this.ensureBuiltInFlows();
-    const flow = (await this.state.load()).autonomyFlows.find((candidate) => candidate.id === input.flowId);
-    if (!flow || !flow.readOnly) throw new AutonomyError("Only built-in read-only workflows can be hooked.", 400);
+    const flow = (await this.state.load()).autonomyFlows.find(
+      (candidate) => candidate.id === input.flowId,
+    );
+    if (!flow || !flow.readOnly)
+      throw new AutonomyError("Only built-in read-only workflows can be hooked.", 400);
     const now = new Date().toISOString();
     const hook = parseAutonomyHook({
       schemaVersion: AUTONOMY_SCHEMA_VERSION,
@@ -406,7 +460,10 @@ export class AutonomyEngine {
       flowId: input.flowId,
       projectId: input.projectId ?? null,
       enabled: true,
-      cooldownSeconds: Math.min(MAX_HOOK_COOLDOWN, Math.max(0, Math.floor(input.cooldownSeconds ?? 300))),
+      cooldownSeconds: Math.min(
+        MAX_HOOK_COOLDOWN,
+        Math.max(0, Math.floor(input.cooldownSeconds ?? 300)),
+      ),
       lastTriggeredAt: null,
       lastRunId: null,
       createdAt: now,
@@ -418,11 +475,16 @@ export class AutonomyEngine {
 
   #queueRun(runId: string): void {
     const previous = this.#runTails.get(runId) ?? Promise.resolve();
-    const next = previous.then(() => this.#executeRun(runId), () => this.#executeRun(runId));
+    const next = previous.then(
+      () => this.#executeRun(runId),
+      () => this.#executeRun(runId),
+    );
     this.#runTails.set(runId, next);
-    void next.catch(() => undefined).finally(() => {
-      if (this.#runTails.get(runId) === next) this.#runTails.delete(runId);
-    });
+    void next
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.#runTails.get(runId) === next) this.#runTails.delete(runId);
+      });
   }
 
   newTask(
@@ -483,7 +545,9 @@ export class AutonomyEngine {
       if (!currentRun || currentRun.status === "cancelled") return;
       run = currentRun;
       if (isTerminal(run.status) && run.status !== "running") return;
-      const task = projection.autonomyTasks.find((candidate) => candidate.runId === runId && candidate.stepId === flowStep.id);
+      const task = projection.autonomyTasks.find(
+        (candidate) => candidate.runId === runId && candidate.stepId === flowStep.id,
+      );
       if (!task || task.status === "succeeded") continue;
       const runningTask: AutonomyTask = {
         ...task,
@@ -525,29 +589,35 @@ export class AutonomyEngine {
         } catch (error) {
           lastError = error instanceof Error ? error.message : "Autonomy task failed.";
           if (attempt >= runningTask.maxAttempts) break;
-          await new Promise((resolve) => setTimeout(resolve, Math.min(flowStep.backoffSeconds * 1000, 2000)));
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(flowStep.backoffSeconds * 1000, 2000)),
+          );
         }
       }
       if (lastError) {
         const failedAt = new Date().toISOString();
         await this.state.saveAutonomyRecords({
-          tasks: [{
-            ...runningTask,
-            status: "failed",
-            attempt: runningTask.maxAttempts,
-            error: bounded(lastError, 500, "Autonomy task failed."),
-            updatedAt: failedAt,
-            completedAt: failedAt,
-          }],
-          runs: [{
-            ...runningRun,
-            status: "failed",
-            currentStepId: flowStep.id,
-            error: bounded(lastError, 500, "Autonomy run failed."),
-            updatedAt: failedAt,
-            completedAt: failedAt,
-            revision: runningRun.revision + 1,
-          }],
+          tasks: [
+            {
+              ...runningTask,
+              status: "failed",
+              attempt: runningTask.maxAttempts,
+              error: bounded(lastError, 500, "Autonomy task failed."),
+              updatedAt: failedAt,
+              completedAt: failedAt,
+            },
+          ],
+          runs: [
+            {
+              ...runningRun,
+              status: "failed",
+              currentStepId: flowStep.id,
+              error: bounded(lastError, 500, "Autonomy run failed."),
+              updatedAt: failedAt,
+              completedAt: failedAt,
+              revision: runningRun.revision + 1,
+            },
+          ],
         });
         await this.updateHeartbeatStatus(runId, "failed");
         return;
@@ -557,7 +627,9 @@ export class AutonomyEngine {
     const completedRun = projection.autonomyRuns.find((candidate) => candidate.id === runId);
     if (!completedRun || completedRun.status === "cancelled") return;
     run = completedRun;
-    const reportTask = projection.autonomyTasks.find((task) => task.runId === runId && task.kind === "report");
+    const reportTask = projection.autonomyTasks.find(
+      (task) => task.runId === runId && task.kind === "report",
+    );
     const result = reportTask?.output?.kind === "report" ? reportTask.output.result : null;
     const completedAt = new Date().toISOString();
     const completed: AutonomyRun = {
@@ -586,7 +658,12 @@ export class AutonomyEngine {
     switch (kind) {
       case "preflight": {
         if (!run.worktree) {
-          return { kind, repositoryPresent: false, changedFiles: 0, detail: "No repository was selected for this awareness run." };
+          return {
+            kind,
+            repositoryPresent: false,
+            changedFiles: 0,
+            detail: "No repository was selected for this awareness run.",
+          };
         }
         const changedFiles = await listChangedFiles(run.worktree);
         return {
@@ -604,32 +681,50 @@ export class AutonomyEngine {
         return { kind, filesScanned: context.filesScanned, findings: context.findings };
       }
       case "rank_findings": {
-        const scan = projection.autonomyTasks.find((candidate) => candidate.runId === run.id && candidate.kind === "scan_repository");
+        const scan = projection.autonomyTasks.find(
+          (candidate) => candidate.runId === run.id && candidate.kind === "scan_repository",
+        );
         const findings = scan?.output?.kind === "scan_repository" ? scan.output.findings : [];
         return { kind, findings: sortFindings(findings) };
       }
       case "report": {
-        const preflight = projection.autonomyTasks.find((candidate) => candidate.runId === run.id && candidate.kind === "preflight");
-        const scan = projection.autonomyTasks.find((candidate) => candidate.runId === run.id && candidate.kind === "scan_repository");
-        const ranked = projection.autonomyTasks.find((candidate) => candidate.runId === run.id && candidate.kind === "rank_findings");
-        const findings = ranked?.output?.kind === "rank_findings"
-          ? ranked.output.findings
-          : scan?.output?.kind === "scan_repository" ? scan.output.findings : [];
+        const preflight = projection.autonomyTasks.find(
+          (candidate) => candidate.runId === run.id && candidate.kind === "preflight",
+        );
+        const scan = projection.autonomyTasks.find(
+          (candidate) => candidate.runId === run.id && candidate.kind === "scan_repository",
+        );
+        const ranked = projection.autonomyTasks.find(
+          (candidate) => candidate.runId === run.id && candidate.kind === "rank_findings",
+        );
+        const findings =
+          ranked?.output?.kind === "rank_findings"
+            ? ranked.output.findings
+            : scan?.output?.kind === "scan_repository"
+              ? scan.output.findings
+              : [];
         const resultBase: Omit<AutonomyRunResult, "digest"> = {
-          summary: run.kind === "heartbeat" ? "Heartbeat recorded without provider activity." : summarizeFindings(findings),
+          summary:
+            run.kind === "heartbeat"
+              ? "Heartbeat recorded without provider activity."
+              : summarizeFindings(findings),
           findings,
           filesScanned: scan?.output?.kind === "scan_repository" ? scan.output.filesScanned : 0,
           changedFiles: preflight?.output?.kind === "preflight" ? preflight.output.changedFiles : 0,
           durationMs: Math.max(0, Date.now() - Date.parse(run.startedAt ?? run.createdAt)),
         };
-        const result: AutonomyRunResult = { ...resultBase, digest: digestAutonomyResult(resultBase) };
+        const result: AutonomyRunResult = {
+          ...resultBase,
+          digest: digestAutonomyResult(resultBase),
+        };
         return { kind, result };
       }
       case "approval_gate":
         return {
           kind,
           state: "not_needed",
-          detail: "This workflow is read-only. Any source or provider mutation must use the existing explicit approval flow.",
+          detail:
+            "This workflow is read-only. Any source or provider mutation must use the existing explicit approval flow.",
         };
       case "notify":
         return { kind, detail: "The autonomy result is available in the local run ledger." };
@@ -643,25 +738,31 @@ export class AutonomyEngine {
     const trackedFiles = await gitTrackedFiles(worktree);
     const findings: MaintenanceFinding[] = [];
     if (changedFiles.length > 0) {
-      findings.push(finding(
-        "workspace",
-        "info",
-        null,
-        `${changedFiles.length} workspace change${changedFiles.length === 1 ? "" : "s"} are present before maintenance review.`,
-        "An autonomous change could overlap with work that is not part of this run.",
-        "Review the diff and use an approved provider turn for any mutation.",
-      ));
+      findings.push(
+        finding(
+          "workspace",
+          "info",
+          null,
+          `${changedFiles.length} workspace change${changedFiles.length === 1 ? "" : "s"} are present before maintenance review.`,
+          "An autonomous change could overlap with work that is not part of this run.",
+          "Review the diff and use an approved provider turn for any mutation.",
+        ),
+      );
     }
-    const trackedSensitive = trackedFiles.some((path) => /(^|\/)(\.env(?:\.|$)|.*\.(pem|key|p12|pfx))$/i.test(path));
+    const trackedSensitive = trackedFiles.some((path) =>
+      /(^|\/)(\.env(?:\.|$)|.*\.(pem|key|p12|pfx))$/i.test(path),
+    );
     if (trackedSensitive) {
-      findings.push(finding(
-        "security",
-        "high",
-        null,
-        "A tracked path matches a secret-bearing filename pattern.",
-        "Credentials or private material may be exposed to version control.",
-        "Inspect tracked secret candidates and rotate or remove them through an approved workflow.",
-      ));
+      findings.push(
+        finding(
+          "security",
+          "high",
+          null,
+          "A tracked path matches a secret-bearing filename pattern.",
+          "Credentials or private material may be exposed to version control.",
+          "Inspect tracked secret candidates and rotate or remove them through an approved workflow.",
+        ),
+      );
     }
     const candidates = [...new Set([...trackedFiles, ...changedFiles.map((item) => item.path)])]
       .filter((path) => shouldScanPath(path))
@@ -676,66 +777,77 @@ export class AutonomyEngine {
       if (path.toLocaleLowerCase() === "package.json") hasPackage = true;
       if (/^readme(?:\.[^.]+)?$/i.test(basename(path))) hasReadme = true;
       if (path.toLocaleLowerCase().startsWith("docs/")) hasDocs = true;
-      if (/^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i.test(basename(path))) hasLock = true;
+      if (/^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i.test(basename(path)))
+        hasLock = true;
       const content = await readBoundedText(worktree, path);
       if (content === null || bytes >= MAX_SCAN_BYTES) continue;
       bytes += Buffer.byteLength(content, "utf8");
       filesScanned += 1;
       const todoCount = (content.match(/\b(?:TODO|FIXME|XXX)\b/gi) ?? []).length;
       if (todoCount > 0) {
-        findings.push(finding(
-          "quality",
-          todoCount >= 10 ? "medium" : "low",
-          path,
-          `${todoCount} maintenance marker${todoCount === 1 ? "" : "s"} found.`,
-          "Unowned markers tend to become stale and hide work that needs a decision.",
-          "Triage the markers and convert actionable items into an owned task or remove obsolete notes.",
-        ));
+        findings.push(
+          finding(
+            "quality",
+            todoCount >= 10 ? "medium" : "low",
+            path,
+            `${todoCount} maintenance marker${todoCount === 1 ? "" : "s"} found.`,
+            "Unowned markers tend to become stale and hide work that needs a decision.",
+            "Triage the markers and convert actionable items into an owned task or remove obsolete notes.",
+          ),
+        );
       }
       if (path.toLocaleLowerCase() === "package.json") {
         try {
           const parsed = JSON.parse(content) as { scripts?: Record<string, unknown> };
           if (!parsed.scripts || typeof parsed.scripts.test !== "string") {
-            findings.push(finding(
-              "quality",
-              "low",
-              path,
-              "The package manifest does not declare a test script.",
-              "Contributors and maintenance runs lack a discoverable verification entry point.",
-              "Add or document the project’s deterministic verification command.",
-            ));
+            findings.push(
+              finding(
+                "quality",
+                "low",
+                path,
+                "The package manifest does not declare a test script.",
+                "Contributors and maintenance runs lack a discoverable verification entry point.",
+                "Add or document the project’s deterministic verification command.",
+              ),
+            );
           }
         } catch {
-          findings.push(finding(
-            "quality",
-            "medium",
-            path,
-            "The package manifest could not be parsed as JSON.",
-            "Build and dependency tooling may fail before reaching project code.",
-            "Repair the manifest in an approved change and run the repository checks.",
-          ));
+          findings.push(
+            finding(
+              "quality",
+              "medium",
+              path,
+              "The package manifest could not be parsed as JSON.",
+              "Build and dependency tooling may fail before reaching project code.",
+              "Repair the manifest in an approved change and run the repository checks.",
+            ),
+          );
         }
       }
     }
     if (!hasReadme && !hasDocs) {
-      findings.push(finding(
-        "documentation",
-        "low",
-        null,
-        "No README or docs directory was found in the bounded file inventory.",
-        "New contributors may not have a durable starting point for local operation.",
-        "Add a concise getting-started document if the repository is intended for collaboration.",
-      ));
+      findings.push(
+        finding(
+          "documentation",
+          "low",
+          null,
+          "No README or docs directory was found in the bounded file inventory.",
+          "New contributors may not have a durable starting point for local operation.",
+          "Add a concise getting-started document if the repository is intended for collaboration.",
+        ),
+      );
     }
     if (hasPackage && !hasLock) {
-      findings.push(finding(
-        "hygiene",
-        "info",
-        "package.json",
-        "A package manifest was found without a recognized lockfile.",
-        "Dependency resolution may vary between machines or maintenance runs.",
-        "Confirm whether the repository intentionally omits a lockfile and document that choice.",
-      ));
+      findings.push(
+        finding(
+          "hygiene",
+          "info",
+          "package.json",
+          "A package manifest was found without a recognized lockfile.",
+          "Dependency resolution may vary between machines or maintenance runs.",
+          "Confirm whether the repository intentionally omits a lockfile and document that choice.",
+        ),
+      );
     }
     return {
       changedFiles,
@@ -757,9 +869,14 @@ export class AutonomyEngine {
     const candidates: WorktreeMetadata[] = await discoverWorktrees(root);
     const selected = requestedWorktree ?? root;
     const canonicalSelected = await realpath(selected).catch(() => selected);
-    const match = candidates.find((candidate) => candidate.path === canonicalSelected || candidate.path === selected);
+    const match = candidates.find(
+      (candidate) => candidate.path === canonicalSelected || candidate.path === selected,
+    );
     if (!match || ["missing", "inaccessible"].includes(match.state)) {
-      throw new AutonomyError("The selected worktree is not available for read-only maintenance.", 409);
+      throw new AutonomyError(
+        "The selected worktree is not available for read-only maintenance.",
+        409,
+      );
     }
     return match.path;
   }
@@ -770,7 +887,10 @@ export class AutonomyEngine {
       return await Promise.race([
         operation,
         new Promise<T>((_, reject) => {
-          timer = setTimeout(() => reject(new AutonomyError("The autonomy step timed out.", 408)), timeoutMs);
+          timer = setTimeout(
+            () => reject(new AutonomyError("The autonomy step timed out.", 408)),
+            timeoutMs,
+          );
         }),
       ]);
     } finally {
@@ -781,14 +901,16 @@ export class AutonomyEngine {
   async failRun(run: AutonomyRun, message: string): Promise<void> {
     const now = new Date().toISOString();
     await this.state.saveAutonomyRecords({
-      runs: [{
-        ...run,
-        status: "failed",
-        error: bounded(message, 500, "Autonomy run failed."),
-        updatedAt: now,
-        completedAt: now,
-        revision: run.revision + 1,
-      }],
+      runs: [
+        {
+          ...run,
+          status: "failed",
+          error: bounded(message, 500, "Autonomy run failed."),
+          updatedAt: now,
+          completedAt: now,
+          revision: run.revision + 1,
+        },
+      ],
     });
     await this.updateHeartbeatStatus(run.id, "failed");
   }
@@ -797,12 +919,17 @@ export class AutonomyEngine {
     const projection = await this.state.load();
     const monitor = projection.heartbeatMonitors.find((candidate) => candidate.lastRunId === runId);
     if (!monitor) return;
-    await this.state.saveAutonomyRecords({ heartbeatMonitors: [{ ...monitor, lastStatus: status, updatedAt: new Date().toISOString() }] });
+    await this.state.saveAutonomyRecords({
+      heartbeatMonitors: [{ ...monitor, lastStatus: status, updatedAt: new Date().toISOString() }],
+    });
   }
 
   emptyResult(run: AutonomyRun, durationMs: number): AutonomyRunResult {
     const resultBase: Omit<AutonomyRunResult, "digest"> = {
-      summary: run.kind === "heartbeat" ? "Heartbeat recorded without provider activity." : "No bounded findings were recorded.",
+      summary:
+        run.kind === "heartbeat"
+          ? "Heartbeat recorded without provider activity."
+          : "No bounded findings were recorded.",
       findings: [],
       filesScanned: 0,
       changedFiles: 0,

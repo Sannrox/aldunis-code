@@ -42,22 +42,27 @@ export function FileBrowserPanel({
           query,
         }),
         signal: controller.signal,
-      }).then(async (response) => {
-        const body = await response.json() as {
-          files?: RepositoryFileResult[];
-          truncated?: boolean;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(body.error ?? "Worktree files could not be searched.");
-        const next = body.files ?? [];
-        setFiles(next);
-        setTruncated(body.truncated ?? false);
-        setSelected((current) => next.some(({ path }) => path === current) ? current : next[0]?.path ?? null);
-      }).catch((cause) => {
-        if (cause instanceof Error && cause.name !== "AbortError") setError(cause.message);
-      }).finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
+      })
+        .then(async (response) => {
+          const body = (await response.json()) as {
+            files?: RepositoryFileResult[];
+            truncated?: boolean;
+            error?: string;
+          };
+          if (!response.ok) throw new Error(body.error ?? "Worktree files could not be searched.");
+          const next = body.files ?? [];
+          setFiles(next);
+          setTruncated(body.truncated ?? false);
+          setSelected((current) =>
+            next.some(({ path }) => path === current) ? current : (next[0]?.path ?? null),
+          );
+        })
+        .catch((cause) => {
+          if (cause instanceof Error && cause.name !== "AbortError") setError(cause.message);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
     }, 120);
     return () => {
       window.clearTimeout(timer);
@@ -82,13 +87,16 @@ export function FileBrowserPanel({
         path: selected,
       }),
       signal: controller.signal,
-    }).then(async (response) => {
-      const body = await response.json() as { preview?: RepositoryFilePreview; error?: string };
-      if (!response.ok || !body.preview) throw new Error(body.error ?? "The selected file could not be previewed.");
-      setPreview(body.preview);
-    }).catch((cause) => {
-      if (cause instanceof Error && cause.name !== "AbortError") setError(cause.message);
-    });
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as { preview?: RepositoryFilePreview; error?: string };
+        if (!response.ok || !body.preview)
+          throw new Error(body.error ?? "The selected file could not be previewed.");
+        setPreview(body.preview);
+      })
+      .catch((cause) => {
+        if (cause instanceof Error && cause.name !== "AbortError") setError(cause.message);
+      });
     return () => controller.abort();
   }, [repository.root, repository.selectedWorktree, selected]);
 
@@ -96,7 +104,11 @@ export function FileBrowserPanel({
     // Capture phase so ⌘K focuses this search instead of opening the command palette
     // while the file browser is open (both claim mod+k).
     const shortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k" && !event.shiftKey) {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLocaleLowerCase() === "k" &&
+        !event.shiftKey
+      ) {
         event.preventDefault();
         event.stopImmediatePropagation();
         searchRef.current?.focus();
@@ -117,11 +129,15 @@ export function FileBrowserPanel({
   return (
     <section className="file-browser-panel" aria-label={`Browse active worktree, ${pane} pane`}>
       <header>
-        <div><p className="eyebrow">Bounded local context</p><h2>Browse active worktree</h2></div>
+        <div>
+          <p className="eyebrow">Bounded local context</p>
+          <h2>Browse active worktree</h2>
+        </div>
         <CloseButton onClick={onClose} label={`Close file browser, ${pane} pane`} />
       </header>
       <div className="file-browser-policy">
-        Hidden, ignored, secret-like, and generated ignored files are excluded. Search is local, capped, and not indexed.
+        Hidden, ignored, secret-like, and local runtime files are excluded. Search is local, capped,
+        and not indexed.
       </div>
       <label className="file-search">
         <Icon name="search" />
@@ -143,23 +159,32 @@ export function FileBrowserPanel({
           aria-label={`Worktree files, ${pane} pane`}
           tabIndex={0}
           onKeyDown={(event) => {
-            if (!files.length || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            if (!files.length || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+              return;
             event.preventDefault();
-            const next = event.key === "Home" ? 0
-              : event.key === "End" ? files.length - 1
-              : event.key === "ArrowDown" ? Math.min(files.length - 1, selectedIndex + 1)
-              : Math.max(0, selectedIndex - 1);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? files.length - 1
+                  : event.key === "ArrowDown"
+                    ? Math.min(files.length - 1, selectedIndex + 1)
+                    : Math.max(0, selectedIndex - 1);
             setSelected(files[next].path);
           }}
         >
           {loading && <p className="file-browser-note">Searching active worktree…</p>}
-          {!loading && files.length === 0 && <p className="file-browser-note">No supported files match this search.</p>}
+          {!loading && files.length === 0 && (
+            <p className="file-browser-note">No supported files match this search.</p>
+          )}
           {files.map((file) => {
             const meta = [
               file.match ? `${file.match} match` : null,
               file.kind,
               file.size === null ? null : `${file.size.toLocaleString()} B`,
-            ].filter(Boolean).join(" · ");
+            ]
+              .filter(Boolean)
+              .join(" · ");
             return (
               <button
                 type="button"
@@ -175,19 +200,32 @@ export function FileBrowserPanel({
               </button>
             );
           })}
-          {truncated && <p className="file-browser-note">Results are capped. Refine the search to find more.</p>}
+          {truncated && (
+            <p className="file-browser-note">Results are capped. Refine the search to find more.</p>
+          )}
         </nav>
         <article className="file-preview" tabIndex={0}>
           {!selected && <div className="file-preview-state">Select a file to preview it.</div>}
-          {selected && !preview && !error && <div className="file-preview-state">Loading bounded preview…</div>}
+          {selected && !preview && !error && (
+            <div className="file-preview-state">Loading bounded preview…</div>
+          )}
           {preview && (
             <>
               <header>
-                <div title={preview.path}><strong>{preview.path}</strong><small>{preview.encoding} · {preview.size?.toLocaleString() ?? "unknown"} B</small></div>
+                <div title={preview.path}>
+                  <strong>{preview.path}</strong>
+                  <small>
+                    {preview.encoding} · {preview.size?.toLocaleString() ?? "unknown"} B
+                  </small>
+                </div>
                 <button
                   type="button"
                   onClick={() => onAttach(preview.path)}
-                  disabled={attached.includes(preview.path) || attached.length >= maxAttachments || !preview.attachable}
+                  disabled={
+                    attached.includes(preview.path) ||
+                    attached.length >= maxAttachments ||
+                    !preview.attachable
+                  }
                   aria-label={
                     attached.includes(preview.path)
                       ? `${preview.path} already attached`
@@ -198,18 +236,22 @@ export function FileBrowserPanel({
                 </button>
               </header>
               {preview.message && <p className="file-preview-message">{preview.message}</p>}
-              {preview.imageData
-                ? <img src={preview.imageData} alt={`Preview of ${preview.path}`} />
-                : preview.content !== null
-                ? <pre>{preview.content}</pre>
-                : <div className="file-preview-state">Preview unavailable for this file type.</div>}
+              {preview.imageData ? (
+                <img src={preview.imageData} alt={`Preview of ${preview.path}`} />
+              ) : preview.content !== null ? (
+                <pre>{preview.content}</pre>
+              ) : (
+                <div className="file-preview-state">Preview unavailable for this file type.</div>
+              )}
             </>
           )}
-          {error && <div className="file-browser-error" role="alert">{error}</div>}
+          {error && (
+            <div className="file-browser-error" role="alert">
+              {error}
+            </div>
+          )}
         </article>
       </div>
     </section>
   );
 }
-
-

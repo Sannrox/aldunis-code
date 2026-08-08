@@ -369,7 +369,7 @@ export function RepositoryDialog({
             autoComplete="off"
             spellCheck={false}
           />
-          {window.aldunisDesktop && (
+          {window.aldunisDesktopCapabilities?.directoryPicker && (
             <Button
               type="button"
               size="sm"

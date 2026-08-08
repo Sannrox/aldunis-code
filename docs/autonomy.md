@@ -9,14 +9,14 @@ Open the command palette → **Autonomy**.
 
 ## Primitives
 
-| Primitive | Behavior |
-| --- | --- |
-| Background task ledger | Every run is a durable `AutonomyRun` with ordered `AutonomyTask` records, status, attempts, errors, and result digest. |
-| Typed Task Flows | Built-in flow definitions contain ordered step kinds, retries, timeouts, approval-gate markers, resumability, runtime/task budgets, and a zero provider-cost limit. |
-| Heartbeats | Host-owned periodic awareness checks or scheduled gardener runs with minimum 60-second intervals and optional active hours. They run only while the host is alive. |
-| Hooks | Internal reactions to completed turns, failed turns, completed automations, heartbeat ticks, or completed autonomy runs. Hooks have cooldowns and can start only built-in read-only flows. |
-| Standing orders | Durable, bounded operator preferences carried as metadata into future run context. They do not grant authority. |
-| Nightly maintenance gardener | A read-only flow that checks the worktree, scans a bounded set of text files for maintenance signals, ranks findings, and writes an operator report. |
+| Primitive                    | Behavior                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Background task ledger       | Every run is a durable `AutonomyRun` with ordered `AutonomyTask` records, status, attempts, errors, and result digest.                                                                     |
+| Typed Task Flows             | Built-in flow definitions contain ordered step kinds, retries, timeouts, approval-gate markers, resumability, runtime/task budgets, and a zero provider-cost limit.                        |
+| Heartbeats                   | Host-owned periodic awareness checks or scheduled gardener runs with minimum 60-second intervals and optional active hours. They run only while the host is alive.                         |
+| Hooks                        | Internal reactions to completed turns, failed turns, completed automations, heartbeat ticks, or completed autonomy runs. Hooks have cooldowns and can start only built-in read-only flows. |
+| Standing orders              | Durable, bounded operator preferences carried as metadata into future run context. They do not grant authority.                                                                            |
+| Nightly maintenance gardener | A read-only flow that checks the worktree, scans a bounded set of text files for maintenance signals, ranks findings, and writes an operator report.                                       |
 
 The local event log remains the single durability authority. The autonomy
 records are metadata only: source contents, prompts, provider transcripts,

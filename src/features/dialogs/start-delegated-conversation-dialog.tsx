@@ -48,8 +48,7 @@ export function StartDelegatedConversationDialog({
   const taskId = `delegated-task-${parent.id}`;
   const modeId = `delegated-mode-${parent.id}`;
   const worktreeId = `delegated-worktree-${parent.id}`;
-  const parentWorktree = repository?.worktrees.find((item) => item.path === parent.worktree);
-  const base = parentWorktree?.head ?? "HEAD";
+  const base = repository?.defaultBranch ?? "";
   const claudeProfileId = parent.profileId
     ?? profiles.find((profile) => profile.id === "default:claude-code")?.id
     ?? profiles.find((profile) => profile.provider === "claude-code" || !profile.provider)?.id
@@ -290,7 +289,9 @@ export function StartDelegatedConversationDialog({
                   ? `The parent’s ${providerLabel} profile is unavailable; restore it before starting a child.`
                   : `Configure a ${providerLabel} profile before starting a child.`
                 : isolated
-                ? `The child will branch from ${base} and use a new managed checkout.`
+                ? base
+                  ? `The child will branch from ${base} and use a new managed checkout.`
+                  : "The repository default branch could not be determined; configure one remote HEAD or a conventional local default branch before creating a worktree."
                 : "Shared worktrees are limited to read-only and planning children."}
             </p>
             <footer>
@@ -298,7 +299,7 @@ export function StartDelegatedConversationDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !prompt.trim() || claudeProfileMissing || shikigamiProfileMissing}
+                disabled={busy || !prompt.trim() || claudeProfileMissing || shikigamiProfileMissing || (isolated && !base)}
               >
                 {busy ? "Starting…" : isolated ? "Preview isolated child" : "Start child"}
               </Button>

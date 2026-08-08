@@ -16,9 +16,15 @@ behalf of the workbench.
 Creation follows a preview-and-approve flow:
 
 1. Canonicalize the repository and target path.
-2. Resolve the requested base to an exact commit.
-3. Validate repository cleanliness, attached HEAD, branch and path
-   availability, submodule absence, and Git-operation locks.
+2. Resolve the repository default branch to an exact commit from agreeing
+   remote HEADs or a conventional local branch.
+   New worktrees do not inherit the selected checkout's or parent conversation's
+   current branch; ambiguous repositories fail closed at creation. The
+   repository can still be opened for shared-workspace use while that default
+   is unresolved.
+3. Validate a clean index, attached HEAD, branch and path availability,
+   submodule absence, and Git-operation locks. Unstaged and untracked changes
+   remain in the source checkout and are not copied into the new worktree.
 4. Render the repository, base name and commit, new branch, and target path.
 5. After one scoped approval, revalidate the exact plan and execute
    `git worktree add` without a shell.

@@ -13,8 +13,8 @@ conversation from the normal composer. It presents two user-facing workspace
 strategies:
 
 - `aldunis-managed`: create a dedicated Aldunis-owned worktree and branch
-  through the existing preview-and-approve flow. This is the default for every
-  new conversation intent.
+  from the repository default branch through the existing preview-and-approve
+  flow. This is the default for every new conversation intent.
 - `provider-native`: allow a provider adapter to prepare its own isolated
   workspace only when that adapter declares the capability and returns the
   canonical path before the conversation is started. The host still validates
@@ -25,12 +25,12 @@ server-owned flows, but it is not presented as a third primary choice in the
 new-chat setup. Multiple conversations may share a selected checkout only when
 that existing mode is already bound or an owning flow explicitly permits it.
 
-If a new-chat managed-worktree preview reports that the selected repository is
-not clean, the setup surface may explicitly switch that new conversation to the
-selected shared checkout as a recovery choice. This preserves local changes;
-it does not copy, stash, commit, or remove them. Managed forks do not use this
-fallback because a fork from an Aldunis-managed conversation still requires a
-separate approved destination worktree.
+If a new-chat managed-worktree preview reports staged index changes, the setup
+surface may explicitly switch that new conversation to the selected shared
+checkout as a recovery choice. Unstaged and untracked local changes remain in
+the source checkout and are not copied, stashed, committed, or removed.
+Managed forks do not use this fallback because a fork from an Aldunis-managed
+conversation still requires a separate approved destination worktree.
 
 Current built-in adapters do not expose the provider-native preparation
 contract, so the option is visible as unavailable with an explanation. The

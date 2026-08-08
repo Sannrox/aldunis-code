@@ -21,16 +21,34 @@ async function git(worktree: string, args: string[]): Promise<void> {
   await execFileAsync("git", ["-C", worktree, ...args], { encoding: "utf8" });
 }
 
-async function fixture(): Promise<{ root: string; state: LocalStateStore; engine: AutonomyEngine; cleanup: () => Promise<void> }> {
+async function fixture(): Promise<{
+  root: string;
+  state: LocalStateStore;
+  engine: AutonomyEngine;
+  cleanup: () => Promise<void>;
+}> {
   const root = await mkdtemp(join(tmpdir(), "aldunis-autonomy-repo-"));
   const stateDirectory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-state-"));
   await git(root, ["init", "-q"]);
-  await writeFile(join(root, "README.md"), "# Fixture\n\nA bounded repository for autonomy tests.\n", "utf8");
-  await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { test: "node --test" } }), "utf8");
+  await writeFile(
+    join(root, "README.md"),
+    "# Fixture\n\nA bounded repository for autonomy tests.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ scripts: { test: "node --test" } }),
+    "utf8",
+  );
   await git(root, ["add", "README.md", "package.json"]);
   await git(root, [
-    "-c", "user.email=tests@example.invalid", "-c", "user.name=Aldunis Tests",
-    "commit", "-qm", "fixture",
+    "-c",
+    "user.email=tests@example.invalid",
+    "-c",
+    "user.name=Aldunis Tests",
+    "commit",
+    "-qm",
+    "fixture",
   ]);
   const state = new LocalStateStore(stateDirectory);
   await state.saveProject({ id: "project-1", name: "fixture", root });
@@ -74,17 +92,21 @@ test("autonomy records validate bounded durable configuration", () => {
     updatedAt: "2026-08-03T00:00:00.000Z",
   });
   assert.equal(isHeartbeatDue(monitor, new Date("2026-08-03T00:00:00.000Z")), true);
-  assert.throws(() => parseStandingOrder({
-    schemaVersion: 2,
-    id: "order-1",
-    name: "Invalid",
-    scope: "project",
-    projectId: null,
-    instruction: "Needs a project",
-    enabled: true,
-    createdAt: "now",
-    updatedAt: "now",
-  }), /project/);
+  assert.throws(
+    () =>
+      parseStandingOrder({
+        schemaVersion: 2,
+        id: "order-1",
+        name: "Invalid",
+        scope: "project",
+        projectId: null,
+        instruction: "Needs a project",
+        enabled: true,
+        createdAt: "now",
+        updatedAt: "now",
+      }),
+    /project/,
+  );
 });
 
 test("nightly gardener runs read-only, records tasks, and survives reload", async () => {
@@ -98,9 +120,12 @@ test("nightly gardener runs read-only, records tasks, and survives reload", asyn
     assert.equal(completed.flowId, "maintenance-gardener.v1");
     assert.ok(completed.result);
     assert.equal(completed.result?.changedFiles, 0);
-    assert.equal((await readFile(join(root, "README.md"), "utf8")), before);
+    assert.equal(await readFile(join(root, "README.md"), "utf8"), before);
     const tasks = (await state.load()).autonomyTasks.filter((task) => task.runId === run.id);
-    assert.deepEqual(tasks.map((task) => task.status), ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded"]);
+    assert.deepEqual(
+      tasks.map((task) => task.status),
+      ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded"],
+    );
     const reloaded = await new LocalStateStore(state.directory).load();
     assert.equal(reloaded.autonomyRuns[0]?.id, run.id);
     assert.equal(reloaded.autonomyFlows.length, builtInAutonomyFlows().length);

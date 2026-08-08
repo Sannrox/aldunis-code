@@ -5,6 +5,7 @@ import {
   collectVoiceTranscript,
   composeVoiceDraft,
   getVoiceRecognitionConstructor,
+  matchesVoiceInputShortcut,
   voiceInputErrorMessage,
   type VoiceRecognition,
   type VoiceRecognitionResultList,
@@ -31,6 +32,15 @@ test("voice recognition prefers the standard constructor and supports the WebKit
   const webkit = class extends FakeRecognition {};
   assert.equal(getVoiceRecognitionConstructor({ webkitSpeechRecognition: webkit }), webkit);
   assert.equal(getVoiceRecognitionConstructor({}), null);
+});
+
+test("voice input shortcut works with either platform modifier and ignores collisions", () => {
+  assert.equal(matchesVoiceInputShortcut({ key: "m", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false }), true);
+  assert.equal(matchesVoiceInputShortcut({ key: "M", metaKey: false, ctrlKey: true, shiftKey: true, altKey: false }), true);
+  assert.equal(matchesVoiceInputShortcut({ key: "m", metaKey: true, ctrlKey: false, shiftKey: false, altKey: false }), false);
+  assert.equal(matchesVoiceInputShortcut({ key: "m", metaKey: true, ctrlKey: false, shiftKey: true, altKey: true }), false);
+  assert.equal(matchesVoiceInputShortcut({ key: "m", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false, repeat: true }), false);
+  assert.equal(matchesVoiceInputShortcut({ key: "v", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false }), false);
 });
 
 test("voice transcript collection separates changed final and interim results", () => {

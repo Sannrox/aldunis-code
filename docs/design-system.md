@@ -40,14 +40,14 @@ primary.
 something wants a decision, or something failed. It is never applied to
 things that are merely in progress or merely finished.
 
-| Meaning | Treatment |
-| --- | --- |
-| Pending approval | amber label |
-| Awaiting input | indigo label |
-| Failed | red label |
-| Working | muted spinner, no label |
-| Completed | faint check, no label |
-| Diff added / removed | green / red, retained |
+| Meaning              | Treatment               |
+| -------------------- | ----------------------- |
+| Pending approval     | amber label             |
+| Awaiting input       | indigo label            |
+| Failed               | red label               |
+| Working              | muted spinner, no label |
+| Completed            | faint check, no label   |
+| Diff added / removed | green / red, retained   |
 
 Diff coloring stays even under a monochrome system. Glyphs and tinted rows
 do some of the work, but scanning a long diff without hue is measurably
@@ -81,6 +81,28 @@ bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
 
+**Snooze** is a separate temporary hide, inspired by T3 Code. Row actions
+offer presets (in 1 hour, this evening when meaningful, tomorrow morning,
+next week). Snoozed threads leave Active/Attention and appear in a
+`Snoozed (N)` shelf with a compact wake label (`20m` / `3h` / `2d`). When
+the wake time elapses the row returns without a server write. Pending
+approval or awaiting input cannot be snoozed and, if they arise while
+snoozed, surface immediately in Needs attention. Running provider work may
+remain snoozed — snooze never stops the agent, archives history, or
+releases a worktree. Settling clears snooze; snoozing clears settle.
+
+The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
+macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
+browser or desktop profile, and the collapsed state removes the sidebar from
+the layout while leaving the main conversation surface available. A visible
+expand button remains in the shell so the sidebar can be reopened by pointer;
+on macOS it explicitly opts out of the titlebar drag region. The compact
+header mark crops the supplied tile frame so the brand glyph does not acquire a
+stray border at small sizes. On narrow screens the same sidebar becomes a
+temporary navigation drawer with a scrim, so the conversation and composer
+retain the viewport. The same control is used in the web renderer and Electron
+desktop shell, with desktop and drawer preferences stored independently.
+
 **Settling does not release the worktree.** Aldunis Code enforces a managed
 worktree limit (`server/worktrees.ts`), so settled conversations can continue
 to consume that finite local resource.
@@ -88,12 +110,26 @@ to consume that finite local resource.
 The interface therefore makes the cost visible rather than changing the
 semantics:
 
+The post-turn completion notice is a compact elevated popover anchored to the
+composer. It stays close to the next lifecycle decision without taking over
+the conversation transcript; the worktree path is truncated visually but
+remains available as the control's title text.
+
 - A worktree meter in the shelf, `n / limit`.
 - A marker on each settled row still holding a worktree.
 - A line in the completion card stating that settling keeps the worktree and
   how many remain, so the choice is made before settling rather than
   discovered at the limit.
 - `Settle and release worktree` as a separate action.
+
+On macOS, the Electron client uses the native hidden-inset titlebar with an
+explicit traffic-light position (`x: 16px`, `y: 18px`). The renderer reserves a
+separate 52px native-titlebar row, then starts the ordinary app headers below
+it; the sidebar header uses a 12px content inset and is not itself a drag
+surface. The renderer row carries the compact sidebar affordance and the
+aligned sidebar boundary. The sidebar collapse/expand control opts out of the
+drag region, so the two tiers read as one continuous shell. Browser clients and
+other desktop platforms keep their normal single-row window chrome.
 
 Releasing a worktree never deletes the conversation.
 
@@ -114,6 +150,41 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Composer drafts and previous worktree
+
+Unsent composer text is stashed in the browser profile only (per conversation
+and per new-chat pane). Switching threads restores the matching draft; a
+successful send clears it. Drafts never leave the local browser.
+
+New conversations in shared-checkout mode may show a **Previous worktree**
+control when another recent conversation in the same project used a different
+path. Choosing it selects that worktree once; it does not create or release
+checkouts.
+
+## Pull request status
+
+When GitHub CLI can resolve a pull request for a conversation worktree branch,
+the sidebar row shows a compact `PR #n` / `Merged #n` / `Closed #n` control that
+opens the PR URL. Absence of a PR, `gh`, or a GitHub remote is silent — no error
+chrome. Status is a live projection, not durable conversation state.
+
+## Message copy
+
+Submitted prompts and completed assistant answers expose a ghost icon button
+in the turn footer. The control is hover/focus-visible on fine pointers and
+always visible on coarse pointers. Brief “copied” / failure feedback uses
+polite live text; the success hue is temporary action confirmation, not a
+persistent “healthy” badge.
+
+## Context window
+
+When a provider reports live token/context usage (Codex
+`thread/tokenUsage/updated`, ACP `usage_update`), the composer shows a compact
+ring meter beside the run controls. The control is muted at rest and only uses
+the status/warning hue above 90% fill. Details open on click and state that the
+snapshot is live stream data, not durable history. When usage is unknown, the
+meter is absent — nothing renders to report that context is fine.
+
 ## Voice input
 
 Voice input is a secondary action in the conversation composer. The microphone
@@ -128,6 +199,10 @@ does not receive, persist, or forward microphone audio; the browser or operating
 system speech implementation may apply its own service and privacy policy. An
 unsupported browser, blocked microphone, missing device, or unavailable speech
 service is shown inline and leaves ordinary text input available.
+
+The active conversation pane can also toggle dictation with `⌘⇧M` on macOS or
+`Ctrl+Shift+M` on Windows/Linux. The shortcut is ignored while a modal dialog is
+open and does not repeat while the key is held.
 
 ## Settings
 
@@ -166,15 +241,15 @@ is a user mistaking a local action for an authoritative one.
 
 Use the live application and automated checks as the source of truth:
 
-| Concern | Source |
-| --- | --- |
-| Semantic tokens and component styling | `src/styles.css` |
-| Shell layout | `src/mock-shell.css` |
-| Shared UI primitives | `src/components/ui/` |
-| Sidebar and settled shelf | `src/features/code/sidebar.tsx` |
-| Preferences and worktree limits | `src/features/dialogs/preferences-dialog.tsx` |
-| Structural style checks | `src/styles.verification.test.ts` |
-| Exploratory reference mock | `docs/design/workbench-mock.html` |
+| Concern                               | Source                                        |
+| ------------------------------------- | --------------------------------------------- |
+| Semantic tokens and component styling | `src/styles.css`                              |
+| Shell layout                          | `src/mock-shell.css`                          |
+| Shared UI primitives                  | `src/components/ui/`                          |
+| Sidebar and settled shelf             | `src/features/code/sidebar.tsx`               |
+| Preferences and worktree limits       | `src/features/dialogs/preferences-dialog.tsx` |
+| Structural style checks               | `src/styles.verification.test.ts`             |
+| Exploratory reference mock            | `docs/design/workbench-mock.html`             |
 
 The HTML mock is design evidence, not a runtime contract. When it differs from
 the shipped application, update or annotate the mock rather than documenting

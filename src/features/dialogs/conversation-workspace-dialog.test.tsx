@@ -19,8 +19,8 @@ const userWorktree = {
 
 test("shared-workspace recovery copy explains how dirty changes are preserved", () => {
   assert.equal(CURRENT_WORKSPACE_RECOVERY_COPY.label, "Use current workspace");
-  assert.match(CURRENT_WORKSPACE_RECOVERY_COPY.detail, /clean repository/);
-  assert.match(CURRENT_WORKSPACE_RECOVERY_COPY.detail, /keep local changes/);
+  assert.match(CURRENT_WORKSPACE_RECOVERY_COPY.detail, /clean index/);
+  assert.match(CURRENT_WORKSPACE_RECOVERY_COPY.detail, /keep staged local changes/);
   assert.equal(isDirtyRepositoryError(CLEAN_REPOSITORY_ERROR), true);
   assert.equal(isDirtyRepositoryError("The branch name is invalid."), false);
 });

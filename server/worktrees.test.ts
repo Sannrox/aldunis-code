@@ -5,13 +5,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { openRepository } from "./repository.ts";
 import {
+  hasStagedChanges,
   ManagedWorktreeStore,
   WorktreeManager,
   type ManagedWorktreeRecord,
 } from "./worktrees.ts";
 
 const execFileAsync = promisify(execFile);
+
+test("staged-change detection consumes rename and copy source paths", () => {
+  assert.equal(hasStagedChanges(" R renamed.txt\0original.txt\0"), false);
+  assert.equal(hasStagedChanges(" C copied.txt\0original.txt\0"), false);
+  assert.equal(hasStagedChanges("R  renamed.txt\0original.txt\0"), true);
+  assert.equal(hasStagedChanges("C  copied.txt\0original.txt\0"), true);
+});
 
 async function fixture(): Promise<{ data: string; root: string }> {
   const data = await mkdtemp(join(tmpdir(), "aldunis-worktrees-data-"));
@@ -60,15 +69,180 @@ test("creation previews exact canonical inputs and records only an approved work
   }
 });
 
-test("creation rejects dirty, detached, missing-base, branch, path, limit, and lock collisions", async () => {
+test("creation always uses the repository default branch instead of the requested base", async () => {
+  const { data, root } = await fixture();
+  try {
+    await execFileAsync("git", ["-C", root, "branch", "feature"]);
+    await execFileAsync("git", ["-C", root, "switch", "-q", "feature"]);
+    await writeFile(join(root, "feature.txt"), "feature-only\n");
+    await execFileAsync("git", ["-C", root, "add", "feature.txt"]);
+    await execFileAsync("git", [
+      "-C",
+      root,
+      "-c", "user.name=Fixture",
+      "-c", "user.email=fixture@example.invalid",
+      "commit", "-qm", "feature commit",
+    ]);
+    await execFileAsync("git", ["-C", root, "remote", "add", "origin", "https://example.invalid/repo.git"]);
+    await execFileAsync("git", ["-C", root, "update-ref", "refs/remotes/origin/main", "main"]);
+    await execFileAsync("git", [
+      "-C",
+      root,
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main",
+    ]);
+
+    const manager = new WorktreeManager(data);
+    const plan = await manager.previewCreate({
+      repository: root,
+      base: "feature",
+      branch: "codex/default-base",
+      limit: 10,
+    });
+
+    assert.equal(plan.base, "main");
+    assert.equal(plan.baseRevision, (await execFileAsync("git", ["-C", root, "rev-parse", "main"])).stdout.trim());
+    const created = await manager.create(plan.id, 10);
+    assert.equal(
+      (await execFileAsync("git", ["-C", created.path, "rev-parse", "HEAD"])).stdout.trim(),
+      plan.baseRevision,
+    );
+    await assert.rejects(() => readFile(join(created.path, "feature.txt"), "utf8"), /ENOENT/);
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creation uses a stable local default when the primary checkout is on a feature branch", async () => {
+  const { data, root } = await fixture();
+  try {
+    await execFileAsync("git", ["-C", root, "branch", "feature"]);
+    await execFileAsync("git", ["-C", root, "switch", "-q", "feature"]);
+    await writeFile(join(root, "feature.txt"), "feature-only\n");
+    await execFileAsync("git", ["-C", root, "add", "feature.txt"]);
+    await execFileAsync("git", [
+      "-C",
+      root,
+      "-c", "user.name=Fixture",
+      "-c", "user.email=fixture@example.invalid",
+      "commit", "-qm", "feature commit",
+    ]);
+
+    const manager = new WorktreeManager(data);
+    const plan = await manager.previewCreate({
+      repository: root,
+      base: "feature",
+      branch: "codex/no-remote-default",
+      limit: 10,
+    });
+
+    assert.equal(plan.base, "main");
+    const created = await manager.create(plan.id, 10);
+    await assert.rejects(() => readFile(join(created.path, "feature.txt"), "utf8"), /ENOENT/);
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("repository opening remains available when the default branch is ambiguous", async () => {
+  const { data, root } = await fixture();
+  try {
+    await execFileAsync("git", ["-C", root, "branch", "-m", "main", "develop"]);
+    await execFileAsync("git", ["-C", root, "branch", "release"]);
+
+    const repository = await openRepository(root);
+    assert.equal(repository.defaultBranch, null);
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creation rejects a repository with only a non-conventional branch", async () => {
+  const { data, root } = await fixture();
+  try {
+    await execFileAsync("git", ["-C", root, "branch", "-m", "main", "feature/only"]);
+
+    const repository = await openRepository(root);
+    assert.equal(repository.defaultBranch, null);
+    const manager = new WorktreeManager(data);
+    await assert.rejects(
+      () => manager.previewCreate({ repository: root, base: "feature/only", branch: "codex/no-default", limit: 10 }),
+      /default branch could not be determined/,
+    );
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creation fails closed when remote default branches disagree", async () => {
+  const { data, root } = await fixture();
+  try {
+    await execFileAsync("git", ["-C", root, "branch", "develop"]);
+    await execFileAsync("git", ["-C", root, "remote", "add", "origin", "https://example.invalid/origin.git"]);
+    await execFileAsync("git", ["-C", root, "remote", "add", "upstream", "https://example.invalid/upstream.git"]);
+    await execFileAsync("git", ["-C", root, "update-ref", "refs/remotes/origin/main", "main"]);
+    await execFileAsync("git", ["-C", root, "update-ref", "refs/remotes/upstream/develop", "develop"]);
+    await execFileAsync("git", [
+      "-C", root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+    ]);
+    await execFileAsync("git", [
+      "-C", root, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/develop",
+    ]);
+
+    const repository = await openRepository(root);
+    assert.equal(repository.defaultBranch, null);
+    const manager = new WorktreeManager(data);
+    await assert.rejects(
+      () => manager.previewCreate({ repository: root, base: "main", branch: "codex/conflicting-default", limit: 10 }),
+      /default branch could not be determined/,
+    );
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creation excludes unstaged and untracked source changes from the new checkout", async () => {
+  const { data, root } = await fixture();
+  try {
+    await writeFile(join(root, "tracked.txt"), "local unstaged edit\n");
+    await writeFile(join(root, "untracked.txt"), "local untracked file\n");
+
+    const manager = new WorktreeManager(data);
+    const plan = await manager.previewCreate({
+      repository: root,
+      base: "main",
+      branch: "codex/clean-checkout",
+      limit: 10,
+    });
+    const created = await manager.create(plan.id, 10);
+
+    assert.equal(await readFile(join(root, "tracked.txt"), "utf8"), "local unstaged edit\n");
+    assert.equal(await readFile(join(root, "untracked.txt"), "utf8"), "local untracked file\n");
+    assert.equal(await readFile(join(created.path, "tracked.txt"), "utf8"), "baseline\n");
+    await assert.rejects(() => readFile(join(created.path, "untracked.txt"), "utf8"), /ENOENT/);
+  } finally {
+    await rm(data, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("creation rejects staged, detached, branch, path, limit, and lock collisions", async () => {
   const { data, root } = await fixture();
   try {
     const manager = new WorktreeManager(data);
     await writeFile(join(root, "dirty.txt"), "dirty\n");
+    await execFileAsync("git", ["-C", root, "add", "dirty.txt"]);
     await assert.rejects(
       () => manager.previewCreate({ repository: root, base: "main", branch: "codex/dirty", limit: 10 }),
-      /clean repository/,
+      /indexed changes/,
     );
+    await execFileAsync("git", ["-C", root, "restore", "--staged", "dirty.txt"]);
     await rm(join(root, "dirty.txt"));
     await execFileAsync("git", ["-C", root, "checkout", "--detach", "-q"]);
     await assert.rejects(
@@ -76,10 +250,6 @@ test("creation rejects dirty, detached, missing-base, branch, path, limit, and l
       /detached HEAD/,
     );
     await execFileAsync("git", ["-C", root, "checkout", "main", "-q"]);
-    await assert.rejects(
-      () => manager.previewCreate({ repository: root, base: "missing", branch: "codex/missing", limit: 10 }),
-      /base revision/,
-    );
     await assert.rejects(
       () => manager.previewCreate({ repository: root, base: "main", branch: "bad name", limit: 10 }),
       /branch name/,

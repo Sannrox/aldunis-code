@@ -11,9 +11,7 @@ import { LocalStateStore } from "./state.ts";
 async function listen(remote = false) {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-host-"));
   const state = new LocalStateStore(directory);
-  const remoteAuth = remote
-    ? { verify: async () => ({}) } as unknown as RemoteAuth
-    : undefined;
+  const remoteAuth = remote ? ({ verify: async () => ({}) } as unknown as RemoteAuth) : undefined;
   const server = createLocalHost(directory, state, undefined, remoteAuth);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
@@ -22,7 +20,7 @@ async function listen(remote = false) {
 
 async function close(current: Awaited<ReturnType<typeof listen>>): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    current.server.close((error) => error ? reject(error) : resolve());
+    current.server.close((error) => (error ? reject(error) : resolve()));
   });
   await rm(current.directory, { recursive: true, force: true });
 }
@@ -40,8 +38,11 @@ test("autonomy host routes expose the ledger and keep mutations loopback-local",
   try {
     const loaded = await post(current.url, "/api/autonomy/load", {});
     assert.equal(loaded.status, 200);
-    const initial = await loaded.json() as { flows: Array<{ id: string }> };
-    assert.deepEqual(initial.flows.map((flow) => flow.id).sort(), ["heartbeat-awareness.v1", "maintenance-gardener.v1"]);
+    const initial = (await loaded.json()) as { flows: Array<{ id: string }> };
+    assert.deepEqual(initial.flows.map((flow) => flow.id).sort(), [
+      "heartbeat-awareness.v1",
+      "maintenance-gardener.v1",
+    ]);
 
     const order = await post(current.url, "/api/autonomy/standing-orders/create", {
       name: "Keep reports bounded",

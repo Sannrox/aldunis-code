@@ -11,14 +11,14 @@ Open via the command palette → **Automations**.
 
 ## What they are
 
-| Field | Meaning |
-| --- | --- |
-| Name | Operator label |
-| Target | Existing thread only (no new chat / worktree) |
-| Prompt | Durable instruction for each run |
-| Mode | Ask / Plan / Build (defaults apply per create UI) |
-| Schedule | Interval (≥ 60 seconds) or 5-field **UTC** cron |
-| Enabled | Paused when off |
+| Field    | Meaning                                           |
+| -------- | ------------------------------------------------- |
+| Name     | Operator label                                    |
+| Target   | Existing thread only (no new chat / worktree)     |
+| Prompt   | Durable instruction for each run                  |
+| Mode     | Ask / Plan / Build (defaults apply per create UI) |
+| Schedule | Interval (≥ 60 seconds) or 5-field **UTC** cron   |
+| Enabled  | Paused when off                                   |
 
 Design record: [decisions/conversation-automations.md](decisions/conversation-automations.md).
 
@@ -71,10 +71,10 @@ silently turn an automation into a provider mutation or bypass approval.
 
 ## API (host)
 
-| Route | Purpose |
-| --- | --- |
-| `POST /api/automations/list` | List automations |
-| `POST /api/automations/create` | Create |
-| `POST /api/automations/update` | Update / pause |
-| `POST /api/automations/delete` | Delete |
-| `POST /api/automations/run-now` | Immediate fire |
+| Route                           | Purpose          |
+| ------------------------------- | ---------------- |
+| `POST /api/automations/list`    | List automations |
+| `POST /api/automations/create`  | Create           |
+| `POST /api/automations/update`  | Update / pause   |
+| `POST /api/automations/delete`  | Delete           |
+| `POST /api/automations/run-now` | Immediate fire   |

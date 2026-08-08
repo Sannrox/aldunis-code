@@ -1,6 +1,11 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Preferences } from "./preferences";
+import {
+  DEFAULT_PREFERENCES,
+  readPreferencesResponse,
+  resolveTheme,
+  type Preferences,
+} from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import "./mock-shell.css";
@@ -24,12 +29,22 @@ import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
 import { AutonomyDialog } from "./features/dialogs/autonomy-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
+import { ActivityDialog, type ActivitySelectionAction } from "./features/dialogs/activity-dialog";
+import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
+import { DesktopUpdateBanner, type DesktopUpdateControls } from "./features/updates/desktop-update";
+import { isKeybindingCaptured, matchesModifierShortcut } from "./lib/workspace-shortcuts";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
   readProductAvailabilityResponse,
   type ProductAvailability,
 } from "./lib/product-availability";
+import type { DesktopUpdateSnapshot } from "../desktop/update-contract";
+
+const desktopPlatform = window.aldunisDesktop?.platform;
+if (desktopPlatform) {
+  document.documentElement.dataset.desktopShell = desktopPlatform === "darwin" ? "macos" : "native";
+}
 
 const LAST_REPOSITORY_ROOT_KEY = "aldunis.lastRepositoryRoot";
 
@@ -59,7 +74,8 @@ function App() {
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryRestoring, setRepositoryRestoring] = useState(true);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
-  const [chiseiBindingAdministrationAvailable, setChiseiBindingAdministrationAvailable] = useState(true);
+  const [chiseiBindingAdministrationAvailable, setChiseiBindingAdministrationAvailable] =
+    useState(true);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [providerManagement, setProviderManagement] = useState<{
     destination: ProviderManagementDestination;
@@ -71,11 +87,14 @@ function App() {
   const [automationsOpen, setAutomationsOpen] = useState(false);
   const [autonomyOpen, setAutonomyOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [preferencesRecovered, setPreferencesRecovered] = useState(false);
   const [preferences, setPreferences] = useState<Preferences>(DEFAULT_PREFERENCES);
   const [productAvailability, setProductAvailability] = useState<ProductAvailability>(
     DEFAULT_PRODUCT_AVAILABILITY,
   );
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdateSnapshot | null>(null);
   const [hostCapabilities, setHostCapabilities] = useState<HostCapabilities>({
     mode: "local",
     managed: false,
@@ -97,7 +116,7 @@ function App() {
       try {
         const response = await fetch("/api/host/capabilities", { method: "POST" });
         if (!response.ok) throw new Error("The host capability contract is unavailable.");
-        const body = await response.json() as HostCapabilities;
+        const body = (await response.json()) as HostCapabilities;
         if (body.mode !== "local" && body.mode !== "remote" && body.mode !== "managed") {
           throw new Error("The host capability contract is invalid.");
         }
@@ -112,40 +131,46 @@ function App() {
   }, []);
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
-    const body = await response.json() as { profiles?: ClaudeProfile[] };
+    const body = (await response.json()) as { profiles?: ClaudeProfile[] };
     if (response.ok) {
       setProfiles(body.profiles ?? []);
       window.dispatchEvent(new Event("aldunis:providers-retry"));
     }
   };
-  useEffect(() => { void loadProfiles(); }, []);
+  useEffect(() => {
+    void loadProfiles();
+  }, []);
   const loadSavedProjects = async () => {
     try {
       // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
       const response = await fetch("/api/projects/list", { method: "POST" });
       if (!response.ok) return;
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         projects?: SavedProject[];
         chiseiBindingAdministrationAvailable?: boolean;
       };
       setSavedProjects(body.projects ?? []);
-      setChiseiBindingAdministrationAvailable(
-        body.chiseiBindingAdministrationAvailable !== false,
-      );
+      setChiseiBindingAdministrationAvailable(body.chiseiBindingAdministrationAvailable !== false);
     } catch {
       /* leave existing list */
     }
   };
   const loadThreads = async () => {
-    const response = await fetch("/api/state/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "" }) });
-    const body = await response.json() as { threads?: ThreadMetadata[] };
+    const response = await fetch("/api/state/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "" }),
+    });
+    const body = (await response.json()) as { threads?: ThreadMetadata[] };
     if (response.ok) setThreads(body.threads ?? []);
   };
   useEffect(() => {
     void loadThreads();
     void loadSavedProjects();
     void fetch("/api/preferences/load", { method: "POST" })
-      .then(async (response) => response.ok ? readPreferencesResponse(await response.json()) : null)
+      .then(async (response) =>
+        response.ok ? readPreferencesResponse(await response.json()) : null,
+      )
       .then((result) => {
         if (!result) return;
         setPreferences(result.preferences);
@@ -153,7 +178,9 @@ function App() {
       })
       .catch(() => undefined);
     void fetch("/api/products/availability", { method: "POST" })
-      .then(async (response) => response.ok ? readProductAvailabilityResponse(await response.json()) : null)
+      .then(async (response) =>
+        response.ok ? readProductAvailabilityResponse(await response.json()) : null,
+      )
       .then((availability) => {
         if (availability) setProductAvailability(availability);
       })
@@ -164,6 +191,24 @@ function App() {
       setProduct("code");
     }
   }, [product, productAvailability]);
+  useEffect(() => {
+    const api = window.aldunisDesktop;
+    if (!api) return;
+    let active = true;
+    const unsubscribe = api.onUpdateState((snapshot) => {
+      if (active) setDesktopUpdate(snapshot);
+    });
+    void api
+      .getUpdateState()
+      .then((snapshot) => {
+        if (active && snapshot) setDesktopUpdate(snapshot);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
@@ -181,19 +226,20 @@ function App() {
   }, [preferences]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const modifier = event.metaKey || event.ctrlKey;
-      const matches = preferences.commandPaletteShortcut === "mod+k"
-        ? modifier && !event.shiftKey && event.key.toLocaleLowerCase() === "k"
-        : modifier && event.shiftKey && event.key.toLocaleLowerCase() === "p";
-      if (matches) {
+      if (event.defaultPrevented || isKeybindingCaptured(event.target)) return;
+      if (matchesModifierShortcut(event, preferences.commandPaletteShortcut)) {
         event.preventDefault();
         setPaletteOpen(true);
+        return;
+      }
+      if (matchesModifierShortcut(event, preferences.conversationSearchShortcut)) {
+        event.preventDefault();
+        setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [preferences.commandPaletteShortcut]);
+  }, [preferences.commandPaletteShortcut, preferences.conversationSearchShortcut]);
   const showRepositoryDialog = () => {
     setRepositoryError(null);
     setRepositoryDialog(true);
@@ -205,12 +251,13 @@ function App() {
       const response = await fetch("/api/repositories/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(hostCapabilities.managed
-          ? { repositoryId: target }
-          : { path: target }),
+        body: JSON.stringify(
+          hostCapabilities.managed ? { repositoryId: target } : { path: target },
+        ),
       });
-      const body = await response.json() as RepositoryMetadata | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
+      const body = (await response.json()) as RepositoryMetadata | { error?: string };
+      if (!response.ok)
+        throw new Error("error" in body ? body.error : "Repository discovery failed.");
       const next = body as RepositoryMetadata;
       setRepository(next);
       if (!hostCapabilities.managed) writeLastRepositoryRoot(next.root);
@@ -244,7 +291,7 @@ function App() {
         try {
           const response = await fetch("/api/projects/list", { method: "POST" });
           if (response.ok) {
-            const body = await response.json() as { projects?: SavedProject[] };
+            const body = (await response.json()) as { projects?: SavedProject[] };
             projects = body.projects ?? [];
             if (active) setSavedProjects(projects);
           }
@@ -257,14 +304,9 @@ function App() {
         const rootCandidates: string[] = [];
         if (urlProjectId) {
           for (const project of projects) {
-            if (
-              project.id === urlProjectId
-              || project.memberIds?.includes(urlProjectId)
-            ) {
+            if (project.id === urlProjectId || project.memberIds?.includes(urlProjectId)) {
               rootCandidates.push(
-                hostCapabilities.managed
-                  ? (project.managedRepositoryId ?? "")
-                  : project.root,
+                hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
               );
             }
           }
@@ -272,9 +314,7 @@ function App() {
         if (lastRoot) rootCandidates.push(lastRoot);
         for (const project of projects) {
           rootCandidates.push(
-            hostCapabilities.managed
-              ? (project.managedRepositoryId ?? "")
-              : project.root,
+            hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
           );
         }
 
@@ -284,7 +324,13 @@ function App() {
           seen.add(root);
           const opened = await openRepository(root, { quiet: true });
           if (!active) return;
-          if (opened) return;
+          if (opened) {
+            // Quiet restore registers the repository on the host without
+            // refreshing the sidebar project registry. Keep the restored
+            // project visible before handing control back to the shell.
+            await loadSavedProjects();
+            return;
+          }
         }
       } catch {
         /* leave empty shell if history cannot be restored */
@@ -297,11 +343,40 @@ function App() {
       active = false;
     };
   }, [hostCapabilitiesLoaded, hostCapabilities.managed]);
+  const runDesktopUpdateAction = async (
+    action: "checkForUpdate" | "downloadUpdate" | "installUpdate",
+  ): Promise<void> => {
+    const api = window.aldunisDesktop;
+    if (!api) return;
+    try {
+      const snapshot = await api[action]();
+      if (snapshot) setDesktopUpdate(snapshot);
+    } catch {
+      // The main process publishes a sanitized error state for updater failures.
+    }
+  };
+  const desktopUpdateControls: DesktopUpdateControls | undefined = desktopPlatform
+    ? {
+        snapshot: desktopUpdate,
+        onCheck: () => {
+          void runDesktopUpdateAction("checkForUpdate");
+        },
+        onDownload: () => {
+          void runDesktopUpdateAction("downloadUpdate");
+        },
+        onInstall: () => {
+          void runDesktopUpdateAction("installUpdate");
+        },
+      }
+    : undefined;
   if (hostCapabilitiesError) {
     return (
       <main className="remote-pairing-error" role="alert">
         <h1>Host configuration unavailable</h1>
-        <p>{hostCapabilitiesError} Reload this page after the configured host or gateway is available.</p>
+        <p>
+          {hostCapabilitiesError} Reload this page after the configured host or gateway is
+          available.
+        </p>
       </main>
     );
   }
@@ -316,21 +391,20 @@ function App() {
         projects={savedProjects}
         onAddProject={showRepositoryDialog}
         onSelectProject={(projectId) => {
-          const project = savedProjects.find((item) =>
-            item.id === projectId || item.memberIds?.includes(projectId),
+          const project = savedProjects.find(
+            (item) => item.id === projectId || item.memberIds?.includes(projectId),
           );
           if (!project) return;
-          const target = hostCapabilities.managed
-            ? project.managedRepositoryId
-            : project.root;
+          const target = hostCapabilities.managed ? project.managedRepositoryId : project.root;
           if (!target) return;
           // Already on this logical project — do not re-open (bumps openedAt / reorders chips).
           if (
-            repository
-            && (!hostCapabilities.managed && (repository.projectId === project.id
-              || project.memberIds?.includes(repository.projectId)
-              || repository.root === project.root)
-              || hostCapabilities.managed && repository.managedRepositoryId === target)
+            repository &&
+            ((!hostCapabilities.managed &&
+              (repository.projectId === project.id ||
+                project.memberIds?.includes(repository.projectId) ||
+                repository.root === project.root)) ||
+              (hostCapabilities.managed && repository.managedRepositoryId === target))
           ) {
             return;
           }
@@ -342,7 +416,9 @@ function App() {
           setProviderManagement({ destination: "profiles", provider: provider ?? null });
         }}
         onOpenPalette={() => setPaletteOpen(true)}
-        onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
+        onSelectWorktree={(path) =>
+          setRepository((current) => (current ? { ...current, selectedWorktree: path } : current))
+        }
         onManageWorktrees={(path) => {
           setManagedWorktreePath(path ?? null);
           setWorktreeDialog(true);
@@ -360,6 +436,7 @@ function App() {
         managedModel={hostCapabilities.provider?.model}
         managedAccount={hostCapabilities.account}
       />
+      {desktopUpdateControls && <DesktopUpdateBanner {...desktopUpdateControls} />}
       <RepositoryDialog
         open={repositoryDialog}
         busy={repositoryBusy}
@@ -368,7 +445,9 @@ function App() {
         currentRoot={repository?.root ?? null}
         managedRepositories={hostCapabilities.managed ? hostCapabilities.repositories : undefined}
         onClose={() => setRepositoryDialog(false)}
-        onSubmit={(path) => { void openRepository(path); }}
+        onSubmit={(path) => {
+          void openRepository(path);
+        }}
       />
       {worktreeDialog && (
         <WorktreeDialog
@@ -405,11 +484,19 @@ function App() {
         onClose={() => setPaletteOpen(false)}
         onOpenRepository={showRepositoryDialog}
         onSearch={() => setSearchOpen(true)}
+        threads={threads}
+        onOpenConversation={(threadId) => {
+          window.dispatchEvent(
+            new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
+          );
+        }}
         onPreferences={() => setPreferencesOpen(true)}
         onProviderManagement={() => {
           if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
+        onActivity={() => setActivityOpen(true)}
+        onConnections={() => setConnectionsOpen(true)}
         onAutomations={() => setAutomationsOpen(true)}
         onAutonomy={() => setAutonomyOpen(true)}
         onManageWorktrees={() => {
@@ -444,24 +531,59 @@ function App() {
           if (hostCapabilities.managed) return;
           setProviderManagement({ destination: "diagnostics", provider: null });
         }}
+        onOpenConnections={() => setConnectionsOpen(true)}
         onOpenArchivedThreads={() => {
           setPreferencesOpen(false);
           window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
         }}
+        desktopUpdates={desktopUpdateControls}
         onSave={async (value) => {
-          const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+          const response = await fetch("/api/preferences/save", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(value),
+          });
           if (!response.ok) return;
-          setPreferences(await response.json() as Preferences);
+          setPreferences((await response.json()) as Preferences);
           setPreferencesRecovered(false);
           setPreferencesOpen(false);
         }}
       />
+      <ActivityDialog
+        open={activityOpen}
+        onClose={() => setActivityOpen(false)}
+        onSelect={(conversation, action: ActivitySelectionAction) => {
+          window.dispatchEvent(
+            new CustomEvent("aldunis:open-conversation", {
+              detail: {
+                threadId: conversation.id,
+                conversation,
+                action,
+              },
+            }),
+          );
+        }}
+      />
+      <ConnectionsDialog open={connectionsOpen} onClose={() => setConnectionsOpen(false)} />
     </div>
   );
 }
 
 void initializeRemoteAuthentication()
-  .then(() => createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>))
+  .then(async (remoteEnabled) => {
+    if (remoteEnabled && window.aldunisDesktop) {
+      const confirmed = await window.aldunisDesktop.confirmRemoteEnvironmentPairing();
+      if (!confirmed) throw new Error("The desktop could not confirm the remote pairing.");
+    }
+    if (window.aldunisDesktop) {
+      window.aldunisDesktopCapabilities = await window.aldunisDesktop.getCapabilities();
+    }
+    createRoot(document.getElementById("root")!).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+  })
   .catch((error: unknown) => {
     const root = document.getElementById("root")!;
     root.innerHTML = "";
@@ -471,7 +593,8 @@ void initializeRemoteAuthentication()
     const heading = document.createElement("h1");
     heading.textContent = "Remote pairing failed";
     const detail = document.createElement("p");
-    detail.textContent = error instanceof Error ? error.message : "The pairing link is invalid or expired.";
+    detail.textContent =
+      error instanceof Error ? error.message : "The pairing link is invalid or expired.";
     main.append(heading, detail);
     root.append(main);
   });

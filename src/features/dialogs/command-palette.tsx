@@ -1,11 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/icon";
+import type { ThreadMetadata } from "../../types";
 import { OverlayDialog } from "./overlay-dialog";
 
 export const CREATE_WORKTREE_ACTION_COPY = {
   label: "Create worktree",
   detail: "Create an isolated managed checkout for conversation work",
 } as const;
+export const PROVIDER_MANAGEMENT_ACTION_COPY = {
+  label: "Provider management",
+  detail: "Profiles, adapter package trust, and readiness diagnostics",
+} as const;
+
+export function commandPaletteThreadMatches(thread: ThreadMetadata, query: string): boolean {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return false;
+  return [thread.title, thread.projectName, thread.worktree].some((value) =>
+    value.toLocaleLowerCase().includes(normalized),
+  );
+}
 
 export function CommandPalette({
   open,
@@ -14,9 +27,13 @@ export function CommandPalette({
   onSearch,
   onPreferences,
   onProviderManagement,
+  onActivity = () => undefined,
+  onConnections = () => undefined,
   onManageWorktrees,
   onAutomations,
   onAutonomy,
+  threads = [],
+  onOpenConversation = () => undefined,
   hasRepository = false,
 }: {
   open: boolean;
@@ -25,9 +42,13 @@ export function CommandPalette({
   onSearch: () => void;
   onPreferences: () => void;
   onProviderManagement: () => void;
+  onActivity?: () => void;
+  onConnections?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
   onAutonomy: () => void;
+  threads?: ThreadMetadata[];
+  onOpenConversation?: (threadId: string) => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
   hasRepository?: boolean;
 }) {
@@ -69,9 +90,18 @@ export function CommandPalette({
           run: onPreferences,
         },
         {
-          label: "Provider management",
-          detail: "Profiles, adapter package trust, and readiness diagnostics",
+          ...PROVIDER_MANAGEMENT_ACTION_COPY,
           run: onProviderManagement,
+        },
+        {
+          label: "Activity",
+          detail: "Supervise attention, running, completed, and idle conversations",
+          run: onActivity,
+        },
+        {
+          label: "Connections",
+          detail: "Pair devices and revoke local remote sessions",
+          run: onConnections,
         },
         {
           label: "Automations",
@@ -91,6 +121,14 @@ export function CommandPalette({
               },
             ]
           : []),
+        ...threads
+          .filter((thread) => commandPaletteThreadMatches(thread, query))
+          .map((thread) => ({
+            id: `thread:${thread.id}`,
+            label: `Open: ${thread.title || "Untitled conversation"}`,
+            detail: `${thread.projectName} · ${thread.worktree}`,
+            run: () => onOpenConversation(thread.id),
+          })),
       ].filter((action) => {
         const q = query.toLocaleLowerCase();
         return (
@@ -98,7 +136,21 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onAutonomy, onAutomations, onManageWorktrees, onOpenRepository, onPreferences, onProviderManagement, onSearch, query],
+    [
+      hasRepository,
+      onActivity,
+      onAutonomy,
+      onAutomations,
+      onConnections,
+      onManageWorktrees,
+      onOpenConversation,
+      onOpenRepository,
+      onPreferences,
+      onProviderManagement,
+      onSearch,
+      query,
+      threads,
+    ],
   );
 
   useEffect(() => {
@@ -168,7 +220,7 @@ export function CommandPalette({
           {actions.length === 0 && <p>No matching actions.</p>}
           {actions.map((action, index) => (
             <button
-              key={action.label}
+              key={"id" in action ? action.id : action.label}
               type="button"
               id={`command-palette-action-${index}`}
               role="option"

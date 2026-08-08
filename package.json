@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local-first agentic development workbench",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sannrox/aldunis-code.git"
+  },
   "main": "dist-electron/main.js",
   "type": "module",
   "engines": {
@@ -16,23 +20,34 @@
     "ontology:sync": "bash scripts/ontology.sh sync",
     "ontology:check": "bash scripts/ontology.sh check",
     "start": "npm run build && node dist-cli/aldunis-code.js start",
-    "test": "tsx --test server/*.test.ts desktop/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
+    "test": "tsx --test server/*.test.ts desktop/*.test.ts scripts/*.test.ts src/*.test.ts src/lib/**/*.test.ts src/components/ui/*.test.ts src/features/**/*.test.ts",
+    "test:integration": "tsx --test desktop/lifecycle.test.ts desktop/remote-environments.test.ts desktop/updater.test.ts server/browser-mcp.test.ts server/browser.test.ts server/changes.test.ts server/delivery.test.ts server/directory-browser.test.ts server/host-*.test.ts server/managed-host.test.ts server/preview.test.ts server/provider*.test.ts server/release-candidate.test.ts server/release-delivery-workflow.test.ts server/remote-auth.test.ts server/repository.test.ts server/state.test.ts server/worktrees.test.ts",
+    "format:check": "tsx scripts/check-changed.ts prettier",
+    "format:all": "tsx scripts/check-changed.ts prettier --all",
+    "lint:changed": "tsx scripts/check-changed.ts eslint",
+    "lint:all": "tsx scripts/check-changed.ts eslint --all",
     "check": "tsc -b --pretty false",
+    "validate": "npm run format:check && npm run lint:changed && tsx scripts/check-whitespace.ts",
+    "verify": "npm run validate && npm run check && npm test && npm run build",
     "verify:desktop-release-tag": "tsx scripts/verify-desktop-release-tag.ts",
+    "rename:desktop-update-assets": "node scripts/rename-desktop-update-assets.mjs",
+    "merge:desktop-update-manifest": "node scripts/merge-desktop-update-manifest.mjs",
+    "preview:version": "tsx scripts/preview-version.ts",
     "build:web": "tsc -b && vite build",
-    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs && esbuild server/browser-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-electron/browser-mcp.mjs",
-    "build:cli": "esbuild server/main.ts --bundle --platform=node --format=esm --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-cli/aldunis-code.js --banner:js='#!/usr/bin/env node' && esbuild server/permission-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-cli/permission-mcp.mjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-cli/shikigami-permission-hook.mjs",
+    "build:desktop-main": "esbuild desktop/main.ts --bundle --platform=node --format=esm --external:electron --external:electron-updater --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-electron/main.js && esbuild desktop/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-electron/shikigami-permission-hook.mjs && esbuild server/browser-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-electron/browser-mcp.mjs",
+    "build:cli": "esbuild server/main.ts --bundle --platform=node --format=esm --external:proper-lockfile --external:@grpc/grpc-js --external:@grpc/proto-loader --external:@iarna/toml --outfile=dist-cli/aldunis-code.js --banner:js=\"#!/usr/bin/env node\" && esbuild server/permission-mcp.mjs --bundle --platform=node --format=esm --outfile=dist-cli/permission-mcp.mjs && esbuild server/shikigami-permission-hook.mjs --bundle --platform=node --format=esm --outfile=dist-cli/shikigami-permission-hook.mjs",
     "build": "npm run build:web && npm run build:desktop-main && npm run build:cli",
     "desktop": "npm run build && electron .",
     "package:desktop": "npm run build && electron-builder --publish never"
   },
   "dependencies": {
-    "@sannrox/sekai-chisei-sdk": "file:vendor/sekai-chisei-sdk",
-    "@iarna/toml": "2.2.5",
     "@base-ui/react": "^1.6.0",
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
+    "@iarna/toml": "2.2.5",
+    "@sannrox/sekai-chisei-sdk": "file:vendor/sekai-chisei-sdk",
     "@vitejs/plugin-react": "4.3.4",
+    "electron-updater": "6.8.9",
     "proper-lockfile": "^4.1.2",
     "react": "19.0.0",
     "react-dom": "19.0.0",
@@ -41,6 +56,7 @@
     "vite": "6.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
     "@types/jsdom": "^21.1.7",
     "@types/node": "22.10.7",
     "@types/proper-lockfile": "^4.1.4",
@@ -49,11 +65,22 @@
     "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.1",
+    "eslint": "9.39.5",
+    "globals": "17.9.0",
+    "js-yaml": "4.3.1",
     "jsdom": "^26.1.0",
+    "prettier": "3.9.6",
     "tsx": "4.23.1",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "typescript-eslint": "8.66.0"
   },
   "build": {
+    "detectUpdateChannel": true,
+    "publish": {
+      "provider": "github",
+      "owner": "Sannrox",
+      "repo": "aldunis-code"
+    },
     "appId": "com.aldunis.code",
     "productName": "Aldunis Code",
     "icon": "public/aldunis-mark.png",
@@ -87,7 +114,8 @@
         "NSMicrophoneUsageDescription": "Aldunis Code uses the microphone only when you activate voice input to transcribe a prompt."
       },
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ]
     },
     "win": {
@@ -97,6 +125,7 @@
     },
     "linux": {
       "category": "Development",
+      "maintainer": "Sannrox",
       "target": [
         "AppImage",
         "deb"

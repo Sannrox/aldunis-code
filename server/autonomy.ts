@@ -13,14 +13,7 @@ export const MAX_HEARTBEAT_SECONDS = 7 * 24 * 60 * 60;
 
 export type AutonomyRunKind = "heartbeat" | "maintenance" | "workflow";
 export type AutonomyRunStatus =
-  | "queued"
-  | "running"
-  | "waiting"
-  | "blocked"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "lost";
+  "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed" | "cancelled" | "lost";
 export type AutonomyTaskStatus =
   | "queued"
   | "running"
@@ -33,18 +26,9 @@ export type AutonomyTaskStatus =
   | "lost";
 export type AutonomyTrigger = "manual" | "heartbeat" | "hook" | "schedule" | "resume";
 export type AutonomyStepKind =
-  | "preflight"
-  | "scan_repository"
-  | "rank_findings"
-  | "report"
-  | "approval_gate"
-  | "notify";
+  "preflight" | "scan_repository" | "rank_findings" | "report" | "approval_gate" | "notify";
 export type AutonomyHookEvent =
-  | "heartbeat_tick"
-  | "turn_completed"
-  | "turn_failed"
-  | "automation_completed"
-  | "task_completed";
+  "heartbeat_tick" | "turn_completed" | "turn_failed" | "automation_completed" | "task_completed";
 
 export interface AutonomyBudget {
   maxTasks: number;
@@ -202,7 +186,10 @@ export interface AutonomyHook {
 }
 
 export class AutonomyError extends Error {
-  constructor(message: string, readonly status = 400) {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
     super(message);
   }
 }
@@ -241,19 +228,53 @@ function status<T extends string>(value: unknown, allowed: readonly T[], label: 
   return value as T;
 }
 
-const runStatuses = ["queued", "running", "waiting", "blocked", "succeeded", "failed", "cancelled", "lost"] as const;
-const taskStatuses = ["queued", "running", "waiting", "blocked", "succeeded", "failed", "timed_out", "cancelled", "lost"] as const;
+const runStatuses = [
+  "queued",
+  "running",
+  "waiting",
+  "blocked",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "lost",
+] as const;
+const taskStatuses = [
+  "queued",
+  "running",
+  "waiting",
+  "blocked",
+  "succeeded",
+  "failed",
+  "timed_out",
+  "cancelled",
+  "lost",
+] as const;
 const runKinds = ["heartbeat", "maintenance", "workflow"] as const;
 const triggers = ["manual", "heartbeat", "hook", "schedule", "resume"] as const;
-const stepKinds = ["preflight", "scan_repository", "rank_findings", "report", "approval_gate", "notify"] as const;
-const hookEvents = ["heartbeat_tick", "turn_completed", "turn_failed", "automation_completed", "task_completed"] as const;
+const stepKinds = [
+  "preflight",
+  "scan_repository",
+  "rank_findings",
+  "report",
+  "approval_gate",
+  "notify",
+] as const;
+const hookEvents = [
+  "heartbeat_tick",
+  "turn_completed",
+  "turn_failed",
+  "automation_completed",
+  "task_completed",
+] as const;
 
 export function normalizeBudget(value: unknown): AutonomyBudget {
   const input = record(value, "Workflow budget");
-  const maxCostUsd = input.maxCostUsd === null || input.maxCostUsd === undefined
-    ? null
-    : input.maxCostUsd;
-  if (maxCostUsd !== null && (typeof maxCostUsd !== "number" || !Number.isFinite(maxCostUsd) || maxCostUsd < 0)) {
+  const maxCostUsd =
+    input.maxCostUsd === null || input.maxCostUsd === undefined ? null : input.maxCostUsd;
+  if (
+    maxCostUsd !== null &&
+    (typeof maxCostUsd !== "number" || !Number.isFinite(maxCostUsd) || maxCostUsd < 0)
+  ) {
     throw new AutonomyError("Workflow cost limit is invalid.");
   }
   return {
@@ -287,7 +308,8 @@ export function parseAutonomyFlow(value: unknown): AutonomyFlow {
     ids.add(step.id);
   }
   const budget = normalizeBudget(input.budget);
-  if (steps.length > budget.maxTasks) throw new AutonomyError("Workflow steps exceed the task budget.");
+  if (steps.length > budget.maxTasks)
+    throw new AutonomyError("Workflow steps exceed the task budget.");
   return {
     schemaVersion: AUTONOMY_SCHEMA_VERSION,
     id: text(input.id, "Workflow id", 120),
@@ -307,8 +329,16 @@ function parseFinding(value: unknown): MaintenanceFinding {
   const input = record(value, "Maintenance finding");
   return {
     id: text(input.id, "Finding id", 120),
-    category: status(input.category, ["workspace", "quality", "documentation", "hygiene", "security"] as const, "Finding category"),
-    severity: status(input.severity, ["info", "low", "medium", "high"] as const, "Finding severity"),
+    category: status(
+      input.category,
+      ["workspace", "quality", "documentation", "hygiene", "security"] as const,
+      "Finding category",
+    ),
+    severity: status(
+      input.severity,
+      ["info", "low", "medium", "high"] as const,
+      "Finding severity",
+    ),
     path: nullableText(input.path, "Finding path", 400),
     summary: text(input.summary, "Finding summary", 300),
     risk: text(input.risk, "Finding risk", 300),
@@ -320,7 +350,8 @@ function parseResult(value: unknown): AutonomyRunResult | null {
   if (value === null || value === undefined) return null;
   const input = record(value, "Run result");
   const findingsRaw = input.findings;
-  if (!Array.isArray(findingsRaw) || findingsRaw.length > 100) throw new AutonomyError("Run findings are invalid.");
+  if (!Array.isArray(findingsRaw) || findingsRaw.length > 100)
+    throw new AutonomyError("Run findings are invalid.");
   return {
     summary: text(input.summary, "Run summary", 500),
     findings: findingsRaw.map(parseFinding),
@@ -335,10 +366,18 @@ export function parseAutonomyRun(value: unknown): AutonomyRun {
   const input = record(value, "Autonomy run");
   const taskIds = input.taskIds;
   const standingOrderIds = input.standingOrderIds;
-  if (!Array.isArray(taskIds) || taskIds.some((item) => typeof item !== "string") || taskIds.length > 100) {
+  if (
+    !Array.isArray(taskIds) ||
+    taskIds.some((item) => typeof item !== "string") ||
+    taskIds.length > 100
+  ) {
     throw new AutonomyError("Run task ids are invalid.");
   }
-  if (!Array.isArray(standingOrderIds) || standingOrderIds.some((item) => typeof item !== "string") || standingOrderIds.length > 100) {
+  if (
+    !Array.isArray(standingOrderIds) ||
+    standingOrderIds.some((item) => typeof item !== "string") ||
+    standingOrderIds.length > 100
+  ) {
     throw new AutonomyError("Run standing order ids are invalid.");
   }
   return {
@@ -371,7 +410,12 @@ export function parseAutonomyTask(value: unknown): AutonomyTask {
   const taskInput = record(input.input, "Task input");
   if (Object.keys(taskInput).length > 30) throw new AutonomyError("Task input is too large.");
   for (const item of Object.values(taskInput)) {
-    if (item !== null && typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean") {
+    if (
+      item !== null &&
+      typeof item !== "string" &&
+      typeof item !== "number" &&
+      typeof item !== "boolean"
+    ) {
       throw new AutonomyError("Task input contains unsupported data.");
     }
   }
@@ -388,7 +432,7 @@ export function parseAutonomyTask(value: unknown): AutonomyTask {
     maxAttempts: integer(input.maxAttempts, "Task retry limit", 1, 10),
     timeoutSeconds: integer(input.timeoutSeconds, "Task timeout", 1, 86_400),
     input: taskInput as AutonomyTask["input"],
-    output: output === null || output === undefined ? null : output as AutonomyTaskOutput,
+    output: output === null || output === undefined ? null : (output as AutonomyTaskOutput),
     error: nullableText(input.error, "Task error", 500),
     createdAt: text(input.createdAt, "Task createdAt", 64),
     startedAt: nullableText(input.startedAt, "Task startedAt", 64),
@@ -415,9 +459,10 @@ export function parseHeartbeatMonitor(value: unknown): HeartbeatMonitor {
   if (flowId !== HEARTBEAT_AWARENESS_FLOW_ID && flowId !== NIGHTLY_GARDENER_FLOW_ID) {
     throw new AutonomyError("Heartbeat workflow must be a built-in read-only workflow.");
   }
-  const lastStatus = input.lastStatus === null || input.lastStatus === undefined
-    ? null
-    : status(input.lastStatus, runStatuses, "Heartbeat last status");
+  const lastStatus =
+    input.lastStatus === null || input.lastStatus === undefined
+      ? null
+      : status(input.lastStatus, runStatuses, "Heartbeat last status");
   return {
     schemaVersion: AUTONOMY_SCHEMA_VERSION,
     id: text(input.id, "Heartbeat id", 120),
@@ -427,7 +472,12 @@ export function parseHeartbeatMonitor(value: unknown): HeartbeatMonitor {
     worktree: nullableText(input.worktree, "Heartbeat worktree", 1000),
     goal: text(input.goal, "Heartbeat goal", 500),
     enabled: input.enabled === true,
-    everySeconds: integer(input.everySeconds, "Heartbeat interval", MIN_HEARTBEAT_SECONDS, MAX_HEARTBEAT_SECONDS),
+    everySeconds: integer(
+      input.everySeconds,
+      "Heartbeat interval",
+      MIN_HEARTBEAT_SECONDS,
+      MAX_HEARTBEAT_SECONDS,
+    ),
     activeHours: parseActiveHours(input.activeHours),
     lastRunAt: nullableText(input.lastRunAt, "Heartbeat last run", 64),
     lastRunId: nullableText(input.lastRunId, "Heartbeat last run id", 120),
@@ -441,7 +491,8 @@ export function parseStandingOrder(value: unknown): StandingOrder {
   const input = record(value, "Standing order");
   const scope = status(input.scope, ["global", "project"] as const, "Standing order scope");
   const projectId = nullableText(input.projectId, "Standing order project id", 120);
-  if (scope === "project" && !projectId) throw new AutonomyError("Project standing orders need a project.");
+  if (scope === "project" && !projectId)
+    throw new AutonomyError("Project standing orders need a project.");
   return {
     schemaVersion: AUTONOMY_SCHEMA_VERSION,
     id: text(input.id, "Standing order id", 120),
@@ -477,7 +528,9 @@ function step(
   id: string,
   kind: AutonomyStepKind,
   title: string,
-  options: Partial<Pick<AutonomyFlowStep, "timeoutSeconds" | "maxAttempts" | "backoffSeconds" | "approvalRequired">> = {},
+  options: Partial<
+    Pick<AutonomyFlowStep, "timeoutSeconds" | "maxAttempts" | "backoffSeconds" | "approvalRequired">
+  > = {},
 ): AutonomyFlowStep {
   return {
     id,
@@ -496,7 +549,8 @@ export function builtInAutonomyFlows(now = new Date().toISOString()): AutonomyFl
       schemaVersion: AUTONOMY_SCHEMA_VERSION,
       id: NIGHTLY_GARDENER_FLOW_ID,
       name: "Nightly maintenance gardener",
-      description: "Inspect a repository, rank bounded maintenance findings, and produce an operator report.",
+      description:
+        "Inspect a repository, rank bounded maintenance findings, and produce an operator report.",
       version: 1,
       enabled: true,
       readOnly: true,
@@ -505,7 +559,9 @@ export function builtInAutonomyFlows(now = new Date().toISOString()): AutonomyFl
         step("scan", "scan_repository", "Scan bounded repository signals", { timeoutSeconds: 90 }),
         step("rank", "rank_findings", "Rank findings by maintenance value"),
         step("report", "report", "Write an operator report"),
-        step("approval", "approval_gate", "Mark any follow-up for existing approval flow", { approvalRequired: true }),
+        step("approval", "approval_gate", "Mark any follow-up for existing approval flow", {
+          approvalRequired: true,
+        }),
       ],
       budget: { maxTasks: 8, maxRuntimeSeconds: 180, maxCostUsd: 0 },
       createdAt: now,
@@ -515,7 +571,8 @@ export function builtInAutonomyFlows(now = new Date().toISOString()): AutonomyFl
       schemaVersion: AUTONOMY_SCHEMA_VERSION,
       id: HEARTBEAT_AWARENESS_FLOW_ID,
       name: "Heartbeat awareness",
-      description: "Record a periodic awareness check without starting a provider turn or mutation.",
+      description:
+        "Record a periodic awareness check without starting a provider turn or mutation.",
       version: 1,
       enabled: true,
       readOnly: true,
@@ -532,12 +589,15 @@ export function builtInAutonomyFlows(now = new Date().toISOString()): AutonomyFl
 
 export function digestAutonomyResult(result: Omit<AutonomyRunResult, "digest">): string {
   return createHash("sha256")
-    .update(JSON.stringify({
-      summary: result.summary,
-      findings: result.findings,
-      filesScanned: result.filesScanned,
-      changedFiles: result.changedFiles,
-    }), "utf8")
+    .update(
+      JSON.stringify({
+        summary: result.summary,
+        findings: result.findings,
+        filesScanned: result.filesScanned,
+        changedFiles: result.changedFiles,
+      }),
+      "utf8",
+    )
     .digest("hex");
 }
 

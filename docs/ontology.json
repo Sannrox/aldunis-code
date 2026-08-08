@@ -14,6 +14,18 @@
       "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
     },
     {
+      "name": "DesktopRemoteEnvironmentManager",
+      "description": "The Electron main-process boundary that stores named remote-environment metadata, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
+    },
+    {
+      "name": "RemoteEnvironment",
+      "description": "A local desktop metadata record for one named HTTPS or SSH Aldunis Code workbench environment. It stores only the origin or SSH target, remote backend port, fixed executable name, preferred local forwarding port, and pairing-state hint; it is not repository, provider, or execution authority."
+    },
+    {
+      "name": "SshRemoteWorkbenchTransport",
+      "description": "The desktop-managed transport that runs an explicit loopback-bound Aldunis Code SSH remote mode and forwards an allocated client loopback port to the remote backend while retaining proof-key application authentication."
+    },
+    {
       "name": "ConversationComposer",
       "description": "The desktop conversation input surface that accepts typed or transient browser speech transcript text while selecting a provider, model, interaction mode, and explicit tool scope."
     },
@@ -24,6 +36,18 @@
     {
       "name": "ConversationLifecycleControl",
       "description": "The local workbench UI and host boundary for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations."
+    },
+    {
+      "name": "CollapsibleCodeSidebar",
+      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and a fixed Mod+B keybinding to toggle it. Its compact header mark crops the supplied tile frame, and its macOS collapse/expand control lives in the native row while opting out of the drag region. On macOS Electron, the shell reserves a distinct 52px native-titlebar row above the ordinary app header, with a compact sidebar affordance and aligned sidebar boundary, while keeping the explicitly positioned hidden-inset controls and without changing repository, provider, or permission authority."
+    },
+    {
+      "name": "SidebarOpenPreference",
+      "description": "A local browser or desktop-profile presentation preference recording whether the Aldunis Code sidebar should start expanded; it grants no repository, provider, permission, or contract authority."
+    },
+    {
+      "name": "SidebarToggleKeybinding",
+      "description": "The fixed Mod+B presentation keybinding that toggles the Aldunis Code sidebar without changing conversation, repository, provider, permission, or contract state."
     },
     {
       "name": "ConversationAutomation",
@@ -94,6 +118,10 @@
       "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
     },
     {
+      "name": "ConversationActivityInbox",
+      "description": "A derived, read-only cross-project Code workbench projection that groups bounded conversation metadata by operator attention, running, completed, and idle state and offers explicit open or changes-review navigation without provider, approval, execution, or remote mutation authority."
+    },
+    {
       "name": "LocalConversation",
       "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
       "properties": [
@@ -110,6 +138,10 @@
           "description": "The canonical local worktree bound to the conversation."
         }
       ]
+    },
+    {
+      "name": "TurnChangeSummary",
+      "description": "A persisted metadata-only summary of one completed Aldunis Code turn's checkpoint diff, including changed paths, states, rename sources, and line counts; it exposes no source content and grants no mutation or delivery authority."
     },
     {
       "name": "ConstrainedWebPreview",
@@ -236,6 +268,22 @@
     {
       "name": "DeliveryCorrelationReceipt",
       "description": "An aldunis.delivery-receipt/v1 correlation export containing stable identities, digests, freshness, and completeness without signed assertions, credentials, source, command output, or approval material."
+    },
+    {
+      "name": "AldunisDesktopAutoUpdater",
+      "description": "The packaged Electron main-process updater for Aldunis Code stable and nightly releases. It derives a fixed update feed from the packaged channel, enables prerelease checks only for nightly builds, exposes explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and preserves the local host shutdown boundary before installation."
+    },
+    {
+      "name": "DesktopUpdateChannel",
+      "description": "The packaged desktop update stream selected by the application version: stable releases use the latest feed, while dated nightly releases use the nightly prerelease feed."
+    },
+    {
+      "name": "DesktopShellEnvironment",
+      "description": "The Electron desktop startup boundary that imports a bounded PATH and selected non-secret session environment from the user's login shell before local provider discovery and subprocess launch; it never exposes those values to the renderer or changes provider credential ownership."
+    },
+    {
+      "name": "DesktopWindowLifecycle",
+      "description": "The Electron desktop window lifecycle that keeps the local host and active provider sessions alive when a macOS window is closed, restores the hidden window on activation or second launch, and preserves explicit application shutdown through Cmd+Q; Windows and Linux retain close-to-exit behavior."
     }
   ],
   "relations": [
@@ -326,6 +374,26 @@
       }
     },
     {
+      "name": "projects_conversation_activity",
+      "description": "Projects bounded local conversation metadata into a cross-project activity inbox without copying conversation content or granting new execution authority.",
+      "domain": "ConversationActivityInbox",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "renders_turn_change_summary",
+      "description": "Renders a completed turn's checkpoint-owned changed-file summary inline in the conversation and opens its immutable historical diff for review without changing the current worktree.",
+      "domain": "ConversationComposer",
+      "range": "TurnChangeSummary",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
       "name": "exposes_host_commands",
       "description": "The CLI exposes typed start and serve commands that route into the local host lifecycle without adding provider or terminal authority.",
       "domain": "AldunisCodeCli",
@@ -340,6 +408,36 @@
       "description": "The CLI exposes nested remote pairing commands for creating, listing, and revoking sessions before host startup.",
       "domain": "AldunisCodeCli",
       "range": "RemoteAuthCommand",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "manages_remote_environments",
+      "description": "The Electron desktop manages saved remote-environment metadata and connection lifecycle without taking ownership of the remote repository or provider state.",
+      "domain": "DesktopRemoteEnvironmentManager",
+      "range": "RemoteEnvironment",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "uses_ssh_remote_workbench_transport",
+      "description": "A desktop remote-environment manager may use the fixed SSH loopback transport for one saved environment.",
+      "domain": "DesktopRemoteEnvironmentManager",
+      "range": "SshRemoteWorkbenchTransport",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "connects_remote_environment",
+      "description": "The SSH transport connects one saved remote environment through an explicit local port forward and proof-key pairing flow.",
+      "domain": "SshRemoteWorkbenchTransport",
+      "range": "RemoteEnvironment",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -588,6 +686,46 @@
       "description": "Exports one integrity-bounded correlation envelope from the current local session projection.",
       "domain": "CapabilityLinkedDeliverySession",
       "range": "DeliveryCorrelationReceipt"
+    },
+    {
+      "name": "persists_sidebar_open_preference",
+      "description": "Stores the shared Code sidebar's expanded or collapsed presentation state in the local browser or desktop profile without changing conversation or host state.",
+      "domain": "CollapsibleCodeSidebar",
+      "range": "SidebarOpenPreference",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "exposes_sidebar_toggle_keybinding",
+      "description": "Exposes the fixed Mod+B presentation keybinding for collapsing or reopening the shared Code sidebar without granting authority over local work or provider actions.",
+      "domain": "CollapsibleCodeSidebar",
+      "range": "SidebarToggleKeybinding",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "selects_desktop_update_channel",
+      "description": "The packaged updater selects exactly one stable or nightly feed from the installed desktop release identity without switching channels or granting downgrade authority.",
+      "domain": "AldunisDesktopAutoUpdater",
+      "range": "DesktopUpdateChannel",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "prepares_provider_discovery",
+      "description": "Desktop startup prepares the inherited process environment used by provider readiness probes and provider subprocesses without moving provider-specific credentials or authority into the desktop environment manager.",
+      "domain": "DesktopShellEnvironment",
+      "range": "ProviderDiscovery",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
     }
   ],
   "provenance": [
@@ -610,6 +748,42 @@
       "confidence": 1.0
     },
     {
+      "subject": "DesktopRemoteEnvironmentManager",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/main.ts#REMOTE_ENVIRONMENT_CONNECT_CHANNEL; desktop/remote-environments.ts#RemoteEnvironmentManager",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteEnvironment",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentRecord; docs/remote-workbench.md#Desktop-managed environments",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SshRemoteWorkbenchTransport",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#buildSshForwardArguments; server/cli.ts#HostCommandOptions; docs/remote-workbench.md#Desktop-managed environments",
+      "confidence": 1.0
+    },
+    {
+      "subject": "manages_remote_environments",
+      "source": "Aldunis Code desktop remote-environment contract",
+      "locator": "desktop/main.ts#REMOTE_ENVIRONMENTS_LIST_CHANNEL; desktop/main.ts#REMOTE_ENVIRONMENT_SAVE_CHANNEL",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_ssh_remote_workbench_transport",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentManager.connect",
+      "confidence": 1.0
+    },
+    {
+      "subject": "connects_remote_environment",
+      "source": "Aldunis Code desktop SSH transport contract",
+      "locator": "desktop/remote-environments.ts#RemoteEnvironmentManager.connect",
+      "confidence": 1.0
+    },
+    {
       "subject": "exposes_host_commands",
       "source": "Aldunis Code CLI command contract",
       "locator": "server/cli.ts#HostCommand",
@@ -628,6 +802,18 @@
       "confidence": 1.0
     },
     {
+      "subject": "TurnChangeSummary",
+      "source": "Aldunis Code checkpoint and turn-review contract",
+      "locator": "server/state.ts#TurnCheckpoint.files; server/host.ts#/api/checkpoints/:id/diff; src/features/code/conversation.tsx#TurnChangesCard",
+      "confidence": 1.0
+    },
+    {
+      "subject": "renders_turn_change_summary",
+      "source": "Aldunis Code checkpoint and turn-review contract",
+      "locator": "src/features/code/conversation.tsx#TurnChangesCard; src/features/changes/changes-panel.tsx#checkpointId",
+      "confidence": 1.0
+    },
+    {
       "subject": "BrowserSpeechRecognition",
       "source": "Sannrox/aldunis-code",
       "locator": "src/lib/voice-input.ts; docs/design-system.md#voice-input",
@@ -643,6 +829,36 @@
       "subject": "ConversationLifecycleControl",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/workbench.tsx:manageConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CollapsibleCodeSidebar",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/components/brand-mark.tsx; src/mock-shell.css; src/main.tsx; desktop/main.ts; desktop/preload.ts; desktop/window-chrome.ts; docs/design-system.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SidebarOpenPreference",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SidebarToggleKeybinding",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/features/dialogs/preferences-dialog.tsx; docs/design-system.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "persists_sidebar_open_preference",
+      "source": "Aldunis Code sidebar presentation boundary",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "exposes_sidebar_toggle_keybinding",
+      "source": "Aldunis Code sidebar presentation boundary",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/features/dialogs/preferences-dialog.tsx",
       "confidence": 1.0
     },
     {
@@ -778,6 +994,18 @@
       "confidence": 1.0
     },
     {
+      "subject": "ConversationActivityInbox",
+      "source": "GitHub Issue Sannrox/aldunis-code#511",
+      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx; src/main.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_conversation_activity",
+      "source": "Aldunis Code cross-project activity projection",
+      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
       "subject": "gates",
       "source": "Sannrox/aldunis-code",
       "locator": "src/lib/provider-discovery-cache.ts",
@@ -835,6 +1063,24 @@
       "subject": "PictureInPictureBrowserMirror",
       "source": "Aldunis Code shared-browser desktop mirror",
       "locator": "desktop/shared-browser.ts; desktop/channels.ts; desktop/preload.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AldunisDesktopAutoUpdater",
+      "source": "Aldunis Code desktop update lifecycle",
+      "locator": "desktop/updater.ts; desktop/main.ts; desktop/preload.ts; desktop/update-contract.ts; .github/workflows/desktop-release-evidence.yml; docs/desktop-distribution.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopUpdateChannel",
+      "source": "Aldunis Code desktop release channel contract",
+      "locator": "desktop/update-contract.ts; desktop/updater.ts; scripts/preview-version.ts; .github/workflows/desktop-release-evidence.yml",
+      "confidence": 1.0
+    },
+    {
+      "subject": "selects_desktop_update_channel",
+      "source": "Aldunis Code desktop release channel contract",
+      "locator": "desktop/updater.ts; desktop/main.ts; docs/desktop-distribution.md",
       "confidence": 1.0
     },
     {
@@ -1129,6 +1375,24 @@
       "subject": "exports_delivery_correlation",
       "source": "Aldunis Code local release-delivery contract",
       "locator": "server/release-delivery-workflow.ts#receipt",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopShellEnvironment",
+      "source": "Aldunis Code desktop provider-process startup contract",
+      "locator": "desktop/shell-environment.ts; desktop/main.ts#app.whenReady",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopWindowLifecycle",
+      "source": "Aldunis Code desktop window lifecycle contract",
+      "locator": "desktop/main.ts#window.close; desktop/main.ts#app.activate; docs/desktop-distribution.md#runtime-boundary-and-lifecycle",
+      "confidence": 1.0
+    },
+    {
+      "subject": "prepares_provider_discovery",
+      "source": "Aldunis Code desktop provider-process startup contract",
+      "locator": "desktop/main.ts#app.whenReady; server/profiles.ts#probeRuntime",
       "confidence": 1.0
     }
   ]

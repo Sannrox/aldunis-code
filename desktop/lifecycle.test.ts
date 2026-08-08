@@ -4,11 +4,15 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
   closeServer,
+  isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
   localApplicationUrl,
   selectedDirectoryPath,
+  shouldHideWindowOnClose,
 } from "./lifecycle.ts";
+import { nightlyTag, nightlyVersion } from "../scripts/preview-version.ts";
+import { windowChromeOptions } from "./window-chrome.ts";
 import { validateDesktopReleaseTag } from "../scripts/verify-desktop-release-tag.ts";
 
 test("packaged startup waits for a loopback backend on an ephemeral port", async () => {
@@ -28,20 +32,55 @@ test("backend readiness rejects non-TCP and unavailable addresses", () => {
   assert.throws(() => localApplicationUrl("/tmp/aldunis.sock"), /did not provide a TCP address/);
 });
 
+test("desktop connection IPC accepts only the local application origin", () => {
+  assert.equal(
+    isLocalApplicationOrigin("http://127.0.0.1:4174/settings", "http://127.0.0.1:4174"),
+    true,
+  );
+  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4177/", "http://127.0.0.1:4174"), false);
+  assert.equal(
+    isLocalApplicationOrigin("https://code.example.test/", "http://127.0.0.1:4174"),
+    false,
+  );
+  assert.equal(isLocalApplicationOrigin("about:blank", "http://127.0.0.1:4174"), false);
+  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4174/", null), false);
+});
+
 test("deep links accept only the registered application protocol", () => {
   assert.equal(isSupportedDeepLink("aldunis-code://open"), true);
   assert.equal(isSupportedDeepLink("https://example.com"), false);
   assert.equal(isSupportedDeepLink("not a URL"), false);
 });
 
+test("macOS desktop close hides the window while explicit shutdown still closes it", () => {
+  assert.equal(shouldHideWindowOnClose("darwin", false), true);
+  assert.equal(shouldHideWindowOnClose("darwin", true), false);
+  assert.equal(shouldHideWindowOnClose("win32", false), false);
+  assert.equal(shouldHideWindowOnClose("linux", false), false);
+});
+
 test("native directory selection returns one path and cancellation returns no authority", () => {
-  assert.equal(selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }), "/project");
+  assert.equal(
+    selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }),
+    "/project",
+  );
   assert.equal(selectedDirectoryPath({ canceled: true, filePaths: ["/project"] }), null);
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
 });
 
+test("macOS desktop chrome shares the shell with native traffic controls", () => {
+  assert.deepEqual(windowChromeOptions("darwin"), {
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 18 },
+  });
+  assert.deepEqual(windowChromeOptions("win32"), { titleBarStyle: "default" });
+  assert.deepEqual(windowChromeOptions("linux"), { titleBarStyle: "default" });
+});
+
 test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"];
@@ -49,14 +88,28 @@ test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle"
 
   assert.match(mainProcessBuild ?? "", /esbuild desktop\/main\.ts/);
   assert.match(mainProcessBuild ?? "", /--format=esm/);
+  assert.match(mainProcessBuild ?? "", /--external:electron-updater/);
   assert.match(mainProcessBuild ?? "", /--external:proper-lockfile/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/grpc-js/);
   assert.match(mainProcessBuild ?? "", /--external:@grpc\/proto-loader/);
   assert.match(mainProcessBuild ?? "", /--external:@iarna\/toml/);
 });
 
+test("desktop main adapts the CommonJS updater and wires update shutdown", async () => {
+  const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+
+  assert.match(source, /import electronUpdater from "electron-updater";/);
+  assert.match(source, /engine: electronUpdater\.autoUpdater as unknown as DesktopUpdaterEngine/);
+  assert.match(source, /prepareForInstall: prepareForUpdate,/);
+  assert.match(source, /window\.on\("close", \(event\) =>/);
+  assert.match(source, /app\.on\("activate", showWindow\);/);
+  assert.match(source, /process\.platform !== "darwin"/);
+});
+
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"] ?? "";
@@ -67,7 +120,9 @@ test("desktop build emits the Shikigami permission hook beside the main bundle",
 });
 
 test("desktop build emits the host-owned browser MCP bridge beside the main bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"] ?? "";
@@ -75,6 +130,18 @@ test("desktop build emits the host-owned browser MCP bridge beside the main bund
   assert.match(command, /esbuild server\/browser-mcp\.mjs/);
   assert.match(command, /--format=esm/);
   assert.match(command, /--outfile=dist-electron\/browser-mcp\.mjs/);
+});
+
+test("desktop CLI build keeps its banner argument portable across shells", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
+    scripts?: { "build:cli"?: string };
+  };
+  const command = packageJson.scripts?.["build:cli"] ?? "";
+
+  assert.match(command, /--banner:js="#!\/usr\/bin\/env node"/);
+  assert.doesNotMatch(command, /--banner:js='/);
 });
 
 test("shared browser validates webview attachment parameters before guest creation", async () => {
@@ -99,8 +166,103 @@ test("desktop release evidence is bound to the package version", () => {
   );
 });
 
+test("nightly versions are generated as dated semver prereleases", () => {
+  const version = nightlyVersion("0.1.0", "20260804", 17);
+  assert.equal(version, "0.1.0-nightly.20260804.17");
+  assert.equal(nightlyTag(version), "v0.1.0-nightly.20260804.17");
+  assert.throws(
+    () => nightlyVersion("0.1.0-nightly.20260803.16", "20260804", 17),
+    /base package version is invalid/,
+  );
+  assert.throws(() => nightlyVersion("0.1.0", "2026-08-04", 17), /UTC build date is invalid/);
+});
+
+test("desktop distribution workflow keeps nightly publication separate from stable tags", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/desktop-release-evidence.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /Unsupported desktop release tag/);
+  assert.match(workflow, /release_tag="v\$\{version\}"/);
+  assert.match(workflow, /verify:desktop-release-tag/);
+  assert.match(workflow, /npm version --no-git-tag-version/);
+  assert.match(workflow, /-c\.mac\.bundleShortVersion="\$\{BASE_VERSION\}"/);
+  assert.match(workflow, /-c\.mac\.bundleVersion="\$\{BASE_VERSION\}"/);
+  assert.match(workflow, /--prerelease/);
+  assert.match(workflow, /gh release upload/);
+  assert.match(workflow, /--clobber/);
+  assert.match(workflow, /contents: write/);
+  assert.match(workflow, /publish-stable:/);
+  assert.match(workflow, /publish-nightly:/);
+  assert.match(workflow, /nightly\.yml/);
+  assert.match(workflow, /-c\.publish\.channel=/);
+  assert.match(workflow, /MACOS_SIGNING_MODE=adhoc/);
+  assert.match(workflow, /-c\.mac\.identity=-/);
+  assert.match(workflow, /Verify ad-hoc signature and checksums/);
+  assert.match(workflow, /RELEASE_CHANNEL: \$\{\{ needs\.validate\.outputs\.channel \}\}/);
+  assert.match(workflow, /Stable macOS releases require complete Developer ID signing/);
+  assert.match(workflow, /--config\.publish\.channel=\$env:UPDATE_CHANNEL/);
+  assert.match(workflow, /--config\.forceCodeSigning=true/);
+  assert.match(workflow, /WINDOWS_SIGNING_MODE=unsigned-nightly/);
+  assert.match(
+    workflow,
+    /Stable Windows releases require complete Authenticode signing credentials/,
+  );
+  assert.match(workflow, /Unsigned nightly package/);
+  assert.match(workflow, /if \(\$env:WINDOWS_SIGNING_MODE -eq "signed"\)/);
+  assert.match(
+    workflow,
+    /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/,
+  );
+  assert.match(workflow, /latest-linux\.yml/);
+  assert.match(workflow, /latest\.yml/);
+  assert.match(workflow, /merge:desktop-update-manifest/);
+  assert.match(workflow, /-name '\*\.zip'/);
+});
+
+test("README documents the unsigned Windows nightly fallback", async () => {
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /nightly workflow may publish an unsigned\s+Windows installer/);
+  assert.match(readme, /Stable\s+releases remain fail-closed/);
+});
+
+test("desktop packaging config produces channel updater metadata and macOS zip artifacts", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
+    dependencies?: { [name: string]: string };
+    scripts?: { "build:desktop-main"?: string };
+    repository?: { type?: string; url?: string };
+    build?: {
+      detectUpdateChannel?: boolean;
+      publish?: { provider?: string; owner?: string; repo?: string };
+      linux?: { maintainer?: string };
+      mac?: { target?: string[] };
+    };
+  };
+
+  assert.equal(packageJson.dependencies?.["electron-updater"], "6.8.9");
+  assert.match(packageJson.scripts?.["build:desktop-main"] ?? "", /external:electron-updater/);
+  assert.equal(packageJson.build?.linux?.maintainer, "Sannrox");
+  assert.deepEqual(packageJson.build?.mac?.target, ["dmg", "zip"]);
+  assert.equal(packageJson.build?.detectUpdateChannel, true);
+  assert.deepEqual(packageJson.build?.publish, {
+    provider: "github",
+    owner: "Sannrox",
+    repo: "aldunis-code",
+  });
+  assert.deepEqual(packageJson.repository, {
+    type: "git",
+    url: "https://github.com/Sannrox/aldunis-code.git",
+  });
+});
+
 test("native packages cannot overwrite the web build output", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     build?: { directories?: { output?: string } };
   };
 
@@ -108,7 +270,9 @@ test("native packages cannot overwrite the web build output", async () => {
 });
 
 test("mac packages explain the microphone permission used by voice input", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     build?: {
       mac?: {
         entitlements?: string;
@@ -118,9 +282,15 @@ test("mac packages explain the microphone permission used by voice input", async
     };
   };
 
-  assert.match(packageJson.build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? "", /microphone/i);
+  assert.match(
+    packageJson.build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? "",
+    /microphone/i,
+  );
 
-  const appEntitlements = await readFile(new URL("../build/entitlements.mac.plist", import.meta.url), "utf8");
+  const appEntitlements = await readFile(
+    new URL("../build/entitlements.mac.plist", import.meta.url),
+    "utf8",
+  );
   const inheritedEntitlements = await readFile(
     new URL("../build/entitlements.mac.inherit.plist", import.meta.url),
     "utf8",

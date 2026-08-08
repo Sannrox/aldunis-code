@@ -1,24 +1,103 @@
-name: Desktop release evidence
+name: Desktop release and nightly evidence
 
 on:
   push:
     tags:
       - "v*"
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'push' && github.ref || 'nightly' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  prepare:
     runs-on: ubuntu-24.04
+    outputs:
+      channel: ${{ steps.metadata.outputs.channel }}
+      update_channel: ${{ steps.metadata.outputs.update_channel }}
+      base_version: ${{ steps.metadata.outputs.base_version }}
+      version: ${{ steps.metadata.outputs.version }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      source_ref: ${{ steps.metadata.outputs.source_ref }}
+      artifact_prefix: ${{ steps.metadata.outputs.artifact_prefix }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'main' }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run verify:desktop-release-tag -- "${GITHUB_REF_NAME}"
+      - name: Resolve release identity
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref="$(git rev-parse HEAD)"
+          base_version="$(node -p 'require("./package.json").version')"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Unsupported desktop release tag: ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+            channel="stable"
+            update_channel="latest"
+            version="${base_version}"
+            release_tag="${GITHUB_REF_NAME}"
+            artifact_prefix="desktop"
+          else
+            channel="nightly"
+            update_channel="nightly"
+            utc_date="$(date -u +%Y%m%d)"
+            version="$(npm run --silent preview:version -- "${base_version}" "${utc_date}" "${GITHUB_RUN_NUMBER}")"
+            release_tag="v${version}"
+            artifact_prefix="desktop-nightly"
+          fi
+          {
+            echo "channel=${channel}"
+            echo "update_channel=${update_channel}"
+            echo "base_version=${base_version}"
+            echo "version=${version}"
+            echo "release_tag=${release_tag}"
+            echo "source_ref=${source_ref}"
+            echo "artifact_prefix=${artifact_prefix}"
+          } >> "${GITHUB_OUTPUT}"
+
+  validate:
+    needs: prepare
+    outputs:
+      channel: ${{ needs.prepare.outputs.channel }}
+      update_channel: ${{ needs.prepare.outputs.update_channel }}
+      base_version: ${{ needs.prepare.outputs.base_version }}
+      version: ${{ needs.prepare.outputs.version }}
+      release_tag: ${{ needs.prepare.outputs.release_tag }}
+      source_ref: ${{ needs.prepare.outputs.source_ref }}
+      artifact_prefix: ${{ needs.prepare.outputs.artifact_prefix }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify stable release tag
+        if: needs.prepare.outputs.channel == 'stable'
+        run: npm run verify:desktop-release-tag -- "${{ needs.prepare.outputs.release_tag }}"
+      - name: Set nightly package version
+        if: needs.prepare.outputs.channel == 'nightly'
+        env:
+          PACKAGE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - run: npm run check
       - run: npm test
       - run: npm run build
@@ -32,6 +111,17 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      BASE_VERSION: ${{ needs.validate.outputs.base_version }}
+      RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
+      MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+      MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+      MACOS_APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      MACOS_APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      MACOS_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      MACOS_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     strategy:
       fail-fast: false
       matrix:
@@ -40,37 +130,78 @@ jobs:
             arch: arm64
           - runner: macos-15-intel
             arch: x64
-    env:
-      CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Install App Store Connect API key
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
+      - name: Configure macOS signing
         run: |
-          key_path="${RUNNER_TEMP}/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "${APPLE_API_KEY_P8}" > "${key_path}"
-          chmod 600 "${key_path}"
-          echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
+          set -euo pipefail
+          if [[ -n "${MACOS_CSC_LINK}" \
+            && -n "${MACOS_CSC_KEY_PASSWORD}" \
+            && -n "${MACOS_APPLE_API_KEY_P8}" \
+            && -n "${MACOS_APPLE_API_KEY_ID}" \
+            && -n "${MACOS_APPLE_API_ISSUER}" \
+            && -n "${MACOS_APPLE_TEAM_ID}" ]]; then
+            echo "MACOS_SIGNING_MODE=developer-id" >> "${GITHUB_ENV}"
+            {
+              echo "CSC_LINK<<__ALDUNIS_CSC_LINK__"
+              printf '%s\n' "${MACOS_CSC_LINK}"
+              echo "__ALDUNIS_CSC_LINK__"
+              echo "CSC_KEY_PASSWORD<<__ALDUNIS_CSC_PASSWORD__"
+              printf '%s\n' "${MACOS_CSC_KEY_PASSWORD}"
+              echo "__ALDUNIS_CSC_PASSWORD__"
+              echo "APPLE_API_KEY_ID=${MACOS_APPLE_API_KEY_ID}"
+              echo "APPLE_API_ISSUER=${MACOS_APPLE_API_ISSUER}"
+              echo "APPLE_TEAM_ID=${MACOS_APPLE_TEAM_ID}"
+            } >> "${GITHUB_ENV}"
+            key_path="${RUNNER_TEMP}/AuthKey_${MACOS_APPLE_API_KEY_ID}.p8"
+            printf '%s' "${MACOS_APPLE_API_KEY_P8}" > "${key_path}"
+            chmod 600 "${key_path}"
+            echo "APPLE_API_KEY=${key_path}" >> "${GITHUB_ENV}"
+            echo "Developer ID signing and notarization enabled."
+          else
+            if [[ "${RELEASE_CHANNEL}" == "nightly" ]]; then
+              echo "MACOS_SIGNING_MODE=adhoc" >> "${GITHUB_ENV}"
+              echo "Apple signing credentials are incomplete; using ad-hoc signing without notarization for nightly."
+            else
+              echo "Stable macOS releases require complete Developer ID signing and notarization credentials." >&2
+              exit 1
+            fi
+          fi
       - run: npm run build
-      - name: Build signed and notarized package
-        run: >-
-          npx electron-builder
-          --mac dmg
-          --${{ matrix.arch }}
-          --publish never
-          -c.forceCodeSigning=true
-          -c.mac.notarize=true
+      - name: Build macOS package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${MACOS_SIGNING_MODE}" == "developer-id" ]]; then
+            signing_args=(-c.forceCodeSigning=true -c.mac.notarize=true)
+          else
+            signing_args=(-c.mac.identity=- -c.forceCodeSigning=true -c.mac.notarize=false)
+          fi
+          npx electron-builder \
+            --mac \
+            --${{ matrix.arch }} \
+            --publish never \
+            -c.publish.channel="${UPDATE_CHANNEL}" \
+            "${signing_args[@]}" \
+            -c.mac.bundleShortVersion="${BASE_VERSION}" \
+            -c.mac.bundleVersion="${BASE_VERSION}"
+      - name: Give macOS update assets a unique architecture name
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run rename:desktop-update-assets -- release "${{ matrix.arch }}" "${UPDATE_CHANNEL}"
       - name: Notarize and staple disk image
+        if: env.MACOS_SIGNING_MODE == 'developer-id'
         shell: bash
         run: |
           dmg_path="$(find release -maxdepth 1 -type f -name '*.dmg' -print -quit)"
@@ -82,6 +213,7 @@ jobs:
             --wait
           xcrun stapler staple "${dmg_path}"
       - name: Verify signature, notarization, and stapling
+        if: env.MACOS_SIGNING_MODE == 'developer-id'
         shell: bash
         run: |
           set -o pipefail
@@ -95,16 +227,40 @@ jobs:
             xcrun stapler validate "${app_path}"
             xcrun stapler validate "${dmg_path}"
           } 2>&1 | tee "release/verification-macos-${{ matrix.arch }}.txt"
-          shasum -a 256 "${dmg_path}" > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
+          shasum -a 256 release/*.dmg release/*.zip > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
+      - name: Verify ad-hoc signature and checksums
+        if: env.MACOS_SIGNING_MODE == 'adhoc'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="$(find release -type d -name '*.app' -print -quit)"
+          test -n "${app_path}"
+          {
+            codesign --verify --deep --strict --verbose=2 "${app_path}"
+            codesign --display --verbose=2 "${app_path}"
+          } 2>&1 | tee "release/verification-macos-${{ matrix.arch }}.txt"
+          if spctl --assess --type execute --verbose=2 "${app_path}"; then
+            echo "Gatekeeper assessment passed for the ad-hoc nightly package." \
+              | tee -a "release/verification-macos-${{ matrix.arch }}.txt"
+          else
+            echo "Gatekeeper assessment requires manual approval for this ad-hoc nightly package." \
+              | tee -a "release/verification-macos-${{ matrix.arch }}.txt"
+          fi
+          shasum -a 256 release/*.dmg release/*.zip > "release/SHA256SUMS-macos-${{ matrix.arch }}.txt"
       - uses: actions/attest@v4
         with:
-          subject-path: release/*.dmg
+          subject-path: |
+            release/*.dmg
+            release/*.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-${{ matrix.arch }}
+          name: ${{ needs.validate.outputs.artifact_prefix }}-macos-${{ matrix.arch }}
           if-no-files-found: error
           path: |
             release/*.dmg
+            release/*.zip
+            release/${{ needs.validate.outputs.update_channel }}-mac-${{ matrix.arch }}.yml
+            release/*.blockmap
             release/SHA256SUMS-macos-${{ matrix.arch }}.txt
             release/verification-macos-${{ matrix.arch }}.txt
 
@@ -117,18 +273,58 @@ jobs:
       id-token: write
       attestations: write
     env:
-      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_CHANNEL: ${{ needs.validate.outputs.channel }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
+      WINDOWS_CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      WINDOWS_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
+        shell: pwsh
+        run: npm version --no-git-tag-version $env:PACKAGE_VERSION
       - run: npm run build
-      - name: Build signed installer
-        run: npx electron-builder --win nsis --x64 --publish never -c.forceCodeSigning=true
+      - name: Configure Windows signing
+        shell: pwsh
+        run: |
+          $hasSigningCredentials = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_LINK) -and `
+            -not [string]::IsNullOrWhiteSpace($env:WINDOWS_CSC_KEY_PASSWORD)
+          if ($hasSigningCredentials) {
+            "WINDOWS_SIGNING_MODE=signed" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CSC_LINK=$env:WINDOWS_CSC_LINK" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "CSC_KEY_PASSWORD=$env:WINDOWS_CSC_KEY_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows Authenticode signing enabled."
+          } elseif ($env:RELEASE_CHANNEL -eq "nightly") {
+            "WINDOWS_SIGNING_MODE=unsigned-nightly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "Windows signing credentials are incomplete; building an unsigned nightly package."
+          } else {
+            throw "Stable Windows releases require complete Authenticode signing credentials."
+          }
+      - name: Build Windows installer
+        # PowerShell treats -c.foo=bar as the short -c config-path option.
+        # Use electron-builder's long-form dotted configuration for native Windows.
+        shell: pwsh
+        run: |
+          $builderArgs = @(
+            "--win",
+            "nsis",
+            "--x64",
+            "--publish",
+            "never",
+            "--config.publish.channel=$env:UPDATE_CHANNEL"
+          )
+          if ($env:WINDOWS_SIGNING_MODE -eq "signed") {
+            $builderArgs += "--config.forceCodeSigning=true"
+          }
+          npx electron-builder @builderArgs
       - name: Verify Authenticode and checksums
         shell: pwsh
         run: |
@@ -138,10 +334,17 @@ jobs:
           }
           $evidence = foreach ($installer in $installers) {
             $signature = Get-AuthenticodeSignature $installer.FullName
-            if ($signature.Status -ne "Valid") {
-              throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
+            if ($env:WINDOWS_SIGNING_MODE -eq "signed") {
+              if ($signature.Status -ne "Valid") {
+                throw "Invalid Authenticode signature for $($installer.Name): $($signature.Status)"
+              }
+              "$($installer.Name): $($signature.Status); $($signature.SignerCertificate.Subject)"
+            } else {
+              if ($signature.Status -ne "NotSigned") {
+                throw "Expected an unsigned nightly Windows installer, got Authenticode status $($signature.Status) for $($installer.Name)"
+              }
+              "Unsigned nightly package: $($installer.Name); Authenticode status=$($signature.Status)"
             }
-            "$($installer.Name): $($signature.Status); $($signature.SignerCertificate.Subject)"
           }
           $evidence | Tee-Object -FilePath release/verification-windows-x64.txt
           $checksums = foreach ($installer in $installers) {
@@ -154,10 +357,12 @@ jobs:
           subject-path: release/*.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-windows-x64
+          name: ${{ needs.validate.outputs.artifact_prefix }}-windows-x64
           if-no-files-found: error
           path: |
             release/*.exe
+            release/${{ needs.validate.outputs.update_channel }}.yml
+            release/*.blockmap
             release/SHA256SUMS-windows-x64.txt
             release/verification-windows-x64.txt
 
@@ -168,16 +373,24 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+    env:
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      UPDATE_CHANNEL: ${{ needs.validate.outputs.update_channel }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Set nightly package version
+        if: needs.validate.outputs.channel == 'nightly'
+        run: npm version --no-git-tag-version "${PACKAGE_VERSION}"
       - run: npm run build
       - name: Build native packages
-        run: npx electron-builder --linux AppImage deb --x64 --publish never
+        run: npx electron-builder --linux AppImage deb --x64 --publish never -c.publish.channel="${UPDATE_CHANNEL}"
       - name: Record package checksums
         run: |
           sha256sum release/*.AppImage release/*.deb > release/SHA256SUMS-linux-x64.txt
@@ -189,10 +402,172 @@ jobs:
             release/*.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: desktop-linux-x64
+          name: ${{ needs.validate.outputs.artifact_prefix }}-linux-x64
           if-no-files-found: error
           path: |
             release/*.AppImage
             release/*.deb
+            release/${{ needs.validate.outputs.update_channel }}-linux.yml
+            release/*.blockmap
             release/SHA256SUMS-linux-x64.txt
             release/verification-linux-x64.txt
+
+  publish-stable:
+    if: needs.validate.outputs.channel == 'stable'
+    needs:
+      - validate
+      - macos
+      - windows
+      - linux
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+      SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.validate.outputs.artifact_prefix }}-*
+          path: release
+          merge-multiple: true
+      - name: Merge macOS architecture update metadata
+        run: >-
+          npm run merge:desktop-update-manifest --
+          release/latest-mac.yml
+          release/latest-mac-arm64.yml
+          release/latest-mac-x64.yml
+      - name: Publish stable desktop release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find release -type f \( \
+            -name '*.dmg' -o \
+            -name '*.zip' -o \
+            -name '*.exe' -o \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.blockmap' -o \
+            -name 'latest.yml' -o \
+            -name 'latest-linux.yml' -o \
+            -name 'latest-mac.yml' -o \
+            -name 'SHA256SUMS-*' -o \
+            -name 'verification-*' \
+          \) -print | sort)
+          test "${#assets[@]}" -gt 0
+          notes=$'Stable Aldunis Code desktop release with signed packages and update metadata.\n\nSource commit: '"${SOURCE_REF}"
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Aldunis Code ${PACKAGE_VERSION}" \
+              --latest \
+              --notes "${notes}"
+          else
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${SOURCE_REF}" \
+              --title "Aldunis Code ${PACKAGE_VERSION}" \
+              --latest \
+              --notes "${notes}"
+          fi
+
+  publish-nightly:
+    if: needs.validate.outputs.channel == 'nightly'
+    needs:
+      - validate
+      - macos
+      - windows
+      - linux
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+      SOURCE_REF: ${{ needs.validate.outputs.source_ref }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.validate.outputs.source_ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ needs.validate.outputs.artifact_prefix }}-*
+          path: release
+          merge-multiple: true
+      - name: Publish nightly prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg channel "nightly" \
+            --arg version "${PACKAGE_VERSION}" \
+            --arg tag "${RELEASE_TAG}" \
+            --arg source_commit "${SOURCE_REF}" \
+            '{channel: $channel, version: $version, tag: $tag, source_commit: $source_commit}' \
+            > release/aldunis-code-nightly.json
+          npm run merge:desktop-update-manifest -- \
+            release/nightly-mac.yml \
+            release/nightly-mac-arm64.yml \
+            release/nightly-mac-x64.yml
+          mapfile -t assets < <(find release -type f \( \
+            -name '*.dmg' -o \
+            -name '*.zip' -o \
+            -name '*.exe' -o \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.blockmap' -o \
+            -name 'nightly.yml' -o \
+            -name 'nightly-linux.yml' -o \
+            -name 'nightly-mac.yml' -o \
+            -name 'SHA256SUMS-*' -o \
+            -name 'verification-*' -o \
+            -name 'aldunis-code-nightly.json' \
+          \) -print | sort)
+          test "${#assets[@]}" -gt 0
+          macos_note="macOS packages use Developer ID signing and notarization."
+          if grep -R -q 'Signature=adhoc' release/verification-macos-*.txt; then
+            macos_note="macOS packages use ad-hoc signing; first launch requires manual Gatekeeper approval."
+          fi
+          windows_note="Windows packages use Authenticode signing."
+          if grep -R -q 'Unsigned nightly package' release/verification-windows-x64.txt; then
+            windows_note="Windows nightly package is unsigned because Authenticode credentials were not configured; stable releases remain fail-closed."
+          fi
+          notes=$'Opt-in nightly build with nightly update metadata. It does not promote a Tenkai channel.\n\n'"${macos_note}"$'\n\n'"${windows_note}"$'\n\nSource commit: '"${SOURCE_REF}"
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Aldunis Code Nightly ${PACKAGE_VERSION}" \
+              --prerelease \
+              --notes "${notes}"
+          else
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${SOURCE_REF}" \
+              --title "Aldunis Code Nightly ${PACKAGE_VERSION}" \
+              --prerelease \
+              --notes "${notes}"
+          fi

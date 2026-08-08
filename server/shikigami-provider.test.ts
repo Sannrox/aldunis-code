@@ -14,12 +14,14 @@ import {
   confirmShikigamiRunId,
   normalizeShikigamiEvent,
   parseShikigamiStderrLine,
+  parseShikigamiModelCatalog,
   permissionHookRuntimeEnvironment,
   managedShikigamiEnvironment,
   loadShikigamiConfig,
   resolveModelAdapter,
   ShikigamiAdapter,
   ShikigamiToolIdTracker,
+  supportsShikigamiModelCatalog,
   toolsForMode,
 } from "./shikigami-provider.ts";
 
@@ -27,6 +29,42 @@ test("assertSupportedShikigamiVersion accepts 1.0.2+ product lines", () => {
   assert.equal(assertSupportedShikigamiVersion("shikigami 1.0.2"), "1.0.2");
   assert.throws(() => assertSupportedShikigamiVersion("shikigami 0.2.0"), /major version 1/);
   assert.throws(() => assertSupportedShikigamiVersion("shikigami 1.0.1"), /1\.0\.2/);
+});
+
+test("Shikigami model catalog support starts at 1.0.5", () => {
+  assert.equal(supportsShikigamiModelCatalog("1.0.4"), false);
+  assert.equal(supportsShikigamiModelCatalog("1.0.5"), true);
+  assert.equal(supportsShikigamiModelCatalog("1.1.0"), true);
+});
+
+test("parseShikigamiModelCatalog maps canonical models and the auto route", () => {
+  const models = parseShikigamiModelCatalog(JSON.stringify({
+    default_model: "auto",
+    available_models: [
+      {
+        canonical_model: "auto",
+        upstream_model: "auto",
+        provider: "sekai-chisei",
+        lifecycle: "routing",
+      },
+      {
+        canonical_model: "openai/gpt-5.5",
+        upstream_model: "gpt-5.5",
+        provider: "openai",
+        lifecycle: "active",
+      },
+      {
+        canonical_model: "openai/gpt-5.5",
+        upstream_model: "gpt-5.5",
+        provider: "openai",
+        lifecycle: "active",
+      },
+    ],
+  }));
+  assert.deepEqual(models, [
+    { id: "auto", displayName: "Auto (Sekai-Chisei)", isDefault: true },
+    { id: "openai/gpt-5.5", displayName: "openai/gpt-5.5", isDefault: false },
+  ]);
 });
 
 test("managed Shikigami requires plane-compatible version and emits the fixed profile", () => {
@@ -416,6 +454,41 @@ console.log("shikigami 1.0.2");
   assert.match(readiness.detail ?? "", /OPENAI_API_KEY|SHIKIGAMI_API_KEY_ENV|scripted/);
 });
 
+test("ShikigamiAdapter readiness discovers governed model catalog", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-models-"));
+  const executable = join(directory, "fake-shikigami");
+  const script = [
+    "#!/usr/bin/env node",
+    "const args = process.argv.slice(2);",
+    "if (args[0] === \"version\") {",
+    "  console.log(\"shikigami 1.0.5\");",
+    "  process.exit(0);",
+    "}",
+    "if (args.includes(\"doctor\") && args.includes(\"--models\") && args.includes(\"--json\")) {",
+    "  console.log(JSON.stringify({",
+    "    default_model: \"auto\",",
+    "    available_models: [",
+    "      { canonical_model: \"auto\", upstream_model: \"auto\" },",
+    "      { canonical_model: \"openai/gpt-5.5\", upstream_model: \"gpt-5.5\" },",
+    "    ],",
+    "  }));",
+    "  process.exit(0);",
+    "}",
+    "process.exit(1);",
+  ].join("\n");
+  await writeFile(executable, script);
+  await chmod(executable, 0o700);
+  const adapter = new ShikigamiAdapter(executable);
+  const readiness = await adapter.readiness({
+    ...process.env,
+    SHIKIGAMI_MODEL_ADAPTER: "plane",
+  }, { cwd: directory });
+  assert.deepEqual(readiness.models, [
+    { id: "auto", displayName: "Auto (Sekai-Chisei)", isDefault: true },
+    { id: "openai/gpt-5.5", displayName: "openai/gpt-5.5", isDefault: false },
+  ]);
+});
+
 test("ShikigamiAdapter normalizes a parked question as a native resume request", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-park-"));
   const executable = join(directory, "fake-shikigami");
@@ -632,6 +705,9 @@ process.exit(1);
   const failed = events.find((event) => event.kind === "failed");
   assert.equal(failed?.kind, "failed");
   if (failed?.kind === "failed") {
+    assert.equal(failed.code, "provider_mode_violation");
+    assert.equal(failed.toolName, "write_file");
+    assert.equal(failed.mode, "ask");
     assert.match(failed.message, /write_file/);
     assert.match(failed.message, /ask mode/);
   }

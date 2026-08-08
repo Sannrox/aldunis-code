@@ -13,6 +13,10 @@ import {
 import { loadManagedHostConfiguration, ManagedHost } from "./managed-host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
+import {
+  DEFAULT_HOST_PORT,
+  DEFAULT_SSH_REMOTE_PORT,
+} from "../src/ports.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,9 +54,9 @@ if (cliInvocation.kind === "auth") {
 
 const { options } = cliInvocation;
 const host = options.host ?? "127.0.0.1";
-const portValue = options.port ?? "4174";
-const port = Number(portValue);
 const remoteMode = options.remote;
+const portValue = options.port ?? String(remoteMode === "ssh" ? DEFAULT_SSH_REMOTE_PORT : DEFAULT_HOST_PORT);
+const port = Number(portValue);
 const publicUrlInput = options.publicUrl;
 const tlsCertificatePath = options.tlsCert;
 const tlsKeyPath = options.tlsKey;
@@ -90,10 +94,10 @@ if (!remoteMode && !managedMode) {
   if (!isPrivateAddress(host)) {
     throw new Error("LAN remote access requires an explicit private IPv4 or unique-local IPv6 address.");
   }
-} else if (remoteMode === "tailscale") {
+} else if (remoteMode === "tailscale" || remoteMode === "ssh") {
   assertLoopbackHost(host);
 } else {
-  throw new Error("Remote mode must be 'lan' or 'tailscale'.");
+  throw new Error("Remote mode must be 'lan', 'tailscale', or 'ssh'.");
 }
 let configuredPublicUrl: string | undefined;
 if (remoteMode === "lan") {
@@ -116,7 +120,9 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid port: ${portValue}`);
 }
 
-const remoteAuth = remoteMode ? new RemoteAuth(defaultStateDirectory()) : undefined;
+const remoteAuth = remoteMode
+  ? new RemoteAuth(defaultStateDirectory(), { allowLoopbackHttp: remoteMode === "ssh" })
+  : undefined;
 const managedHost = managedMode
   ? new ManagedHost(await loadManagedHostConfiguration())
   : undefined;
@@ -126,6 +132,7 @@ const tls = remoteMode === "lan" || managedNetworkBind
       key: await readFile(tlsKeyPath!),
     }
   : undefined;
+let publicUrl = configuredPublicUrl;
 const state = new LocalStateStore();
 const releaseWriterLease = await state.acquireWriterLease();
 const server = createLocalHost(
@@ -138,6 +145,11 @@ const server = createLocalHost(
   undefined,
   undefined,
   managedHost,
+  undefined,
+  undefined,
+  remoteMode === "ssh" ? undefined : () => publicUrl,
+  host,
+  remoteMode !== "ssh",
 );
 let tailscaleConfigured = false;
 
@@ -179,7 +191,6 @@ server.listen(port, host, async () => {
     console.log(`Aldunis Code is available at ${localUrl}`);
     return;
   }
-  let publicUrl = localUrl;
   if (remoteMode === "tailscale") {
     try {
       const before = await execFileAsync("tailscale", ["serve", "status", "--json"]);
@@ -205,9 +216,12 @@ server.listen(port, host, async () => {
       process.exitCode = 1;
       return;
     }
-  } else {
+  } else if (remoteMode === "lan") {
     publicUrl = configuredPublicUrl!;
     console.warn(`LAN mode is available only through the certificate-matched HTTPS origin ${publicUrl}.`);
+  } else {
+    console.log(`SSH remote workbench is available through the loopback forward at ${localUrl}.`);
+    return;
   }
   try {
     const pairing = await remoteAuth.issuePairing();
