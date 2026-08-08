@@ -243,7 +243,7 @@ test("desktop packaging config produces channel updater metadata and macOS zip a
     };
   };
 
-  assert.equal(packageJson.dependencies?.["electron-updater"], "6.6.2");
+  assert.equal(packageJson.dependencies?.["electron-updater"], "6.8.9");
   assert.match(packageJson.scripts?.["build:desktop-main"] ?? "", /external:electron-updater/);
   assert.equal(packageJson.build?.linux?.maintainer, "Sannrox");
   assert.deepEqual(packageJson.build?.mac?.target, ["dmg", "zip"]);
