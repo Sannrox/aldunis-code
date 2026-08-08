@@ -15,8 +15,9 @@ export const PROVIDER_MANAGEMENT_ACTION_COPY = {
 export function commandPaletteThreadMatches(thread: ThreadMetadata, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return false;
-  return [thread.title, thread.projectName, thread.worktree]
-    .some((value) => value.toLocaleLowerCase().includes(normalized));
+  return [thread.title, thread.projectName, thread.worktree].some((value) =>
+    value.toLocaleLowerCase().includes(normalized),
+  );
 }
 
 export function CommandPalette({
@@ -30,6 +31,7 @@ export function CommandPalette({
   onConnections = () => undefined,
   onManageWorktrees,
   onAutomations,
+  onAutonomy,
   threads = [],
   onOpenConversation = () => undefined,
   hasRepository = false,
@@ -44,6 +46,7 @@ export function CommandPalette({
   onConnections?: () => void;
   onManageWorktrees: () => void;
   onAutomations: () => void;
+  onAutonomy: () => void;
   threads?: ThreadMetadata[];
   onOpenConversation?: (threadId: string) => void;
   /** Worktree management requires an open repository; omit the action otherwise. */
@@ -105,6 +108,11 @@ export function CommandPalette({
           detail: "Schedule interval or cron prompts into existing conversations",
           run: onAutomations,
         },
+        {
+          label: "Autonomy",
+          detail: "Runs, heartbeats, hooks, standing orders, and the maintenance gardener",
+          run: onAutonomy,
+        },
         ...(hasRepository
           ? [
               {
@@ -128,7 +136,21 @@ export function CommandPalette({
           action.detail.toLocaleLowerCase().includes(q)
         );
       }),
-    [hasRepository, onActivity, onAutomations, onConnections, onManageWorktrees, onOpenConversation, onOpenRepository, onPreferences, onProviderManagement, onSearch, query, threads],
+    [
+      hasRepository,
+      onActivity,
+      onAutonomy,
+      onAutomations,
+      onConnections,
+      onManageWorktrees,
+      onOpenConversation,
+      onOpenRepository,
+      onPreferences,
+      onProviderManagement,
+      onSearch,
+      query,
+      threads,
+    ],
   );
 
   useEffect(() => {

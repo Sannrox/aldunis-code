@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ApprovalSnapshot } from "./permission.ts";
-import {
-  assertParentRoutedApproval,
-  projectDelegatedApprovals,
-} from "./delegated-approvals.ts";
+import { assertParentRoutedApproval, projectDelegatedApprovals } from "./delegated-approvals.ts";
 import type { StateProjection } from "./state.ts";
 
 function fixture(): StateProjection {
@@ -13,15 +10,17 @@ function fixture(): StateProjection {
     sequence: 1,
     projects: [],
     threads: [],
-    turns: [{
-      schemaVersion: 2,
-      id: "turn-child",
-      threadId: "child",
-      status: "waiting_for_approval",
-      createdAt: "2026-07-30T10:00:00.000Z",
-      completedAt: null,
-      providerRunId: "run-child",
-    }],
+    turns: [
+      {
+        schemaVersion: 2,
+        id: "turn-child",
+        threadId: "child",
+        status: "waiting_for_approval",
+        createdAt: "2026-07-30T10:00:00.000Z",
+        completedAt: null,
+        providerRunId: "run-child",
+      },
+    ],
     messages: [],
     activities: [],
     plans: [],
@@ -32,13 +31,24 @@ function fixture(): StateProjection {
     fileReviews: [],
     conversationDeletions: [],
     forks: [],
-    delegatedRelationships: [{
-      schemaVersion: 2,
-      id: "relationship",
-      parentThreadId: "parent",
-      childThreadId: "child",
-      createdAt: "2026-07-30T09:00:00.000Z",
-    }],
+    delegatedRelationships: [
+      {
+        schemaVersion: 2,
+        id: "relationship",
+        parentThreadId: "parent",
+        childThreadId: "child",
+        createdAt: "2026-07-30T09:00:00.000Z",
+      },
+    ],
+    inputRequests: [],
+    inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 
@@ -61,11 +71,13 @@ function approval(overrides: Partial<ApprovalSnapshot> = {}): ApprovalSnapshot {
 
 test("delegated approvals project only current pending child authority", () => {
   const state = fixture();
-  assert.deepEqual(projectDelegatedApprovals(state, [approval()]), [{
-    parentThreadId: "parent",
-    childThreadId: "child",
-    approval: approval(),
-  }]);
+  assert.deepEqual(projectDelegatedApprovals(state, [approval()]), [
+    {
+      parentThreadId: "parent",
+      childThreadId: "child",
+      approval: approval(),
+    },
+  ]);
   assert.deepEqual(projectDelegatedApprovals(state, [approval({ state: "denied" })]), []);
   assert.deepEqual(projectDelegatedApprovals(state, [approval({ conversationId: "other" })]), []);
   assert.deepEqual(projectDelegatedApprovals(state, [approval({ runId: "stale-run" })]), []);
@@ -73,20 +85,20 @@ test("delegated approvals project only current pending child authority", () => {
 
 test("parent-routed approval requires the exact live relationship and approval", () => {
   const state = fixture();
-  assert.doesNotThrow(() => assertParentRoutedApproval(state, [approval()], {
-    parentThreadId: "parent",
-    childThreadId: "child",
-    approvalId: "approval",
-  }));
-  assert.doesNotThrow(() => assertParentRoutedApproval(
-    state,
-    [approval({ state: "denied" })],
-    {
+  assert.doesNotThrow(() =>
+    assertParentRoutedApproval(state, [approval()], {
       parentThreadId: "parent",
       childThreadId: "child",
       approvalId: "approval",
-    },
-  ));
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertParentRoutedApproval(state, [approval({ state: "denied" })], {
+      parentThreadId: "parent",
+      childThreadId: "child",
+      approvalId: "approval",
+    }),
+  );
   for (const binding of [
     { parentThreadId: "other", childThreadId: "child", approvalId: "approval" },
     { parentThreadId: "parent", childThreadId: "other", approvalId: "approval" },
@@ -94,11 +106,7 @@ test("parent-routed approval requires the exact live relationship and approval",
   ]) {
     assert.throws(
       () => assertParentRoutedApproval(state, [approval()], binding),
-      (error: unknown) => (
-        error instanceof Error
-        && "status" in error
-        && error.status === 403
-      ),
+      (error: unknown) => error instanceof Error && "status" in error && error.status === 403,
     );
   }
 });

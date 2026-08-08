@@ -3,18 +3,22 @@
 Timer-only **durable prompts** that fire into an **existing conversation** while
 the local host is running.
 
+Automations are the schedule-to-conversation layer. For read-only awareness,
+durable multi-step work, internal event reactions, and maintenance reports, use
+the [Autonomy](autonomy.md) surface instead.
+
 Open via the command palette → **Automations**.
 
 ## What they are
 
-| Field | Meaning |
-| --- | --- |
-| Name | Operator label |
-| Target | Existing thread only (no new chat / worktree) |
-| Prompt | Durable instruction for each run |
-| Mode | Ask / Plan / Build (defaults apply per create UI) |
-| Schedule | Interval (≥ 60 seconds) or 5-field **UTC** cron |
-| Enabled | Paused when off |
+| Field    | Meaning                                           |
+| -------- | ------------------------------------------------- |
+| Name     | Operator label                                    |
+| Target   | Existing thread only (no new chat / worktree)     |
+| Prompt   | Durable instruction for each run                  |
+| Mode     | Ask / Plan / Build (defaults apply per create UI) |
+| Schedule | Interval (≥ 60 seconds) or 5-field **UTC** cron   |
+| Enabled  | Paused when off                                   |
 
 Design record: [decisions/conversation-automations.md](decisions/conversation-automations.md).
 
@@ -56,18 +60,21 @@ startup recovery use one local authority. See [local-data.md](local-data.md).
 
 ## Non-goals
 
-- Event triggers (git hooks, webhooks, file watchers)
+- External event triggers (git hooks, webhooks, file watchers)
 - RFC 5545 RRULE
 - New conversation or worktree targets
 - Chisei policy hooks
 - Automatic replay of an unknown provider execution
 
+Internal lifecycle hooks are available in the Autonomy surface. They cannot
+silently turn an automation into a provider mutation or bypass approval.
+
 ## API (host)
 
-| Route | Purpose |
-| --- | --- |
-| `POST /api/automations/list` | List automations |
-| `POST /api/automations/create` | Create |
-| `POST /api/automations/update` | Update / pause |
-| `POST /api/automations/delete` | Delete |
-| `POST /api/automations/run-now` | Immediate fire |
+| Route                           | Purpose          |
+| ------------------------------- | ---------------- |
+| `POST /api/automations/list`    | List automations |
+| `POST /api/automations/create`  | Create           |
+| `POST /api/automations/update`  | Update / pause   |
+| `POST /api/automations/delete`  | Delete           |
+| `POST /api/automations/run-now` | Immediate fire   |

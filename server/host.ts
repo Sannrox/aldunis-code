@@ -111,6 +111,15 @@ import {
   type AutomationFireExecution,
   type AutomationSchedule,
 } from "./automations.ts";
+import { AutonomyScheduler, AutonomyEngine } from "./autonomy-engine.ts";
+import {
+  AutonomyError,
+  parseAutonomyHook,
+  parseHeartbeatMonitor,
+  parseStandingOrder,
+  type AutonomyHookEvent,
+  type HeartbeatMonitor,
+} from "./autonomy.ts";
 import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
@@ -286,6 +295,23 @@ function filterManagedProjection(
       (receipt) =>
         threadIds.has(receipt.childThreadId) &&
         (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
+    ),
+    autonomyRuns: projection.autonomyRuns.filter(
+      (run) => run.projectId === null || projectIds.has(run.projectId),
+    ),
+    autonomyTasks: projection.autonomyTasks.filter((task) => {
+      const run = projection.autonomyRuns.find((candidate) => candidate.id === task.runId);
+      return run?.projectId === null || (run?.projectId ? projectIds.has(run.projectId) : false);
+    }),
+    autonomyFlows: projection.autonomyFlows,
+    heartbeatMonitors: projection.heartbeatMonitors.filter(
+      (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
+    ),
+    standingOrders: projection.standingOrders.filter(
+      (order) => order.projectId === null || projectIds.has(order.projectId),
+    ),
+    autonomyHooks: projection.autonomyHooks.filter(
+      (hook) => hook.projectId === null || projectIds.has(hook.projectId),
     ),
   };
 }
@@ -534,6 +560,7 @@ async function handleApi(
   preferences: PreferencesStore,
   automations: AutomationStore,
   automationScheduler: AutomationScheduler,
+  autonomy: AutonomyEngine,
   worktrees: WorktreeManager,
   directories: DirectoryBrowser,
   adapters: ProviderAdapterStore,
@@ -2112,6 +2139,350 @@ async function handleApi(
       });
       return true;
     }
+    if (route === "/api/autonomy/load") {
+      const snapshot = await autonomy.snapshot(200);
+      if (!managedHost) {
+        sendJson(response, 200, snapshot);
+        return true;
+      }
+      const visible = filterManagedProjection(await state.load(), managedHost);
+      const projectIds = new Set(visible.projects.map((project) => project.id));
+      const runs = snapshot.runs.filter(
+        (run) => run.projectId === null || projectIds.has(run.projectId),
+      );
+      const runIds = new Set(runs.map((run) => run.id));
+      sendJson(response, 200, {
+        ...snapshot,
+        runs,
+        tasks: snapshot.tasks.filter((task) => runIds.has(task.runId)),
+        heartbeatMonitors: snapshot.heartbeatMonitors.filter(
+          (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
+        ),
+        standingOrders: snapshot.standingOrders.filter(
+          (order) => order.projectId === null || projectIds.has(order.projectId),
+        ),
+        hooks: snapshot.hooks.filter(
+          (hook) => hook.projectId === null || projectIds.has(hook.projectId),
+        ),
+      });
+      return true;
+    }
+    if (route === "/api/autonomy/gardener/start") {
+      if (remoteRequest || managedHost) {
+        throw new AutonomyError("Autonomous runs can only be started from the local host.", 403);
+      }
+      const body = (await readJson(request)) as {
+        projectId?: unknown;
+        worktree?: unknown;
+        goal?: unknown;
+        standingOrderIds?: unknown;
+      };
+      if (typeof body.projectId !== "string") throw new AutonomyError("A project is required.");
+      if (
+        body.worktree !== undefined &&
+        body.worktree !== null &&
+        typeof body.worktree !== "string"
+      ) {
+        throw new AutonomyError("The worktree is invalid.");
+      }
+      if (body.goal !== undefined && typeof body.goal !== "string")
+        throw new AutonomyError("The gardener goal is invalid.");
+      const standingOrderIds =
+        body.standingOrderIds === undefined
+          ? undefined
+          : Array.isArray(body.standingOrderIds) &&
+              body.standingOrderIds.every((item) => typeof item === "string")
+            ? (body.standingOrderIds as string[])
+            : (() => {
+                throw new AutonomyError("Standing order ids are invalid.");
+              })();
+      const run = await autonomy.startGardener({
+        projectId: body.projectId,
+        worktree: typeof body.worktree === "string" ? body.worktree : null,
+        goal: typeof body.goal === "string" ? body.goal : undefined,
+        standingOrderIds,
+      });
+      sendJson(response, 202, run);
+      return true;
+    }
+    if (route === "/api/autonomy/runs/cancel") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot cancel autonomy runs.", 403);
+      const body = (await readJson(request)) as { runId?: unknown };
+      if (typeof body.runId !== "string") throw new AutonomyError("An autonomy run is required.");
+      sendJson(response, 200, await state.cancelAutonomyRun(body.runId));
+      return true;
+    }
+    if (route === "/api/autonomy/runs/resume") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot resume autonomy runs.", 403);
+      const body = (await readJson(request)) as { runId?: unknown };
+      if (typeof body.runId !== "string") throw new AutonomyError("An autonomy run is required.");
+      const run = await state.resumeAutonomyRun(body.runId);
+      await autonomy.resumeRun(run.id);
+      sendJson(response, 202, run);
+      return true;
+    }
+    if (route === "/api/autonomy/heartbeats/create") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot create heartbeats.", 403);
+      const body = (await readJson(request)) as {
+        name?: unknown;
+        projectId?: unknown;
+        worktree?: unknown;
+        goal?: unknown;
+        everySeconds?: unknown;
+        flowId?: unknown;
+        activeHours?: unknown;
+      };
+      if (
+        typeof body.name !== "string" ||
+        typeof body.goal !== "string" ||
+        typeof body.everySeconds !== "number"
+      ) {
+        throw new AutonomyError("Heartbeat name, goal, and interval are required.");
+      }
+      if (
+        body.projectId !== undefined &&
+        body.projectId !== null &&
+        typeof body.projectId !== "string"
+      )
+        throw new AutonomyError("Heartbeat project is invalid.");
+      if (
+        body.worktree !== undefined &&
+        body.worktree !== null &&
+        typeof body.worktree !== "string"
+      )
+        throw new AutonomyError("Heartbeat worktree is invalid.");
+      sendJson(
+        response,
+        200,
+        await autonomy.addHeartbeat({
+          name: body.name,
+          projectId: typeof body.projectId === "string" ? body.projectId : null,
+          worktree: typeof body.worktree === "string" ? body.worktree : null,
+          goal: body.goal,
+          everySeconds: body.everySeconds,
+          flowId: typeof body.flowId === "string" ? body.flowId : undefined,
+          activeHours: body.activeHours as HeartbeatMonitor["activeHours"] | undefined,
+        }),
+      );
+      return true;
+    }
+    if (route === "/api/autonomy/heartbeats/update") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot update heartbeats.", 403);
+      const body = (await readJson(request)) as {
+        id?: unknown;
+        name?: unknown;
+        projectId?: unknown;
+        worktree?: unknown;
+        goal?: unknown;
+        everySeconds?: unknown;
+        flowId?: unknown;
+        activeHours?: unknown;
+        enabled?: unknown;
+      };
+      if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
+      const current = (await state.load()).heartbeatMonitors.find(
+        (monitor) => monitor.id === body.id,
+      );
+      if (!current) throw new AutonomyError("Heartbeat not found.", 404);
+      const updated = parseHeartbeatMonitor({
+        ...current,
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.projectId === "string" || body.projectId === null
+          ? { projectId: body.projectId }
+          : {}),
+        ...(typeof body.worktree === "string" || body.worktree === null
+          ? { worktree: body.worktree }
+          : {}),
+        ...(typeof body.goal === "string" ? { goal: body.goal } : {}),
+        ...(typeof body.everySeconds === "number" ? { everySeconds: body.everySeconds } : {}),
+        ...(typeof body.flowId === "string" ? { flowId: body.flowId } : {}),
+        ...(body.activeHours !== undefined ? { activeHours: body.activeHours } : {}),
+        ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+      await state.saveAutonomyRecords({ heartbeatMonitors: [updated] });
+      sendJson(response, 200, updated);
+      return true;
+    }
+    if (route === "/api/autonomy/heartbeats/delete") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot delete heartbeats.", 403);
+      const body = (await readJson(request)) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
+      await state.removeAutonomyRecord("heartbeat", body.id);
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+    if (route === "/api/autonomy/heartbeats/run-now") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot run heartbeats.", 403);
+      const body = (await readJson(request)) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
+      const monitor = (await state.load()).heartbeatMonitors.find(
+        (candidate) => candidate.id === body.id,
+      );
+      if (!monitor) throw new AutonomyError("Heartbeat not found.", 404);
+      const run = await autonomy.startHeartbeat(monitor, "manual");
+      await state.saveAutonomyRecords({
+        heartbeatMonitors: [
+          {
+            ...monitor,
+            lastRunAt: new Date().toISOString(),
+            lastRunId: run.id,
+            lastStatus: "queued",
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      });
+      sendJson(response, 202, run);
+      return true;
+    }
+    if (route === "/api/autonomy/standing-orders/create") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot create standing orders.", 403);
+      const body = (await readJson(request)) as {
+        name?: unknown;
+        scope?: unknown;
+        projectId?: unknown;
+        instruction?: unknown;
+      };
+      if (
+        typeof body.name !== "string" ||
+        typeof body.instruction !== "string" ||
+        (body.scope !== "global" && body.scope !== "project")
+      )
+        throw new AutonomyError("Standing order name, scope, and instruction are required.");
+      sendJson(
+        response,
+        200,
+        await autonomy.addStandingOrder({
+          name: body.name,
+          scope: body.scope,
+          projectId: typeof body.projectId === "string" ? body.projectId : null,
+          instruction: body.instruction,
+        }),
+      );
+      return true;
+    }
+    if (route === "/api/autonomy/standing-orders/update") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot update standing orders.", 403);
+      const body = (await readJson(request)) as {
+        id?: unknown;
+        name?: unknown;
+        scope?: unknown;
+        projectId?: unknown;
+        instruction?: unknown;
+        enabled?: unknown;
+      };
+      if (typeof body.id !== "string") throw new AutonomyError("A standing order is required.");
+      const current = (await state.load()).standingOrders.find((order) => order.id === body.id);
+      if (!current) throw new AutonomyError("Standing order not found.", 404);
+      const updated = parseStandingOrder({
+        ...current,
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(body.scope === "global" || body.scope === "project" ? { scope: body.scope } : {}),
+        ...(typeof body.projectId === "string" || body.projectId === null
+          ? { projectId: body.projectId }
+          : {}),
+        ...(typeof body.instruction === "string" ? { instruction: body.instruction } : {}),
+        ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+      await state.saveAutonomyRecords({ standingOrders: [updated] });
+      sendJson(response, 200, updated);
+      return true;
+    }
+    if (route === "/api/autonomy/standing-orders/delete") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot delete standing orders.", 403);
+      const body = (await readJson(request)) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutonomyError("A standing order is required.");
+      await state.removeAutonomyRecord("standingOrder", body.id);
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+    if (route === "/api/autonomy/hooks/create") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot create autonomy hooks.", 403);
+      const body = (await readJson(request)) as {
+        name?: unknown;
+        event?: unknown;
+        flowId?: unknown;
+        projectId?: unknown;
+        cooldownSeconds?: unknown;
+      };
+      if (
+        typeof body.name !== "string" ||
+        typeof body.event !== "string" ||
+        typeof body.flowId !== "string"
+      )
+        throw new AutonomyError("Hook name, event, and workflow are required.");
+      sendJson(
+        response,
+        200,
+        await autonomy.addHook({
+          name: body.name,
+          event: body.event as AutonomyHookEvent,
+          flowId: body.flowId,
+          projectId: typeof body.projectId === "string" ? body.projectId : null,
+          cooldownSeconds:
+            typeof body.cooldownSeconds === "number" ? body.cooldownSeconds : undefined,
+        }),
+      );
+      return true;
+    }
+    if (route === "/api/autonomy/hooks/update") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot update autonomy hooks.", 403);
+      const body = (await readJson(request)) as {
+        id?: unknown;
+        name?: unknown;
+        event?: unknown;
+        flowId?: unknown;
+        projectId?: unknown;
+        enabled?: unknown;
+        cooldownSeconds?: unknown;
+      };
+      if (typeof body.id !== "string") throw new AutonomyError("A hook is required.");
+      const current = (await state.load()).autonomyHooks.find((hook) => hook.id === body.id);
+      if (!current) throw new AutonomyError("Hook not found.", 404);
+      const updated = parseAutonomyHook({
+        ...current,
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.event === "string" ? { event: body.event } : {}),
+        ...(typeof body.flowId === "string" ? { flowId: body.flowId } : {}),
+        ...(typeof body.projectId === "string" || body.projectId === null
+          ? { projectId: body.projectId }
+          : {}),
+        ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+        ...(typeof body.cooldownSeconds === "number"
+          ? { cooldownSeconds: body.cooldownSeconds }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      });
+      const flow = (await state.load()).autonomyFlows.find(
+        (candidate) => candidate.id === updated.flowId,
+      );
+      if (!flow?.readOnly)
+        throw new AutonomyError("Only built-in read-only workflows can be hooked.", 400);
+      await state.saveAutonomyRecords({ hooks: [updated] });
+      sendJson(response, 200, updated);
+      return true;
+    }
+    if (route === "/api/autonomy/hooks/delete") {
+      if (remoteRequest || managedHost)
+        throw new AutonomyError("Remote clients cannot delete autonomy hooks.", 403);
+      const body = (await readJson(request)) as { id?: unknown };
+      if (typeof body.id !== "string") throw new AutonomyError("A hook is required.");
+      await state.removeAutonomyRecord("hook", body.id);
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
     if (route === "/api/state/projects/delete") {
       const body = (await readJson(request)) as { projectId?: unknown };
       if (typeof body.projectId !== "string") {
@@ -3639,6 +4010,9 @@ async function handleApi(
             });
           }
         }
+        void autonomy
+          .dispatch(completed ? "turn_completed" : "turn_failed", persisted.thread.projectId)
+          .catch(() => undefined);
         response.end();
         activeAcp.delete(run.id);
         return true;
@@ -4571,6 +4945,7 @@ async function handleApi(
       error instanceof ProfileError ||
       error instanceof PreferencesError ||
       error instanceof AutomationError ||
+      error instanceof AutonomyError ||
       error instanceof PreviewError ||
       error instanceof ProviderAdapterError ||
       error instanceof ProviderModelError ||
@@ -4588,6 +4963,7 @@ async function handleApi(
       error instanceof ProfileError ||
       error instanceof PreferencesError ||
       error instanceof AutomationError ||
+      error instanceof AutonomyError ||
       error instanceof PreviewError ||
       error instanceof ProviderAdapterError ||
       error instanceof ProviderModelError ||
@@ -4665,6 +5041,8 @@ export function createLocalHost(
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const wake = new WakeBroker();
+  const autonomy = new AutonomyEngine(state);
+  const autonomyScheduler = new AutonomyScheduler(autonomy);
   const internalRequestToken = randomUUID();
   let delegatedControlTail = Promise.resolve();
   const withDelegatedControlLock: DelegatedControlLock = async (action) => {
@@ -4711,7 +5089,11 @@ export function createLocalHost(
   });
   // Seed Claude Code default profile so first-run does not require Settings.
   const profileBootstrap = profiles.ensureDefaults().catch(() => undefined);
-  const recovery = state.recoverInterruptedTurns().then(() => state.reconcileAutomationFires());
+  const recovery = state
+    .recoverInterruptedTurns()
+    .then(() => state.reconcileAutomationFires())
+    .then(() => state.recoverAutonomyRuns())
+    .then(() => autonomy.ensureBuiltInFlows());
 
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
 
@@ -4906,6 +5288,11 @@ export function createLocalHost(
       claim: (input) => state.claimAutomationFire(input),
       finish: (fireId, status, error) => state.finishAutomationFire(fireId, status, error),
     },
+    onFinished: async (automation) => {
+      const projection = await state.load();
+      const thread = projection.threads.find((candidate) => candidate.id === automation.threadId);
+      await autonomy.dispatch("automation_completed", thread?.projectId ?? null);
+    },
   });
 
   const handler = async (request: IncomingMessage, response: ServerResponse) => {
@@ -4974,6 +5361,7 @@ export function createLocalHost(
         preferences,
         automations,
         automationScheduler,
+        autonomy,
         worktrees,
         directories,
         adapters,
@@ -5004,7 +5392,10 @@ export function createLocalHost(
     server.once("listening", () => {
       void recovery
         .then(() => {
-          if (server.listening) automationScheduler.start();
+          if (server.listening) {
+            automationScheduler.start();
+            autonomyScheduler.start();
+          }
         })
         .catch(() => undefined);
     });
@@ -5012,6 +5403,7 @@ export function createLocalHost(
   server.once("close", () => {
     unsubscribePermissionChanges();
     automationScheduler.stop();
+    autonomyScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();
   });

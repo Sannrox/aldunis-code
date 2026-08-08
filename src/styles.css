@@ -1623,6 +1623,81 @@ select.ui-input {
 .automations-dialog-body > :last-child {
   margin-bottom: 0;
 }
+.autonomy-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.autonomy-dialog-body > :first-child {
+  margin-top: 0;
+}
+.autonomy-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+}
+.autonomy-tabs button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 9px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.autonomy-tabs button:hover,
+.autonomy-tabs button.active {
+  color: var(--foreground);
+  background: var(--muted);
+}
+.autonomy-panel,
+.autonomy-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.autonomy-panel h3,
+.autonomy-card p {
+  margin: 0;
+}
+.autonomy-panel h3 {
+  font-size: 12px;
+}
+.autonomy-card {
+  font-size: 12px;
+}
+.autonomy-card > .muted {
+  overflow-wrap: anywhere;
+}
+.autonomy-finding {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.severity {
+  flex: 0 0 auto;
+  min-width: 44px;
+  color: var(--muted-foreground);
+  font: 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.severity-high {
+  color: var(--destructive);
+}
+.severity-medium {
+  color: var(--warning, #b7791f);
+}
 .rename-conversation-form {
   display: flex;
   flex-direction: column;

@@ -6,21 +6,22 @@ want to change it.
 
 ## User and operator guides
 
-| Document                                                         | Description                                                        |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------ |
-| [cli.md](cli.md)                                                 | Host startup, remote auth, and CLI compatibility reference         |
-| [getting-started.md](getting-started.md)                         | Install, run, first conversation, remote, desktop                  |
-| [providers.md](providers.md)                                     | Claude, Codex, Shikigami, reviewed ACP adapters                    |
-| [automations.md](automations.md)                                 | Timer-only scheduled prompts                                       |
-| [local-delivery.md](local-delivery.md)                           | Clean candidate → Chisei evidence → Tenkai local release           |
-| [chisei-sdk.md](chisei-sdk.md)                                   | Pinned server-side Chisei SDK and projection compatibility surface |
-| [local-data.md](local-data.md)                                   | State directory, history, preferences, secrets                     |
-| [remote-workbench.md](remote-workbench.md)                       | Authenticated remote access (Tailscale / LAN)                      |
-| [managed-image-compatibility.md](managed-image-compatibility.md) | Managed hosted image requirements and current blockers             |
-| [workspace-checkpoints.md](workspace-checkpoints.md)             | Checkpoint capture and rewind safeguards                           |
-| [web-preview.md](web-preview.md)                                 | In-workbench web preview                                           |
-| [desktop-distribution.md](desktop-distribution.md)               | Packaging, signing, update posture                                 |
-| [troubleshooting.md](troubleshooting.md)                         | Common failures and checks                                         |
+| Document                                                         | Description                                                            |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [cli.md](cli.md)                                                 | Host startup, remote auth, and CLI compatibility reference             |
+| [getting-started.md](getting-started.md)                         | Install, run, first conversation, remote, desktop                      |
+| [providers.md](providers.md)                                     | Claude, Codex, Shikigami, reviewed ACP adapters                        |
+| [automations.md](automations.md)                                 | Timer-only scheduled prompts                                           |
+| [autonomy.md](autonomy.md)                                       | Durable runs, Task Flows, heartbeats, hooks, standing orders, gardener |
+| [local-delivery.md](local-delivery.md)                           | Clean candidate → Chisei evidence → Tenkai local release               |
+| [chisei-sdk.md](chisei-sdk.md)                                   | Pinned server-side Chisei SDK and projection compatibility surface     |
+| [local-data.md](local-data.md)                                   | State directory, history, preferences, secrets                         |
+| [remote-workbench.md](remote-workbench.md)                       | Authenticated remote access (Tailscale / LAN)                          |
+| [managed-image-compatibility.md](managed-image-compatibility.md) | Managed hosted image requirements and current blockers                 |
+| [workspace-checkpoints.md](workspace-checkpoints.md)             | Checkpoint capture and rewind safeguards                               |
+| [web-preview.md](web-preview.md)                                 | In-workbench web preview                                               |
+| [desktop-distribution.md](desktop-distribution.md)               | Packaging, signing, update posture                                     |
+| [troubleshooting.md](troubleshooting.md)                         | Common failures and checks                                             |
 
 ## Design and contribution
 

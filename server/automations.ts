@@ -11,16 +11,10 @@ export const AUTOMATIONS_SCHEMA_VERSION = 1 as const;
 export const MIN_INTERVAL_SECONDS = 60;
 
 export type AutomationSchedule =
-  | { kind: "interval"; seconds: number }
-  | { kind: "cron"; expression: string };
+  { kind: "interval"; seconds: number } | { kind: "cron"; expression: string };
 
 export type AutomationFireKind = "scheduled" | "manual";
-export type AutomationFireStatus =
-  | "started"
-  | "completed"
-  | "failed"
-  | "skipped_busy"
-  | "unknown";
+export type AutomationFireStatus = "started" | "completed" | "failed" | "skipped_busy" | "unknown";
 
 /** Metadata-only durable identity for one automation execution attempt. */
 export interface AutomationFire {
@@ -90,7 +84,10 @@ export interface AutomationStoreFile {
 }
 
 export class AutomationError extends Error {
-  constructor(message: string, readonly status = 400) {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
     super(message);
   }
 }
@@ -115,13 +112,13 @@ export function assertValidCron(expression: string): void {
       const end = stepMatch[2] !== undefined ? Number(stepMatch[2]) : start;
       const step = stepMatch[3] !== undefined ? Number(stepMatch[3]) : 1;
       if (
-        !Number.isInteger(start)
-        || !Number.isInteger(end)
-        || !Number.isInteger(step)
-        || start < min
-        || end > max
-        || start > end
-        || step < 1
+        !Number.isInteger(start) ||
+        !Number.isInteger(end) ||
+        !Number.isInteger(step) ||
+        start < min ||
+        end > max ||
+        start > end ||
+        step < 1
       ) {
         throw new AutomationError(`Invalid cron ${label} field: ${field}`);
       }
@@ -159,9 +156,9 @@ function isUnrestrictedField(field: string): boolean {
 export function cronMatchesUtc(expression: string, date: Date): boolean {
   const [minute, hour, dom, month, dow] = expression.trim().split(/\s+/);
   if (
-    !fieldMatches(minute, date.getUTCMinutes(), 0, 59)
-    || !fieldMatches(hour, date.getUTCHours(), 0, 23)
-    || !fieldMatches(month, date.getUTCMonth() + 1, 1, 12)
+    !fieldMatches(minute, date.getUTCMinutes(), 0, 59) ||
+    !fieldMatches(hour, date.getUTCHours(), 0, 23) ||
+    !fieldMatches(month, date.getUTCMonth() + 1, 1, 12)
   ) {
     return false;
   }
@@ -199,25 +196,25 @@ export function parseAutomation(value: unknown): Automation {
   }
   const input = value as Record<string, unknown>;
   if (
-    input.schemaVersion !== AUTOMATIONS_SCHEMA_VERSION
-    || typeof input.id !== "string"
-    || typeof input.name !== "string"
-    || !input.name.trim()
-    || typeof input.threadId !== "string"
-    || !input.threadId
-    || typeof input.prompt !== "string"
-    || !input.prompt.trim()
-    || !isMode(input.mode)
-    || typeof input.enabled !== "boolean"
-    || typeof input.createdAt !== "string"
-    || typeof input.updatedAt !== "string"
-    || (input.lastRunAt !== null && typeof input.lastRunAt !== "string")
-    || (input.lastStatus !== null
-      && input.lastStatus !== "ok"
-      && input.lastStatus !== "skipped_busy"
-      && input.lastStatus !== "error"
-      && input.lastStatus !== "unknown")
-    || (input.lastError !== null && typeof input.lastError !== "string")
+    input.schemaVersion !== AUTOMATIONS_SCHEMA_VERSION ||
+    typeof input.id !== "string" ||
+    typeof input.name !== "string" ||
+    !input.name.trim() ||
+    typeof input.threadId !== "string" ||
+    !input.threadId ||
+    typeof input.prompt !== "string" ||
+    !input.prompt.trim() ||
+    !isMode(input.mode) ||
+    typeof input.enabled !== "boolean" ||
+    typeof input.createdAt !== "string" ||
+    typeof input.updatedAt !== "string" ||
+    (input.lastRunAt !== null && typeof input.lastRunAt !== "string") ||
+    (input.lastStatus !== null &&
+      input.lastStatus !== "ok" &&
+      input.lastStatus !== "skipped_busy" &&
+      input.lastStatus !== "error" &&
+      input.lastStatus !== "unknown") ||
+    (input.lastError !== null && typeof input.lastError !== "string")
   ) {
     throw new AutomationError("Automation uses an incompatible or invalid value.");
   }
@@ -229,9 +226,9 @@ export function parseAutomation(value: unknown): Automation {
   let parsedSchedule: AutomationSchedule;
   if (schedule.kind === "interval") {
     if (
-      typeof schedule.seconds !== "number"
-      || !Number.isInteger(schedule.seconds)
-      || schedule.seconds < MIN_INTERVAL_SECONDS
+      typeof schedule.seconds !== "number" ||
+      !Number.isInteger(schedule.seconds) ||
+      schedule.seconds < MIN_INTERVAL_SECONDS
     ) {
       throw new AutomationError(`Interval must be an integer >= ${MIN_INTERVAL_SECONDS} seconds.`);
     }
@@ -286,7 +283,10 @@ export class AutomationStore {
 
   #serialize<T>(work: () => Promise<T>): Promise<T> {
     const run = this.#queue.then(work, work);
-    this.#queue = run.then(() => undefined, () => undefined);
+    this.#queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
     return run;
   }
 
@@ -332,16 +332,19 @@ export class AutomationStore {
     });
   }
 
-  async update(id: string, patch: Partial<{
-    name: string;
-    prompt: string;
-    mode: InteractionMode;
-    enabled: boolean;
-    schedule: AutomationSchedule;
-    lastRunAt: string | null;
-    lastStatus: Automation["lastStatus"];
-    lastError: string | null;
-  }>): Promise<Automation> {
+  async update(
+    id: string,
+    patch: Partial<{
+      name: string;
+      prompt: string;
+      mode: InteractionMode;
+      enabled: boolean;
+      schedule: AutomationSchedule;
+      lastRunAt: string | null;
+      lastStatus: Automation["lastStatus"];
+      lastError: string | null;
+    }>,
+  ): Promise<Automation> {
     return this.#serialize(async () => {
       const store = await this.#read();
       const index = store.items.findIndex((item) => item.id === id);
@@ -413,6 +416,8 @@ export class AutomationScheduler {
       ) => Promise<AutomationFireExecution | void>;
       /** Production state hooks; omitted by focused scheduler tests. */
       fireStore?: AutomationFireStore;
+      /** Advisory internal hook after a fire reaches a terminal outcome. */
+      onFinished?: (automation: Automation, outcome: AutomationFireExecution) => Promise<void>;
       intervalMs?: number;
       now?: () => Date;
     },
@@ -460,11 +465,16 @@ export class AutomationScheduler {
 
   #statusForAutomation(status: AutomationFireStatus): Automation["lastStatus"] {
     switch (status) {
-      case "completed": return "ok";
-      case "skipped_busy": return "skipped_busy";
-      case "failed": return "error";
-      case "unknown": return "unknown";
-      default: return null;
+      case "completed":
+        return "ok";
+      case "skipped_busy":
+        return "skipped_busy";
+      case "failed":
+        return "error";
+      case "unknown":
+        return "unknown";
+      default:
+        return null;
     }
   }
 
@@ -501,11 +511,7 @@ export class AutomationScheduler {
     });
   }
 
-  async #syncExisting(
-    automation: Automation,
-    fire: AutomationFire,
-    now: Date,
-  ): Promise<void> {
+  async #syncExisting(automation: Automation, fire: AutomationFire, now: Date): Promise<void> {
     if (fire.status === "started" || fire.status === "skipped_busy") return;
     const latest = await this.options.fireStore?.latest?.(automation.id);
     if (latest && latest.id !== fire.id) return;
@@ -540,9 +546,7 @@ export class AutomationScheduler {
         await this.#saveSkippedBusy(automation, input);
         return;
       }
-      const claim = this.options.fireStore
-        ? await this.options.fireStore.claim(input)
-        : null;
+      const claim = this.options.fireStore ? await this.options.fireStore.claim(input) : null;
       if (claim && !claim.claimed) {
         if (syncExisting) await this.#syncExisting(automation, claim.fire, now);
         return;
@@ -550,12 +554,8 @@ export class AutomationScheduler {
       const fire = claim?.fire ?? null;
       try {
         const outcome = await this.options.fire(automation, fire ?? undefined);
-        await this.#saveOutcome(
-          automation,
-          fire,
-          now,
-          outcome ?? { status: "completed" },
-        );
+        await this.#saveOutcome(automation, fire, now, outcome ?? { status: "completed" });
+        await this.options.onFinished?.(automation, outcome ?? { status: "completed" });
       } catch (error) {
         const message = this.#errorMessage(error);
         if (this.options.fireStore && fire) {
@@ -566,6 +566,7 @@ export class AutomationScheduler {
           lastStatus: "error",
           lastError: message,
         });
+        await this.options.onFinished?.(automation, { status: "failed", error: message });
       }
     } finally {
       release();
@@ -597,7 +598,10 @@ export class AutomationScheduler {
           continue;
         }
         const input = this.#scheduledFireKey(automation, now);
-        if (claimedThreads.has(automation.threadId) || await this.options.isThreadBusy(automation.threadId)) {
+        if (
+          claimedThreads.has(automation.threadId) ||
+          (await this.options.isThreadBusy(automation.threadId))
+        ) {
           // Skip without advancing lastRun on scheduled ticks.
           await this.#saveSkippedBusy(automation, input);
           continue;
@@ -605,9 +609,9 @@ export class AutomationScheduler {
         claimedThreads.add(automation.threadId);
         due.push({ automation, input });
       }
-      await Promise.all(due.map(({ automation, input }) => (
-        this.#execute(automation, input, now, true)
-      )));
+      await Promise.all(
+        due.map(({ automation, input }) => this.#execute(automation, input, now, true)),
+      );
     } finally {
       this.#running = false;
     }

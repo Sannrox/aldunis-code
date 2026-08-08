@@ -27,15 +27,17 @@ function projection(): StateProjection {
     sequence: 0,
     projects: [],
     threads: [],
-    turns: [{
-      schemaVersion: 2,
-      id: "turn-child",
-      threadId: "child",
-      status: "waiting_for_user",
-      providerRunId: "run-child",
-      createdAt: request.createdAt,
-      completedAt: null,
-    }],
+    turns: [
+      {
+        schemaVersion: 2,
+        id: "turn-child",
+        threadId: "child",
+        status: "waiting_for_user",
+        providerRunId: "run-child",
+        createdAt: request.createdAt,
+        completedAt: null,
+      },
+    ],
     messages: [],
     activities: [],
     plans: [],
@@ -46,15 +48,24 @@ function projection(): StateProjection {
     fileReviews: [],
     conversationDeletions: [],
     forks: [],
-    delegatedRelationships: [{
-      schemaVersion: 2,
-      id: "relationship-1",
-      parentThreadId: "parent",
-      childThreadId: "child",
-      createdAt: request.createdAt,
-    }],
+    delegatedRelationships: [
+      {
+        schemaVersion: 2,
+        id: "relationship-1",
+        parentThreadId: "parent",
+        childThreadId: "child",
+        createdAt: request.createdAt,
+      },
+    ],
     inputRequests: [request],
     inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 

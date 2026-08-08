@@ -14,6 +14,20 @@ import {
   type ReasoningEffort,
 } from "./provider.ts";
 import type { AutomationFire, AutomationFireKey, AutomationFireStatus } from "./automations.ts";
+import {
+  parseAutonomyFlow,
+  parseAutonomyHook,
+  parseAutonomyRun,
+  parseAutonomyTask,
+  parseHeartbeatMonitor,
+  parseStandingOrder,
+  type AutonomyFlow,
+  type AutonomyHook,
+  type AutonomyRun,
+  type AutonomyTask,
+  type HeartbeatMonitor,
+  type StandingOrder,
+} from "./autonomy.ts";
 import type { ContextPin, ContextReceiptEntry } from "./context.ts";
 import type { WorkspaceMode } from "../src/types.ts";
 
@@ -370,6 +384,12 @@ export interface StateProjection {
   inputRequests: ChildInputRequest[];
   inputReceipts: ChildInputReceipt[];
   automationFires: AutomationFire[];
+  autonomyRuns: AutonomyRun[];
+  autonomyTasks: AutonomyTask[];
+  autonomyFlows: AutonomyFlow[];
+  heartbeatMonitors: HeartbeatMonitor[];
+  standingOrders: StandingOrder[];
+  autonomyHooks: AutonomyHook[];
 }
 
 type StateEvent =
@@ -394,7 +414,13 @@ type StateEvent =
     }
   | { type: "input_request_saved"; inputRequest: ChildInputRequest }
   | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt }
-  | { type: "automation_fire_saved"; automationFire: AutomationFire };
+  | { type: "automation_fire_saved"; automationFire: AutomationFire }
+  | { type: "autonomy_run_saved"; autonomyRun: AutonomyRun }
+  | { type: "autonomy_task_saved"; autonomyTask: AutonomyTask }
+  | { type: "autonomy_flow_saved"; autonomyFlow: AutonomyFlow }
+  | { type: "heartbeat_monitor_saved"; heartbeatMonitor: HeartbeatMonitor }
+  | { type: "standing_order_saved"; standingOrder: StandingOrder }
+  | { type: "autonomy_hook_saved"; autonomyHook: AutonomyHook };
 
 interface EventEnvelope {
   schemaVersion: 2;
@@ -435,6 +461,12 @@ function emptyProjection(): StateProjection {
     inputRequests: [],
     inputReceipts: [],
     automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 
@@ -843,6 +875,18 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     replaceById(projection.inputReceipts, event.inputReceipt);
   } else if (event.type === "automation_fire_saved") {
     replaceById(projection.automationFires, event.automationFire);
+  } else if (event.type === "autonomy_run_saved") {
+    replaceById(projection.autonomyRuns, event.autonomyRun);
+  } else if (event.type === "autonomy_task_saved") {
+    replaceById(projection.autonomyTasks, event.autonomyTask);
+  } else if (event.type === "autonomy_flow_saved") {
+    replaceById(projection.autonomyFlows, event.autonomyFlow);
+  } else if (event.type === "heartbeat_monitor_saved") {
+    replaceById(projection.heartbeatMonitors, event.heartbeatMonitor);
+  } else if (event.type === "standing_order_saved") {
+    replaceById(projection.standingOrders, event.standingOrder);
+  } else if (event.type === "autonomy_hook_saved") {
+    replaceById(projection.autonomyHooks, event.autonomyHook);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -889,6 +933,12 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     input_request_saved: "inputRequest",
     input_receipt_saved: "inputReceipt",
     automation_fire_saved: "automationFire",
+    autonomy_run_saved: "autonomyRun",
+    autonomy_task_saved: "autonomyTask",
+    autonomy_flow_saved: "autonomyFlow",
+    heartbeat_monitor_saved: "heartbeatMonitor",
+    standing_order_saved: "standingOrder",
+    autonomy_hook_saved: "autonomyHook",
   };
   const key = payloadKey[event.type as string];
   const payload = key ? event[key] : undefined;
@@ -943,11 +993,24 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     } else {
       event[key] = migrateEntityRecord(payload);
     }
+    if (event.type === "autonomy_run_saved") {
+      event.autonomyRun = parseAutonomyRun(event.autonomyRun);
+    } else if (event.type === "autonomy_task_saved") {
+      event.autonomyTask = parseAutonomyTask(event.autonomyTask);
+    } else if (event.type === "autonomy_flow_saved") {
+      event.autonomyFlow = parseAutonomyFlow(event.autonomyFlow);
+    } else if (event.type === "heartbeat_monitor_saved") {
+      event.heartbeatMonitor = parseHeartbeatMonitor(event.heartbeatMonitor);
+    } else if (event.type === "standing_order_saved") {
+      event.standingOrder = parseStandingOrder(event.standingOrder);
+    } else if (event.type === "autonomy_hook_saved") {
+      event.autonomyHook = parseAutonomyHook(event.autonomyHook);
+    }
   } catch (error) {
     if (error instanceof LocalStateError) {
       throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
     }
-    throw error;
+    throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
 
   return {
@@ -1669,6 +1732,192 @@ export class LocalStateStore {
             status: outcome.status,
             error: outcome.error,
             updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+      return { event: events, value: undefined };
+    });
+  }
+
+  async saveAutonomyRecords(input: {
+    runs?: AutonomyRun[];
+    tasks?: AutonomyTask[];
+    flows?: AutonomyFlow[];
+    heartbeatMonitors?: HeartbeatMonitor[];
+    standingOrders?: StandingOrder[];
+    hooks?: AutonomyHook[];
+  }): Promise<void> {
+    await this.#appendComputed((projection) => {
+      const events: StateEvent[] = [];
+      const save = <T extends { id: string }>(items: T[], next: T, event: StateEvent) => {
+        const existing = items.find((item) => item.id === next.id);
+        if (existing && JSON.stringify(existing) === JSON.stringify(next)) return;
+        events.push(event);
+      };
+      for (const run of input.runs ?? []) {
+        save(projection.autonomyRuns, run, { type: "autonomy_run_saved", autonomyRun: run });
+      }
+      for (const task of input.tasks ?? []) {
+        save(projection.autonomyTasks, task, { type: "autonomy_task_saved", autonomyTask: task });
+      }
+      for (const flow of input.flows ?? []) {
+        save(projection.autonomyFlows, flow, { type: "autonomy_flow_saved", autonomyFlow: flow });
+      }
+      for (const monitor of input.heartbeatMonitors ?? []) {
+        save(projection.heartbeatMonitors, monitor, {
+          type: "heartbeat_monitor_saved",
+          heartbeatMonitor: monitor,
+        });
+      }
+      for (const order of input.standingOrders ?? []) {
+        save(projection.standingOrders, order, {
+          type: "standing_order_saved",
+          standingOrder: order,
+        });
+      }
+      for (const hook of input.hooks ?? []) {
+        save(projection.autonomyHooks, hook, { type: "autonomy_hook_saved", autonomyHook: hook });
+      }
+      return { event: events, value: undefined };
+    });
+  }
+
+  async removeAutonomyRecord(
+    kind: "heartbeat" | "standingOrder" | "hook",
+    id: string,
+  ): Promise<void> {
+    await this.#compact((projection) => {
+      if (kind === "heartbeat") {
+        const before = projection.heartbeatMonitors.length;
+        projection.heartbeatMonitors = projection.heartbeatMonitors.filter(
+          (item) => item.id !== id,
+        );
+        if (projection.heartbeatMonitors.length === before) {
+          throw new LocalStateError("The heartbeat is unavailable.", 404);
+        }
+        return;
+      }
+      if (kind === "standingOrder") {
+        const before = projection.standingOrders.length;
+        projection.standingOrders = projection.standingOrders.filter((item) => item.id !== id);
+        if (projection.standingOrders.length === before) {
+          throw new LocalStateError("The standing order is unavailable.", 404);
+        }
+        return;
+      }
+      const before = projection.autonomyHooks.length;
+      projection.autonomyHooks = projection.autonomyHooks.filter((item) => item.id !== id);
+      if (projection.autonomyHooks.length === before) {
+        throw new LocalStateError("The autonomy hook is unavailable.", 404);
+      }
+    });
+  }
+
+  async cancelAutonomyRun(runId: string): Promise<AutonomyRun> {
+    return this.#appendComputed((projection) => {
+      const run = projection.autonomyRuns.find((item) => item.id === runId);
+      if (!run) throw new LocalStateError("The autonomy run is unavailable.", 404);
+      if (["succeeded", "failed", "cancelled"].includes(run.status))
+        return { event: null, value: run };
+      const now = new Date().toISOString();
+      const nextRun: AutonomyRun = {
+        ...run,
+        status: "cancelled",
+        currentStepId: null,
+        error: "Cancelled by the operator.",
+        revision: run.revision + 1,
+        updatedAt: now,
+        completedAt: now,
+      };
+      const events: StateEvent[] = [{ type: "autonomy_run_saved", autonomyRun: nextRun }];
+      for (const task of projection.autonomyTasks.filter((item) => item.runId === runId)) {
+        if (["succeeded", "failed", "cancelled", "timed_out"].includes(task.status)) continue;
+        events.push({
+          type: "autonomy_task_saved",
+          autonomyTask: {
+            ...task,
+            status: "cancelled",
+            error: "Cancelled with the parent autonomy run.",
+            updatedAt: now,
+            completedAt: now,
+            nextRunAt: null,
+          },
+        });
+      }
+      return { event: events, value: nextRun };
+    });
+  }
+
+  async resumeAutonomyRun(runId: string): Promise<AutonomyRun> {
+    return this.#appendComputed((projection) => {
+      const run = projection.autonomyRuns.find((item) => item.id === runId);
+      if (!run) throw new LocalStateError("The autonomy run is unavailable.", 404);
+      if (!["lost", "failed", "blocked", "waiting"].includes(run.status)) {
+        throw new LocalStateError(
+          "Only a paused, lost, blocked, or failed autonomy run can be resumed.",
+          409,
+        );
+      }
+      const now = new Date().toISOString();
+      const nextRun: AutonomyRun = {
+        ...run,
+        status: "queued",
+        trigger: "resume",
+        error: null,
+        revision: run.revision + 1,
+        updatedAt: now,
+        completedAt: null,
+      };
+      const events: StateEvent[] = [{ type: "autonomy_run_saved", autonomyRun: nextRun }];
+      for (const task of projection.autonomyTasks.filter((item) => item.runId === runId)) {
+        if (!["lost", "failed", "blocked", "waiting", "timed_out"].includes(task.status)) continue;
+        events.push({
+          type: "autonomy_task_saved",
+          autonomyTask: {
+            ...task,
+            status: "queued",
+            attempt: 0,
+            error: null,
+            output: null,
+            startedAt: null,
+            completedAt: null,
+            nextRunAt: null,
+            updatedAt: now,
+          },
+        });
+      }
+      return { event: events, value: nextRun };
+    });
+  }
+
+  async recoverAutonomyRuns(): Promise<void> {
+    await this.#appendComputed((projection) => {
+      const now = new Date().toISOString();
+      const events: StateEvent[] = [];
+      const lostRunIds = new Set<string>();
+      for (const run of projection.autonomyRuns) {
+        if (run.status !== "running") continue;
+        lostRunIds.add(run.id);
+        events.push({
+          type: "autonomy_run_saved",
+          autonomyRun: {
+            ...run,
+            status: "lost",
+            error: "The host stopped while this run was active; resume it explicitly.",
+            revision: run.revision + 1,
+            updatedAt: now,
+          },
+        });
+      }
+      for (const task of projection.autonomyTasks) {
+        if (task.status !== "running" || !lostRunIds.has(task.runId)) continue;
+        events.push({
+          type: "autonomy_task_saved",
+          autonomyTask: {
+            ...task,
+            status: "lost",
+            error: "The host stopped while this task was active; resume the parent run explicitly.",
+            updatedAt: now,
           },
         });
       }
@@ -2871,6 +3120,22 @@ export class LocalStateStore {
           !threadIds.has(receipt.childThreadId) &&
           (!receipt.parentThreadId || !threadIds.has(receipt.parentThreadId)),
       );
+      const deletedRunIds = new Set(
+        projection.autonomyRuns.filter((run) => run.projectId === projectId).map((run) => run.id),
+      );
+      projection.autonomyRuns = projection.autonomyRuns.filter((run) => !deletedRunIds.has(run.id));
+      projection.autonomyTasks = projection.autonomyTasks.filter(
+        (task) => !deletedRunIds.has(task.runId),
+      );
+      projection.heartbeatMonitors = projection.heartbeatMonitors.filter(
+        (monitor) => monitor.projectId !== projectId,
+      );
+      projection.standingOrders = projection.standingOrders.filter(
+        (order) => order.projectId !== projectId,
+      );
+      projection.autonomyHooks = projection.autonomyHooks.filter(
+        (hook) => hook.projectId !== projectId,
+      );
     });
   }
 
@@ -3028,6 +3293,30 @@ export class LocalStateStore {
         ...next.automationFires.map((automationFire): StateEvent => ({
           type: "automation_fire_saved",
           automationFire,
+        })),
+        ...next.autonomyRuns.map((autonomyRun): StateEvent => ({
+          type: "autonomy_run_saved",
+          autonomyRun,
+        })),
+        ...next.autonomyTasks.map((autonomyTask): StateEvent => ({
+          type: "autonomy_task_saved",
+          autonomyTask,
+        })),
+        ...next.autonomyFlows.map((autonomyFlow): StateEvent => ({
+          type: "autonomy_flow_saved",
+          autonomyFlow,
+        })),
+        ...next.heartbeatMonitors.map((heartbeatMonitor): StateEvent => ({
+          type: "heartbeat_monitor_saved",
+          heartbeatMonitor,
+        })),
+        ...next.standingOrders.map((standingOrder): StateEvent => ({
+          type: "standing_order_saved",
+          standingOrder,
+        })),
+        ...next.autonomyHooks.map((autonomyHook): StateEvent => ({
+          type: "autonomy_hook_saved",
+          autonomyHook,
         })),
       ];
       const rebuilt = emptyProjection();

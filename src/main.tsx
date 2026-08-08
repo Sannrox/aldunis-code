@@ -1,6 +1,11 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { DEFAULT_PREFERENCES, readPreferencesResponse, resolveTheme, type Preferences } from "./preferences";
+import {
+  DEFAULT_PREFERENCES,
+  readPreferencesResponse,
+  resolveTheme,
+  type Preferences,
+} from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import "./mock-shell.css";
@@ -22,17 +27,12 @@ import {
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
 import { AutomationsDialog } from "./features/dialogs/automations-dialog";
+import { AutonomyDialog } from "./features/dialogs/autonomy-dialog";
 import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
 import { ActivityDialog, type ActivitySelectionAction } from "./features/dialogs/activity-dialog";
 import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
-import {
-  DesktopUpdateBanner,
-  type DesktopUpdateControls,
-} from "./features/updates/desktop-update";
-import {
-  isKeybindingCaptured,
-  matchesModifierShortcut,
-} from "./lib/workspace-shortcuts";
+import { DesktopUpdateBanner, type DesktopUpdateControls } from "./features/updates/desktop-update";
+import { isKeybindingCaptured, matchesModifierShortcut } from "./lib/workspace-shortcuts";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
@@ -74,7 +74,8 @@ function App() {
   const [repositoryError, setRepositoryError] = useState<string | null>(null);
   const [repositoryRestoring, setRepositoryRestoring] = useState(true);
   const [savedProjects, setSavedProjects] = useState<SavedProject[]>([]);
-  const [chiseiBindingAdministrationAvailable, setChiseiBindingAdministrationAvailable] = useState(true);
+  const [chiseiBindingAdministrationAvailable, setChiseiBindingAdministrationAvailable] =
+    useState(true);
   const [profiles, setProfiles] = useState<ClaudeProfile[]>([]);
   const [providerManagement, setProviderManagement] = useState<{
     destination: ProviderManagementDestination;
@@ -84,6 +85,7 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [autonomyOpen, setAutonomyOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
@@ -114,7 +116,7 @@ function App() {
       try {
         const response = await fetch("/api/host/capabilities", { method: "POST" });
         if (!response.ok) throw new Error("The host capability contract is unavailable.");
-        const body = await response.json() as HostCapabilities;
+        const body = (await response.json()) as HostCapabilities;
         if (body.mode !== "local" && body.mode !== "remote" && body.mode !== "managed") {
           throw new Error("The host capability contract is invalid.");
         }
@@ -129,40 +131,46 @@ function App() {
   }, []);
   const loadProfiles = async () => {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
-    const body = await response.json() as { profiles?: ClaudeProfile[] };
+    const body = (await response.json()) as { profiles?: ClaudeProfile[] };
     if (response.ok) {
       setProfiles(body.profiles ?? []);
       window.dispatchEvent(new Event("aldunis:providers-retry"));
     }
   };
-  useEffect(() => { void loadProfiles(); }, []);
+  useEffect(() => {
+    void loadProfiles();
+  }, []);
   const loadSavedProjects = async () => {
     try {
       // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
       const response = await fetch("/api/projects/list", { method: "POST" });
       if (!response.ok) return;
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         projects?: SavedProject[];
         chiseiBindingAdministrationAvailable?: boolean;
       };
       setSavedProjects(body.projects ?? []);
-      setChiseiBindingAdministrationAvailable(
-        body.chiseiBindingAdministrationAvailable !== false,
-      );
+      setChiseiBindingAdministrationAvailable(body.chiseiBindingAdministrationAvailable !== false);
     } catch {
       /* leave existing list */
     }
   };
   const loadThreads = async () => {
-    const response = await fetch("/api/state/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query: "" }) });
-    const body = await response.json() as { threads?: ThreadMetadata[] };
+    const response = await fetch("/api/state/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "" }),
+    });
+    const body = (await response.json()) as { threads?: ThreadMetadata[] };
     if (response.ok) setThreads(body.threads ?? []);
   };
   useEffect(() => {
     void loadThreads();
     void loadSavedProjects();
     void fetch("/api/preferences/load", { method: "POST" })
-      .then(async (response) => response.ok ? readPreferencesResponse(await response.json()) : null)
+      .then(async (response) =>
+        response.ok ? readPreferencesResponse(await response.json()) : null,
+      )
       .then((result) => {
         if (!result) return;
         setPreferences(result.preferences);
@@ -170,7 +178,9 @@ function App() {
       })
       .catch(() => undefined);
     void fetch("/api/products/availability", { method: "POST" })
-      .then(async (response) => response.ok ? readProductAvailabilityResponse(await response.json()) : null)
+      .then(async (response) =>
+        response.ok ? readProductAvailabilityResponse(await response.json()) : null,
+      )
       .then((availability) => {
         if (availability) setProductAvailability(availability);
       })
@@ -188,9 +198,12 @@ function App() {
     const unsubscribe = api.onUpdateState((snapshot) => {
       if (active) setDesktopUpdate(snapshot);
     });
-    void api.getUpdateState().then((snapshot) => {
-      if (active && snapshot) setDesktopUpdate(snapshot);
-    }).catch(() => undefined);
+    void api
+      .getUpdateState()
+      .then((snapshot) => {
+        if (active && snapshot) setDesktopUpdate(snapshot);
+      })
+      .catch(() => undefined);
     return () => {
       active = false;
       unsubscribe();
@@ -238,12 +251,13 @@ function App() {
       const response = await fetch("/api/repositories/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(hostCapabilities.managed
-          ? { repositoryId: target }
-          : { path: target }),
+        body: JSON.stringify(
+          hostCapabilities.managed ? { repositoryId: target } : { path: target },
+        ),
       });
-      const body = await response.json() as RepositoryMetadata | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Repository discovery failed.");
+      const body = (await response.json()) as RepositoryMetadata | { error?: string };
+      if (!response.ok)
+        throw new Error("error" in body ? body.error : "Repository discovery failed.");
       const next = body as RepositoryMetadata;
       setRepository(next);
       if (!hostCapabilities.managed) writeLastRepositoryRoot(next.root);
@@ -277,7 +291,7 @@ function App() {
         try {
           const response = await fetch("/api/projects/list", { method: "POST" });
           if (response.ok) {
-            const body = await response.json() as { projects?: SavedProject[] };
+            const body = (await response.json()) as { projects?: SavedProject[] };
             projects = body.projects ?? [];
             if (active) setSavedProjects(projects);
           }
@@ -290,14 +304,9 @@ function App() {
         const rootCandidates: string[] = [];
         if (urlProjectId) {
           for (const project of projects) {
-            if (
-              project.id === urlProjectId
-              || project.memberIds?.includes(urlProjectId)
-            ) {
+            if (project.id === urlProjectId || project.memberIds?.includes(urlProjectId)) {
               rootCandidates.push(
-                hostCapabilities.managed
-                  ? (project.managedRepositoryId ?? "")
-                  : project.root,
+                hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
               );
             }
           }
@@ -305,9 +314,7 @@ function App() {
         if (lastRoot) rootCandidates.push(lastRoot);
         for (const project of projects) {
           rootCandidates.push(
-            hostCapabilities.managed
-              ? (project.managedRepositoryId ?? "")
-              : project.root,
+            hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
           );
         }
 
@@ -350,17 +357,26 @@ function App() {
   };
   const desktopUpdateControls: DesktopUpdateControls | undefined = desktopPlatform
     ? {
-      snapshot: desktopUpdate,
-      onCheck: () => { void runDesktopUpdateAction("checkForUpdate"); },
-      onDownload: () => { void runDesktopUpdateAction("downloadUpdate"); },
-      onInstall: () => { void runDesktopUpdateAction("installUpdate"); },
-    }
+        snapshot: desktopUpdate,
+        onCheck: () => {
+          void runDesktopUpdateAction("checkForUpdate");
+        },
+        onDownload: () => {
+          void runDesktopUpdateAction("downloadUpdate");
+        },
+        onInstall: () => {
+          void runDesktopUpdateAction("installUpdate");
+        },
+      }
     : undefined;
   if (hostCapabilitiesError) {
     return (
       <main className="remote-pairing-error" role="alert">
         <h1>Host configuration unavailable</h1>
-        <p>{hostCapabilitiesError} Reload this page after the configured host or gateway is available.</p>
+        <p>
+          {hostCapabilitiesError} Reload this page after the configured host or gateway is
+          available.
+        </p>
       </main>
     );
   }
@@ -375,21 +391,20 @@ function App() {
         projects={savedProjects}
         onAddProject={showRepositoryDialog}
         onSelectProject={(projectId) => {
-          const project = savedProjects.find((item) =>
-            item.id === projectId || item.memberIds?.includes(projectId),
+          const project = savedProjects.find(
+            (item) => item.id === projectId || item.memberIds?.includes(projectId),
           );
           if (!project) return;
-          const target = hostCapabilities.managed
-            ? project.managedRepositoryId
-            : project.root;
+          const target = hostCapabilities.managed ? project.managedRepositoryId : project.root;
           if (!target) return;
           // Already on this logical project — do not re-open (bumps openedAt / reorders chips).
           if (
-            repository
-            && (!hostCapabilities.managed && (repository.projectId === project.id
-              || project.memberIds?.includes(repository.projectId)
-              || repository.root === project.root)
-              || hostCapabilities.managed && repository.managedRepositoryId === target)
+            repository &&
+            ((!hostCapabilities.managed &&
+              (repository.projectId === project.id ||
+                project.memberIds?.includes(repository.projectId) ||
+                repository.root === project.root)) ||
+              (hostCapabilities.managed && repository.managedRepositoryId === target))
           ) {
             return;
           }
@@ -401,7 +416,9 @@ function App() {
           setProviderManagement({ destination: "profiles", provider: provider ?? null });
         }}
         onOpenPalette={() => setPaletteOpen(true)}
-        onSelectWorktree={(path) => setRepository((current) => current ? { ...current, selectedWorktree: path } : current)}
+        onSelectWorktree={(path) =>
+          setRepository((current) => (current ? { ...current, selectedWorktree: path } : current))
+        }
         onManageWorktrees={(path) => {
           setManagedWorktreePath(path ?? null);
           setWorktreeDialog(true);
@@ -428,7 +445,9 @@ function App() {
         currentRoot={repository?.root ?? null}
         managedRepositories={hostCapabilities.managed ? hostCapabilities.repositories : undefined}
         onClose={() => setRepositoryDialog(false)}
-        onSubmit={(path) => { void openRepository(path); }}
+        onSubmit={(path) => {
+          void openRepository(path);
+        }}
       />
       {worktreeDialog && (
         <WorktreeDialog
@@ -479,6 +498,7 @@ function App() {
         onActivity={() => setActivityOpen(true)}
         onConnections={() => setConnectionsOpen(true)}
         onAutomations={() => setAutomationsOpen(true)}
+        onAutonomy={() => setAutonomyOpen(true)}
         onManageWorktrees={() => {
           setManagedWorktreePath(null);
           setWorktreeDialog(true);
@@ -494,6 +514,13 @@ function App() {
           provider: thread.provider,
         }))}
         onClose={() => setAutomationsOpen(false)}
+      />
+      <AutonomyDialog
+        open={autonomyOpen}
+        repository={repository}
+        projects={savedProjects}
+        managed={hostCapabilities.managed}
+        onClose={() => setAutonomyOpen(false)}
       />
       <PreferencesDialog
         open={preferencesOpen}
@@ -511,9 +538,13 @@ function App() {
         }}
         desktopUpdates={desktopUpdateControls}
         onSave={async (value) => {
-          const response = await fetch("/api/preferences/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
+          const response = await fetch("/api/preferences/save", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(value),
+          });
           if (!response.ok) return;
-          setPreferences(await response.json() as Preferences);
+          setPreferences((await response.json()) as Preferences);
           setPreferencesRecovered(false);
           setPreferencesOpen(false);
         }}
@@ -533,10 +564,7 @@ function App() {
           );
         }}
       />
-      <ConnectionsDialog
-        open={connectionsOpen}
-        onClose={() => setConnectionsOpen(false)}
-      />
+      <ConnectionsDialog open={connectionsOpen} onClose={() => setConnectionsOpen(false)} />
     </div>
   );
 }
@@ -550,7 +578,11 @@ void initializeRemoteAuthentication()
     if (window.aldunisDesktop) {
       window.aldunisDesktopCapabilities = await window.aldunisDesktop.getCapabilities();
     }
-    createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
+    createRoot(document.getElementById("root")!).render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
   })
   .catch((error: unknown) => {
     const root = document.getElementById("root")!;
@@ -561,7 +593,8 @@ void initializeRemoteAuthentication()
     const heading = document.createElement("h1");
     heading.textContent = "Remote pairing failed";
     const detail = document.createElement("p");
-    detail.textContent = error instanceof Error ? error.message : "The pairing link is invalid or expired.";
+    detail.textContent =
+      error instanceof Error ? error.message : "The pairing link is invalid or expired.";
     main.append(heading, detail);
     root.append(main);
   });

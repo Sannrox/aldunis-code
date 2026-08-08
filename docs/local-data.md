@@ -7,10 +7,10 @@ diffs, and tool activity as **sensitive local data**.
 
 Default:
 
-| Platform | Path |
-| --- | --- |
+| Platform    | Path                                                            |
+| ----------- | --------------------------------------------------------------- |
 | Linux (XDG) | `$XDG_STATE_HOME/aldunis-code` or `~/.local/state/aldunis-code` |
-| Override | `ALDUNIS_CODE_STATE_DIR` |
+| Override    | `ALDUNIS_CODE_STATE_DIR`                                        |
 
 Repository file browsing and context attachment use Git's tracked/non-ignored
 view and additionally exclude hidden and credential-shaped secret-like paths,
@@ -19,15 +19,15 @@ filenames such as `clientSecret.json` or `apiToken.txt`.
 
 Typical contents (names may evolve; do not commit these files):
 
-| File / area | Purpose |
-| --- | --- |
-| `events.v1.jsonl` | Append-only conversation history log |
-| `preferences.v1.json` | Theme, density, worktree limit, shortcuts, display flags |
-| `automations.v1.json` | Scheduled automations |
-| `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references |
-| Profile / secret store | Provider profile metadata (all providers + adapters) + env secrets |
-| Provider adapter metadata | Installed declarative adapters |
-| Shikigami run dirs | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
+| File / area                  | Purpose                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `events.v1.jsonl`            | Append-only conversation and autonomy history log                              |
+| `preferences.v1.json`        | Theme, density, worktree limit, shortcuts, display flags                       |
+| `automations.v1.json`        | Scheduled automations                                                          |
+| `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references        |
+| Profile / secret store       | Provider profile metadata (all providers + adapters) + env secrets             |
+| Provider adapter metadata    | Installed declarative adapters                                                 |
+| Shikigami run dirs           | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
 
 File modes are restricted (owner-only where applicable). History mutations are
 locked across local host processes. If an older concurrent-host race left intact
@@ -47,6 +47,13 @@ bound Aldunis turn and provider-run identifiers, outcome, retry link, and safe
 error code. Raw prompts, provider output, credentials, and approval material do
 not enter the fire record. A started fire whose outcome cannot be proven after
 host recovery is retained as unknown and is never replayed automatically.
+
+Autonomy runs and tasks also rebuild from the same event log. They retain typed
+workflow identity, lifecycle status, retry/timeout metadata, bounded budgets,
+standing-order references, and metadata-only findings. Running records become
+`lost` on host recovery and require an explicit operator resume. They never
+retain source contents, provider transcripts, credentials, raw tool traffic, or
+approval payloads.
 
 A project may also retain one Chisei namespace binding. This is local routing
 metadata, not a copy of Chisei authority. Action/effect/receipt projections are
