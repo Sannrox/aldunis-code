@@ -39,6 +39,7 @@ function readDesktopUpdateSnapshot(value: unknown): DesktopUpdateSnapshot | null
     "installing",
     "error",
   ]);
+  const errorStages = new Set(["check", "download", "install"]);
   if (
     snapshot.channel !== "stable"
     && snapshot.channel !== "nightly"
@@ -47,6 +48,8 @@ function readDesktopUpdateSnapshot(value: unknown): DesktopUpdateSnapshot | null
     typeof snapshot.currentVersion !== "string"
     || typeof snapshot.phase !== "string"
     || !phases.has(snapshot.phase)
+    || (snapshot.errorStage !== undefined
+      && (typeof snapshot.errorStage !== "string" || !errorStages.has(snapshot.errorStage)))
   ) return null;
   return snapshot as unknown as DesktopUpdateSnapshot;
 }

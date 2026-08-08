@@ -1,4 +1,4 @@
-import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryMetadata,
   ConversationSummary,
@@ -10,6 +10,8 @@ import type {
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
   ManagedAccount,
+  BranchPrLookupResult,
+  BranchPrStatus,
 } from "../../types";
 import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
@@ -21,11 +23,7 @@ import {
   loadConversationList,
   type ConversationListProjection,
 } from "./conversation-list";
-import {
-  isQuietDelegatedChild,
-  summarizeDelegatedOutcomes,
-} from "./delegated-outcomes";
-import { Icon } from "../../components/icon";
+import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
@@ -49,6 +47,12 @@ import {
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import { delegatedConversationLabels } from "./delegated-conversation-labels";
 import { delegatedConversationAncestorIds } from "../../lib/delegated-conversation-graph";
+import {
+  BRANCH_PR_CLIENT_BATCH_LIMIT,
+  chunkWorktreeRoots,
+  indexBranchPrResults,
+  uniqueWorktreeRoots,
+} from "../../lib/branch-pr-status";
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -61,14 +65,15 @@ function paneConversationLabel(
   return `${title} · ${providerListLabel(conversation.provider)}`;
 }
 
-
 const PROJECT_FILTER_KEY = "aldunis.projectFilter";
 const SIDEBAR_MOBILE_MEDIA_QUERY = "(max-width: 680px)";
 
 function readNarrowViewport(): boolean {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia(SIDEBAR_MOBILE_MEDIA_QUERY).matches;
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(SIDEBAR_MOBILE_MEDIA_QUERY).matches
+  );
 }
 
 function readInitialSidebarOpen(): boolean {
@@ -100,9 +105,11 @@ function persistSidebarOpen(open: boolean, narrowViewport: boolean): void {
 
 function isSidebarShortcutCaptured(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable
-    || target.closest("[data-keybinding-capture]") !== null
-    || target.matches("input, textarea, select");
+  return (
+    target.isContentEditable ||
+    target.closest("[data-keybinding-capture]") !== null ||
+    target.matches("input, textarea, select")
+  );
 }
 
 export function isThreadStatusEvent(value: unknown): value is {
@@ -112,9 +119,11 @@ export function isThreadStatusEvent(value: unknown): value is {
 } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const event = value as Record<string, unknown>;
-  return typeof event.threadId === "string"
-    && typeof event.status === "string"
-    && typeof event.at === "string";
+  return (
+    typeof event.threadId === "string" &&
+    typeof event.status === "string" &&
+    typeof event.at === "string"
+  );
 }
 
 export function DelegatedChildrenPanel({
@@ -148,17 +157,14 @@ export function DelegatedChildrenPanel({
   const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
   const [inputBusyId, setInputBusyId] = useState<string | null>(null);
   const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
-  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const outcomeSummary = summarizeDelegatedOutcomes(parent.id, conversations, relationships);
   const approvalChildIds = new Set(
     approvals
-      .filter((item) => (
-        item.parentThreadId === parent.id
-        && !resolvedApprovalIds.has(item.approval.id)
-      ))
+      .filter(
+        (item) => item.parentThreadId === parent.id && !resolvedApprovalIds.has(item.approval.id),
+      )
       .map((item) => item.childThreadId),
   );
   const approvalCount = new Set([
@@ -167,17 +173,18 @@ export function DelegatedChildrenPanel({
       .map(({ child }) => child.id),
     ...approvalChildIds,
   ]).size;
-  const runningCount = outcomeSummary.outcomes.filter(({ child }) => (
-    child.status === "running" && !approvalChildIds.has(child.id)
-  )).length;
+  const runningCount = outcomeSummary.outcomes.filter(
+    ({ child }) => child.status === "running" && !approvalChildIds.has(child.id),
+  ).length;
   const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
   const ancestorIds = delegatedConversationAncestorIds(relationships, parent.id);
-  const candidates = conversations.filter((item) => (
-    item.id !== parent.id
-    && !item.archivedAt
-    && !unavailableChildIds.has(item.id)
-    && !ancestorIds.has(item.id)
-  ));
+  const candidates = conversations.filter(
+    (item) =>
+      item.id !== parent.id &&
+      !item.archivedAt &&
+      !unavailableChildIds.has(item.id) &&
+      !ancestorIds.has(item.id),
+  );
   const candidateLabels = delegatedConversationLabels(candidates);
   const mutate = async (route: string, childThreadId: string) => {
     setBusy(true);
@@ -188,7 +195,7 @@ export function DelegatedChildrenPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ parentThreadId: parent.id, childThreadId }),
       });
-      const body = await response.json() as { error?: string };
+      const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Delegated conversation update failed.");
       setSelectedChildId("");
       await onChanged();
@@ -205,23 +212,20 @@ export function DelegatedChildrenPanel({
     setApprovalBusyId(delegated.approval.id);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/provider/approvals/${delegated.approval.id}/decide`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            runId: delegated.approval.runId,
-            conversationId: delegated.approval.conversationId,
-            repository: delegated.approval.repository,
-            worktree: delegated.approval.worktree,
-            toolCallId: delegated.approval.toolCallId,
-            decision,
-            parentThreadId: parent.id,
-          }),
-        },
-      );
-      const body = await response.json() as { error?: string };
+      const response = await fetch(`/api/provider/approvals/${delegated.approval.id}/decide`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          runId: delegated.approval.runId,
+          conversationId: delegated.approval.conversationId,
+          repository: delegated.approval.repository,
+          worktree: delegated.approval.worktree,
+          toolCallId: delegated.approval.toolCallId,
+          decision,
+          parentThreadId: parent.id,
+        }),
+      });
+      const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Approval decision failed.");
       setResolvedApprovalIds((current) => new Set(current).add(delegated.approval.id));
       try {
@@ -241,19 +245,16 @@ export function DelegatedChildrenPanel({
     setInputBusyId(delegated.request.id);
     setError(null);
     try {
-      const response = await fetch(
-        `/api/provider/input-requests/${delegated.request.id}/respond`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            childThreadId: delegated.childThreadId,
-            parentThreadId: parent.id,
-            answer,
-          }),
-        },
-      );
-      const body = await response.json() as { error?: string };
+      const response = await fetch(`/api/provider/input-requests/${delegated.request.id}/respond`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          childThreadId: delegated.childThreadId,
+          parentThreadId: parent.id,
+          answer,
+        }),
+      });
+      const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Child input response failed.");
       await onChanged();
     } catch (cause) {
@@ -265,208 +266,239 @@ export function DelegatedChildrenPanel({
   return (
     <>
       <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
-      <div className="delegated-children-header">
-        <div>
-          <h3 id={`delegated-title-${parent.id}`}>Delegated conversations</h3>
-          <p>Quiet status summary. Child messages and provider context stay independent.</p>
-          {outcomeSummary.outcomes.length > 0 && (
-            <div className="delegated-counts" aria-live="polite" aria-atomic="true">
-              <span>{runningCount} working</span>
-              <span>{approvalCount} approval</span>
-              <span>{outcomeSummary.inputs} input</span>
-              <span>{outcomeSummary.failures} failed</span>
-              <span>{outcomeSummary.completed} completed</span>
-            </div>
-          )}
-        </div>
-        <div className="delegated-link-control">
-          <Button
-            type="button"
-            size="sm"
-            variant="primary"
-            onClick={() => setStartOpen(true)}
-            aria-label={`Start a child conversation from ${parent.title}`}
-          >
-            Start child
-          </Button>
-          <label className="sr-only" htmlFor={`delegated-child-${parent.id}`}>
-            Existing conversation to link
-          </label>
-          <select
-            id={`delegated-child-${parent.id}`}
-            value={selectedChildId}
-            disabled={busy || candidates.length === 0}
-            onChange={(event) => setSelectedChildId(event.target.value)}
-          >
-            <option value="">Link existing…</option>
-            {candidates.map((candidate) => (
-              <option value={candidate.id} key={candidate.id}>
-                {candidateLabels.get(candidate.id)}
-              </option>
-            ))}
-          </select>
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy || !selectedChildId}
-            onClick={() => void mutate(
-              "/api/state/delegated-conversations/link",
-              selectedChildId,
+        <div className="delegated-children-header">
+          <div>
+            <h3 id={`delegated-title-${parent.id}`}>Delegated conversations</h3>
+            <p>Quiet status summary. Child messages and provider context stay independent.</p>
+            {outcomeSummary.outcomes.length > 0 && (
+              <div className="delegated-counts" aria-live="polite" aria-atomic="true">
+                <span>{runningCount} working</span>
+                <span>{approvalCount} approval</span>
+                <span>{outcomeSummary.inputs} input</span>
+                <span>{outcomeSummary.failures} failed</span>
+                <span>{outcomeSummary.completed} completed</span>
+              </div>
             )}
-          >
-            Link
-          </Button>
+          </div>
+          <div className="delegated-link-control">
+            <Button
+              type="button"
+              size="sm"
+              variant="primary"
+              onClick={() => setStartOpen(true)}
+              aria-label={`Start a child conversation from ${parent.title}`}
+            >
+              Start child
+            </Button>
+            <label className="sr-only" htmlFor={`delegated-child-${parent.id}`}>
+              Existing conversation to link
+            </label>
+            <select
+              id={`delegated-child-${parent.id}`}
+              value={selectedChildId}
+              disabled={busy || candidates.length === 0}
+              onChange={(event) => setSelectedChildId(event.target.value)}
+            >
+              <option value="">Link existing…</option>
+              {candidates.map((candidate) => (
+                <option value={candidate.id} key={candidate.id}>
+                  {candidateLabels.get(candidate.id)}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              disabled={busy || !selectedChildId}
+              onClick={() =>
+                void mutate("/api/state/delegated-conversations/link", selectedChildId)
+              }
+            >
+              Link
+            </Button>
+          </div>
         </div>
-      </div>
-      {error && <p className="delegated-error" role="alert">{error}</p>}
-      {outcomeSummary.outcomes.length === 0 ? (
-        <p className="delegated-empty">No delegated conversations linked.</p>
-      ) : (
-        <ul className="delegated-list">
-          {outcomeSummary.outcomes.map(({ relationship, child }) => {
-            const childApprovals = approvals.filter((item) => (
-              item.parentThreadId === parent.id
-              && item.childThreadId === child.id
-              && !resolvedApprovalIds.has(item.approval.id)
-            ));
-            const childInputs = inputs.filter((item) => (
-              item.parentThreadId === parent.id && item.childThreadId === child.id
-            ));
-            const status = childApprovals.length > 0
-              ? "pending_approval"
-              : childInputs.length > 0
-                ? "awaiting_input"
-              : child.status ?? "idle";
-            if (status === "completed") {
-              const outcome = outcomes.find((item) => item.childThreadId === child.id);
-              return (
-                <li key={relationship.id} className="delegated-outcome completed">
-                  <details>
-                    <summary>
-                      <strong>{child.title}</strong>
-                      <span>Completed · Review outcome</span>
-                    </summary>
-                    <div className="delegated-outcome-body">
-                      <div className="delegated-summary">
-                        <span>{child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}</span>
-                        <span className="delegated-worktree">
-                          {branchFromWorktree(child.worktree)} · {child.worktree}
-                        </span>
-                        <p className="delegated-result">
-                          {outcome?.summary ?? "Outcome summary is loading…"}
-                        </p>
-                      </div>
-                      <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
-                        Open child
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => void mutate(
-                          "/api/state/delegated-conversations/unlink",
-                          child.id,
-                        )}
-                      >
-                        Detach
-                      </Button>
-                    </div>
-                  </details>
-                </li>
+        {error && (
+          <p className="delegated-error" role="alert">
+            {error}
+          </p>
+        )}
+        {outcomeSummary.outcomes.length === 0 ? (
+          <p className="delegated-empty">No delegated conversations linked.</p>
+        ) : (
+          <ul className="delegated-list">
+            {outcomeSummary.outcomes.map(({ relationship, child }) => {
+              const childApprovals = approvals.filter(
+                (item) =>
+                  item.parentThreadId === parent.id &&
+                  item.childThreadId === child.id &&
+                  !resolvedApprovalIds.has(item.approval.id),
               );
-            }
-            return (
-              <li key={relationship.id} className={`delegated-outcome ${status}`}>
-                <div className="delegated-summary">
-                  <strong>{child.title}</strong>
-                  <span>{child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}</span>
-                  <span className="delegated-worktree">
-                    {branchFromWorktree(child.worktree)} · {child.worktree}
+              const childInputs = inputs.filter(
+                (item) => item.parentThreadId === parent.id && item.childThreadId === child.id,
+              );
+              const status =
+                childApprovals.length > 0
+                  ? "pending_approval"
+                  : childInputs.length > 0
+                    ? "awaiting_input"
+                    : (child.status ?? "idle");
+              if (status === "completed") {
+                const outcome = outcomes.find((item) => item.childThreadId === child.id);
+                return (
+                  <li key={relationship.id} className="delegated-outcome completed">
+                    <details>
+                      <summary>
+                        <strong>{child.title}</strong>
+                        <span>Completed · Review outcome</span>
+                      </summary>
+                      <div className="delegated-outcome-body">
+                        <div className="delegated-summary">
+                          <span>
+                            {child.projectName ?? "Unknown project"} ·{" "}
+                            {providerListLabel(child.provider)}
+                          </span>
+                          <span className="delegated-worktree">
+                            {branchFromWorktree(child.worktree)} · {child.worktree}
+                          </span>
+                          <p className="delegated-result">
+                            {outcome?.summary ?? "Outcome summary is loading…"}
+                          </p>
+                        </div>
+                        <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
+                          Open child
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() =>
+                            void mutate("/api/state/delegated-conversations/unlink", child.id)
+                          }
+                        >
+                          Detach
+                        </Button>
+                      </div>
+                    </details>
+                  </li>
+                );
+              }
+              return (
+                <li key={relationship.id} className={`delegated-outcome ${status}`}>
+                  <div className="delegated-summary">
+                    <strong>{child.title}</strong>
+                    <span>
+                      {child.projectName ?? "Unknown project"} · {providerListLabel(child.provider)}
+                    </span>
+                    <span className="delegated-worktree">
+                      {branchFromWorktree(child.worktree)} · {child.worktree}
+                    </span>
+                  </div>
+                  <span className={`delegated-status status-${status}`}>
+                    {status.replaceAll("_", " ")}
                   </span>
-                </div>
-                <span className={`delegated-status status-${status}`}>
-                  {status.replaceAll("_", " ")}
-                </span>
-                <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
-                  Open child
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => void mutate(
-                    "/api/state/delegated-conversations/unlink",
-                    child.id,
-                  )}
-                >
-                  Detach
-                </Button>
-                {childApprovals.map((delegatedApproval) => (
-                  <section
-                    className="delegated-approval-card"
-                    key={delegatedApproval.approval.id}
-                    aria-label={`Approval required for ${child.title}: ${delegatedApproval.approval.scope.summary}`}
+                  <Button type="button" size="sm" onClick={() => onOpen(child.id)}>
+                    Open child
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate("/api/state/delegated-conversations/unlink", child.id)
+                    }
                   >
-                    <header>
-                      <strong>{delegatedApproval.approval.scope.summary}</strong>
-                      <span>{delegatedApproval.approval.toolName} · one action only</span>
-                    </header>
-                    <dl>
-                      <div><dt>Conversation</dt><dd>{child.title}</dd></div>
-                      <div><dt>Project</dt><dd>{child.projectName ?? "Unknown project"}</dd></div>
-                      <div><dt>Worktree</dt><dd title={delegatedApproval.approval.worktree}>{delegatedApproval.approval.worktree}</dd></div>
-                      <div><dt>Provider</dt><dd>{providerListLabel(delegatedApproval.approval.provider)}</dd></div>
-                      <div><dt>Tool</dt><dd>{delegatedApproval.approval.toolName}</dd></div>
-                      <div><dt>Target</dt><dd>{delegatedApproval.approval.scope.target}</dd></div>
-                      <div><dt>Expires</dt><dd>{new Date(delegatedApproval.approval.expiresAt).toLocaleString()}</dd></div>
-                    </dl>
-                    {delegatedApproval.approval.scope.details.length > 0 && (
-                      <ul>
-                        {delegatedApproval.approval.scope.details.map((detail) => (
-                          <li key={detail}>{detail}</li>
-                        ))}
-                      </ul>
-                    )}
-                    <footer>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={approvalBusyId === delegatedApproval.approval.id}
-                        onClick={() => void decideApproval(delegatedApproval, "deny")}
-                      >
-                        Deny
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="primary"
-                        size="sm"
-                        disabled={approvalBusyId === delegatedApproval.approval.id}
-                        onClick={() => void decideApproval(delegatedApproval, "allow_once")}
-                      >
-                        Allow once
-                      </Button>
-                    </footer>
-                  </section>
-                ))}
-                {childInputs.map((delegatedInput) => (
-                  <section
-                    className="delegated-input-card"
-                    key={delegatedInput.request.id}
-                    aria-label={`Input required for ${child.title}: ${delegatedInput.request.question}`}
-                  >
-                    <header>
-                      <strong>{delegatedInput.request.question}</strong>
-                      <span>
-                        {delegatedInput.request.responseMode === "native_resume"
-                          ? `Resume routes only to ${child.title} with a fresh approval scope`
-                          : `Answer routes only to ${child.title}`}
-                      </span>
-                    </header>
-                    {delegatedInput.request.responseMode === "native_resume"
-                      && delegatedInput.request.resumeState === "unavailable" ? (
+                    Detach
+                  </Button>
+                  {childApprovals.map((delegatedApproval) => (
+                    <section
+                      className="delegated-approval-card"
+                      key={delegatedApproval.approval.id}
+                      aria-label={`Approval required for ${child.title}: ${delegatedApproval.approval.scope.summary}`}
+                    >
+                      <header>
+                        <strong>{delegatedApproval.approval.scope.summary}</strong>
+                        <span>{delegatedApproval.approval.toolName} · one action only</span>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>Conversation</dt>
+                          <dd>{child.title}</dd>
+                        </div>
+                        <div>
+                          <dt>Project</dt>
+                          <dd>{child.projectName ?? "Unknown project"}</dd>
+                        </div>
+                        <div>
+                          <dt>Worktree</dt>
+                          <dd title={delegatedApproval.approval.worktree}>
+                            {delegatedApproval.approval.worktree}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Provider</dt>
+                          <dd>{providerListLabel(delegatedApproval.approval.provider)}</dd>
+                        </div>
+                        <div>
+                          <dt>Tool</dt>
+                          <dd>{delegatedApproval.approval.toolName}</dd>
+                        </div>
+                        <div>
+                          <dt>Target</dt>
+                          <dd>{delegatedApproval.approval.scope.target}</dd>
+                        </div>
+                        <div>
+                          <dt>Expires</dt>
+                          <dd>{new Date(delegatedApproval.approval.expiresAt).toLocaleString()}</dd>
+                        </div>
+                      </dl>
+                      {delegatedApproval.approval.scope.details.length > 0 && (
+                        <ul>
+                          {delegatedApproval.approval.scope.details.map((detail) => (
+                            <li key={detail}>{detail}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <footer>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={approvalBusyId === delegatedApproval.approval.id}
+                          onClick={() => void decideApproval(delegatedApproval, "deny")}
+                        >
+                          Deny
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          size="sm"
+                          disabled={approvalBusyId === delegatedApproval.approval.id}
+                          onClick={() => void decideApproval(delegatedApproval, "allow_once")}
+                        >
+                          Allow once
+                        </Button>
+                      </footer>
+                    </section>
+                  ))}
+                  {childInputs.map((delegatedInput) => (
+                    <section
+                      className="delegated-input-card"
+                      key={delegatedInput.request.id}
+                      aria-label={`Input required for ${child.title}: ${delegatedInput.request.question}`}
+                    >
+                      <header>
+                        <strong>{delegatedInput.request.question}</strong>
+                        <span>
+                          {delegatedInput.request.responseMode === "native_resume"
+                            ? `Resume routes only to ${child.title} with a fresh approval scope`
+                            : `Answer routes only to ${child.title}`}
+                        </span>
+                      </header>
+                      {delegatedInput.request.responseMode === "native_resume" &&
+                      delegatedInput.request.resumeState === "unavailable" ? (
                         <p className="provider-error-hint" role="alert">
-                          {delegatedInput.request.resumeError
-                            ?? "Native Shikigami resume is unavailable. Start a new child run to continue."}
+                          {delegatedInput.request.resumeError ??
+                            "Native Shikigami resume is unavailable. Start a new child run to continue."}
                         </p>
                       ) : (
                         <>
@@ -481,10 +513,12 @@ export function DelegatedChildrenPanel({
                                   size="sm"
                                   key={choice.id}
                                   title={choice.description ?? undefined}
-                                  onClick={() => setInputAnswers((current) => ({
-                                    ...current,
-                                    [delegatedInput.request.id]: choice.label,
-                                  }))}
+                                  onClick={() =>
+                                    setInputAnswers((current) => ({
+                                      ...current,
+                                      [delegatedInput.request.id]: choice.label,
+                                    }))
+                                  }
                                 >
                                   {choice.label}
                                 </Button>
@@ -499,10 +533,12 @@ export function DelegatedChildrenPanel({
                             maxLength={4_000}
                             readOnly={!delegatedInput.request.allowFreeForm}
                             value={inputAnswers[delegatedInput.request.id] ?? ""}
-                            onChange={(event) => setInputAnswers((current) => ({
-                              ...current,
-                              [delegatedInput.request.id]: event.target.value,
-                            }))}
+                            onChange={(event) =>
+                              setInputAnswers((current) => ({
+                                ...current,
+                                [delegatedInput.request.id]: event.target.value,
+                              }))
+                            }
                           />
                           <footer>
                             <Button
@@ -510,8 +546,8 @@ export function DelegatedChildrenPanel({
                               variant="primary"
                               size="sm"
                               disabled={
-                                inputBusyId === delegatedInput.request.id
-                                || !(inputAnswers[delegatedInput.request.id] ?? "").trim()
+                                inputBusyId === delegatedInput.request.id ||
+                                !(inputAnswers[delegatedInput.request.id] ?? "").trim()
                               }
                               onClick={() => void answerInput(delegatedInput)}
                             >
@@ -520,13 +556,13 @@ export function DelegatedChildrenPanel({
                           </footer>
                         </>
                       )}
-                  </section>
-                ))}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                    </section>
+                  ))}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
       {startOpen && (
         <StartDelegatedConversationDialog
@@ -601,20 +637,20 @@ export function CodeWorkbench({
   const sidebarOpenButtonReference = useRef<HTMLButtonElement>(null);
   const mainReference = useRef<HTMLElement>(null);
   const sidebarOpenReference = useRef(sidebarOpen);
-  const sidebarFocusSourceReference = useRef<
-    "user" | "responsive" | "navigation" | "dialog"
-  >("user");
+  const sidebarFocusSourceReference = useRef<"user" | "responsive" | "navigation" | "dialog">(
+    "user",
+  );
   const narrowViewportReference = useRef(narrowViewport);
   const previousSidebarOpenReference = useRef(sidebarOpen);
-  const updateSidebarOpen = useCallback((
-    open: boolean,
-    source: "user" | "responsive" | "navigation" | "dialog",
-  ) => {
-    if (sidebarOpenReference.current === open) return;
-    sidebarOpenReference.current = open;
-    sidebarFocusSourceReference.current = source;
-    setSidebarOpen(open);
-  }, []);
+  const updateSidebarOpen = useCallback(
+    (open: boolean, source: "user" | "responsive" | "navigation" | "dialog") => {
+      if (sidebarOpenReference.current === open) return;
+      sidebarOpenReference.current = open;
+      sidebarFocusSourceReference.current = source;
+      setSidebarOpen(open);
+    },
+    [],
+  );
   const toggleSidebar = useCallback(() => {
     updateSidebarOpen(!sidebarOpenReference.current, "user");
   }, [updateSidebarOpen]);
@@ -697,7 +733,8 @@ export function CodeWorkbench({
   }, [product]);
   useEffect(() => {
     const inspect = (event: Event) => {
-      const correlationId = (event as CustomEvent<{ correlationId?: unknown }>).detail?.correlationId;
+      const correlationId = (event as CustomEvent<{ correlationId?: unknown }>).detail
+        ?.correlationId;
       if (typeof correlationId !== "string") return;
       setChiseiCorrelationId(correlationId);
       onProductChange("chisei");
@@ -731,9 +768,7 @@ export function CodeWorkbench({
   const [delegatedOutcomes, setDelegatedOutcomes] = useState<
     DelegatedConversationOutcomeProjection[]
   >([]);
-  const [delegatedApprovals, setDelegatedApprovals] = useState<
-    DelegatedApprovalProjection[]
-  >([]);
+  const [delegatedApprovals, setDelegatedApprovals] = useState<DelegatedApprovalProjection[]>([]);
   const [delegatedInputs, setDelegatedInputs] = useState<DelegatedInputProjection[]>([]);
   const [showingArchived, setShowingArchived] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
@@ -747,15 +782,17 @@ export function CodeWorkbench({
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const primaryNewKeyReference = useRef(0);
-  const [repairBrief, setRepairBrief] = useState<{ projectId: string; prompt: string } | null>(null);
+  const [repairBrief, setRepairBrief] = useState<{ projectId: string; prompt: string } | null>(
+    null,
+  );
   const [secondaryId, setSecondaryId] = useState<string | null>(null);
   const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
   const [splitPercent, setSplitPercent] = useState(50);
   const renameReturnFocusReference = useRef<HTMLElement | null>(null);
   const deleteReturnFocusReference = useRef<HTMLElement | null>(null);
   const releaseReturnFocusReference = useRef<HTMLElement | null>(null);
-  const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(
-    () => (repository ? "loading" : "idle"),
+  const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(() =>
+    repository ? "loading" : "idle",
   );
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const splitReference = useRef<HTMLDivElement>(null);
@@ -771,12 +808,13 @@ export function CodeWorkbench({
     const startRepair = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: unknown; prompt?: unknown }>).detail;
       if (
-        typeof detail?.projectId !== "string"
-        || !detail.projectId
-        || typeof detail.prompt !== "string"
-        || !detail.prompt
-        || detail.prompt.length > 8_000
-      ) return;
+        typeof detail?.projectId !== "string" ||
+        !detail.projectId ||
+        typeof detail.prompt !== "string" ||
+        !detail.prompt ||
+        detail.prompt.length > 8_000
+      )
+        return;
       onSelectProject(detail.projectId);
       onProductChange("code");
       setRepairBrief({ projectId: detail.projectId, prompt: detail.prompt });
@@ -809,7 +847,7 @@ export function CodeWorkbench({
       setConversations(available);
       const requestSequence = ++stateProjectionRequestReference.current;
       const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
-      const lifecycleProjection = await lifecycleResponse.json() as {
+      const lifecycleProjection = (await lifecycleResponse.json()) as {
         conversationDeletions?: Array<{ threadId: string; status: string }>;
         delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
         delegatedApprovals?: DelegatedApprovalProjection[];
@@ -830,21 +868,30 @@ export function CodeWorkbench({
       // Only apply stored selection on the first successful load.
       if (restoredProjectReference.current === null) {
         const parameters = new URLSearchParams(window.location.search);
-        const preferredProjectId = repository?.projectId
-          ?? parameters.get("project")
-          ?? projects[0]?.id
-          ?? null;
+        const preferredProjectId =
+          repository?.projectId ?? parameters.get("project") ?? projects[0]?.id ?? null;
         const stored = preferredProjectId
           ? window.localStorage.getItem(`aldunis.split.${preferredProjectId}`)
           : null;
-        let saved: { primaryId?: string | null; secondaryId?: string | null; splitPercent?: number } = {};
-        try { saved = stored ? JSON.parse(stored) as typeof saved : {}; } catch { saved = {}; }
+        let saved: {
+          primaryId?: string | null;
+          secondaryId?: string | null;
+          splitPercent?: number;
+        } = {};
+        try {
+          saved = stored ? (JSON.parse(stored) as typeof saved) : {};
+        } catch {
+          saved = {};
+        }
         const urlConversation = parameters.get("conversation");
-        const restored = normalizeSplitWorkspaceState({
-          primaryId: urlConversation ?? saved.primaryId,
-          secondaryId: parameters.get("beside") ?? saved.secondaryId,
-          splitPercent: saved.splitPercent,
-        }, available[0]?.id ?? null);
+        const restored = normalizeSplitWorkspaceState(
+          {
+            primaryId: urlConversation ?? saved.primaryId,
+            secondaryId: parameters.get("beside") ?? saved.secondaryId,
+            splitPercent: saved.splitPercent,
+          },
+          available[0]?.id ?? null,
+        );
         setPrimaryId(restored.primaryId);
         primarySelectionReference.current = restored.primaryId ?? `new:${primaryNewKey}`;
         setSecondaryId(restored.secondaryId);
@@ -859,8 +906,10 @@ export function CodeWorkbench({
       restoredProjectReference.current = null;
       setRestoreState("failed");
     });
-    return () => { active = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount/retry only; repo switches must not reshuffle
+    return () => {
+      active = false;
+    };
+    // Mount/retry only; repo switches must not reshuffle.
   }, [restoreAttempt]);
 
   // Track the bound project for split persistence without resetting the inbox selection.
@@ -870,16 +919,25 @@ export function CodeWorkbench({
   }, [repository?.projectId]);
   useEffect(() => {
     if (!repository || restoredProjectReference.current !== repository.projectId) return;
-    window.localStorage.setItem(`aldunis.split.${repository.projectId}`, JSON.stringify({
-      primaryId,
-      secondaryId,
-      splitPercent,
-    }));
+    window.localStorage.setItem(
+      `aldunis.split.${repository.projectId}`,
+      JSON.stringify({
+        primaryId,
+        secondaryId,
+        splitPercent,
+      }),
+    );
     const parameters = new URLSearchParams(window.location.search);
     parameters.set("project", repository.projectId);
-    if (primaryId) parameters.set("conversation", primaryId); else parameters.delete("conversation");
-    if (secondaryId) parameters.set("beside", secondaryId); else parameters.delete("beside");
-    window.history.replaceState(null, "", `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`);
+    if (primaryId) parameters.set("conversation", primaryId);
+    else parameters.delete("conversation");
+    if (secondaryId) parameters.set("beside", secondaryId);
+    else parameters.delete("beside");
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`,
+    );
   }, [primaryId, repository?.projectId, secondaryId, splitPercent]);
   useEffect(() => {
     const moveFocus = (event: KeyboardEvent) => {
@@ -901,7 +959,12 @@ export function CodeWorkbench({
   const primary = conversations.find((conversation) => conversation.id === primaryId) ?? null;
   const secondary = conversations.find((conversation) => conversation.id === secondaryId) ?? null;
   useEffect(() => {
-    if (!pendingWorkspaceAction || pendingWorkspaceAction.threadId !== primaryId || !primary || !repository) {
+    if (
+      !pendingWorkspaceAction ||
+      pendingWorkspaceAction.threadId !== primaryId ||
+      !primary ||
+      !repository
+    ) {
       return;
     }
     const activeProjectIds = new Set([
@@ -909,14 +972,18 @@ export function CodeWorkbench({
       ...(projects.find((project) => project.id === repository.projectId)?.memberIds ?? []),
     ]);
     if (!activeProjectIds.has(primary.projectId)) return;
-    const selectedWorktree = repository.worktrees.find((worktree) => worktree.path === primary.worktree);
+    const selectedWorktree = repository.worktrees.find(
+      (worktree) => worktree.path === primary.worktree,
+    );
     if (
-      !selectedWorktree
-      || selectedWorktree.recovery !== "available"
-      || (selectedWorktree.state !== "available" && selectedWorktree.state !== "detached")
+      !selectedWorktree ||
+      selectedWorktree.recovery !== "available" ||
+      (selectedWorktree.state !== "available" && selectedWorktree.state !== "detached")
     ) {
       setPendingWorkspaceAction(null);
-      setLifecycleError("The conversation worktree is no longer available. Open the conversation to inspect its recovery state.");
+      setLifecycleError(
+        "The conversation worktree is no longer available. Open the conversation to inspect its recovery state.",
+      );
       return;
     }
     setPendingWorkspaceAction(null);
@@ -924,21 +991,24 @@ export function CodeWorkbench({
     setPrimaryChangesMode(pendingWorkspaceAction.mode);
     setPrimaryChangesSignal((value) => value + 1);
   }, [pendingWorkspaceAction, primary, primaryId, projects, repository]);
-  const initialRepairPrompt = !primary
-    && repairBrief
-    && repairBrief.projectId === repository?.projectId
-    ? repairBrief.prompt
-    : undefined;
-  const quietPrimaryChild = orchestrationThreadsBeta && isQuietDelegatedChild(
-    primaryId,
-    activePane === "secondary" ? secondaryId : null,
-    delegatedRelationships,
-  );
-  const quietSecondaryChild = orchestrationThreadsBeta && isQuietDelegatedChild(
-    secondaryId,
-    activePane === "primary" ? primaryId : null,
-    delegatedRelationships,
-  );
+  const initialRepairPrompt =
+    !primary && repairBrief && repairBrief.projectId === repository?.projectId
+      ? repairBrief.prompt
+      : undefined;
+  const quietPrimaryChild =
+    orchestrationThreadsBeta &&
+    isQuietDelegatedChild(
+      primaryId,
+      activePane === "secondary" ? secondaryId : null,
+      delegatedRelationships,
+    );
+  const quietSecondaryChild =
+    orchestrationThreadsBeta &&
+    isQuietDelegatedChild(
+      secondaryId,
+      activePane === "primary" ? primaryId : null,
+      delegatedRelationships,
+    );
   // Full labels also used as title tooltips when ellipsis truncates narrow dual-pane tabs.
   const paneSwitcherPrimaryLabel = `Primary · ${paneConversationLabel(
     primary,
@@ -946,22 +1016,23 @@ export function CodeWorkbench({
   )}`;
   const paneSwitcherSecondaryLabel = secondaryId
     ? `Secondary · ${paneConversationLabel(
-      secondary,
-      secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation",
-    )}`
+        secondary,
+        secondaryId.startsWith("new:") ? "New conversation" : "Replace conversation",
+      )}`
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
   const loadStateProjection = async () => {
     const response = await fetch("/api/state/load", { method: "POST" });
-    const body = await response.json() as ConversationListProjection & {
+    const body = (await response.json()) as ConversationListProjection & {
       delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
       delegatedApprovals?: DelegatedApprovalProjection[];
       delegatedInputs?: DelegatedInputProjection[];
       delegatedRelationships?: DelegatedConversationRelationship[];
       error?: string;
     };
-    if (!response.ok) throw new Error(body.error ?? "Local conversation state could not be loaded.");
+    if (!response.ok)
+      throw new Error(body.error ?? "Local conversation state could not be loaded.");
     return body;
   };
   const applyStateProjection = (body: Awaited<ReturnType<typeof loadStateProjection>>) => {
@@ -970,7 +1041,8 @@ export function CodeWorkbench({
       const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
       return projected.map((conversation) => {
         const optimisticVisit = currentById.get(conversation.id)?.lastVisitedAt;
-        return optimisticVisit && (!conversation.lastVisitedAt || optimisticVisit > conversation.lastVisitedAt)
+        return optimisticVisit &&
+          (!conversation.lastVisitedAt || optimisticVisit > conversation.lastVisitedAt)
           ? { ...conversation, lastVisitedAt: optimisticVisit }
           : conversation;
       });
@@ -990,13 +1062,12 @@ export function CodeWorkbench({
     let active = true;
     const synchronize = () => {
       const requestSequence = ++stateProjectionRequestReference.current;
-      void loadStateProjection().then((projection) => {
-        if (
-          !active
-          || requestSequence !== stateProjectionRequestReference.current
-        ) return;
-        applyStateProjection(projection);
-      }).catch(() => undefined);
+      void loadStateProjection()
+        .then((projection) => {
+          if (!active || requestSequence !== stateProjectionRequestReference.current) return;
+          applyStateProjection(projection);
+        })
+        .catch(() => undefined);
     };
     synchronize();
     const events = new EventSource("/api/state/events");
@@ -1015,29 +1086,84 @@ export function CodeWorkbench({
       events.close();
     };
     // The host hides delegated relationships while disabled, so enable performs a fresh load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orchestrationThreadsBeta]);
   const listedConversations = useMemo(() => {
-    const memberIds = projectFilter === "all"
-      ? null
-      : new Set(
-        projects.find((project) => project.id === projectFilter)?.memberIds
-          ?? [projectFilter],
-      );
+    const memberIds =
+      projectFilter === "all"
+        ? null
+        : new Set(
+            projects.find((project) => project.id === projectFilter)?.memberIds ?? [projectFilter],
+          );
     return conversations.filter((conversation) => {
       if (memberIds && !memberIds.has(conversation.projectId)) return false;
       return showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt;
     });
   }, [conversations, projectFilter, projects, showingArchived]);
+  const [prStatusByWorktree, setPrStatusByWorktree] = useState<Map<string, BranchPrStatus>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    const projectRootById = new Map(projects.map((project) => [project.id, project.root]));
+    // Prefer memberRoots when a conversation's projectId maps into a collapsed chip.
+    for (const project of projects) {
+      if (!project.memberRoots) continue;
+      for (const [memberId, root] of Object.entries(project.memberRoots)) {
+        projectRootById.set(memberId, root);
+      }
+    }
+    // Cap uniqueness first; refresh still chunks in case limits change.
+    const items = uniqueWorktreeRoots(
+      listedConversations.flatMap((conversation) => {
+        const root = projectRootById.get(conversation.projectId);
+        if (!root || !conversation.worktree) return [];
+        return [{ root, worktree: conversation.worktree }];
+      }),
+      BRANCH_PR_CLIENT_BATCH_LIMIT * 4,
+    );
+    if (items.length === 0) {
+      setPrStatusByWorktree(new Map());
+      return;
+    }
+    const refresh = async () => {
+      try {
+        const results: BranchPrLookupResult[] = [];
+        for (const batch of chunkWorktreeRoots(items, BRANCH_PR_CLIENT_BATCH_LIMIT)) {
+          const response = await fetch("/api/delivery/pr-status/batch", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ items: batch }),
+          });
+          if (!response.ok) continue;
+          const body = (await response.json()) as {
+            results?: BranchPrLookupResult[];
+            error?: string;
+          };
+          if (Array.isArray(body.results)) results.push(...body.results);
+        }
+        if (cancelled) return;
+        setPrStatusByWorktree(indexBranchPrResults(results));
+      } catch {
+        // Soft-fail: missing gh or network issues leave rows without PR chrome.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [listedConversations, projects]);
   const worktreeLimit = 10;
-  const managedWorktreeCount = repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
+  const managedWorktreeCount =
+    repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
   const postLifecycle = async (route: string, body: Record<string, unknown>) => {
     const response = await fetch(route, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const result = await response.json() as { error?: string };
+    const result = (await response.json()) as { error?: string };
     if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
     await refreshStateProjection();
     return result;
@@ -1050,9 +1176,10 @@ export function CodeWorkbench({
     try {
       if (action === "rename") {
         const active = document.activeElement;
-        renameReturnFocusReference.current = active instanceof HTMLElement
-          ? active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null
-          : null;
+        renameReturnFocusReference.current =
+          active instanceof HTMLElement
+            ? (active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null)
+            : null;
         setRenameTarget(conversation);
       } else if (action === "pin") {
         await postLifecycle("/api/state/conversations/pin", {
@@ -1067,15 +1194,16 @@ export function CodeWorkbench({
         }
       } else {
         const active = document.activeElement;
-        deleteReturnFocusReference.current = active instanceof HTMLElement
-          ? active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null
-          : null;
+        deleteReturnFocusReference.current =
+          active instanceof HTMLElement
+            ? (active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null)
+            : null;
         const previewResponse = await fetch("/api/state/conversations/delete/preview", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ threadId: conversation.id }),
         });
-        const preview = await previewResponse.json() as {
+        const preview = (await previewResponse.json()) as {
           affectedRecords?: Record<string, number>;
           excluded?: string[];
           error?: string;
@@ -1084,7 +1212,9 @@ export function CodeWorkbench({
         setDeleteTarget({ conversation, preview });
       }
     } catch (error) {
-      setLifecycleError(error instanceof Error ? error.message : "Conversation lifecycle action failed.");
+      setLifecycleError(
+        error instanceof Error ? error.message : "Conversation lifecycle action failed.",
+      );
     }
   };
   const worktreeForActive = (() => {
@@ -1109,14 +1239,16 @@ export function CodeWorkbench({
           worktree: worktreeForActive,
         }),
       });
-      const body = await response.json() as { files?: ChangedFile[]; error?: string };
+      const body = (await response.json()) as { files?: ChangedFile[]; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
       setChanges(body.files ?? []);
     } catch {
       setChanges([]);
     }
   };
-  useEffect(() => { void refresh(); }, [worktreeForActive, repository?.root, repository?.selectedWorktree]);
+  useEffect(() => {
+    void refresh();
+  }, [worktreeForActive, repository?.root, repository?.selectedWorktree]);
   // URL/local restore can pair a conversation with the wrong open repository.
   // Activate the thread's project so runs/tools bind to the correct root.
   useEffect(() => {
@@ -1126,10 +1258,12 @@ export function CodeWorkbench({
       requestedProjectForPrimaryRef.current = null;
       return;
     }
-    const activeIds = new Set([
-      repository?.projectId,
-      ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-    ].filter(Boolean) as string[]);
+    const activeIds = new Set(
+      [
+        repository?.projectId,
+        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+      ].filter(Boolean) as string[],
+    );
     if (activeIds.has(thread.projectId)) {
       requestedProjectForPrimaryRef.current = thread.projectId;
       return;
@@ -1159,87 +1293,105 @@ export function CodeWorkbench({
       ...(projects.find((project) => project.id === repository.projectId)?.memberIds ?? []),
     ]);
     if (!activeProjectIds.has(conversation.projectId)) return null;
-    if (!repository.worktrees.some((worktree) => worktree.path === conversation.worktree)) return null;
+    if (!repository.worktrees.some((worktree) => worktree.path === conversation.worktree))
+      return null;
     return repositoryFor(conversation);
   };
   const openBeside = (id?: string) => {
     // Prefer an explicit id (thread-row Beside). Topbar Open beside should stay in the
     // active project — not open a random foreign-worktree thread that cannot send.
-    const sameProjectIds = new Set([
-      repository?.projectId,
-      ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-      primary?.projectId,
-    ].filter(Boolean) as string[]);
-    const sameProjectOther = conversations.find((conversation) => (
-      conversation.id !== primaryId
-      && !conversation.archivedAt
-      && !conversation.settledAt
-      && (sameProjectIds.size === 0 || sameProjectIds.has(conversation.projectId))
-    ));
-    const candidate = id
-      ?? sameProjectOther?.id
-      ?? `new:${crypto.randomUUID()}`;
+    const sameProjectIds = new Set(
+      [
+        repository?.projectId,
+        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+        primary?.projectId,
+      ].filter(Boolean) as string[],
+    );
+    const sameProjectOther = conversations.find(
+      (conversation) =>
+        conversation.id !== primaryId &&
+        !conversation.archivedAt &&
+        !conversation.settledAt &&
+        (sameProjectIds.size === 0 || sameProjectIds.has(conversation.projectId)),
+    );
+    const candidate = id ?? sameProjectOther?.id ?? `new:${crypto.randomUUID()}`;
     secondaryIdReference.current = candidate;
     setSecondaryId(candidate);
     setActivePane("secondary");
   };
-  const openConversation = useCallback((id: string, selectedConversation?: ConversationSummary) => {
-    setPendingWorkspaceAction(null);
-    setPrimaryChangesSignal(0);
-    setPrimaryChangesThreadId(null);
-    const thread = conversations.find((item) => item.id === id)
-      ?? (selectedConversation?.id === id ? selectedConversation : undefined);
-    if (selectedConversation?.id === id) {
-      setConversations((current) => {
-        const existing = current.findIndex((item) => item.id === id);
-        if (existing < 0) return [selectedConversation, ...current];
-        return current.map((item, index) => index === existing ? { ...item, ...selectedConversation } : item);
-      });
-    }
-    // Activate the thread's repository for runs/tools, but do not change the
-    // project chip filter — inbox "All" must stay on All when clicking a chat.
-    if (thread) {
-      const activeIds = new Set([
-        repository?.projectId,
-        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-      ].filter(Boolean) as string[]);
-      if (!activeIds.has(thread.projectId)) {
-        onSelectProject(thread.projectId);
+  const openConversation = useCallback(
+    (id: string, selectedConversation?: ConversationSummary) => {
+      setPendingWorkspaceAction(null);
+      setPrimaryChangesSignal(0);
+      setPrimaryChangesThreadId(null);
+      const thread =
+        conversations.find((item) => item.id === id) ??
+        (selectedConversation?.id === id ? selectedConversation : undefined);
+      if (selectedConversation?.id === id) {
+        setConversations((current) => {
+          const existing = current.findIndex((item) => item.id === id);
+          if (existing < 0) return [selectedConversation, ...current];
+          return current.map((item, index) =>
+            index === existing ? { ...item, ...selectedConversation } : item,
+          );
+        });
       }
-    }
-    primarySelectionReference.current = id;
-    setPrimaryId(id);
-    if (secondaryIdReference.current === id) {
-      secondaryIdReference.current = null;
-      setSecondaryId(null);
-    }
-    setActivePane("primary");
-    // Patch visit locally — do not reload/resort the inbox on every selection.
-    const visitedAt = new Date().toISOString();
-    setConversations((current) => current.map((item) => (
-      item.id === id ? { ...item, lastVisitedAt: visitedAt } : item
-    )));
-    void fetch("/api/state/conversations/visit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: id }),
-    }).catch(() => undefined);
-  }, [conversations, onSelectProject, projects, repository?.projectId]);
-  const consumePrimaryChangesRequest = useCallback((signal: number) => {
-    setPrimaryChangesSignal((current) => current === signal ? 0 : current);
-    setPrimaryChangesThreadId((current) => current === primaryId ? null : current);
-  }, [primaryId]);
+      // Activate the thread's repository for runs/tools, but do not change the
+      // project chip filter — inbox "All" must stay on All when clicking a chat.
+      if (thread) {
+        const activeIds = new Set(
+          [
+            repository?.projectId,
+            ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
+          ].filter(Boolean) as string[],
+        );
+        if (!activeIds.has(thread.projectId)) {
+          onSelectProject(thread.projectId);
+        }
+      }
+      primarySelectionReference.current = id;
+      setPrimaryId(id);
+      if (secondaryIdReference.current === id) {
+        secondaryIdReference.current = null;
+        setSecondaryId(null);
+      }
+      setActivePane("primary");
+      // Patch visit locally — do not reload/resort the inbox on every selection.
+      const visitedAt = new Date().toISOString();
+      setConversations((current) =>
+        current.map((item) => (item.id === id ? { ...item, lastVisitedAt: visitedAt } : item)),
+      );
+      void fetch("/api/state/conversations/visit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ threadId: id }),
+      }).catch(() => undefined);
+    },
+    [conversations, onSelectProject, projects, repository?.projectId],
+  );
+  const consumePrimaryChangesRequest = useCallback(
+    (signal: number) => {
+      setPrimaryChangesSignal((current) => (current === signal ? 0 : current));
+      setPrimaryChangesThreadId((current) => (current === primaryId ? null : current));
+    },
+    [primaryId],
+  );
   // Thread search lives outside the workbench shell; open hits via shared event.
   useEffect(() => {
     const onOpenFromSearch = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        threadId?: string;
-        conversation?: ConversationSummary;
-        action?: "open" | "review_changes";
-      }>).detail;
+      const detail = (
+        event as CustomEvent<{
+          threadId?: string;
+          conversation?: ConversationSummary;
+          action?: "open" | "review_changes";
+        }>
+      ).detail;
       const threadId = detail?.threadId;
       if (typeof threadId === "string" && threadId.length > 0) {
-        openConversation(threadId, detail.conversation?.id === threadId ? detail.conversation : undefined);
+        openConversation(
+          threadId,
+          detail.conversation?.id === threadId ? detail.conversation : undefined,
+        );
         if (detail.action === "review_changes") {
           setPendingWorkspaceAction({ threadId, mode: "review" });
         }
@@ -1324,6 +1476,7 @@ export function CodeWorkbench({
           closeSidebarBeforeMobileDialog();
         }}
         conversations={listedConversations}
+        prStatusByWorktree={prStatusByWorktree}
         primaryConversationId={primaryId}
         secondaryConversationId={secondaryId}
         onOpenConversation={(id) => {
@@ -1370,18 +1523,37 @@ export function CodeWorkbench({
         }}
         showingArchived={showingArchived}
         onToggleArchived={() => setShowingArchived((value) => !value)}
-        onConversationAction={(conversation, action) => { void manageConversation(conversation, action); }}
+        onConversationAction={(conversation, action) => {
+          void manageConversation(conversation, action);
+        }}
         onSettle={(conversation) => {
-          void postLifecycle("/api/state/conversations/settle", { threadId: conversation.id })
-            .catch((error: unknown) => setLifecycleError(
-              error instanceof Error ? error.message : "Settle failed.",
-            ));
+          void postLifecycle("/api/state/conversations/settle", {
+            threadId: conversation.id,
+          }).catch((error: unknown) =>
+            setLifecycleError(error instanceof Error ? error.message : "Settle failed."),
+          );
+        }}
+        onSnooze={(conversation, preset) => {
+          void postLifecycle("/api/state/conversations/snooze", {
+            threadId: conversation.id,
+            snoozedUntil: preset.snoozedUntil,
+          }).catch((error: unknown) =>
+            setLifecycleError(error instanceof Error ? error.message : "Snooze failed."),
+          );
         }}
         onUnsettle={(conversation) => {
-          void postLifecycle("/api/state/conversations/unsettle", { threadId: conversation.id })
-            .catch((error: unknown) => setLifecycleError(
-              error instanceof Error ? error.message : "Unsettle failed.",
-            ));
+          void postLifecycle("/api/state/conversations/unsettle", {
+            threadId: conversation.id,
+          }).catch((error: unknown) =>
+            setLifecycleError(error instanceof Error ? error.message : "Unsettle failed."),
+          );
+        }}
+        onUnsnooze={(conversation) => {
+          void postLifecycle("/api/state/conversations/unsnooze", {
+            threadId: conversation.id,
+          }).catch((error: unknown) =>
+            setLifecycleError(error instanceof Error ? error.message : "Unsnooze failed."),
+          );
         }}
         onReleaseWorktree={(conversation) => {
           const active = document.activeElement;
@@ -1430,182 +1602,305 @@ export function CodeWorkbench({
         inert={narrowViewport && sidebarOpen}
         tabIndex={-1}
       >
-      {product !== "code" ? (
-        <DomainPage
-          product={product as Exclude<import("../../types").Product, "code">}
-          projects={projects}
-          selectedProjectId={repository?.projectId ?? null}
-          onProjectsChanged={onProjectsChanged}
-          chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
-          chiseiCorrelationId={chiseiCorrelationId}
-          repository={repository}
-        />
-      ) : (
-      <div className="code-view conversation-workspace" data-active-pane={activePane} aria-label="Conversation workspace">
-        {lifecycleError && (
-          <div className="workspace-state error" role="alert">
-            <span>{lifecycleError}</span>
-            <CloseButton
-              onClick={() => setLifecycleError(null)}
-              label="Dismiss lifecycle error"
-            />
-          </div>
-        )}
-        {incompleteDeletionIds.map((threadId) => {
-          // Prefer title · provider over a raw UUID in the recovery banner.
-          const conversation = conversations.find((item) => item.id === threadId);
-          const deletionLabel = conversation
-            ? paneConversationLabel(conversation, "conversation")
-            : `conversation ${threadId.slice(0, 8)}`;
-          return (
-          <div className="workspace-state error" role="alert" key={threadId}>
-            <span>Deletion of “{deletionLabel}” is incomplete.</span>
-            <Button
-              type="button"
-              size="sm"
-              aria-label={`Retry incomplete deletion of ${deletionLabel}`}
-              onClick={() => {
-                void postLifecycle("/api/state/conversations/delete", { threadId, confirm: true })
-                  .then(() => setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)))
-                  .catch((error: unknown) => setLifecycleError(
-                    error instanceof Error ? error.message : "Conversation deletion retry failed.",
-                  ));
-              }}
-            >
-              Retry deletion
-            </Button>
-          </div>
-          );
-        })}
-        {restoreState === "loading" && <div className="workspace-state" role="status">Restoring local conversations…</div>}
-        {restoreState === "failed" && (
-          <div className="workspace-state failed" role="alert">
-            <span>Local conversation history could not be loaded.</span>
-            <Button
-              type="button"
-              size="sm"
-              aria-label="Retry loading local conversation history"
-              onClick={() => setRestoreAttempt((value) => value + 1)}
-            >
-              Retry
-            </Button>
-          </div>
-        )}
-        {(restoreState === "ready" || !repository) && <>
-        {secondaryId && (
-          <nav className="pane-switcher" aria-label="Visible conversation pane">
-            <button
-              type="button"
-              className={activePane === "primary" ? "active" : ""}
-              aria-current={activePane === "primary" ? "true" : undefined}
-              title={paneSwitcherPrimaryLabel}
-              onClick={() => setActivePane("primary")}
-            >
-              {paneSwitcherPrimaryLabel}
-            </button>
-            <button
-              type="button"
-              className={activePane === "secondary" ? "active" : ""}
-              aria-current={activePane === "secondary" ? "true" : undefined}
-              title={paneSwitcherSecondaryLabel}
-              onClick={() => setActivePane("secondary")}
-            >
-              {paneSwitcherSecondaryLabel}
-            </button>
-          </nav>
-        )}
-        <div
-          className={`split-workspace ${secondaryId ? "split" : ""}`}
-          ref={splitReference}
-          style={secondaryId ? { gridTemplateColumns: `${splitPercent}% 6px minmax(0, 1fr)` } : undefined}
-        >
-          <div className="conversation-pane primary-pane" tabIndex={-1} ref={primaryPaneReference} onFocusCapture={() => setActivePane("primary")}>
-            {primaryId && !primary
-              ? <MissingConversation pane="primary" conversations={conversations.filter((item) => item.id !== secondaryId)} onReplace={(id) => {
-                  primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
-                  setPrimaryId(id);
-                }} />
-              : <>
-                {orchestrationThreadsBeta && primary && (
-                  <DelegatedChildrenPanel
-                    parent={primary}
-                    repository={repositoryForDelegatedStart(primary)}
-                    profiles={profiles}
-                    onRepositoryChanged={onRepositoryChanged}
-                    conversations={conversations}
-                    relationships={delegatedRelationships}
-                    outcomes={delegatedOutcomes}
-                    approvals={delegatedApprovals}
-                    inputs={delegatedInputs}
-                    onOpen={openConversation}
-                    onChanged={refreshStateProjection}
-                  />
-                )}
-                <PaneConversation key={primaryId ?? `new-primary:${primaryNewKey}`} repository={repositoryFor(primary)} conversation={primary} pane="primary" active={activePane === "primary"} quietDelegatedChild={quietPrimaryChild} projects={projects} onAddProject={onAddProject} onSelectProject={onSelectProject} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} initialPrompt={initialRepairPrompt} initialProvider={initialRepairPrompt ? "shikigami" : undefined} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onRepositoryChanged={onRepositoryChanged} onSelectWorktree={onSelectWorktree} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} showOpenBeside={!secondaryId} showChangesSignal={primaryChangesSignal} showChangesThreadId={primaryChangesThreadId} onChangesRequestConsumed={consumePrimaryChangesRequest} showChangesMode={primaryChangesMode} showFilesSignal={primaryFilesSignal} onConversationAvailable={(id) => {
-                  if (primarySelectionReference.current === primarySelectionKey) {
-                    primarySelectionReference.current = id;
-                    setPrimaryId(id);
-                    setRepairBrief(null);
-                  }
-                  void refreshStateProjection().catch(() => {});
-                }} />
-              </>}
-          </div>
-          {secondaryId && (
-            <>
-              <div
-                className="split-divider"
-                role="separator"
-                aria-label="Resize conversation panes"
-                aria-orientation="vertical"
-                aria-valuemin={30}
-                aria-valuemax={70}
-                aria-valuenow={Math.round(splitPercent)}
-                aria-valuetext={`${Math.round(splitPercent)} percent primary width`}
-                tabIndex={0}
-                onPointerDown={resize}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft") setSplitPercent((value) => Math.max(30, value - 5));
-                  if (event.key === "ArrowRight") setSplitPercent((value) => Math.min(70, value + 5));
-                }}
-              />
-              <div className="conversation-pane secondary-pane" tabIndex={-1} ref={secondaryPaneReference} onFocusCapture={() => setActivePane("secondary")}>
-                {!secondary && !secondaryId.startsWith("new:")
-                  ? <MissingConversation pane="secondary" conversations={conversations.filter((item) => item.id !== primaryId)} onReplace={setSecondaryId} onClose={() => setSecondaryId(null)} />
-                  : <>
-                    {orchestrationThreadsBeta && secondary && (
-                      <DelegatedChildrenPanel
-                        parent={secondary}
-                        repository={repositoryForDelegatedStart(secondary)}
-                        profiles={profiles}
-                        onRepositoryChanged={onRepositoryChanged}
-                        conversations={conversations}
-                        relationships={delegatedRelationships}
-                        outcomes={delegatedOutcomes}
-                        approvals={delegatedApprovals}
-                        inputs={delegatedInputs}
-                        onOpen={openConversation}
-                        onChanged={refreshStateProjection}
-                      />
-                    )}
-                    <PaneConversation key={secondaryId} repository={repositoryFor(secondary)} conversation={secondary} pane="secondary" active={activePane === "secondary"} quietDelegatedChild={quietSecondaryChild} projects={projects} onAddProject={onAddProject} onSelectProject={onSelectProject} profiles={profiles} showThinking={showThinking} managedMode={managedMode} managedModel={managedModel} onOpenRepository={onAddProject} onOpenProfiles={onOpenProfiles} onRepositoryChanged={onRepositoryChanged} onSelectWorktree={onSelectWorktree} onManageWorktrees={onManageWorktrees} onOpenBeside={() => openBeside()} onClosePane={() => {
-                      secondaryIdReference.current = null;
-                      setSecondaryId(null);
-                      setActivePane("primary");
-                    }} showChangesSignal={secondaryChangesSignal} showFilesSignal={secondaryFilesSignal} onConversationAvailable={(id) => {
-                      if (secondaryIdReference.current !== secondaryId) return;
-                      secondaryIdReference.current = id;
-                      setSecondaryId(id);
-                      void refreshStateProjection().catch(() => {});
-                    }} />
-                  </>}
+        {product !== "code" ? (
+          <DomainPage
+            product={product as Exclude<import("../../types").Product, "code">}
+            projects={projects}
+            selectedProjectId={repository?.projectId ?? null}
+            onProjectsChanged={onProjectsChanged}
+            chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+            chiseiCorrelationId={chiseiCorrelationId}
+            repository={repository}
+          />
+        ) : (
+          <div
+            className="code-view conversation-workspace"
+            data-active-pane={activePane}
+            aria-label="Conversation workspace"
+          >
+            {lifecycleError && (
+              <div className="workspace-state error" role="alert">
+                <span>{lifecycleError}</span>
+                <CloseButton
+                  onClick={() => setLifecycleError(null)}
+                  label="Dismiss lifecycle error"
+                />
               </div>
-            </>
-          )}
-        </div>
-        </>}
-      </div>
-      )}
+            )}
+            {incompleteDeletionIds.map((threadId) => {
+              // Prefer title · provider over a raw UUID in the recovery banner.
+              const conversation = conversations.find((item) => item.id === threadId);
+              const deletionLabel = conversation
+                ? paneConversationLabel(conversation, "conversation")
+                : `conversation ${threadId.slice(0, 8)}`;
+              return (
+                <div className="workspace-state error" role="alert" key={threadId}>
+                  <span>Deletion of “{deletionLabel}” is incomplete.</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    aria-label={`Retry incomplete deletion of ${deletionLabel}`}
+                    onClick={() => {
+                      void postLifecycle("/api/state/conversations/delete", {
+                        threadId,
+                        confirm: true,
+                      })
+                        .then(() =>
+                          setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)),
+                        )
+                        .catch((error: unknown) =>
+                          setLifecycleError(
+                            error instanceof Error
+                              ? error.message
+                              : "Conversation deletion retry failed.",
+                          ),
+                        );
+                    }}
+                  >
+                    Retry deletion
+                  </Button>
+                </div>
+              );
+            })}
+            {restoreState === "loading" && (
+              <div className="workspace-state" role="status">
+                Restoring local conversations…
+              </div>
+            )}
+            {restoreState === "failed" && (
+              <div className="workspace-state failed" role="alert">
+                <span>Local conversation history could not be loaded.</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-label="Retry loading local conversation history"
+                  onClick={() => setRestoreAttempt((value) => value + 1)}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+            {(restoreState === "ready" || !repository) && (
+              <>
+                {secondaryId && (
+                  <nav className="pane-switcher" aria-label="Visible conversation pane">
+                    <button
+                      type="button"
+                      className={activePane === "primary" ? "active" : ""}
+                      aria-current={activePane === "primary" ? "true" : undefined}
+                      title={paneSwitcherPrimaryLabel}
+                      onClick={() => setActivePane("primary")}
+                    >
+                      {paneSwitcherPrimaryLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className={activePane === "secondary" ? "active" : ""}
+                      aria-current={activePane === "secondary" ? "true" : undefined}
+                      title={paneSwitcherSecondaryLabel}
+                      onClick={() => setActivePane("secondary")}
+                    >
+                      {paneSwitcherSecondaryLabel}
+                    </button>
+                  </nav>
+                )}
+                <div
+                  className={`split-workspace ${secondaryId ? "split" : ""}`}
+                  ref={splitReference}
+                  style={
+                    secondaryId
+                      ? { gridTemplateColumns: `${splitPercent}% 6px minmax(0, 1fr)` }
+                      : undefined
+                  }
+                >
+                  <div
+                    className="conversation-pane primary-pane"
+                    tabIndex={-1}
+                    ref={primaryPaneReference}
+                    onFocusCapture={() => setActivePane("primary")}
+                  >
+                    {primaryId && !primary ? (
+                      <MissingConversation
+                        pane="primary"
+                        conversations={conversations.filter((item) => item.id !== secondaryId)}
+                        onReplace={(id) => {
+                          primarySelectionReference.current = id ?? `new:${primaryNewKey + 1}`;
+                          setPrimaryId(id);
+                        }}
+                      />
+                    ) : (
+                      <>
+                        {orchestrationThreadsBeta && primary && (
+                          <DelegatedChildrenPanel
+                            parent={primary}
+                            repository={repositoryForDelegatedStart(primary)}
+                            profiles={profiles}
+                            onRepositoryChanged={onRepositoryChanged}
+                            conversations={conversations}
+                            relationships={delegatedRelationships}
+                            outcomes={delegatedOutcomes}
+                            approvals={delegatedApprovals}
+                            inputs={delegatedInputs}
+                            onOpen={openConversation}
+                            onChanged={refreshStateProjection}
+                          />
+                        )}
+                        <PaneConversation
+                          key={primaryId ?? `new-primary:${primaryNewKey}`}
+                          repository={repositoryFor(primary)}
+                          conversation={primary}
+                          pane="primary"
+                          active={activePane === "primary"}
+                          quietDelegatedChild={quietPrimaryChild}
+                          projects={projects}
+                          projectConversations={conversations}
+                          promptStashOperatorKey={
+                            managedAccount
+                              ? [
+                                  managedAccount.tenantId,
+                                  managedAccount.displayName,
+                                  managedAccount.sessionExpiresAt ?? "",
+                                  managedAccount.assertionExpiresAt,
+                                ].join("\0")
+                              : null
+                          }
+                          onAddProject={onAddProject}
+                          onSelectProject={onSelectProject}
+                          profiles={profiles}
+                          showThinking={showThinking}
+                          managedMode={managedMode}
+                          managedModel={managedModel}
+                          initialPrompt={initialRepairPrompt}
+                          initialProvider={initialRepairPrompt ? "shikigami" : undefined}
+                          onOpenRepository={onAddProject}
+                          onOpenProfiles={onOpenProfiles}
+                          onRepositoryChanged={onRepositoryChanged}
+                          onSelectWorktree={onSelectWorktree}
+                          onManageWorktrees={onManageWorktrees}
+                          onOpenBeside={() => openBeside()}
+                          showOpenBeside={!secondaryId}
+                          showChangesSignal={primaryChangesSignal}
+                          showChangesThreadId={primaryChangesThreadId}
+                          onChangesRequestConsumed={consumePrimaryChangesRequest}
+                          showChangesMode={primaryChangesMode}
+                          showFilesSignal={primaryFilesSignal}
+                          onConversationAvailable={(id) => {
+                            if (primarySelectionReference.current === primarySelectionKey) {
+                              primarySelectionReference.current = id;
+                              setPrimaryId(id);
+                              setRepairBrief(null);
+                            }
+                            void refreshStateProjection().catch(() => {});
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
+                  {secondaryId && (
+                    <>
+                      <div
+                        className="split-divider"
+                        role="separator"
+                        aria-label="Resize conversation panes"
+                        aria-orientation="vertical"
+                        aria-valuemin={30}
+                        aria-valuemax={70}
+                        aria-valuenow={Math.round(splitPercent)}
+                        aria-valuetext={`${Math.round(splitPercent)} percent primary width`}
+                        tabIndex={0}
+                        onPointerDown={resize}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowLeft")
+                            setSplitPercent((value) => Math.max(30, value - 5));
+                          if (event.key === "ArrowRight")
+                            setSplitPercent((value) => Math.min(70, value + 5));
+                        }}
+                      />
+                      <div
+                        className="conversation-pane secondary-pane"
+                        tabIndex={-1}
+                        ref={secondaryPaneReference}
+                        onFocusCapture={() => setActivePane("secondary")}
+                      >
+                        {!secondary && !secondaryId.startsWith("new:") ? (
+                          <MissingConversation
+                            pane="secondary"
+                            conversations={conversations.filter((item) => item.id !== primaryId)}
+                            onReplace={setSecondaryId}
+                            onClose={() => setSecondaryId(null)}
+                          />
+                        ) : (
+                          <>
+                            {orchestrationThreadsBeta && secondary && (
+                              <DelegatedChildrenPanel
+                                parent={secondary}
+                                repository={repositoryForDelegatedStart(secondary)}
+                                profiles={profiles}
+                                onRepositoryChanged={onRepositoryChanged}
+                                conversations={conversations}
+                                relationships={delegatedRelationships}
+                                outcomes={delegatedOutcomes}
+                                approvals={delegatedApprovals}
+                                inputs={delegatedInputs}
+                                onOpen={openConversation}
+                                onChanged={refreshStateProjection}
+                              />
+                            )}
+                            <PaneConversation
+                              key={secondaryId}
+                              repository={repositoryFor(secondary)}
+                              conversation={secondary}
+                              pane="secondary"
+                              active={activePane === "secondary"}
+                              quietDelegatedChild={quietSecondaryChild}
+                              projects={projects}
+                              projectConversations={conversations}
+                              promptStashOperatorKey={
+                                managedAccount
+                                  ? [
+                                      managedAccount.tenantId,
+                                      managedAccount.displayName,
+                                      managedAccount.sessionExpiresAt ?? "",
+                                      managedAccount.assertionExpiresAt,
+                                    ].join("\0")
+                                  : null
+                              }
+                              onAddProject={onAddProject}
+                              onSelectProject={onSelectProject}
+                              profiles={profiles}
+                              showThinking={showThinking}
+                              managedMode={managedMode}
+                              managedModel={managedModel}
+                              onOpenRepository={onAddProject}
+                              onOpenProfiles={onOpenProfiles}
+                              onRepositoryChanged={onRepositoryChanged}
+                              onSelectWorktree={onSelectWorktree}
+                              onManageWorktrees={onManageWorktrees}
+                              onOpenBeside={() => openBeside()}
+                              onClosePane={() => {
+                                secondaryIdReference.current = null;
+                                setSecondaryId(null);
+                                setActivePane("primary");
+                              }}
+                              showChangesSignal={secondaryChangesSignal}
+                              showFilesSignal={secondaryFilesSignal}
+                              onConversationAvailable={(id) => {
+                                if (secondaryIdReference.current !== secondaryId) return;
+                                secondaryIdReference.current = id;
+                                setSecondaryId(id);
+                                void refreshStateProjection().catch(() => {});
+                              }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </main>
       {renameTarget && (
         <RenameConversationDialog
@@ -1643,28 +1938,33 @@ export function CodeWorkbench({
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ threadId: conversation.id, confirm: true }),
             });
-            const result = await response.json() as { error?: string };
+            const result = (await response.json()) as { error?: string };
             if (!response.ok) throw new Error(result.error ?? "Conversation deletion failed.");
             if (primaryId === conversation.id) setPrimaryId(null);
             if (secondaryId === conversation.id) setSecondaryId(null);
             setConversations((current) => current.filter((item) => item.id !== conversation.id));
-            void refreshStateProjection()
-              .catch(() => setLifecycleError(
+            void refreshStateProjection().catch(() =>
+              setLifecycleError(
                 "Conversation deleted, but the conversation list could not be refreshed.",
-              ));
+              ),
+            );
           }}
         />
       )}
       {releaseTarget && (
         <ReleaseWorktreeDialog
           title={releaseTarget.title}
-          provider={releaseTarget.provider ? providerListLabel(releaseTarget.provider) : "Unknown provider"}
+          provider={
+            releaseTarget.provider ? providerListLabel(releaseTarget.provider) : "Unknown provider"
+          }
           worktree={releaseTarget.worktree}
           onClose={() => {
             setReleaseTarget(null);
             const returnFocus = releaseReturnFocusReference.current;
             releaseReturnFocusReference.current = null;
-            window.requestAnimationFrame(() => window.requestAnimationFrame(() => returnFocus?.focus()));
+            window.requestAnimationFrame(() =>
+              window.requestAnimationFrame(() => returnFocus?.focus()),
+            );
           }}
           onConfirm={async () => {
             await postLifecycle("/api/state/conversations/release-worktree", {

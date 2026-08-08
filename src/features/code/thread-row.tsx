@@ -1,7 +1,6 @@
-import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ConversationSummary } from "../../types";
-import type { ProviderId } from "../../types";
+import type { BranchPrStatus, ConversationSummary, ProviderId } from "../../types";
 import { providerAvatarInitials } from "../../lib/provider-readiness";
 import {
   branchFromWorktree,
@@ -11,6 +10,8 @@ import {
   providerLabel,
 } from "./conversation-list";
 import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
+import { canSnooze, resolveSnoozePresets, type SnoozePreset } from "../../lib/thread-snooze";
+import { prStatusAriaLabel, prStatusLabel } from "../../lib/branch-pr-status";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
 
@@ -20,8 +21,10 @@ export function ThreadRow({
   active,
   onOpen,
   onSettle,
+  onSnooze,
   onOpenBeside,
   onAction,
+  prStatus = null,
   showSettle = true,
   showBeside = false,
   archivedView = false,
@@ -30,8 +33,11 @@ export function ThreadRow({
   active: boolean;
   onOpen: () => void;
   onSettle?: () => void;
+  onSnooze?: (preset: SnoozePreset) => void;
   onOpenBeside?: () => void;
   onAction?: (action: ConversationLifecycleAction) => void;
+  /** Live GitHub PR for this worktree branch, if known. */
+  prStatus?: BranchPrStatus | null;
   showSettle?: boolean;
   /** Include "Beside" in the row action menu to open this thread in a split secondary pane. */
   showBeside?: boolean;
@@ -45,14 +51,20 @@ export function ThreadRow({
   const listLabel = providerLabel(conversation.provider);
   const monogram = providerAvatarInitials(conversation.provider as ProviderId, listLabel);
   const branch = branchFromWorktree(conversation.worktree);
+  const prLabel = prStatus ? prStatusLabel(prStatus) : null;
   const workspaceLabel = WORKSPACE_MODE_COPY[conversation.workspaceMode ?? "shared"].shortLabel;
   const statusLabel =
-    status === "pending_approval" ? "Approval needed"
-    : status === "awaiting_input" ? "Awaiting input"
-    : status === "failed" ? "Failed"
-    : status === "running" ? "Working"
-    : status === "completed" ? "Completed"
-    : null;
+    status === "pending_approval"
+      ? "Approval needed"
+      : status === "awaiting_input"
+        ? "Awaiting input"
+        : status === "failed"
+          ? "Failed"
+          : status === "running"
+            ? "Working"
+            : status === "completed"
+              ? "Completed"
+              : null;
   const openLabel = [
     conversation.projectName ?? "project",
     statusLabel,
@@ -60,17 +72,27 @@ export function ThreadRow({
     conversation.pinnedAt ? "Pinned" : null,
     conversation.title,
     branch,
+    prLabel,
     workspaceLabel,
     listLabel,
     elapsed,
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuPopupRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const hasMenuActions = Boolean(onAction || (showBeside && onOpenBeside));
+  const snoozePresets = useMemo(
+    () => (menuOpen && onSnooze ? resolveSnoozePresets() : []),
+    [menuOpen, onSnooze],
+  );
+  const snoozeAllowed = Boolean(onSnooze) && canSnooze(conversation) && !archivedView;
+  const hasMenuActions = Boolean(
+    onAction || (showBeside && onOpenBeside) || snoozeAllowed || prStatus,
+  );
 
   useLayoutEffect(() => {
     if (!menuOpen) return;
@@ -92,7 +114,10 @@ export function ThreadRow({
       const visibleTop = Math.max(0, scrollRect?.top ?? 0);
       const visibleBottom = Math.min(viewportHeight, scrollRect?.bottom ?? viewportHeight);
       const hasTriggerGeometry = triggerRect.width > 0 || triggerRect.height > 0;
-      if (hasTriggerGeometry && (triggerRect.bottom <= visibleTop || triggerRect.top >= visibleBottom)) {
+      if (
+        hasTriggerGeometry &&
+        (triggerRect.bottom <= visibleTop || triggerRect.top >= visibleBottom)
+      ) {
         setMenuOpen(false);
         return;
       }
@@ -101,11 +126,12 @@ export function ThreadRow({
       const belowTop = triggerRect.bottom + gap;
       const aboveTop = triggerRect.top - popupHeight - gap;
       const maxTop = Math.max(edge, viewportHeight - popupHeight - edge);
-      const top = popupHeight > viewportHeight - edge * 2
-        ? edge
-        : popupHeight <= viewportHeight - triggerRect.bottom - edge - gap
-          ? Math.min(belowTop, maxTop)
-          : Math.max(edge, Math.min(aboveTop, maxTop));
+      const top =
+        popupHeight > viewportHeight - edge * 2
+          ? edge
+          : popupHeight <= viewportHeight - triggerRect.bottom - edge - gap
+            ? Math.min(belowTop, maxTop)
+            : Math.max(edge, Math.min(aboveTop, maxTop));
 
       setMenuPosition({ top, left });
     };
@@ -126,7 +152,9 @@ export function ThreadRow({
     if (!menuOpen) return;
     const root = menuRef.current;
     if (!root) return;
-    const items = () => [...(menuPopupRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const items = () => [
+      ...(menuPopupRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []),
+    ];
     const frame = window.requestAnimationFrame(() => {
       items()[0]?.focus();
     });
@@ -193,19 +221,41 @@ export function ThreadRow({
           {status === "awaiting_input" && <span className="pill input">Input</span>}
           {status === "failed" && <span className="pill failed">Failed</span>}
           {status === "running" && <span className="spin" aria-label="Working" />}
-          {status === "completed" && !blocks && <span className="mark" aria-hidden="true">✓</span>}
+          {status === "completed" && !blocks && (
+            <span className="mark" aria-hidden="true">
+              ✓
+            </span>
+          )}
         </div>
         <div className="rt" title={conversation.title}>
           {conversation.pinnedAt ? "◆ " : ""}
           {conversation.title}
         </div>
         <div className="rb">
-          <span className="br" title={branch}>{branch}</span>
+          <span className="br" title={branch}>
+            {branch}
+          </span>
+          {prStatus && prLabel && (
+            <span
+              className={`pr-status pr-status--${prStatus.state}`}
+              title={prStatusAriaLabel(prStatus)}
+            >
+              {prLabel}
+            </span>
+          )}
           {/* Monogram alone is cryptic when several threads share a title (dual-pane stress). */}
-          <span className="pv" title={listLabel} aria-hidden="true">{monogram}</span>
-          <span className="pl" title={listLabel}>{listLabel}</span>
-          <span className="pl" title={`Workspace: ${workspaceLabel}`}>{workspaceLabel}</span>
-          <span className="tm" title={elapsed}>{elapsed}</span>
+          <span className="pv" title={listLabel} aria-hidden="true">
+            {monogram}
+          </span>
+          <span className="pl" title={listLabel}>
+            {listLabel}
+          </span>
+          <span className="pl" title={`Workspace: ${workspaceLabel}`}>
+            {workspaceLabel}
+          </span>
+          <span className="tm" title={elapsed}>
+            {elapsed}
+          </span>
         </div>
       </button>
       <div className="row-actions">
@@ -240,97 +290,135 @@ export function ThreadRow({
             >
               ⋮
             </button>
-            {menuOpen && typeof document !== "undefined" && createPortal(
-              <div
-                id={menuId}
-                ref={menuPopupRef}
-                className="row-menu-pop row-menu-pop--portal"
-                role="menu"
-                aria-label={`Actions for ${conversation.title} · ${listLabel}`}
-                style={menuPosition
-                  ? { top: menuPosition.top, left: menuPosition.left }
-                  : { visibility: "hidden" }}
-              >
-                {showBeside && onOpenBeside && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    aria-label={`Open "${conversation.title}" · ${listLabel} beside`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setMenuOpen(false);
-                      onOpenBeside();
-                    }}
-                  >
-                    Beside
-                  </button>
-                )}
-                {onAction && (
-                  <>
+            {menuOpen &&
+              typeof document !== "undefined" &&
+              createPortal(
+                <div
+                  id={menuId}
+                  ref={menuPopupRef}
+                  className="row-menu-pop row-menu-pop--portal"
+                  role="menu"
+                  aria-label={`Actions for ${conversation.title} · ${listLabel}`}
+                  style={
+                    menuPosition
+                      ? { top: menuPosition.top, left: menuPosition.left }
+                      : { visibility: "hidden" }
+                  }
+                >
+                  {showBeside && onOpenBeside && (
                     <button
                       type="button"
                       role="menuitem"
+                      aria-label={`Open "${conversation.title}" · ${listLabel} beside`}
                       onClick={(event) => {
                         event.stopPropagation();
                         setMenuOpen(false);
-                        onAction("rename");
+                        onOpenBeside();
                       }}
                     >
-                      Rename
+                      Beside
                     </button>
-                    <button
-                      type="button"
+                  )}
+                  {prStatus && (
+                    <a
                       role="menuitem"
+                      className="row-menu-pr"
+                      href={prStatus.url}
+                      target="_blank"
+                      rel="noreferrer"
                       onClick={(event) => {
                         event.stopPropagation();
                         setMenuOpen(false);
-                        onAction("pin");
                       }}
                     >
-                      {conversation.pinnedAt ? "Unpin" : "Pin"}
-                    </button>
-                    {archivedView ? (
+                      Open {prStatusLabel(prStatus)}
+                    </a>
+                  )}
+                  {onAction && (
+                    <>
                       <button
                         type="button"
                         role="menuitem"
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuOpen(false);
-                          onAction("restore");
+                          onAction("rename");
                         }}
                       >
-                        Restore
+                        Rename
                       </button>
-                    ) : (
                       <button
                         type="button"
                         role="menuitem"
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuOpen(false);
-                          onAction("archive");
+                          onAction("pin");
                         }}
                       >
-                        Archive
+                        {conversation.pinnedAt ? "Unpin" : "Pin"}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="danger"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setMenuOpen(false);
-                        onAction("delete");
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </>
-                )}
-              </div>,
-              document.body,
-            )}
+                      {snoozeAllowed &&
+                        onSnooze &&
+                        snoozePresets.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            role="menuitem"
+                            className="row-menu-snooze"
+                            aria-label={`Snooze · ${preset.label} · ${preset.whenLabel}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setMenuOpen(false);
+                              onSnooze(preset);
+                            }}
+                          >
+                            <span>Snooze · {preset.label}</span>
+                            <span className="row-menu-snooze__when">{preset.whenLabel}</span>
+                          </button>
+                        ))}
+                      {archivedView ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMenuOpen(false);
+                            onAction("restore");
+                          }}
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMenuOpen(false);
+                            onAction("archive");
+                          }}
+                        >
+                          Archive
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="danger"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMenuOpen(false);
+                          onAction("delete");
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
+                </div>,
+                document.body,
+              )}
           </div>
         )}
       </div>

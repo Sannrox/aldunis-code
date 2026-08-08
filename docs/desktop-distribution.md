@@ -6,11 +6,11 @@ artifacts are safe to distribute.
 
 ## Supported systems
 
-| Platform | Minimum | Package | Trust requirement |
-| --- | --- | --- | --- |
-| macOS | 13 (Ventura), Intel and Apple silicon | signed `.dmg` | Developer ID signing, hardened runtime, notarization, and stapling |
-| Windows | Windows 10 22H2, x64 | signed NSIS installer for stable; unsigned fallback may be used for nightly | organization-backed Authenticode signing for stable |
-| Linux | Ubuntu 22.04 LTS or equivalent, x64 | AppImage and `.deb` | checksums and signed release provenance |
+| Platform | Minimum                               | Package                                                                     | Trust requirement                                                  |
+| -------- | ------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| macOS    | 13 (Ventura), Intel and Apple silicon | signed `.dmg`                                                               | Developer ID signing, hardened runtime, notarization, and stapling |
+| Windows  | Windows 10 22H2, x64                  | signed NSIS installer for stable; unsigned fallback may be used for nightly | organization-backed Authenticode signing for stable                |
+| Linux    | Ubuntu 22.04 LTS or equivalent, x64   | AppImage and `.deb`                                                         | checksums and signed release provenance                            |
 
 Wayland is supported through Electron where available; X11 remains the
 compatibility path. ARM Linux and Windows on ARM are not initially supported.
@@ -27,19 +27,22 @@ general command bridge.
 
 The application takes a single-instance lock. A second launch or an
 `aldunis-code://` deep link focuses the existing window; deep links do not
-carry repository paths, commands, credentials, or provider input. Closing the
-last window begins graceful shutdown and closes the local host before the
-process exits. A startup failure exits visibly rather than opening a renderer
-against a missing backend.
+carry repository paths, commands, credentials, or provider input. On macOS,
+closing the window hides it while the local host and active provider sessions
+remain available in the background; clicking the dock icon, launching the app
+again, or opening a deep link restores the window. `Cmd+Q` still begins
+graceful shutdown. On Windows and Linux, closing the last window continues to
+close the local host before the process exits. A startup failure exits visibly
+rather than opening a renderer against a missing backend.
 
 ## Local data
 
-| Data | macOS | Windows | Linux | Retention |
-| --- | --- | --- | --- | --- |
-| Event history | `~/Library/Application Support/Aldunis Code/state` | `%APPDATA%\\Aldunis Code\\state` | `$XDG_CONFIG_HOME/Aldunis Code/state` | Until user deletion or configured retention |
-| Logs | `~/Library/Logs/Aldunis Code` | `%APPDATA%\\Aldunis Code\\logs` | `$XDG_CONFIG_HOME/Aldunis Code/logs` | 14 days, capped at 50 MiB |
-| Chromium cache | `~/Library/Caches/Aldunis Code` | `%LOCALAPPDATA%\\Aldunis Code\\Cache` | `$XDG_CONFIG_HOME/Aldunis Code/Cache` | Disposable; cleared by application-data reset |
-| Provider credentials | Provider-owned credential store | Provider-owned credential store | Provider-owned credential store | Never copied or persisted by Aldunis Code |
+| Data                 | macOS                                              | Windows                               | Linux                                 | Retention                                     |
+| -------------------- | -------------------------------------------------- | ------------------------------------- | ------------------------------------- | --------------------------------------------- |
+| Event history        | `~/Library/Application Support/Aldunis Code/state` | `%APPDATA%\\Aldunis Code\\state`      | `$XDG_CONFIG_HOME/Aldunis Code/state` | Until user deletion or configured retention   |
+| Logs                 | `~/Library/Logs/Aldunis Code`                      | `%APPDATA%\\Aldunis Code\\logs`       | `$XDG_CONFIG_HOME/Aldunis Code/logs`  | 14 days, capped at 50 MiB                     |
+| Chromium cache       | `~/Library/Caches/Aldunis Code`                    | `%LOCALAPPDATA%\\Aldunis Code\\Cache` | `$XDG_CONFIG_HOME/Aldunis Code/Cache` | Disposable; cleared by application-data reset |
+| Provider credentials | Provider-owned credential store                    | Provider-owned credential store       | Provider-owned credential store       | Never copied or persisted by Aldunis Code     |
 
 The packaged main process sets the event-history directory explicitly before
 constructing the local store. Repository contents, diffs, prompts, and provider
@@ -78,11 +81,11 @@ Nightly releases remain repository-owned transport projections: they do not
 create a Tenkai channel record or promote a Tenkai release. Stable outputs
 remain inputs to the Tenkai-owned release record:
 
-| Job | Protected environment | Evidence |
-| --- | --- | --- |
-| macOS Intel and Apple silicon | `desktop-macos-signing` | Developer ID-signed and notarized DMG and update ZIP when Apple credentials are configured; otherwise ad-hoc-signed packages with `codesign` and checksum evidence, plus GitHub artifact attestation |
-| Windows x64 | `desktop-windows-signing` | signed NSIS installer when credentials are configured; unsigned nightly fallback records `NotSigned`, SHA-256 checksum, and GitHub artifact attestation |
-| Linux x64 | none | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations |
+| Job                           | Protected environment     | Evidence                                                                                                                                                                                             |
+| ----------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS Intel and Apple silicon | `desktop-macos-signing`   | Developer ID-signed and notarized DMG and update ZIP when Apple credentials are configured; otherwise ad-hoc-signed packages with `codesign` and checksum evidence, plus GitHub artifact attestation |
+| Windows x64                   | `desktop-windows-signing` | signed NSIS installer when credentials are configured; unsigned nightly fallback records `NotSigned`, SHA-256 checksum, and GitHub artifact attestation                                              |
+| Linux x64                     | none                      | AppImage and Debian package, SHA-256 checksums, native file inspection, GitHub artifact attestations                                                                                                 |
 
 Nightly packages use the same checksum and attestation checks as stable
 packages. The macOS job follows the Bugyo fallback: complete Apple credentials
@@ -124,6 +127,11 @@ macOS and Windows packages and Linux AppImages can update in place; Debian
 packages remain manual-update because their package-manager lifecycle is
 outside the app. A stable installation stays on stable updates, while a
 nightly installation stays on nightly updates.
+
+The macOS packaging step canonicalizes spaces in builder artifact names to the
+dots GitHub uses for uploaded release assets, rewrites the update manifest to
+the same names, and fails before publication if an update manifest references
+an asset that was not generated for that architecture.
 
 The updater is disabled for development builds, missing update manifests, and
 Linux packages that are not running from an AppImage. A restart first closes

@@ -70,12 +70,13 @@ panel appears only when the host is running in enterprise-managed mode.
 ## Verify the tree
 
 ```sh
-npm test
-npm run check
-npm run build
+make validate
+make test
+make test-integration
+make all
 ```
 
-All three commands should exit successfully before you submit a change.
+All four commands should exit successfully before you submit a change.
 
 ## Cross-product planes
 
@@ -83,9 +84,9 @@ The brand product switcher lists **Code**, **Sekai**, **Chisei**, and
 **Tenkai**. Code is always available. The other planes stay visible but
 **disabled** (“Not configured”) until an endpoint is set:
 
-| Plane | Environment variable |
-| --- | --- |
-| Sekai | `ALDUNIS_SEKAI_ENDPOINT` |
+| Plane  | Environment variable      |
+| ------ | ------------------------- |
+| Sekai  | `ALDUNIS_SEKAI_ENDPOINT`  |
 | Chisei | `ALDUNIS_CHISEI_ENDPOINT` |
 | Tenkai | `ALDUNIS_TENKAI_ENDPOINT` |
 

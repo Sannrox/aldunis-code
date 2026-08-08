@@ -63,6 +63,27 @@ test("desktop update settings offers restart only after download", () => {
   assert.doesNotMatch(html, /Download update/);
 });
 
+test("desktop update settings identifies download failures", () => {
+  const html = renderToStaticMarkup(
+    <DesktopUpdateSettings
+      snapshot={{
+        channel: "nightly",
+        currentVersion: "0.1.0-nightly.20260806.7",
+        phase: "error",
+        error: "The update download failed. Check your connection and try again.",
+        errorStage: "download",
+      }}
+      onCheck={() => undefined}
+      onDownload={() => undefined}
+      onInstall={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Could not download update/);
+  assert.match(html, /The update download failed/);
+  assert.doesNotMatch(html, /Could not check for updates/);
+});
+
 test("desktop update settings identifies the nightly channel", () => {
   const html = renderToStaticMarkup(
     <DesktopUpdateSettings

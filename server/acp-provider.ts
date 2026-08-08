@@ -26,18 +26,20 @@ type RpcId = string | number;
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
 function requiredString(value: unknown, field: string): string {
-  if (typeof value !== "string" || !value) throw new ProviderProtocolError(`ACP message is missing ${field}.`);
+  if (typeof value !== "string" || !value)
+    throw new ProviderProtocolError(`ACP message is missing ${field}.`);
   return value;
 }
 
 function textContent(value: unknown): string {
   const content = record(value);
-  if (!content || content.type !== "text") throw new ProviderProtocolError("ACP emitted unsupported message content.");
+  if (!content || content.type !== "text")
+    throw new ProviderProtocolError("ACP emitted unsupported message content.");
   return requiredString(content.text, "message text");
 }
 
@@ -79,13 +81,9 @@ function acpBrowserObservations(
   if (!enabled) return [];
   const entries = Array.isArray(value) ? value : [value];
   const scopedObservationId = observationBase(observationId, observationSequence);
-  return entries.flatMap((entry, index) => acpBrowserObservation(
-    entry,
-    provider,
-    `${scopedObservationId}:${index}`,
-    toolCallId,
-    enabled,
-  ));
+  return entries.flatMap((entry, index) =>
+    acpBrowserObservation(entry, provider, `${scopedObservationId}:${index}`, toolCallId, enabled),
+  );
 }
 
 function acpMessageEvents(
@@ -125,23 +123,26 @@ export function normalizeAcpNotification(
 ): ProviderEvent[] {
   const message = record(value);
   if (
-    !message
-    || (message.method !== "session/update" && message.method !== "session/notification")
+    !message ||
+    (message.method !== "session/update" && message.method !== "session/notification")
   ) {
     throw new ProviderProtocolError(`Unsupported ACP notification: ${String(message?.method)}.`);
   }
   const params = record(message.params);
   const update = record(params?.update);
-  const updateType = typeof update?.sessionUpdate === "string"
-    ? update.sessionUpdate
-    : typeof update?.type === "string"
-    ? ({
-        AgentMessageChunk: "agent_message_chunk",
-        ToolCall: "tool_call",
-        ToolCallUpdate: "tool_call_update",
-        TurnEnd: "turn_end",
-      } as Record<string, string>)[update.type]
-    : undefined;
+  const updateType =
+    typeof update?.sessionUpdate === "string"
+      ? update.sessionUpdate
+      : typeof update?.type === "string"
+        ? (
+            {
+              AgentMessageChunk: "agent_message_chunk",
+              ToolCall: "tool_call",
+              ToolCallUpdate: "tool_call_update",
+              TurnEnd: "turn_end",
+            } as Record<string, string>
+          )[update.type]
+        : undefined;
   if (!update || !updateType) {
     throw new ProviderProtocolError("ACP emitted a malformed session update.");
   }
@@ -158,13 +159,14 @@ export function normalizeAcpNotification(
     return [{ kind: "thinking", text: textContent(update.content) }];
   }
   if (updateType === "tool_call") {
-    return [{
-      kind: "tool_started",
-      toolCallId: requiredString(update.toolCallId, "tool call ID"),
-      name: typeof update.title === "string" && update.title.trim()
-        ? update.title.trim()
-        : "Tool",
-    }];
+    return [
+      {
+        kind: "tool_started",
+        toolCallId: requiredString(update.toolCallId, "tool call ID"),
+        name:
+          typeof update.title === "string" && update.title.trim() ? update.title.trim() : "Tool",
+      },
+    ];
   }
   if (updateType === "tool_call_update") {
     // Agents (notably Grok Build) emit metadata-only tool_call_update frames with
@@ -191,26 +193,30 @@ export function normalizeAcpNotification(
     if (rawStatus === undefined || rawStatus === null || rawStatus === "") return [];
     const status = String(rawStatus).toLowerCase();
     if (status === "completed" || status === "success") {
-      return [{
-        kind: "tool_finished",
-        toolCallId,
-        failed: false,
-      }];
+      return [
+        {
+          kind: "tool_finished",
+          toolCallId,
+          failed: false,
+        },
+      ];
     }
     if (status === "failed" || status === "error") {
-      return [{
-        kind: "tool_finished",
-        toolCallId,
-        failed: true,
-      }];
+      return [
+        {
+          kind: "tool_finished",
+          toolCallId,
+          failed: true,
+        },
+      ];
     }
     // Intermediate / soft statuses — ignore without failing the turn.
     if (
-      status === "pending"
-      || status === "in_progress"
-      || status === "running"
-      || status === "cancelled"
-      || status === "canceled"
+      status === "pending" ||
+      status === "in_progress" ||
+      status === "running" ||
+      status === "cancelled" ||
+      status === "canceled"
     ) {
       return [];
     }
@@ -226,29 +232,31 @@ export function normalizeAcpNotification(
       const entry = record(value);
       if (!entry) throw new ProviderProtocolError("ACP emitted a malformed plan entry.");
       const rawStatus = entry.status;
-      const status = rawStatus === undefined
-        ? "neutral"
-        : rawStatus === "in_progress"
-        ? "active"
-        : rawStatus;
+      const status =
+        rawStatus === undefined ? "neutral" : rawStatus === "in_progress" ? "active" : rawStatus;
       if (
-        status !== "pending"
-        && status !== "active"
-        && status !== "completed"
-        && status !== "neutral"
+        status !== "pending" &&
+        status !== "active" &&
+        status !== "completed" &&
+        status !== "neutral"
       ) {
         throw new ProviderProtocolError(`Unsupported ACP plan status: ${String(rawStatus)}.`);
       }
       return { content: requiredString(entry.content, "plan entry content"), status };
     });
-    return [{
-      kind: "plan_updated",
-      artifact: {
-        id: `session:${sessionId}`,
-        provider,
-        steps,
+    return [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: `session:${sessionId}`,
+          provider,
+          steps,
+        },
       },
-    }];
+    ];
+  }
+  if (updateType === "usage_update") {
+    return normalizeAcpUsageUpdate(update);
   }
   const informational = new Set([
     "user_message_chunk",
@@ -256,11 +264,47 @@ export function normalizeAcpNotification(
     "current_mode_update",
     "config_option_update",
     "session_info_update",
-    "usage_update",
     "turn_end",
   ]);
   if (informational.has(updateType)) return [];
   throw new ProviderProtocolError(`Unsupported ACP session update: ${updateType}.`);
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return value;
+}
+
+/**
+ * Best-effort ACP usage_update → context_usage. Providers disagree on field
+ * names; only emit when a usable used/max pair (or used alone) is present.
+ */
+export function normalizeAcpUsageUpdate(update: Record<string, unknown>): ProviderEvent[] {
+  const usedTokens =
+    finiteNonNegative(update.usedTokens) ??
+    finiteNonNegative(update.used) ??
+    finiteNonNegative(update.tokens) ??
+    finiteNonNegative(update.totalTokens) ??
+    finiteNonNegative(update.contextTokens);
+  if (usedTokens === null) return [];
+  const maxTokens =
+    finiteNonNegative(update.maxTokens) ??
+    finiteNonNegative(update.size) ??
+    finiteNonNegative(update.contextWindow) ??
+    finiteNonNegative(update.contextWindowSize) ??
+    finiteNonNegative(update.limit);
+  return [
+    {
+      kind: "context_usage",
+      usedTokens,
+      maxTokens,
+      totalProcessedTokens:
+        finiteNonNegative(update.totalProcessedTokens) ??
+        finiteNonNegative(update.cumulativeTokens),
+      inputTokens: finiteNonNegative(update.inputTokens),
+      outputTokens: finiteNonNegative(update.outputTokens),
+    },
+  ];
 }
 
 export function acpNotificationEvents(
@@ -270,17 +314,19 @@ export function acpNotificationEvents(
   browserObservationEnabled = false,
   observationSequence?: string | number,
 ): ProviderEvent[] {
-  const events = normalizeAcpNotification(value, provider, browserObservationEnabled, observationSequence);
+  const events = normalizeAcpNotification(
+    value,
+    provider,
+    browserObservationEnabled,
+    observationSequence,
+  );
   // session/load may replay the provider's native history before replying.
   // Aldunis already owns that timeline, so validate the replay but do not
   // append it as fresh content to the resumed turn.
   return loadingSession ? [] : events;
 }
 
-export function acpLoadedSessionId(
-  value: unknown,
-  resumeSessionId: string | undefined,
-): string {
+export function acpLoadedSessionId(value: unknown, resumeSessionId: string | undefined): string {
   const result = record(value);
   if (typeof result?.sessionId === "string" && result.sessionId) return result.sessionId;
   if (resumeSessionId) return resumeSessionId;
@@ -289,21 +335,22 @@ export function acpLoadedSessionId(
 
 export function isOptionalKiroNotification(adapterId: string, value: unknown): boolean {
   const message = record(value);
-  return adapterId === "dev.kiro.cli"
-    && typeof message?.method === "string"
-    && (
-      message.method.startsWith("_kiro.dev/")
-      || message.method === "_session/terminate"
-    )
-    && message.id === undefined;
+  return (
+    adapterId === "dev.kiro.cli" &&
+    typeof message?.method === "string" &&
+    (message.method.startsWith("_kiro.dev/") || message.method === "_session/terminate") &&
+    message.id === undefined
+  );
 }
 
 export function isOptionalGrokNotification(adapterId: string, value: unknown): boolean {
   const message = record(value);
-  return adapterId === "dev.xai.grok-build"
-    && typeof message?.method === "string"
-    && message.method.startsWith("_x.ai/")
-    && message.id === undefined;
+  return (
+    adapterId === "dev.xai.grok-build" &&
+    typeof message?.method === "string" &&
+    message.method.startsWith("_x.ai/") &&
+    message.id === undefined
+  );
 }
 
 export function acpSessionRequest(
@@ -321,12 +368,14 @@ export function acpSessionRequest(
       ...(resume ? { sessionId: resumeSessionId } : {}),
       cwd: worktree,
       mcpServers: browserMcp
-        ? [{
-            name: browserMcp.name,
-            command: browserMcp.command,
-            args: browserMcp.args,
-            env: Object.entries(browserMcp.environment).map(([name, value]) => ({ name, value })),
-          }]
+        ? [
+            {
+              name: browserMcp.name,
+              command: browserMcp.command,
+              args: browserMcp.args,
+              env: Object.entries(browserMcp.environment).map(([name, value]) => ({ name, value })),
+            },
+          ]
         : [],
     },
   };
@@ -381,7 +430,9 @@ export async function acpReadTextFile(
     path = await constrainPath(worktree, candidate);
   } catch (error) {
     if (error instanceof RepositoryError) {
-      throw new ProviderProtocolError("ACP fs/read_text_file path escapes the conversation worktree.");
+      throw new ProviderProtocolError(
+        "ACP fs/read_text_file path escapes the conversation worktree.",
+      );
     }
     throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
   }
@@ -401,12 +452,14 @@ export async function acpReadTextFile(
     throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
   }
   // Optional 1-based line window (ACP clients may request a slice).
-  const line = typeof recordParams?.line === "number" && Number.isFinite(recordParams.line)
-    ? Math.max(1, Math.floor(recordParams.line))
-    : null;
-  const limit = typeof recordParams?.limit === "number" && Number.isFinite(recordParams.limit)
-    ? Math.max(0, Math.floor(recordParams.limit))
-    : null;
+  const line =
+    typeof recordParams?.line === "number" && Number.isFinite(recordParams.line)
+      ? Math.max(1, Math.floor(recordParams.line))
+      : null;
+  const limit =
+    typeof recordParams?.limit === "number" && Number.isFinite(recordParams.limit)
+      ? Math.max(0, Math.floor(recordParams.limit))
+      : null;
   if (line !== null || limit !== null) {
     const lines = content.split("\n");
     const start = (line ?? 1) - 1;
@@ -594,12 +647,12 @@ export class AcpProviderAdapter {
           continue;
         }
         if (message.method === undefined && message.id === 1) {
-          if (message.error) throw new ProviderProtocolError("ACP could not start or load the session.");
+          if (message.error)
+            throw new ProviderProtocolError("ACP could not start or load the session.");
           active.sessionId = acpLoadedSessionId(message.result, options.resumeSessionId);
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
-          const selectedModel = options.model?.trim() && options.model !== "default"
-            ? options.model.trim()
-            : null;
+          const selectedModel =
+            options.model?.trim() && options.model !== "default" ? options.model.trim() : null;
           // ACP session/load is not required to repeat the session/new model
           // catalog. A resumed session still gets a live set_model request,
           // whose response is checked below when a concrete model is selected.
@@ -624,31 +677,27 @@ export class AcpProviderAdapter {
           this.#send(active.child, {
             jsonrpc: "2.0",
             id: 2,
-            ...acpPromptRequest(
-              active.sessionId,
-              options.prompt,
-            ),
+            ...acpPromptRequest(active.sessionId, options.prompt),
           });
           continue;
         }
         if (message.method === undefined && message.id === 3) {
           if (message.error) throw new ProviderProtocolError("ACP rejected the selected model.");
-          if (!active.sessionId) throw new ProviderProtocolError("ACP completed without a session.");
+          if (!active.sessionId)
+            throw new ProviderProtocolError("ACP completed without a session.");
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           this.#send(active.child, {
             jsonrpc: "2.0",
             id: 2,
-            ...acpPromptRequest(
-              active.sessionId,
-              options.prompt,
-            ),
+            ...acpPromptRequest(active.sessionId, options.prompt),
           });
           continue;
         }
         if (message.method === undefined && message.id === 2) {
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
           if (message.error) throw new ProviderProtocolError("ACP could not complete the prompt.");
-          if (!active.sessionId) throw new ProviderProtocolError("ACP completed without a session.");
+          if (!active.sessionId)
+            throw new ProviderProtocolError("ACP completed without a session.");
           terminal = true;
           yield { kind: "turn_completed", sessionId: active.sessionId, costUsd: null };
           this.#terminate(active.child);
@@ -670,9 +719,10 @@ export class AcpProviderAdapter {
                 id: message.id as RpcId,
                 error: {
                   code: -32000,
-                  message: error instanceof ProviderProtocolError
-                    ? error.message
-                    : "ACP fs/read_text_file failed.",
+                  message:
+                    error instanceof ProviderProtocolError
+                      ? error.message
+                      : "ACP fs/read_text_file failed.",
                 },
               });
             }
@@ -680,7 +730,8 @@ export class AcpProviderAdapter {
           }
           if (message.method !== "session/request_permission") {
             this.#send(active.child, {
-              jsonrpc: "2.0", id: message.id as RpcId,
+              jsonrpc: "2.0",
+              id: message.id as RpcId,
               error: { code: -32601, message: "Aldunis Code does not support this ACP request." },
             });
             continue;
@@ -698,44 +749,55 @@ export class AcpProviderAdapter {
                 return typeof location?.path === "string" ? [location.path] : [];
               })
             : [];
-          const toolName = kind === "execute"
-            ? typeof rawInput?.command === "string" ? "Bash" : "ProviderAction"
-            : kind === "edit"
-            ? locationPaths.length > 0 ? "Edit" : "ProviderAction"
-            : kind === "delete"
-            ? locationPaths.length > 0 ? "Delete" : "ProviderAction"
-            : kind === "move"
-            ? locationPaths.length > 0 ? "Move" : "ProviderAction"
-            : kind === "read" || kind === "search" || kind === "think" || kind === "fetch"
-            ? ""
-            : "ProviderAction";
+          const toolName =
+            kind === "execute"
+              ? typeof rawInput?.command === "string"
+                ? "Bash"
+                : "ProviderAction"
+              : kind === "edit"
+                ? locationPaths.length > 0
+                  ? "Edit"
+                  : "ProviderAction"
+                : kind === "delete"
+                  ? locationPaths.length > 0
+                    ? "Delete"
+                    : "ProviderAction"
+                  : kind === "move"
+                    ? locationPaths.length > 0
+                      ? "Move"
+                      : "ProviderAction"
+                    : kind === "read" || kind === "search" || kind === "think" || kind === "fetch"
+                      ? ""
+                      : "ProviderAction";
           if (
-            !toolName
-            || !allowOnceOption
-            || (toolName === "ProviderAction"
-              && locationPaths.length === 0
-              && typeof toolCall?.title !== "string")
-            || options.mode !== "build"
-            || !this.adapter.manifest.capabilities.tools
+            !toolName ||
+            !allowOnceOption ||
+            (toolName === "ProviderAction" &&
+              locationPaths.length === 0 &&
+              typeof toolCall?.title !== "string") ||
+            options.mode !== "build" ||
+            !this.adapter.manifest.capabilities.tools
           ) {
             this.#send(active.child, {
-              jsonrpc: "2.0", id: message.id as RpcId,
+              jsonrpc: "2.0",
+              id: message.id as RpcId,
               result: { outcome: { outcome: "cancelled" } },
             });
             continue;
           }
-          const input = toolName === "Bash"
-            ? { command: requiredString(rawInput?.command, "tool command") }
-            : toolName === "ProviderAction"
-            ? {
-                title: typeof toolCall?.title === "string" ? toolCall.title : "Provider action",
-                path: locationPaths[0],
-                paths: locationPaths,
-              }
-            : {
-                path: locationPaths[0],
-                paths: locationPaths,
-              };
+          const input =
+            toolName === "Bash"
+              ? { command: requiredString(rawInput?.command, "tool command") }
+              : toolName === "ProviderAction"
+                ? {
+                    title: typeof toolCall?.title === "string" ? toolCall.title : "Provider action",
+                    path: locationPaths[0],
+                    paths: locationPaths,
+                  }
+                : {
+                    path: locationPaths[0],
+                    paths: locationPaths,
+                  };
           const approval = this.permissions.register({
             runId: id,
             conversationId: options.conversationId,
@@ -748,27 +810,35 @@ export class AcpProviderAdapter {
           });
           if (!approval) throw new ProviderProtocolError("ACP approval could not be registered.");
           yield { kind: "approval_pending", ...approval };
-          const task = this.permissions.awaitRegisteredDecision(id, token, approval.id)
-            .then((decision) => this.#send(active.child, {
-              jsonrpc: "2.0", id: message.id as RpcId,
-              result: {
-                outcome: decision.behavior === "allow"
-                  ? { outcome: "selected", optionId: allowOnceOption }
-                  : { outcome: "cancelled" },
-              },
-            }))
-            .catch(() => this.#send(active.child, {
-              jsonrpc: "2.0", id: message.id as RpcId,
-              result: { outcome: { outcome: "cancelled" } },
-            }))
+          const task = this.permissions
+            .awaitRegisteredDecision(id, token, approval.id)
+            .then((decision) =>
+              this.#send(active.child, {
+                jsonrpc: "2.0",
+                id: message.id as RpcId,
+                result: {
+                  outcome:
+                    decision.behavior === "allow"
+                      ? { outcome: "selected", optionId: allowOnceOption }
+                      : { outcome: "cancelled" },
+                },
+              }),
+            )
+            .catch(() =>
+              this.#send(active.child, {
+                jsonrpc: "2.0",
+                id: message.id as RpcId,
+                result: { outcome: { outcome: "cancelled" } },
+              }),
+            )
             .finally(() => approvalTasks.delete(task));
           approvalTasks.add(task);
           continue;
         }
         if (typeof message.method === "string") {
           if (
-            isOptionalKiroNotification(this.adapter.manifest.id, message)
-            || isOptionalGrokNotification(this.adapter.manifest.id, message)
+            isOptionalKiroNotification(this.adapter.manifest.id, message) ||
+            isOptionalGrokNotification(this.adapter.manifest.id, message)
           ) {
             setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
             continue;
@@ -790,7 +860,8 @@ export class AcpProviderAdapter {
       this.#terminate(active.child);
       yield {
         kind: "failed",
-        message: error instanceof ProviderProtocolError ? error.message : "ACP stream processing failed.",
+        message:
+          error instanceof ProviderProtocolError ? error.message : "ACP stream processing failed.",
       };
     } finally {
       clearTimeout(phaseTimer);
@@ -800,11 +871,10 @@ export class AcpProviderAdapter {
     if (active.cancelled && !protocolFailed) yield { kind: "cancelled" };
     else if (active.timedOut && !protocolFailed) {
       yield { kind: "failed", message: "The ACP provider stopped responding and was terminated." };
-    }
-    else if (active.spawnFailed && !protocolFailed) {
+    } else if (active.spawnFailed && !protocolFailed) {
       yield { kind: "failed", message: "The adapter executable could not be started." };
-    }
-    else if (!terminal) yield { kind: "failed", message: "ACP provider exited before completing the turn." };
+    } else if (!terminal)
+      yield { kind: "failed", message: "ACP provider exited before completing the turn." };
   }
 }
 

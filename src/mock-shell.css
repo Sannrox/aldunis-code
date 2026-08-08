@@ -985,6 +985,10 @@ html, body { height: 100%; }
 .send { flex: 0 0 30px; border: 0; cursor: pointer; }
 .send:disabled { opacity: .4; }
 .cc { border: 0; cursor: pointer; background: transparent; }
+@media (min-width: 681px) {
+  .split:not(.with-review) > .conv:only-child .crow { flex-wrap: nowrap; }
+  .split:not(.with-review) > .conv:only-child .composer-run-settings { flex-basis: 0; }
+}
 /* Dual-pane columns are tight; long model·effort chips were wrapping the crow
    to ~3 rows. Cap chip width and ellipsize — full label stays in aria/title. */
 .crow .cc {
@@ -2747,6 +2751,21 @@ html[data-desktop-shell="macos"] .sb,
 html[data-desktop-shell="macos"] .main {
   padding-top:var(--desktop-shell-titlebar-height);
 }
+html[data-desktop-shell="macos"] .settings {
+  inset:var(--desktop-shell-titlebar-height) 0 0 !important;
+}
+html[data-desktop-shell="macos"] .app:has(.settings) {
+  --desktop-shell-sidebar-width:214px;
+}
+html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar[data-sidebar-state="collapsed"]::after {
+  display:block;
+}
+@media (max-width:680px) {
+  html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar::after,
+  html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar[data-sidebar-state="collapsed"]::after {
+    display:none;
+  }
+}
 html[data-desktop-shell="macos"] .sb-hd {
   height: var(--desktop-shell-titlebar-height);
   min-height: var(--desktop-shell-titlebar-height);
@@ -2910,7 +2929,6 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
   .new-chat-worktree-filter-label { display: none; }
   .new-chat-worktree-tools { padding-inline: 4px; }
   .composer-run-settings { flex: 1 1 100%; order: 2; }
-  .composer-run-settings-label { display: none; }
   .crow .send { order: 3; }
 }
 
@@ -3082,36 +3100,7 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
 .conversation-empty.sparse p {
   max-width: 52ch;
 }
-.send {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex: 0 0 auto !important;
-  width: auto !important;
-  min-width: 30px;
-  padding-inline: 9px;
-  border: 1px solid transparent !important;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.send:not(:disabled):hover {
-  filter: brightness(.94);
-}
-.send:not(:disabled):focus-visible {
-  filter: brightness(.94);
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.send-label { line-height: 1; }
 @media (max-width: 680px) {
-  .send {
-    width: 30px !important;
-    min-width: 30px;
-    padding-inline: 0;
-  }
-  .send-label { display: none; }
   .conversation-empty.sparse h2 { font-size: 18px !important; }
 }
 
@@ -3135,7 +3124,5 @@ html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] > .domain
     width: 44px !important;
     min-width: 44px;
     flex: 0 0 44px !important;
-    padding-inline: 0;
   }
-  .send-label { display: none; }
 }

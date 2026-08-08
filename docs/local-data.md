@@ -12,6 +12,11 @@ Default:
 | Linux (XDG) | `$XDG_STATE_HOME/aldunis-code` or `~/.local/state/aldunis-code` |
 | Override | `ALDUNIS_CODE_STATE_DIR` |
 
+Repository file browsing and context attachment use Git's tracked/non-ignored
+view and additionally exclude hidden and credential-shaped secret-like paths,
+including exact `secret`/`secrets`/`token`/`tokens` components and credential
+filenames such as `clientSecret.json` or `apiToken.txt`.
+
 Typical contents (names may evolve; do not commit these files):
 
 | File / area | Purpose |
