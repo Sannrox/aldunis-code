@@ -47,7 +47,7 @@
     "@iarna/toml": "2.2.5",
     "@sannrox/sekai-chisei-sdk": "file:vendor/sekai-chisei-sdk",
     "@vitejs/plugin-react": "4.3.4",
-    "electron-updater": "6.6.2",
+    "electron-updater": "6.8.9",
     "proper-lockfile": "^4.1.2",
     "react": "19.0.0",
     "react-dom": "19.0.0",
