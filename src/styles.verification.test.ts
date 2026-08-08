@@ -710,6 +710,19 @@ test("narrow workbench uses a drawer sidebar with an explicit scrim", () => {
   );
 });
 
+test("collapsed sidebar keeps dual-pane tabs clear of the open control", () => {
+  const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
+  const shell = readFileSync(shellPath, "utf8");
+  assert.match(
+    shell,
+    /\.main\[data-sidebar-state="collapsed"\] \.pane-switcher\s*\{[^}]*padding-left:\s*56px\s*!important/s,
+  );
+  assert.match(
+    shell,
+    /html\[data-desktop-shell="macos"\] \.main\[data-sidebar-state="collapsed"\] \.pane-switcher\s*\{[^}]*padding-left:\s*8px\s*!important/s,
+  );
+});
+
 test("diff source lines scroll horizontally instead of wrapping", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
