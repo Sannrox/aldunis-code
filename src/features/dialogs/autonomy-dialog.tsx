@@ -160,7 +160,9 @@ export function AutonomyDialog({
   const [hookCooldown, setHookCooldown] = useState(300);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
+  const loadInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -169,13 +171,21 @@ export function AutonomyDialog({
   }, [open, repository?.projectId, repository?.selectedWorktree]);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/autonomy/load", { method: "POST" });
-    if (!response.ok) {
-      setError("Could not load the autonomy ledger.");
-      return;
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
+    try {
+      const response = await fetch("/api/autonomy/load", { method: "POST" });
+      if (!response.ok) {
+        setLoadError("Could not load the autonomy ledger.");
+        return;
+      }
+      setSnapshot((await response.json()) as Snapshot);
+      setLoadError(null);
+    } catch {
+      setLoadError("Could not load the autonomy ledger.");
+    } finally {
+      loadInFlightRef.current = false;
     }
-    setSnapshot((await response.json()) as Snapshot);
-    setError(null);
   }, []);
 
   useEffect(() => {
@@ -184,7 +194,11 @@ export function AutonomyDialog({
     const focus = () => firstFieldRef.current?.focus();
     focus();
     const frame = window.requestAnimationFrame(focus);
-    return () => window.cancelAnimationFrame(frame);
+    const refresh = window.setInterval(() => void load(), 1000);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearInterval(refresh);
+    };
   }, [load, open]);
 
   const projectOptions = useMemo(() => {
@@ -219,6 +233,8 @@ export function AutonomyDialog({
     }
   };
 
+  const displayedError = error ?? loadError;
+
   const createGardener = () => {
     if (!projectId) {
       setError("Open a repository before starting the gardener.");
@@ -242,9 +258,9 @@ export function AutonomyDialog({
         {managed && (
           <p className="muted">Managed mode is inspect-only for this local autonomy surface.</p>
         )}
-        {error && (
+        {displayedError && (
           <p role="alert" className="error-text">
-            {error}
+            {displayedError}
           </p>
         )}
         <nav className="autonomy-tabs" aria-label="Autonomy sections">
