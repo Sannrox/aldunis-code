@@ -5,7 +5,9 @@ import { dump, load } from "js-yaml";
 const [, , directory, suffix, channel = "latest"] = process.argv;
 
 if (!directory || !suffix) {
-  throw new Error("Usage: node scripts/rename-desktop-update-assets.mjs <release-directory> <architecture> [latest|nightly]");
+  throw new Error(
+    "Usage: node scripts/rename-desktop-update-assets.mjs <release-directory> <architecture> [latest|nightly]",
+  );
 }
 
 if (channel !== "latest" && channel !== "nightly") {
@@ -21,8 +23,16 @@ const renameable = entries
   .map((entry) => entry.name);
 const assetNames = new Map();
 
+function publishableAssetName(name) {
+  // GitHub normalizes spaces in uploaded release asset names to dots. Apply
+  // the same stable spelling before publishing so update metadata and assets
+  // retain identical URLs after upload.
+  return name.replace(/\s+/gu, ".");
+}
+
 for (const name of renameable) {
-  const match = name.match(/^(.*?)(\.(?:dmg|zip|blockmap))$/);
+  const publishableName = publishableAssetName(name);
+  const match = publishableName.match(/^(.*?)(\.(?:dmg|zip|blockmap))$/);
   if (!match) continue;
   const nextName = `${match[1]}-${suffix}${match[2]}`;
   assetNames.set(name, nextName);
@@ -32,7 +42,10 @@ for (const name of renameable) {
 function normalizedAssetName(name) {
   const extensionMatch = name.match(/(\.(?:dmg|zip|blockmap))$/iu);
   if (!extensionMatch) return name.replace(/[.\s_-]+/gu, "-").toLowerCase();
-  const stem = name.slice(0, -extensionMatch[1].length).replace(/[.\s_-]+/gu, "-").toLowerCase();
+  const stem = name
+    .slice(0, -extensionMatch[1].length)
+    .replace(/[.\s_-]+/gu, "-")
+    .toLowerCase();
   return `${stem}${extensionMatch[1].toLowerCase()}`;
 }
 
@@ -64,7 +77,9 @@ function rewriteReferences(value) {
   }
   if (Array.isArray(value)) return value.map(rewriteReferences);
   if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, rewriteReferences(entry)]));
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, rewriteReferences(entry)]),
+  );
 }
 
 function manifestAssetReferences(value) {

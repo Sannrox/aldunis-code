@@ -2747,6 +2747,21 @@ html[data-desktop-shell="macos"] .sb,
 html[data-desktop-shell="macos"] .main {
   padding-top:var(--desktop-shell-titlebar-height);
 }
+html[data-desktop-shell="macos"] .settings {
+  inset:var(--desktop-shell-titlebar-height) 0 0 !important;
+}
+html[data-desktop-shell="macos"] .app:has(.settings) {
+  --desktop-shell-sidebar-width:214px;
+}
+html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar[data-sidebar-state="collapsed"]::after {
+  display:block;
+}
+@media (max-width:680px) {
+  html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar::after,
+  html[data-desktop-shell="macos"] .app:has(.settings) .desktop-titlebar[data-sidebar-state="collapsed"]::after {
+    display:none;
+  }
+}
 html[data-desktop-shell="macos"] .sb-hd {
   height: var(--desktop-shell-titlebar-height);
   min-height: var(--desktop-shell-titlebar-height);

@@ -9,6 +9,7 @@ import {
   listenOnLoopback,
   localApplicationUrl,
   selectedDirectoryPath,
+  shouldHideWindowOnClose,
 } from "./lifecycle.ts";
 import { nightlyTag, nightlyVersion } from "../scripts/preview-version.ts";
 import { windowChromeOptions } from "./window-chrome.ts";
@@ -32,9 +33,15 @@ test("backend readiness rejects non-TCP and unavailable addresses", () => {
 });
 
 test("desktop connection IPC accepts only the local application origin", () => {
-  assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4174/settings", "http://127.0.0.1:4174"), true);
+  assert.equal(
+    isLocalApplicationOrigin("http://127.0.0.1:4174/settings", "http://127.0.0.1:4174"),
+    true,
+  );
   assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4177/", "http://127.0.0.1:4174"), false);
-  assert.equal(isLocalApplicationOrigin("https://code.example.test/", "http://127.0.0.1:4174"), false);
+  assert.equal(
+    isLocalApplicationOrigin("https://code.example.test/", "http://127.0.0.1:4174"),
+    false,
+  );
   assert.equal(isLocalApplicationOrigin("about:blank", "http://127.0.0.1:4174"), false);
   assert.equal(isLocalApplicationOrigin("http://127.0.0.1:4174/", null), false);
 });
@@ -45,8 +52,18 @@ test("deep links accept only the registered application protocol", () => {
   assert.equal(isSupportedDeepLink("not a URL"), false);
 });
 
+test("macOS desktop close hides the window while explicit shutdown still closes it", () => {
+  assert.equal(shouldHideWindowOnClose("darwin", false), true);
+  assert.equal(shouldHideWindowOnClose("darwin", true), false);
+  assert.equal(shouldHideWindowOnClose("win32", false), false);
+  assert.equal(shouldHideWindowOnClose("linux", false), false);
+});
+
 test("native directory selection returns one path and cancellation returns no authority", () => {
-  assert.equal(selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }), "/project");
+  assert.equal(
+    selectedDirectoryPath({ canceled: false, filePaths: ["/project", "/other"] }),
+    "/project",
+  );
   assert.equal(selectedDirectoryPath({ canceled: true, filePaths: ["/project"] }), null);
   assert.equal(selectedDirectoryPath({ canceled: false, filePaths: [] }), null);
 });
@@ -61,7 +78,9 @@ test("macOS desktop chrome shares the shell with native traffic controls", () =>
 });
 
 test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"];
@@ -82,10 +101,15 @@ test("desktop main adapts the CommonJS updater and wires update shutdown", async
   assert.match(source, /import electronUpdater from "electron-updater";/);
   assert.match(source, /engine: electronUpdater\.autoUpdater as unknown as DesktopUpdaterEngine/);
   assert.match(source, /prepareForInstall: prepareForUpdate,/);
+  assert.match(source, /window\.on\("close", \(event\) =>/);
+  assert.match(source, /app\.on\("activate", showWindow\);/);
+  assert.match(source, /process\.platform !== "darwin"/);
 });
 
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"] ?? "";
@@ -96,7 +120,9 @@ test("desktop build emits the Shikigami permission hook beside the main bundle",
 });
 
 test("desktop build emits the host-owned browser MCP bridge beside the main bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:desktop-main"?: string };
   };
   const command = packageJson.scripts?.["build:desktop-main"] ?? "";
@@ -107,12 +133,14 @@ test("desktop build emits the host-owned browser MCP bridge beside the main bund
 });
 
 test("desktop CLI build keeps its banner argument portable across shells", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:cli"?: string };
   };
   const command = packageJson.scripts?.["build:cli"] ?? "";
 
-  assert.match(command, /--banner:js=\"#!\/usr\/bin\/env node\"/);
+  assert.match(command, /--banner:js="#!\/usr\/bin\/env node"/);
   assert.doesNotMatch(command, /--banner:js='/);
 });
 
@@ -146,10 +174,7 @@ test("nightly versions are generated as dated semver prereleases", () => {
     () => nightlyVersion("0.1.0-nightly.20260803.16", "20260804", 17),
     /base package version is invalid/,
   );
-  assert.throws(
-    () => nightlyVersion("0.1.0", "2026-08-04", 17),
-    /UTC build date is invalid/,
-  );
+  assert.throws(() => nightlyVersion("0.1.0", "2026-08-04", 17), /UTC build date is invalid/);
 });
 
 test("desktop distribution workflow keeps nightly publication separate from stable tags", async () => {
@@ -181,10 +206,16 @@ test("desktop distribution workflow keeps nightly publication separate from stab
   assert.match(workflow, /--config\.publish\.channel=\$env:UPDATE_CHANNEL/);
   assert.match(workflow, /--config\.forceCodeSigning=true/);
   assert.match(workflow, /WINDOWS_SIGNING_MODE=unsigned-nightly/);
-  assert.match(workflow, /Stable Windows releases require complete Authenticode signing credentials/);
+  assert.match(
+    workflow,
+    /Stable Windows releases require complete Authenticode signing credentials/,
+  );
   assert.match(workflow, /Unsigned nightly package/);
   assert.match(workflow, /if \(\$env:WINDOWS_SIGNING_MODE -eq "signed"\)/);
-  assert.match(workflow, /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/);
+  assert.match(
+    workflow,
+    /\$\{\{ needs\.validate\.outputs\.update_channel \}\}-mac-\$\{\{ matrix\.arch \}\}\.yml/,
+  );
   assert.match(workflow, /latest-linux\.yml/);
   assert.match(workflow, /latest\.yml/);
   assert.match(workflow, /merge:desktop-update-manifest/);
@@ -198,7 +229,9 @@ test("README documents the unsigned Windows nightly fallback", async () => {
 });
 
 test("desktop packaging config produces channel updater metadata and macOS zip artifacts", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     dependencies?: { [name: string]: string };
     scripts?: { "build:desktop-main"?: string };
     repository?: { type?: string; url?: string };
@@ -227,7 +260,9 @@ test("desktop packaging config produces channel updater metadata and macOS zip a
 });
 
 test("native packages cannot overwrite the web build output", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     build?: { directories?: { output?: string } };
   };
 
@@ -235,7 +270,9 @@ test("native packages cannot overwrite the web build output", async () => {
 });
 
 test("mac packages explain the microphone permission used by voice input", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     build?: {
       mac?: {
         entitlements?: string;
@@ -245,9 +282,15 @@ test("mac packages explain the microphone permission used by voice input", async
     };
   };
 
-  assert.match(packageJson.build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? "", /microphone/i);
+  assert.match(
+    packageJson.build?.mac?.extendInfo?.NSMicrophoneUsageDescription ?? "",
+    /microphone/i,
+  );
 
-  const appEntitlements = await readFile(new URL("../build/entitlements.mac.plist", import.meta.url), "utf8");
+  const appEntitlements = await readFile(
+    new URL("../build/entitlements.mac.plist", import.meta.url),
+    "utf8",
+  );
   const inheritedEntitlements = await readFile(
     new URL("../build/entitlements.mac.inherit.plist", import.meta.url),
     "utf8",
