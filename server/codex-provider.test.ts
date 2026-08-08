@@ -15,20 +15,24 @@ import {
 import { ProviderProtocolError } from "./provider.ts";
 
 test("file-change approvals include move destinations", () => {
-  assert.deepEqual(codexFileChangePaths({
-    type: "fileChange",
-    changes: [
-      { path: "src/old.ts", kind: { type: "update", move_path: "src/new.ts" } },
-      { path: "src/added.ts", kind: { type: "add" } },
-    ],
-  }), ["src/old.ts", "src/new.ts", "src/added.ts"]);
-  assert.throws(() => codexFileChangePaths({
-    type: "fileChange",
-    changes: [
-      { path: "src/valid.ts", kind: { type: "update" } },
-      { kind: { type: "add" } },
-    ],
-  }), /malformed file change/);
+  assert.deepEqual(
+    codexFileChangePaths({
+      type: "fileChange",
+      changes: [
+        { path: "src/old.ts", kind: { type: "update", move_path: "src/new.ts" } },
+        { path: "src/added.ts", kind: { type: "add" } },
+      ],
+    }),
+    ["src/old.ts", "src/new.ts", "src/added.ts"],
+  );
+  assert.throws(
+    () =>
+      codexFileChangePaths({
+        type: "fileChange",
+        changes: [{ path: "src/valid.ts", kind: { type: "update" } }, { kind: { type: "add" } }],
+      }),
+    /malformed file change/,
+  );
 });
 
 test("approval paths cannot escape the selected worktree", async () => {
@@ -52,111 +56,251 @@ test("Codex version and native lifecycle events normalize without provider paylo
     name: "aldunis_browser",
     command: "/usr/bin/node",
     args: ["/app/browser-mcp.mjs"],
-    environment: { ALDUNIS_BROWSER_TOKEN: "token", ALDUNIS_BROWSER_TOOL_URL: "http://127.0.0.1:4173/api/browser/tools" },
+    environment: {
+      ALDUNIS_BROWSER_TOKEN: "token",
+      ALDUNIS_BROWSER_TOOL_URL: "http://127.0.0.1:4173/api/browser/tools",
+    },
   });
   assert.match(browserArgs.join(" "), /mcp_servers\.aldunis_browser/);
   assert.match(browserArgs.join(" "), /ALDUNIS_BROWSER_TOOL_URL/);
-  assert.ok(browserArgs.indexOf("mcp_servers={}") < browserArgs.findIndex((value) => value.includes("mcp_servers.aldunis_browser")));
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/started",
-    params: { item: { id: "item-1", type: "commandExecution", command: "private" } },
-  }), [{ kind: "tool_started", toolCallId: "item-1", name: "Command" }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: { item: { id: "item-2", type: "agentMessage", text: "Done." } },
-  }), [{ kind: "assistant_text", text: "Done." }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/reasoning/textDelta",
-    params: { itemId: "reasoning-1", delta: "private reasoning" },
-  }), [{ kind: "thinking", text: "private reasoning" }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: { item: { id: "item-1", type: "commandExecution", status: "failed", aggregatedOutput: "secret" } },
-  }), [{ kind: "tool_finished", toolCallId: "item-1", failed: true }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/started",
-    params: { item: { id: "item-3", type: "collabAgentToolCall", tool: "spawnAgent", status: "inProgress" } },
-  }), [{ kind: "tool_started", toolCallId: "item-3", name: "Subagent spawnAgent" }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: { item: { id: "item-3", type: "collabAgentToolCall", tool: "spawnAgent", status: "completed" } },
-  }), [{ kind: "tool_finished", toolCallId: "item-3", failed: false }]);
+  assert.ok(
+    browserArgs.indexOf("mcp_servers={}") <
+      browserArgs.findIndex((value) => value.includes("mcp_servers.aldunis_browser")),
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        tokenUsage: {
+          total: {
+            totalTokens: 40_000,
+            inputTokens: 30_000,
+            cachedInputTokens: 0,
+            cacheWriteInputTokens: 0,
+            outputTokens: 10_000,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 12_500,
+            inputTokens: 10_000,
+            cachedInputTokens: 1_000,
+            cacheWriteInputTokens: 0,
+            outputTokens: 2_500,
+            reasoningOutputTokens: 200,
+          },
+          modelContextWindow: 258_000,
+        },
+      },
+    }),
+    [
+      {
+        kind: "context_usage",
+        // last.totalTokens (12500) − reasoningOutputTokens (200)
+        usedTokens: 12_300,
+        maxTokens: 258_000,
+        totalProcessedTokens: 40_000,
+        inputTokens: 10_000,
+        outputTokens: 2_500,
+      },
+    ],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        tokenUsage: {
+          total: { totalTokens: 40_000 },
+          modelContextWindow: 258_000,
+        },
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "thread/tokenUsage/updated",
+      params: { threadId: "thread-1", turnId: "turn-1", tokenUsage: {} },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: { item: { id: "item-1", type: "commandExecution", command: "private" } },
+    }),
+    [{ kind: "tool_started", toolCallId: "item-1", name: "Command" }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: { item: { id: "item-2", type: "agentMessage", text: "Done." } },
+    }),
+    [{ kind: "assistant_text", text: "Done." }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/reasoning/textDelta",
+      params: { itemId: "reasoning-1", delta: "private reasoning" },
+    }),
+    [{ kind: "thinking", text: "private reasoning" }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          id: "item-1",
+          type: "commandExecution",
+          status: "failed",
+          aggregatedOutput: "secret",
+        },
+      },
+    }),
+    [{ kind: "tool_finished", toolCallId: "item-1", failed: true }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "item-3",
+          type: "collabAgentToolCall",
+          tool: "spawnAgent",
+          status: "inProgress",
+        },
+      },
+    }),
+    [{ kind: "tool_started", toolCallId: "item-3", name: "Subagent spawnAgent" }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          id: "item-3",
+          type: "collabAgentToolCall",
+          tool: "spawnAgent",
+          status: "completed",
+        },
+      },
+    }),
+    [{ kind: "tool_finished", toolCallId: "item-3", failed: false }],
+  );
   const inlineImage = Buffer.from("codex browser frame", "utf8").toString("base64");
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: {
-      item: { id: "image-1", type: "imageView", imageData: inlineImage, mimeType: "image/webp" },
-    },
-  }), [{
-    kind: "browser_observation",
-    provider: "codex-cli",
-    observationId: "image-1",
-    imageData: `data:image/webp;base64,${inlineImage}`,
-    mediaType: "image/webp",
-  }]);
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: { id: "image-1", type: "imageView", imageData: inlineImage, mimeType: "image/webp" },
+      },
+    }),
+    [
+      {
+        kind: "browser_observation",
+        provider: "codex-cli",
+        observationId: "image-1",
+        imageData: `data:image/webp;base64,${inlineImage}`,
+        mediaType: "image/webp",
+      },
+    ],
+  );
   // The shipped Codex schema exposes a local path. It must not become a file
   // read or a browser view merely because the provider emitted an imageView.
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: { item: { id: "path-image", type: "imageView", path: "/private/provider/image.png" } },
-  }), []);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "thread/goal/cleared",
-    params: { threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" },
-  }), []);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "thread/goal/updated",
-    params: {
-      threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53",
-      goal: { objective: "Ship safely", status: "active" },
-    },
-  }), []);
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: { id: "path-image", type: "imageView", path: "/private/provider/image.png" },
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "thread/goal/cleared",
+      params: { threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53" },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "thread/goal/updated",
+      params: {
+        threadId: "0199a213-81c0-7800-8aa1-bbab2a035a53",
+        goal: { objective: "Ship safely", status: "active" },
+      },
+    }),
+    [],
+  );
 });
 
 test("Codex plan notifications normalize as stable artifacts and reject malformed steps", () => {
-  assert.deepEqual(normalizeCodexNotification({
-    method: "turn/plan/updated",
-    params: {
-      turnId: "turn-1",
-      explanation: "Implementation plan",
-      plan: [
-        { step: "Inspect", status: "completed" },
-        { step: "Implement", status: "inProgress" },
-        { step: "Verify", status: "pending" },
-      ],
-    },
-  }), [{
-    kind: "plan_updated",
-    artifact: {
-      id: "turn:turn-1",
-      provider: "codex-cli",
-      body: "Implementation plan",
-      steps: [
-        { content: "Inspect", status: "completed" },
-        { content: "Implement", status: "active" },
-        { content: "Verify", status: "pending" },
-      ],
-    },
-  }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/plan/delta",
-    params: { itemId: "plan-1", delta: "First chunk" },
-  }), [{
-    kind: "plan_updated",
-    artifact: { id: "item:plan-1", provider: "codex-cli", body: "First chunk" },
-    bodyMode: "append",
-  }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: { item: { id: "plan-1", type: "plan", text: "Final plan" } },
-  }), [{
-    kind: "plan_updated",
-    artifact: { id: "item:plan-1", provider: "codex-cli", body: "Final plan" },
-  }]);
-  assert.throws(() => normalizeCodexNotification({
-    method: "turn/plan/updated",
-    params: { turnId: "turn-1", plan: [{ step: "Inspect", status: "invented" }] },
-  }), /Unsupported Codex plan step status/);
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "turn/plan/updated",
+      params: {
+        turnId: "turn-1",
+        explanation: "Implementation plan",
+        plan: [
+          { step: "Inspect", status: "completed" },
+          { step: "Implement", status: "inProgress" },
+          { step: "Verify", status: "pending" },
+        ],
+      },
+    }),
+    [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: "turn:turn-1",
+          provider: "codex-cli",
+          body: "Implementation plan",
+          steps: [
+            { content: "Inspect", status: "completed" },
+            { content: "Implement", status: "active" },
+            { content: "Verify", status: "pending" },
+          ],
+        },
+      },
+    ],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/plan/delta",
+      params: { itemId: "plan-1", delta: "First chunk" },
+    }),
+    [
+      {
+        kind: "plan_updated",
+        artifact: { id: "item:plan-1", provider: "codex-cli", body: "First chunk" },
+        bodyMode: "append",
+      },
+    ],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: { item: { id: "plan-1", type: "plan", text: "Final plan" } },
+    }),
+    [
+      {
+        kind: "plan_updated",
+        artifact: { id: "item:plan-1", provider: "codex-cli", body: "Final plan" },
+      },
+    ],
+  );
+  assert.throws(
+    () =>
+      normalizeCodexNotification({
+        method: "turn/plan/updated",
+        params: { turnId: "turn-1", plan: [{ step: "Inspect", status: "invented" }] },
+      }),
+    /Unsupported Codex plan step status/,
+  );
 });
 
 test("Codex resumes fall back only for missing provider threads", () => {
@@ -169,7 +313,9 @@ test("Codex resumes fall back only for missing provider threads", () => {
 test("Codex keeps one app-server process alive across conversation turns", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-session-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.145.0");
 } else {
@@ -191,7 +337,8 @@ if (process.argv.includes("--version")) {
     }
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   try {
@@ -219,11 +366,13 @@ if (process.argv.includes("--version")) {
     });
     const secondEvents = [];
     for await (const event of second.events) secondEvents.push(event);
-    assert.deepEqual(secondEvents, [{
-      kind: "turn_completed",
-      sessionId: session?.kind === "session_started" ? session.sessionId : "",
-      costUsd: null,
-    }]);
+    assert.deepEqual(secondEvents, [
+      {
+        kind: "turn_completed",
+        sessionId: session?.kind === "session_started" ? session.sessionId : "",
+        costUsd: null,
+      },
+    ]);
   } finally {
     adapter.close();
   }
@@ -232,7 +381,9 @@ if (process.argv.includes("--version")) {
 test("Codex session reuse cannot leak abandoned tool state into the next turn", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-session-reset-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.145.0");
 } else {
@@ -261,7 +412,8 @@ if (process.argv.includes("--version")) {
     }
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   try {
@@ -290,11 +442,13 @@ if (process.argv.includes("--version")) {
     });
     const secondEvents = [];
     for await (const event of second.events) secondEvents.push(event);
-    assert.deepEqual(secondEvents, [{
-      kind: "turn_completed",
-      sessionId: "thread-1",
-      costUsd: null,
-    }]);
+    assert.deepEqual(secondEvents, [
+      {
+        kind: "turn_completed",
+        sessionId: "thread-1",
+        costUsd: null,
+      },
+    ]);
   } finally {
     adapter.close();
   }
@@ -303,7 +457,9 @@ if (process.argv.includes("--version")) {
 test("Codex native input requests normalize and resume only after the bound answer", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-input-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.145.0");
 } else {
@@ -340,7 +496,8 @@ if (process.argv.includes("--version")) {
     }
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   try {
@@ -371,7 +528,9 @@ if (process.argv.includes("--version")) {
 test("Codex skills expose enabled metadata without local paths", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-skills-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.144.3");
 } else {
@@ -390,7 +549,8 @@ if (process.argv.includes("--version")) {
     }]}}));
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   assert.deepEqual(await new CodexCliAdapter(executable).skills(directory), [
     { name: "alpha", description: "Alpha skill" },
@@ -401,7 +561,9 @@ if (process.argv.includes("--version")) {
 test("Codex cancellation force-terminates an unresponsive app-server", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-provider-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.144.3");
 } else {
@@ -421,7 +583,8 @@ if (process.argv.includes("--version")) {
     }));
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   const run = await adapter.start({
@@ -446,7 +609,9 @@ if (process.argv.includes("--version")) {
 test("Codex dynamic-tool requests fail with an actionable policy explanation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-provider-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.145.0");
 } else {
@@ -480,7 +645,8 @@ if (process.argv.includes("--version")) {
     }
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   const run = await adapter.start({
@@ -512,7 +678,8 @@ if (process.argv.includes("--version")) {
     {
       kind: "failed",
       code: "unsupported_external_tool",
-      message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+      message:
+        "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
     },
   ]);
   assert.equal(adapter.cancel(run.id), false);
@@ -528,57 +695,72 @@ test("unknown and malformed Codex notifications fail closed", () => {
     ProviderProtocolError,
   );
   assert.throws(
-    () => normalizeCodexNotification({
-      method: "item/started",
-      params: { item: { id: "item-1", type: "futureMutation" } },
-    }),
+    () =>
+      normalizeCodexNotification({
+        method: "item/started",
+        params: { item: { id: "item-1", type: "futureMutation" } },
+      }),
     /Unsupported Codex item type/,
   );
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/started",
-    params: {
-      item: {
-        id: "item-2",
-        type: "mcpToolCall",
-        server: "private-server",
-        tool: "private-tool",
-        arguments: { secret: "must not be exposed" },
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "item-2",
+          type: "mcpToolCall",
+          server: "private-server",
+          tool: "private-tool",
+          arguments: { secret: "must not be exposed" },
+        },
       },
-    },
-  }), [{
-    kind: "failed",
-    code: "unsupported_external_tool",
-    message: "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
-  }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/started",
-    params: {
-      item: {
-        id: "item-3",
-        type: "mcpToolCall",
-        server: "aldunis_browser",
-        tool: "browser_snapshot",
+    }),
+    [
+      {
+        kind: "failed",
+        code: "unsupported_external_tool",
+        message:
+          "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
       },
-    },
-  }), [{ kind: "tool_started", toolCallId: "item-3", name: "MCP browser_snapshot" }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "item/completed",
-    params: {
-      item: {
-        id: "item-2",
-        type: "mcpToolCall",
-        server: "aldunis_browser",
-        tool: "browser_snapshot",
-        status: "completed",
+    ],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "item-3",
+          type: "mcpToolCall",
+          server: "aldunis_browser",
+          tool: "browser_snapshot",
+        },
       },
-    },
-  }), [{ kind: "tool_finished", toolCallId: "item-2", failed: false }]);
+    }),
+    [{ kind: "tool_started", toolCallId: "item-3", name: "MCP browser_snapshot" }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          id: "item-2",
+          type: "mcpToolCall",
+          server: "aldunis_browser",
+          tool: "browser_snapshot",
+          status: "completed",
+        },
+      },
+    }),
+    [{ kind: "tool_finished", toolCallId: "item-2", failed: false }],
+  );
 });
 
 test("Codex protocol failures preserve a safe diagnostic and settle active tools", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-protocol-"));
   const executable = join(directory, "fake-codex");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
   console.log("codex-cli 0.145.0");
 } else {
@@ -599,7 +781,8 @@ if (process.argv.includes("--version")) {
     }
   });
 }
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new CodexCliAdapter(executable);
   const run = await adapter.start({
@@ -625,20 +808,33 @@ if (process.argv.includes("--version")) {
 });
 
 test("interrupted and failed Codex turns normalize to terminal events", () => {
-  assert.deepEqual(normalizeCodexNotification({
-    method: "error",
-    params: { error: { message: "Authentication expired." } },
-  }), [{ kind: "failed", message: "Authentication expired." }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "turn/completed",
-    params: { turn: { status: "interrupted", error: null } },
-  }), [{ kind: "cancelled" }]);
-  assert.deepEqual(normalizeCodexNotification({
-    method: "turn/completed",
-    params: { turn: { status: "failed", error: { message: "Provider unavailable." } } },
-  }), [{ kind: "failed", message: "Provider unavailable." }]);
-  assert.throws(() => normalizeCodexNotification({
-    method: "turn/completed",
-    params: { turn: { status: "future-status", error: null } },
-  }), /Unsupported Codex turn status/);
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "error",
+      params: { error: { message: "Authentication expired." } },
+    }),
+    [{ kind: "failed", message: "Authentication expired." }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "interrupted", error: null } },
+    }),
+    [{ kind: "cancelled" }],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "failed", error: { message: "Provider unavailable." } } },
+    }),
+    [{ kind: "failed", message: "Provider unavailable." }],
+  );
+  assert.throws(
+    () =>
+      normalizeCodexNotification({
+        method: "turn/completed",
+        params: { turn: { status: "future-status", error: null } },
+      }),
+    /Unsupported Codex turn status/,
+  );
 });

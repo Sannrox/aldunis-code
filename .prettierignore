@@ -7,3 +7,4 @@ coverage/
 vendor/sekai-chisei-sdk/dist/
 public/*.png
 public/*.ico
+src/mock-shell.css
