@@ -143,6 +143,7 @@ import {
   type AssistantTimelineBlock,
 } from "../../lib/conversation-timeline";
 import { latestPlanFromEvents } from "../../lib/provider-plan";
+import { buildWorkGraph, hasWorkGraphEvidence } from "../../lib/work-graph";
 import {
   shouldRefreshAfterRestoredTurn,
   type RestoredTurnStatus,
@@ -151,6 +152,7 @@ import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
 import { ProviderPlanActions, ProviderPlanCard, ProviderPlanContent } from "./provider-plan";
+import { WorkGraphContent } from "./work-graph";
 import { ContextPackagePanel, ContextPackageSummary } from "./context-package";
 import { MessageCopyButton } from "./message-copy-button";
 import { ToolActivity } from "./tool-activity";
@@ -164,6 +166,8 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
 }
+
+type PlanPanelMode = "plan" | "graph";
 
 /** Join assistant text blocks while preserving timeline boundaries around tools/plans. */
 export function assistantTextFromEvents(events: readonly ProviderEvent[]): string {
@@ -294,6 +298,46 @@ export function appendProviderEvent(
   }
   if (!replaced) result.push(next);
   return result;
+}
+
+export function preserveInputResolution(
+  current: ProviderEvent[],
+  resolution: Extract<ProviderEvent, { kind: "input_resolved" }>,
+): ProviderEvent[] {
+  let inserted = false;
+  const result: ProviderEvent[] = [];
+  for (const event of current) {
+    if (
+      (event.kind === "input_requested" || event.kind === "input_resolved") &&
+      event.id === resolution.id
+    ) {
+      if (!inserted) {
+        result.push(resolution);
+        inserted = true;
+      }
+      continue;
+    }
+    result.push(event);
+  }
+  if (!inserted) result.push(resolution);
+  return result;
+}
+
+export function restoredTurnTerminalEvent(
+  status: RestoredTurnStatus,
+  sessionId: string | null,
+): ProviderEvent | null {
+  switch (status) {
+    case "completed":
+      return { kind: "turn_completed", sessionId: sessionId ?? "restored", costUsd: null };
+    case "failed":
+      return { kind: "failed", message: "Provider failed." };
+    case "interrupted":
+    case "cancelled":
+      return { kind: "cancelled" };
+    default:
+      return null;
+  }
 }
 
 export function GovernanceCorrelationSummary({
@@ -804,11 +848,13 @@ export function Conversation({
   );
   const [forkOpen, setForkOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [planPanelMode, setPlanPanelMode] = useState<PlanPanelMode>("plan");
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
   const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
   const [inputBusyId, setInputBusyId] = useState<string | null>(null);
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
   const planTriggerRef = useRef<HTMLButtonElement>(null);
+  const workGraphTriggerRef = useRef<HTMLButtonElement>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
     () => conversation?.reasoningEffort ?? "medium",
   );
@@ -1962,8 +2008,9 @@ export function Conversation({
         }));
       const eventsForTurn = (
         turnId: string,
-      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> =>
-        [
+      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
+        const turn = turns.find((item) => item.id === turnId);
+        const orderedEvents = [
           ...history
             .filter(
               (message) =>
@@ -2039,15 +2086,16 @@ export function Conversation({
               eventSequence: plan.eventSequence,
             })),
           ...(projection.inputRequests ?? [])
-            .filter(
-              (request) =>
-                request.turnId === turnId &&
-                (request.state === "pending" ||
-                  (request.responseMode === "native_resume" &&
-                    request.resumeState === "unavailable")),
-            )
+            .filter((request) => request.turnId === turnId)
             .map((request) => ({
-              event: { ...request, kind: "input_requested" as const },
+              event:
+                request.state === "pending"
+                  ? { ...request, kind: "input_requested" as const }
+                  : {
+                      kind: "input_resolved" as const,
+                      id: request.id,
+                      state: request.state,
+                    },
               createdAt: request.createdAt,
               eventSequence: undefined,
             })),
@@ -2069,6 +2117,37 @@ export function Conversation({
             ? left.eventSequence - right.eventSequence
             : left.createdAt.localeCompare(right.createdAt),
         );
+        const terminalEvent = turn
+          ? restoredTurnTerminalEvent(
+              turn.status,
+              projection.providerSessions.find(
+                (item) =>
+                  item.threadId === thread.id &&
+                  (item.provider ?? "claude-code") === threadProvider,
+              )?.sessionId ?? null,
+            )
+          : null;
+        if (
+          !terminalEvent ||
+          orderedEvents.some(
+            ({ event }) =>
+              event.kind === "turn_completed" ||
+              event.kind === "failed" ||
+              event.kind === "cancelled",
+          )
+        ) {
+          return orderedEvents;
+        }
+        return [
+          ...orderedEvents,
+          {
+            event: terminalEvent,
+            createdAt:
+              turn?.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn?.createdAt ?? "",
+            eventSequence: undefined,
+          },
+        ];
+      };
       const restoredTurns = turns.flatMap((turn) => {
         const user = history.find(
           (message) => message.turnId === turn.id && message.role === "user",
@@ -2628,11 +2707,7 @@ export function Conversation({
               continue;
             }
             if (event.kind === "input_resolved") {
-              setProviderEvents((current) =>
-                current.filter(
-                  (candidate) => candidate.kind !== "input_requested" || candidate.id !== event.id,
-                ),
-              );
+              setProviderEvents((current) => preserveInputResolution(current, event));
               setProviderState("streaming");
               newline = buffer.indexOf("\n");
               continue;
@@ -2849,11 +2924,11 @@ export function Conversation({
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Input response failed.");
       setProviderEvents((current) =>
-        current.map((event) =>
-          event.kind === "input_requested" && event.id === input.id
-            ? { kind: "input_resolved" as const, id: input.id, state: "answered" as const }
-            : event,
-        ),
+        preserveInputResolution(current, {
+          kind: "input_resolved",
+          id: input.id,
+          state: "answered",
+        }),
       );
       if (input.responseMode === "native_resume") {
         setProviderState("streaming");
@@ -2904,6 +2979,11 @@ export function Conversation({
     () => latestPlanFromEvents([...archivedTurns.map((turn) => turn.events), providerEvents]),
     [archivedTurns, providerEvents],
   );
+  const workGraphEvents = useMemo(() => {
+    const groups = [...archivedTurns.map((turn) => turn.events), providerEvents];
+    return [...groups].reverse().find((events) => hasWorkGraphEvidence(events)) ?? [];
+  }, [archivedTurns, providerEvents]);
+  const workGraph = useMemo(() => buildWorkGraph(workGraphEvents), [workGraphEvents]);
   const planEntries = useMemo(
     () => [
       ...archivedTurns.flatMap((turn, index) =>
@@ -2929,8 +3009,8 @@ export function Conversation({
     ? (planEntries.find((entry) => entry.key === selectedPlanKey)?.artifact ?? latestPlan)
     : latestPlan;
   useEffect(() => {
-    if (!latestPlan) setPlanOpen(false);
-  }, [latestPlan]);
+    if (!latestPlan && !workGraph.hasObservedActivity) setPlanOpen(false);
+  }, [latestPlan, workGraph.hasObservedActivity]);
   const assistantText = assistantTextFromEvents(providerEvents);
   const thinkingText = joinAssistantTextChunks(
     providerEvents
@@ -3261,6 +3341,7 @@ export function Conversation({
                 providers.find((item) => item.id === block.artifact.provider),
               )}
               onOpen={() => {
+                setPlanPanelMode("plan");
                 setSelectedPlanKey(planKey);
                 setPlanOpen(true);
               }}
@@ -3387,17 +3468,46 @@ export function Conversation({
             <button
               ref={planTriggerRef}
               type="button"
-              className={`btn btn-ghost btn-sm ${planOpen ? "on" : ""}`}
+              className={`btn btn-ghost btn-sm ${planOpen && planPanelMode === "plan" ? "on" : ""}`}
               onClick={() => {
+                if (planOpen && planPanelMode === "plan") {
+                  setPlanOpen(false);
+                  return;
+                }
+                setPlanPanelMode("plan");
                 setSelectedPlanKey(null);
-                setPlanOpen((open) => !open);
+                setPlanOpen(true);
               }}
-              aria-expanded={planOpen}
+              aria-expanded={planOpen && planPanelMode === "plan"}
               aria-controls={`${pane}-provider-plan-panel`}
             >
               Plan
             </button>
           )}
+          {workGraph.hasPlan || workGraph.hasObservedActivity ? (
+            <button
+              ref={workGraphTriggerRef}
+              type="button"
+              className={`btn btn-ghost btn-sm work-graph-trigger ${planOpen && planPanelMode === "graph" ? "on" : ""}`}
+              onClick={() => {
+                if (planOpen && planPanelMode === "graph") {
+                  setPlanOpen(false);
+                  return;
+                }
+                setPlanPanelMode("graph");
+                setSelectedPlanKey(null);
+                setPlanOpen(true);
+              }}
+              aria-expanded={planOpen && planPanelMode === "graph"}
+              aria-controls={`${pane}-provider-plan-panel`}
+              title="Work Graph (Beta)"
+            >
+              Graph{" "}
+              <span className="work-graph-trigger-beta" aria-hidden="true">
+                β
+              </span>
+            </button>
+          ) : null}
           <div
             className="workspace-panel-selector"
             role="group"
@@ -5302,49 +5412,67 @@ export function Conversation({
             />
           </aside>
         )}
-        {planOpen && panelPlan && (
-          <aside
-            id={`${pane}-provider-plan-panel`}
-            className="provider-plan-panel"
-            aria-label={`Latest plan, ${pane} pane`}
-            onKeyDown={(event) => {
-              if (event.key !== "Escape") return;
-              event.stopPropagation();
-              setPlanOpen(false);
-              planTriggerRef.current?.focus();
-            }}
-          >
-            <header>
-              <div>
-                <small>
-                  {providerDisplayName(
-                    panelPlan.provider,
-                    providers.find((item) => item.id === panelPlan.provider),
-                  )}
-                </small>
-                <h2>{panelPlan.title?.trim() || "Plan"}</h2>
+        {planOpen &&
+          ((planPanelMode === "graph" && (workGraph.hasPlan || workGraph.hasObservedActivity)) ||
+            (planPanelMode === "plan" && panelPlan)) && (
+            <aside
+              id={`${pane}-provider-plan-panel`}
+              className="provider-plan-panel"
+              aria-label={`${planPanelMode === "graph" ? "Work graph" : "Latest plan"}, ${pane} pane`}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.stopPropagation();
+                setPlanOpen(false);
+                (planPanelMode === "graph" ? workGraphTriggerRef : planTriggerRef).current?.focus();
+              }}
+            >
+              <header>
+                {planPanelMode === "graph" ? (
+                  <div>
+                    <small>Work Graph · Beta</small>
+                    <h2>{workGraph.title}</h2>
+                  </div>
+                ) : panelPlan ? (
+                  <div>
+                    <small>
+                      {providerDisplayName(
+                        panelPlan.provider,
+                        providers.find((item) => item.id === panelPlan.provider),
+                      )}
+                    </small>
+                    <h2>{panelPlan.title?.trim() || "Plan"}</h2>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  autoFocus
+                  onClick={() => {
+                    setPlanOpen(false);
+                    (planPanelMode === "graph"
+                      ? workGraphTriggerRef
+                      : planTriggerRef
+                    ).current?.focus();
+                  }}
+                  aria-label="Close plan panel"
+                >
+                  ×
+                </button>
+              </header>
+              <div className="provider-plan-panel-body">
+                {planPanelMode === "graph" ? (
+                  <WorkGraphContent graph={workGraph} />
+                ) : panelPlan ? (
+                  <ProviderPlanContent plan={panelPlan} />
+                ) : null}
               </div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                autoFocus
-                onClick={() => {
-                  setPlanOpen(false);
-                  planTriggerRef.current?.focus();
-                }}
-                aria-label="Close plan panel"
-              >
-                ×
-              </button>
-            </header>
-            <div className="provider-plan-panel-body">
-              <ProviderPlanContent plan={panelPlan} />
-            </div>
-            <footer>
-              <ProviderPlanActions plan={panelPlan} />
-            </footer>
-          </aside>
-        )}
+              {planPanelMode === "plan" && panelPlan && (
+                <footer>
+                  <ProviderPlanActions plan={panelPlan} />
+                </footer>
+              )}
+            </aside>
+          )}
         {contextOpen && (
           <ContextPackagePanel
             receipt={draftContextReceipt}

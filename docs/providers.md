@@ -8,10 +8,10 @@ bound to a provider: you cannot silently resume a Claude conversation as Codex.
 
 Conversations use **Ask**, **Plan**, or **Build**:
 
-| Mode | Mutations |
-| --- | --- |
-| Ask | Read-oriented; mutations declined |
-| Plan | Planning; mutations declined |
+| Mode  | Mutations                                            |
+| ----- | ---------------------------------------------------- |
+| Ask   | Read-oriented; mutations declined                    |
+| Plan  | Planning; mutations declined                         |
 | Build | Mutating tools require **explicit, scoped approval** |
 
 Approvals are allow-once, bound to conversation, repository, worktree, and tool
@@ -59,6 +59,17 @@ Provider-emitted thinking is normalized at the adapter boundary but hidden by
 default. Settings → General can enable its live display for the current
 in-memory timeline; thinking is not persisted, restored, or transferred across
 provider forks.
+
+### Work Graph (Beta)
+
+When a conversation has a provider-reported plan or normalized provider
+activity, the conversation top bar exposes an opt-in **Graph β** panel. It is a
+read-only derived view with two explicit lanes: provider-reported plan intent
+and Aldunis-observed tools, approvals, inputs, and terminal outcomes. It does
+not infer hidden provider reasoning, execute graph nodes, or change approval,
+filesystem, provider, or persistence authority. Missing relationships remain
+explicitly approximate while the feature is in beta; the ordinary Plan card
+remains the source for provider plan content.
 
 ### Claude Code
 
@@ -181,11 +192,11 @@ Install from **Provider adapters → Reviewed adapters**. You still need the
 provider binary on `PATH`. Aldunis does not bundle provider credentials or
 rewrite provider-owned config.
 
-| Package | Launch | Notes |
-| --- | --- | --- |
-| `kiro-cli` | `kiro-cli acp` | Direct-only ACP |
+| Package          | Launch             | Notes                                                   |
+| ---------------- | ------------------ | ------------------------------------------------------- |
+| `kiro-cli`       | `kiro-cli acp`     | Direct-only ACP                                         |
 | `grok-build-cli` | `grok agent stdio` | Direct-only ACP; reviewed shared-browser MCP capability |
-| `opencode-cli` | `opencode acp` | Direct-only ACP |
+| `opencode-cli`   | `opencode acp`     | Direct-only ACP                                         |
 
 Rules shared by reviewed ACP adapters:
 
@@ -231,11 +242,11 @@ capability change.
 
 ## Credentials and secrets
 
-| Data | Where it lives |
-| --- | --- |
-| Provider login / OAuth | Provider-owned local store |
-| Profile env secrets | Aldunis host secret store (owner-only files) |
-| Browser | Redacted presence markers only |
+| Data                   | Where it lives                               |
+| ---------------------- | -------------------------------------------- |
+| Provider login / OAuth | Provider-owned local store                   |
+| Profile env secrets    | Aldunis host secret store (owner-only files) |
+| Browser                | Redacted presence markers only               |
 
 Never commit credentials, provider transcripts, or unredacted logs.
 

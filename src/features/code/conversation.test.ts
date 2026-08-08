@@ -6,8 +6,10 @@ import {
   filterSelectableWorktrees,
   formatHostLabel,
   formatWorktreeOptionLabel,
+  preserveInputResolution,
   providerProfileDisplayName,
   readyComposerPlaceholder,
+  restoredTurnTerminalEvent,
 } from "./conversation";
 import type { ClaudeProfile, ProviderEvent, RepositoryMetadata } from "../../types";
 
@@ -70,6 +72,42 @@ test("provider browser observations replace the prior transient frame", () => {
     second,
     { kind: "assistant_text", text: "after" },
   ]);
+});
+
+test("input resolutions replace requests with a sanitized durable marker", () => {
+  const request = {
+    kind: "input_requested",
+    id: "input-1",
+    threadId: "thread-1",
+    question: "Sensitive question",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    state: "pending",
+    createdAt: "2026-08-08T10:00:00.000Z",
+    expiresAt: null,
+    allowFreeForm: true,
+  } satisfies ProviderEvent;
+  const resolution = {
+    kind: "input_resolved",
+    id: "input-1",
+    state: "answered",
+  } satisfies ProviderEvent;
+
+  assert.deepEqual(preserveInputResolution([request], resolution), [resolution]);
+  assert.deepEqual(preserveInputResolution([resolution], resolution), [resolution]);
+  assert.deepEqual(preserveInputResolution([], resolution), [resolution]);
+});
+
+test("restored terminal state becomes graph-safe provider evidence", () => {
+  assert.deepEqual(restoredTurnTerminalEvent("completed", "session-1"), {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: null,
+  });
+  assert.deepEqual(restoredTurnTerminalEvent("cancelled", null), { kind: "cancelled" });
+  assert.deepEqual(restoredTurnTerminalEvent("interrupted", null), { kind: "cancelled" });
+  assert.equal(restoredTurnTerminalEvent("running", null), null);
 });
 
 test("worktree filtering groups branch search without hiding the selected worktree", () => {

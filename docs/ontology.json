@@ -122,6 +122,10 @@
       "description": "A derived, read-only cross-project Code workbench projection that groups bounded conversation metadata by operator attention, running, completed, and idle state and offers explicit open or changes-review navigation without provider, approval, execution, or remote mutation authority."
     },
     {
+      "name": "WorkGraph",
+      "description": "A beta-gated, derived, read-only Aldunis Code conversation view that separates provider-reported plan intent from normalized Aldunis-observed activity for one recent turn; it does not infer hidden provider reasoning, become durable source-of-truth state, or grant execution, approval, filesystem, or provider authority."
+    },
+    {
       "name": "LocalConversation",
       "description": "A provider-independent conversation owned and persisted by Aldunis Code.",
       "properties": [
@@ -381,6 +385,16 @@
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "projects_work_graph",
+      "description": "Projects one recent conversation turn into the opt-in Work Graph beta view without persisting a new graph authority or changing provider and approval semantics.",
+      "domain": "LocalConversation",
+      "range": "WorkGraph",
+      "cardinality": {
+        "min": 0,
+        "max": 1
       }
     },
     {
@@ -1393,6 +1407,18 @@
       "subject": "prepares_provider_discovery",
       "source": "Aldunis Code desktop provider-process startup contract",
       "locator": "desktop/main.ts#app.whenReady; server/profiles.ts#probeRuntime",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorkGraph",
+      "source": "Aldunis Code Work Graph beta presentation contract",
+      "locator": "src/lib/work-graph.ts; src/features/code/work-graph.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_work_graph",
+      "source": "Aldunis Code Work Graph beta presentation contract",
+      "locator": "src/features/code/conversation.tsx; src/lib/work-graph.ts",
       "confidence": 1.0
     }
   ]

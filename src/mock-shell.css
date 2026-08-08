@@ -549,6 +549,38 @@ code{font-family:var(--font-mono)}
 .provider-plan-panel>header small{color:var(--muted-foreground)}
 .provider-plan-panel-body{flex:1;min-height:0;overflow:auto}
 .provider-plan-panel>footer{border-top:1px solid var(--border);border-bottom:0}
+.work-graph-trigger{display:inline-flex;align-items:center;gap:3px}
+.work-graph-trigger-beta{color:var(--amber);font:10px var(--font-mono);font-weight:700}
+.work-graph-content{display:grid;gap:12px;padding:14px;min-width:0}
+.work-graph-beta-note{display:flex;align-items:flex-start;gap:8px;color:var(--muted-foreground);font-size:11.5px;line-height:1.45}
+.work-graph-beta-note .ui-badge{flex:0 0 auto;height:18px;padding:0 6px;font-size:9px;letter-spacing:.08em}
+.work-graph-summary{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted-foreground);font:10px var(--font-mono);text-transform:uppercase;letter-spacing:.06em}
+.work-graph-summary span{padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted)}
+.work-graph-summary strong{color:var(--foreground);font-weight:700}
+.work-graph-tree{display:grid;gap:2px;margin:0;padding:0;list-style:none}
+.work-graph-node{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:7px;align-items:start;min-width:0;padding:8px 7px;border-radius:7px;background:transparent;color:var(--foreground)}
+.work-graph-node.depth-1{margin-left:12px}
+.work-graph-node.depth-2{margin-left:35px}
+.work-graph-node.depth-1::before,.work-graph-node.depth-2::before{position:absolute;left:-17px;top:6px;color:var(--border);font:14px/1.2 var(--font-mono);content:"├─"}
+.work-graph-node.depth-2::after{position:absolute;left:-17px;top:-8px;bottom:-8px;border-left:1px solid var(--border);content:"";z-index:-1}
+.work-graph-node.source-root{padding:10px 8px;border:1px solid var(--border);background:var(--surface-elevated)}
+.work-graph-node.source-plan{background:color-mix(in srgb,var(--indigo) 5%,transparent)}
+.work-graph-node.source-observed{background:color-mix(in srgb,var(--diff-added) 5%,transparent)}
+.work-graph-marker{color:var(--muted-foreground);font:13px/1.4 var(--font-mono);font-weight:700;text-align:center}
+.work-graph-node.source-root .work-graph-marker{color:var(--foreground)}
+.work-graph-node.source-plan .work-graph-marker{color:var(--indigo)}
+.work-graph-node.source-observed .work-graph-marker{color:var(--diff-added)}
+.work-graph-node-copy{display:grid;min-width:0;gap:2px}
+.work-graph-node-copy strong{font-size:12px;font-weight:600;overflow-wrap:anywhere}
+.work-graph-node-copy small{color:var(--muted-foreground);font-size:10.5px;line-height:1.35;overflow-wrap:anywhere}
+.work-graph-status{align-self:start;padding:2px 5px;border:1px solid var(--border);border-radius:5px;color:var(--muted-foreground);font:9px var(--font-mono);text-transform:uppercase;letter-spacing:.04em}
+.work-graph-node.status-active .work-graph-status{border-color:color-mix(in srgb,var(--primary) 35%,var(--border));color:var(--primary)}
+.work-graph-node.status-waiting .work-graph-status{border-color:color-mix(in srgb,var(--amber) 45%,var(--border));color:var(--amber)}
+.work-graph-node.status-completed .work-graph-status{border-color:color-mix(in srgb,var(--diff-added) 35%,var(--border));color:var(--diff-added)}
+.work-graph-node.status-failed .work-graph-status{border-color:color-mix(in srgb,var(--diff-removed) 45%,var(--border));color:var(--diff-removed)}
+.work-graph-disclaimer{margin:0;color:var(--muted-foreground);font-size:11px;line-height:1.5}
+.work-graph-empty{display:grid;gap:5px;padding:18px 14px;color:var(--muted-foreground);font-size:12px}
+.work-graph-empty strong{color:var(--foreground);font-size:13px}
 .composer-context-summary{align-self:flex-start;margin:2px 0 6px;padding:4px 8px;border-radius:7px;color:var(--muted-foreground);font-size:12px}
 .composer-context-summary:hover,.composer-context-summary:focus-visible{background:var(--accent);color:var(--foreground)}
 .context-receipt-card{margin:10px 0;border:1px solid var(--border);border-radius:9px;background:var(--background);overflow:hidden}
