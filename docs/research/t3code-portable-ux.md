@@ -1,6 +1,6 @@
 # Portable UX from T3 Code
 
-Status: Implemented (#542–#554 T3 portable UX pack, including explicit Mod+S stash)
+Status: Implemented (#542–#554 T3 portable UX pack, including explicit Mod+S stash and local Usage telemetry)
 
 Source: Comparison of [pingdotgg/t3code](https://github.com/pingdotgg/t3code)
 against Aldunis Code product boundaries and design system.
@@ -22,15 +22,16 @@ against Aldunis Code product boundaries and design system.
 
 ## Portable and in scope for Code
 
-| Pattern                      | Fit    | Notes                                                                                |
-| ---------------------------- | ------ | ------------------------------------------------------------------------------------ |
-| **Time-based thread snooze** | High   | Implemented in #542. Visibility-only hide with presets; attention override.          |
-| **Context window meter**     | High   | Implemented in #545. Codex/ACP usage → ephemeral composer ring; not durable history. |
-| **Message copy actions**     | Medium | Implemented in #548. Hover/focus copy for prompts and answers.                       |
-| **PR status on thread rows** | Medium | Implemented in #551. GitHub `gh pr view` projection; soft-fail without gh.           |
-| **Previous-worktree seed**   | Medium | Implemented in #553; #554 shows it for new chats and switches to shared on select.   |
-| **Composer draft recovery**  | Medium | Implemented in #553. Auto local drafts per thread / new-chat pane.                   |
-| **Explicit prompt stash**    | Medium | Implemented in #554. T3-style Mod+S queue across threads; scoped storage.            |
+| Pattern                      | Fit    | Notes                                                                                                     |
+| ---------------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| **Time-based thread snooze** | High   | Implemented in #542. Visibility-only hide with presets; attention override.                               |
+| **Context window meter**     | High   | Implemented in #545. Codex/ACP usage → ephemeral composer ring; occupancy stays live-only.                |
+| **Local Usage view**         | High   | Code-owned 7/30/90-day aggregation of bounded turn receipts; no provider-history import or billing claim. |
+| **Message copy actions**     | Medium | Implemented in #548. Hover/focus copy for prompts and answers.                                            |
+| **PR status on thread rows** | Medium | Implemented in #551. GitHub `gh pr view` projection; soft-fail without gh.                                |
+| **Previous-worktree seed**   | Medium | Implemented in #553; #554 shows it for new chats and switches to shared on select.                        |
+| **Composer draft recovery**  | Medium | Implemented in #553. Auto local drafts per thread / new-chat pane.                                        |
+| **Explicit prompt stash**    | Medium | Implemented in #554. T3-style Mod+S queue across threads; scoped storage.                                 |
 
 ## Out of scope or constrained
 
@@ -50,6 +51,7 @@ against Aldunis Code product boundaries and design system.
 3. Message copy (#548) — prompt/answer clipboard actions.
 4. PR row indicators (#551) — GitHub PR state on conversation rows.
 5. Previous worktree + draft stash (#553) — composer polish.
+6. Local Usage telemetry — append bounded provider numbers without copying prompts, tools, or native history.
 
 Do not port T3 architecture (Effect event sourcing, multi-environment
 orchestration) wholesale; keep Aldunis ownership boundaries and design system.

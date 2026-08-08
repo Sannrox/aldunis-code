@@ -293,18 +293,29 @@ export function normalizeAcpUsageUpdate(update: Record<string, unknown>): Provid
     finiteNonNegative(update.contextWindow) ??
     finiteNonNegative(update.contextWindowSize) ??
     finiteNonNegative(update.limit);
-  return [
-    {
-      kind: "context_usage",
-      usedTokens,
-      maxTokens,
-      totalProcessedTokens:
-        finiteNonNegative(update.totalProcessedTokens) ??
-        finiteNonNegative(update.cumulativeTokens),
-      inputTokens: finiteNonNegative(update.inputTokens),
-      outputTokens: finiteNonNegative(update.outputTokens),
-    },
-  ];
+  const usage: Extract<ProviderEvent, { kind: "context_usage" }> = {
+    kind: "context_usage",
+    usedTokens,
+    maxTokens,
+    totalProcessedTokens:
+      finiteNonNegative(update.totalProcessedTokens) ?? finiteNonNegative(update.cumulativeTokens),
+    inputTokens: finiteNonNegative(update.inputTokens),
+    outputTokens: finiteNonNegative(update.outputTokens),
+  };
+  const cachedInputTokens =
+    finiteNonNegative(update.cachedInputTokens) ??
+    finiteNonNegative(update.cacheReadInputTokens) ??
+    finiteNonNegative(update.cacheReadTokens);
+  const cacheWriteInputTokens =
+    finiteNonNegative(update.cacheWriteInputTokens) ??
+    finiteNonNegative(update.cacheCreationInputTokens) ??
+    finiteNonNegative(update.cacheWriteTokens);
+  const reasoningOutputTokens =
+    finiteNonNegative(update.reasoningOutputTokens) ?? finiteNonNegative(update.reasoningTokens);
+  if (cachedInputTokens !== null) usage.cachedInputTokens = cachedInputTokens;
+  if (cacheWriteInputTokens !== null) usage.cacheWriteInputTokens = cacheWriteInputTokens;
+  if (reasoningOutputTokens !== null) usage.reasoningOutputTokens = reasoningOutputTokens;
+  return [usage];
 }
 
 export function acpNotificationEvents(

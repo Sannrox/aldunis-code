@@ -369,16 +369,21 @@ export function normalizeCodexTokenUsage(params: JsonRecord): ProviderEvent[] {
   const maxTokens = finiteNonNegative(tokenUsage.modelContextWindow);
   const inputTokens = finiteNonNegative(last.inputTokens);
   const outputTokens = finiteNonNegative(last.outputTokens);
-  return [
-    {
-      kind: "context_usage",
-      usedTokens,
-      maxTokens,
-      totalProcessedTokens: sessionTotal,
-      inputTokens,
-      outputTokens,
-    },
-  ];
+  const cachedInputTokens = finiteNonNegative(last.cachedInputTokens);
+  const cacheWriteInputTokens = finiteNonNegative(last.cacheWriteInputTokens);
+  const reasoningOutputTokens = finiteNonNegative(last.reasoningOutputTokens);
+  const usage: Extract<ProviderEvent, { kind: "context_usage" }> = {
+    kind: "context_usage",
+    usedTokens,
+    maxTokens,
+    totalProcessedTokens: sessionTotal,
+    inputTokens,
+    outputTokens,
+  };
+  if (cachedInputTokens !== null) usage.cachedInputTokens = cachedInputTokens;
+  if (cacheWriteInputTokens !== null) usage.cacheWriteInputTokens = cacheWriteInputTokens;
+  if (reasoningOutputTokens !== null) usage.reasoningOutputTokens = reasoningOutputTokens;
+  return [usage];
 }
 
 export function normalizeCodexNotification(value: unknown): ProviderEvent[] {

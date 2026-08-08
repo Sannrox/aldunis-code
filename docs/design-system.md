@@ -182,8 +182,13 @@ When a provider reports live token/context usage (Codex
 `thread/tokenUsage/updated`, ACP `usage_update`), the composer shows a compact
 ring meter beside the run controls. The control is muted at rest and only uses
 the status/warning hue above 90% fill. Details open on click and state that the
-snapshot is live stream data, not durable history. When usage is unknown, the
-meter is absent — nothing renders to report that context is fine.
+snapshot is live stream data, not durable context occupancy history. The Code
+Usage view separately aggregates bounded per-turn numeric fields from terminal
+turn receipts; cumulative context totals stay live-only without a safe baseline.
+Those receipts contain no prompts, tool payloads, or
+repository content and do not replace Chisei usage or billing authority. When
+usage is unknown, the meter is absent — nothing renders to report that context
+is fine.
 
 ## Voice input
 

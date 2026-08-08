@@ -98,8 +98,9 @@ export type ProviderEvent =
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | ({ kind: "browser_observation" } & ProviderBrowserObservation)
   /**
-   * Ephemeral context pressure for the active turn. Not durable history —
-   * adapters emit it for live UI only.
+   * Live context pressure for the active turn. The state layer may copy its
+   * bounded numeric usage fields into a turn-scoped local receipt; occupancy
+   * and provider payloads remain transient.
    */
   | {
       kind: "context_usage";
@@ -108,12 +109,16 @@ export type ProviderEvent =
       totalProcessedTokens?: number | null;
       inputTokens?: number | null;
       outputTokens?: number | null;
+      cachedInputTokens?: number | null;
+      cacheWriteInputTokens?: number | null;
+      reasoningOutputTokens?: number | null;
     }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
       kind: "failed";
       message: string;
+      costUsd?: number | null;
       sessionId?: string;
       code?:
         | "unsupported_external_tool"
@@ -222,6 +227,44 @@ function record(value: unknown): JsonRecord | null {
     : null;
 }
 
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function claudeUsageEvent(
+  event: JsonRecord,
+): Extract<ProviderEvent, { kind: "context_usage" }> | null {
+  const usage = record(event.usage);
+  if (!usage) return null;
+  const inputTokens = finiteNonNegative(usage.input_tokens) ?? finiteNonNegative(usage.inputTokens);
+  const outputTokens =
+    finiteNonNegative(usage.output_tokens) ?? finiteNonNegative(usage.outputTokens);
+  const totalProcessedTokens =
+    finiteNonNegative(usage.total_tokens) ??
+    finiteNonNegative(usage.totalTokens) ??
+    (inputTokens !== null || outputTokens !== null
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : null);
+  if (totalProcessedTokens === null) return null;
+  const cachedInputTokens =
+    finiteNonNegative(usage.cache_read_input_tokens) ??
+    finiteNonNegative(usage.cacheReadInputTokens);
+  const cacheWriteInputTokens =
+    finiteNonNegative(usage.cache_creation_input_tokens) ??
+    finiteNonNegative(usage.cacheCreationInputTokens);
+  const usageEvent: Extract<ProviderEvent, { kind: "context_usage" }> = {
+    kind: "context_usage",
+    usedTokens: totalProcessedTokens,
+    maxTokens: null,
+    totalProcessedTokens,
+    inputTokens,
+    outputTokens,
+  };
+  if (cachedInputTokens !== null) usageEvent.cachedInputTokens = cachedInputTokens;
+  if (cacheWriteInputTokens !== null) usageEvent.cacheWriteInputTokens = cacheWriteInputTokens;
+  return usageEvent;
+}
+
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value) {
     throw new ProviderProtocolError(`Claude event is missing ${field}.`);
@@ -315,20 +358,25 @@ export function normalizeClaudeEvent(value: unknown): Array<ProviderEvent | Prov
 
   if (event.type === "result") {
     const sessionId = requiredString(event.session_id, "session_id");
+    const usage = claudeUsageEvent(event);
+    const costUsd = finiteNonNegative(event.total_cost_usd);
     if (event.is_error === true) {
       return [
+        ...(usage ? [usage] : []),
         {
           kind: "failed",
+          ...(costUsd !== null ? { costUsd } : {}),
           message:
             typeof event.result === "string" ? event.result : "Claude could not complete the turn.",
         },
       ];
     }
     return [
+      ...(usage ? [usage] : []),
       {
         kind: "turn_completed",
         sessionId,
-        costUsd: typeof event.total_cost_usd === "number" ? event.total_cost_usd : null,
+        costUsd,
       },
     ];
   }

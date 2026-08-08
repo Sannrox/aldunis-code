@@ -6,6 +6,12 @@ import { lock } from "proper-lockfile";
 import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
 import { wouldCreateDelegatedConversationCycle } from "../src/lib/delegated-conversation-graph.ts";
 import {
+  MAX_USAGE_COST_USD,
+  MAX_USAGE_TOKENS,
+  type UsageReceipt,
+  type UsageReceiptStatus,
+} from "../src/lib/usage.ts";
+import {
   type InteractionMode,
   persistedProviderFailureMessage,
   type ProviderEvent,
@@ -88,6 +94,7 @@ export interface ConversationDeletion {
     activities: number;
     plans: number;
     contextReceipts: number;
+    usageReceipts: number;
     governanceCorrelations: number;
     providerSessions: number;
     checkpoints: number;
@@ -373,6 +380,7 @@ export interface StateProjection {
   activities: Activity[];
   plans: PlanArtifact[];
   contextReceipts: ContextReceipt[];
+  usageReceipts: UsageReceipt[];
   governanceCorrelations: GovernanceCorrelationReceipt[];
   providerSessions: ProviderSessionReference[];
   checkpoints: TurnCheckpoint[];
@@ -400,6 +408,7 @@ type StateEvent =
   | { type: "activity_saved"; activity: Activity }
   | { type: "plan_saved"; plan: PlanArtifact }
   | { type: "context_receipt_saved"; contextReceipt: ContextReceipt }
+  | { type: "usage_receipt_saved"; usageReceipt: UsageReceipt }
   | { type: "governance_correlation_saved"; governanceCorrelation: GovernanceCorrelationReceipt }
   | { type: "provider_session_saved"; providerSession: ProviderSessionReference }
   | { type: "checkpoint_saved"; checkpoint: TurnCheckpoint }
@@ -450,6 +459,7 @@ function emptyProjection(): StateProjection {
     activities: [],
     plans: [],
     contextReceipts: [],
+    usageReceipts: [],
     governanceCorrelations: [],
     providerSessions: [],
     checkpoints: [],
@@ -840,6 +850,8 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     });
   } else if (event.type === "context_receipt_saved") {
     replaceById(projection.contextReceipts, event.contextReceipt);
+  } else if (event.type === "usage_receipt_saved") {
+    replaceById(projection.usageReceipts, event.usageReceipt);
   } else if (event.type === "governance_correlation_saved") {
     replaceById(projection.governanceCorrelations, event.governanceCorrelation);
   } else if (event.type === "provider_session_saved") {
@@ -921,6 +933,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     activity_saved: "activity",
     plan_saved: "plan",
     context_receipt_saved: "contextReceipt",
+    usage_receipt_saved: "usageReceipt",
     governance_correlation_saved: "governanceCorrelation",
     provider_session_saved: "providerSession",
     checkpoint_saved: "checkpoint",
@@ -979,6 +992,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           activities: Number(records.activities ?? 0),
           plans: Number(records.plans ?? 0),
           contextReceipts: Number(records.contextReceipts ?? 0),
+          usageReceipts: Number(records.usageReceipts ?? 0),
           governanceCorrelations: Number(records.governanceCorrelations ?? 0),
           providerSessions: Number(records.providerSessions ?? 0),
           checkpoints: Number(records.checkpoints ?? 0),
@@ -2191,6 +2205,18 @@ export class LocalStateStore {
           ? { ...turn, status: hasOtherPendingInput ? "waiting_for_user" : "active" }
           : { ...turn, status: "completed", completedAt: now },
       );
+      if (request.responseMode !== "native_resume") {
+        const usageReceipt = projection.usageReceipts.find(
+          (receipt) => receipt.turnId === turn.id && receipt.status === "running",
+        );
+        if (usageReceipt) {
+          replaceById(projection.usageReceipts, {
+            ...usageReceipt,
+            status: "completed",
+            updatedAt: now,
+          });
+        }
+      }
       resolved = { request: nextRequest, receipt };
     });
     if (!resolved) throw new LocalStateError("The input request could not be resolved.");
@@ -2345,11 +2371,22 @@ export class LocalStateStore {
       );
       const turn = projection.turns.find((item) => item.id === request.turnId);
       if (turn && !["failed", "interrupted", "cancelled"].includes(turn.status)) {
+        const interruptedAt = new Date().toISOString();
         replaceById(projection.turns, {
           ...turn,
           status: "interrupted",
-          completedAt: new Date().toISOString(),
+          completedAt: interruptedAt,
         });
+        const usageReceipt = projection.usageReceipts.find(
+          (receipt) => receipt.turnId === turn.id && receipt.status === "running",
+        );
+        if (usageReceipt) {
+          replaceById(projection.usageReceipts, {
+            ...usageReceipt,
+            status: "interrupted",
+            updatedAt: interruptedAt,
+          });
+        }
       }
     });
   }
@@ -2465,6 +2502,8 @@ export class LocalStateStore {
       plans: projection.plans.filter((plan) => plan.threadId === threadId).length,
       contextReceipts: projection.contextReceipts.filter((receipt) => receipt.threadId === threadId)
         .length,
+      usageReceipts: projection.usageReceipts.filter((receipt) => receipt.threadId === threadId)
+        .length,
       governanceCorrelations: projection.governanceCorrelations.filter(
         (receipt) => receipt.threadId === threadId,
       ).length,
@@ -2506,6 +2545,9 @@ export class LocalStateStore {
     );
     projection.plans = projection.plans.filter((plan) => plan.threadId !== threadId);
     projection.contextReceipts = projection.contextReceipts.filter(
+      (receipt) => receipt.threadId !== threadId,
+    );
+    projection.usageReceipts = projection.usageReceipts.filter(
       (receipt) => receipt.threadId !== threadId,
     );
     projection.governanceCorrelations = projection.governanceCorrelations.filter(
@@ -2599,11 +2641,22 @@ export class LocalStateStore {
             sourceTurn.status,
           )
         ) {
+          const interruptedAt = new Date().toISOString();
           replaceById(current.turns, {
             ...sourceTurn,
             status: "interrupted",
-            completedAt: new Date().toISOString(),
+            completedAt: interruptedAt,
           });
+          const usageReceipt = current.usageReceipts.find(
+            (receipt) => receipt.turnId === sourceTurn.id,
+          );
+          if (usageReceipt?.status === "running") {
+            replaceById(current.usageReceipts, {
+              ...usageReceipt,
+              status: "interrupted",
+              updatedAt: interruptedAt,
+            });
+          }
         }
       }
     });
@@ -2634,14 +2687,25 @@ export class LocalStateStore {
           inputRequest: { ...nativeInput, state: "cancelled", answeredAt: null },
         });
       }
+      const interruptedAt = new Date().toISOString();
       await this.#append({
         type: "turn_saved",
         turn: {
           ...turn,
           status: "interrupted",
-          completedAt: new Date().toISOString(),
+          completedAt: interruptedAt,
         },
       });
+      const thread = projection.threads.find((item) => item.id === turn.threadId);
+      if (thread) {
+        await this.#saveUsageReceipt(
+          turn.threadId,
+          turn.id,
+          thread.provider,
+          "interrupted",
+          interruptedAt,
+        );
+      }
     }
   }
 
@@ -2652,6 +2716,81 @@ export class LocalStateStore {
     await this.#append({
       type: "thread_saved",
       thread: { ...thread, wokeAt: at, updatedAt: at },
+    });
+  }
+
+  async #saveUsageReceipt(
+    threadId: string,
+    turnId: string,
+    provider: ProviderId,
+    status: UsageReceiptStatus,
+    now: string,
+    usage?: Extract<ProviderEvent, { kind: "context_usage" }>,
+    reportedCostUsd?: number | null,
+  ): Promise<void> {
+    const projection = await this.load();
+    const thread = projection.threads.find((item) => item.id === threadId);
+    const turn = projection.turns.find((item) => item.id === turnId && item.threadId === threadId);
+    if (!thread || !turn)
+      throw new LocalStateError("The provider turn is missing from local history.");
+    const existing = projection.usageReceipts.find((receipt) => receipt.turnId === turnId);
+    const providerSession = projection.providerSessions.find(
+      (session) => session.threadId === threadId && session.provider === provider,
+    );
+    const boundedMetric = (value: number | null | undefined, maximum: number): number | null =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
+        ? value
+        : null;
+    const metric = (value: number | null | undefined, previous: number | null): number | null =>
+      boundedMetric(value, MAX_USAGE_TOKENS) ?? boundedMetric(previous, MAX_USAGE_TOKENS);
+    const boundedCost = (value: number | null | undefined): number | null =>
+      boundedMetric(value, MAX_USAGE_COST_USD);
+    const hasReportedCost = boundedCost(reportedCostUsd) !== null;
+    const hasUsageMetric = [
+      usage?.inputTokens,
+      usage?.outputTokens,
+      usage?.cachedInputTokens,
+      usage?.cacheWriteInputTokens,
+      usage?.reasoningOutputTokens,
+    ].some((value) => boundedMetric(value, MAX_USAGE_TOKENS) !== null);
+    if (!existing && !hasUsageMetric && !hasReportedCost) return;
+    const cost = hasReportedCost
+      ? boundedCost(reportedCostUsd)
+      : boundedCost(existing?.reportedCostUsd);
+    const nextStatus =
+      status === "running" &&
+      existing &&
+      ["completed", "failed", "interrupted"].includes(existing.status)
+        ? existing.status
+        : status;
+    await this.#append({
+      type: "usage_receipt_saved",
+      usageReceipt: {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: existing?.id ?? `usage:${turnId}`,
+        threadId,
+        turnId,
+        provider,
+        model: providerSession?.model ?? thread.model ?? existing?.model ?? null,
+        status: nextStatus,
+        inputTokens: metric(usage?.inputTokens, existing?.inputTokens ?? null),
+        outputTokens: metric(usage?.outputTokens, existing?.outputTokens ?? null),
+        cachedInputTokens: metric(usage?.cachedInputTokens, existing?.cachedInputTokens ?? null),
+        cacheWriteInputTokens: metric(
+          usage?.cacheWriteInputTokens,
+          existing?.cacheWriteInputTokens ?? null,
+        ),
+        reasoningOutputTokens: metric(
+          usage?.reasoningOutputTokens,
+          existing?.reasoningOutputTokens ?? null,
+        ),
+        // Cumulative provider totals are live context data, not per-turn
+        // usage, so they never enter a new durable receipt.
+        totalProcessedTokens: null,
+        reportedCostUsd: cost,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      },
     });
   }
 
@@ -2788,8 +2927,10 @@ export class LocalStateStore {
       return;
     }
     if (event.kind === "context_usage") {
-      // Context pressure is live-only for the composer meter. Do not journal
-      // token counts into durable history or fork context.
+      // The live composer still receives this event, while the bounded numeric
+      // fields are also captured as a turn-scoped usage receipt. Prompts,
+      // provider payloads, and context-window occupancy remain transient.
+      await this.#saveUsageReceipt(threadId, turnId, provider, "running", now, event);
       return;
     }
     if (event.kind === "plan_updated") {
@@ -2934,6 +3075,19 @@ export class LocalStateStore {
       const projection = await this.load();
       const turn = projection.turns.find((item) => item.id === turnId);
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
+      await this.#saveUsageReceipt(
+        threadId,
+        turnId,
+        provider,
+        event.kind === "turn_completed"
+          ? "completed"
+          : event.kind === "cancelled"
+            ? "interrupted"
+            : "failed",
+        now,
+        undefined,
+        event.kind === "turn_completed" || event.kind === "failed" ? event.costUsd : null,
+      );
       const nextStatus =
         event.kind === "turn_completed"
           ? ("completed" as const)
@@ -3084,6 +3238,9 @@ export class LocalStateStore {
       projection.contextReceipts = projection.contextReceipts.filter(
         (receipt) => !threadIds.has(receipt.threadId),
       );
+      projection.usageReceipts = projection.usageReceipts.filter(
+        (receipt) => !threadIds.has(receipt.threadId),
+      );
       projection.governanceCorrelations = projection.governanceCorrelations.filter(
         (receipt) => !threadIds.has(receipt.threadId),
       );
@@ -3169,6 +3326,9 @@ export class LocalStateStore {
       projection.contextReceipts = projection.contextReceipts.filter(
         (receipt) => !expiredThreads.has(receipt.threadId),
       );
+      projection.usageReceipts = projection.usageReceipts.filter(
+        (receipt) => !expiredThreads.has(receipt.threadId),
+      );
       projection.governanceCorrelations = projection.governanceCorrelations.filter(
         (receipt) => !expiredThreads.has(receipt.threadId),
       );
@@ -3238,6 +3398,11 @@ export class LocalStateStore {
           eventSequence: undefined,
           createdAt: contextReceipt.createdAt,
           event: { type: "context_receipt_saved" as const, contextReceipt },
+        })),
+        ...next.usageReceipts.map((usageReceipt) => ({
+          eventSequence: undefined,
+          createdAt: usageReceipt.createdAt,
+          event: { type: "usage_receipt_saved" as const, usageReceipt },
         })),
         ...next.governanceCorrelations.map((governanceCorrelation) => ({
           eventSequence: undefined,

@@ -84,6 +84,12 @@ device sessions or silently fall back to loopback. See the accepted
 Displayed remote data is a projection. Mutations go to the owning service
 through a versioned authenticated contract.
 
+Code may retain bounded provider-reported per-turn numeric usage receipts for its
+local Usage view. Cumulative context totals remain live-only unless a safe
+per-turn baseline is available. This is observational, host-scoped telemetry for
+turns started in Code; it is not provider-history import, billing truth, or a
+transfer of usage and audit authority from Sekai Chisei.
+
 ## Security invariants
 
 - Loopback is the default and no network bind is implicit.
@@ -137,6 +143,11 @@ through a versioned authenticated contract.
   Build children use an isolated managed worktree; Ask/Plan children may use
   the parent worktree.
 - Unknown provider events and incompatible contract versions fail closed.
+- Local usage receipts contain only bounded per-turn numeric provider
+  observations for one Code turn. Cumulative context totals stay live-only
+  without a safe baseline. Prompts, tool payloads, repository content,
+  credentials, and native provider history stay outside the receipt; running
+  receipts are finalized or excluded during interruption recovery.
 - Autonomy records use the same append-only local history and writer lease.
   Heartbeats, hooks, and standing orders cannot grant provider, filesystem,
   credential, tenant, or approval authority. The shipped maintenance flow is

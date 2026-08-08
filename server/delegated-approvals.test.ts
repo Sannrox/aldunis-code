@@ -25,6 +25,7 @@ function fixture(): StateProjection {
     activities: [],
     plans: [],
     contextReceipts: [],
+    usageReceipts: [],
     providerSessions: [],
     checkpoints: [],
     annotations: [],
