@@ -248,6 +248,10 @@
     {
       "name": "DesktopShellEnvironment",
       "description": "The Electron desktop startup boundary that imports a bounded PATH and selected non-secret session environment from the user's login shell before local provider discovery and subprocess launch; it never exposes those values to the renderer or changes provider credential ownership."
+    },
+    {
+      "name": "DesktopWindowLifecycle",
+      "description": "The Electron desktop window lifecycle that keeps the local host and active provider sessions alive when a macOS window is closed, restores the hidden window on activation or second launch, and preserves explicit application shutdown through Cmd+Q; Windows and Linux retain close-to-exit behavior."
     }
   ],
   "relations": [
@@ -598,7 +602,7 @@
       "range": "SidebarToggleKeybinding",
       "cardinality": {
         "min": 0,
-      "max": 1
+        "max": 1
       }
     },
     {
@@ -1185,6 +1189,12 @@
       "subject": "DesktopShellEnvironment",
       "source": "Aldunis Code desktop provider-process startup contract",
       "locator": "desktop/shell-environment.ts; desktop/main.ts#app.whenReady",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DesktopWindowLifecycle",
+      "source": "Aldunis Code desktop window lifecycle contract",
+      "locator": "desktop/main.ts#window.close; desktop/main.ts#app.activate; docs/desktop-distribution.md#runtime-boundary-and-lifecycle",
       "confidence": 1.0
     },
     {

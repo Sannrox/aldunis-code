@@ -112,12 +112,7 @@ export interface ThreadMetadata {
   archivedAt: string | null;
 }
 export type ThreadStatus =
-  | "pending_approval"
-  | "awaiting_input"
-  | "running"
-  | "failed"
-  | "completed"
-  | "idle";
+  "pending_approval" | "awaiting_input" | "running" | "failed" | "completed" | "idle";
 
 export interface ThreadStatusProjection {
   threadId: string;
@@ -140,12 +135,32 @@ export interface ConversationSummary {
   pinnedAt?: string | null;
   archivedAt?: string | null;
   settledAt?: string | null;
+  /** Temporary inbox hide until this ISO time. Visibility only. */
+  snoozedUntil?: string | null;
+  /** When the operator last snoozed this conversation. */
+  snoozedAt?: string | null;
   wokeAt?: string | null;
   lastVisitedAt?: string | null;
   /** Derived server-side; attached by loadConversationList. */
   status?: ThreadStatus;
   statusSince?: string;
   projectName?: string;
+}
+
+/** Live GitHub PR projection for a conversation worktree (not durable history). */
+export type BranchPrState = "open" | "merged" | "closed";
+export interface BranchPrStatus {
+  worktree: string;
+  branch: string;
+  number: number;
+  title: string;
+  state: BranchPrState;
+  url: string;
+}
+export interface BranchPrLookupResult {
+  worktree: string;
+  branch: string | null;
+  pr: BranchPrStatus | null;
 }
 export interface DelegatedConversationRelationship {
   id: string;
@@ -177,9 +192,7 @@ export interface ContextPin {
   kind: "file" | "folder";
 }
 export type ContextReceiptSource =
-  | "aldunis_attachment"
-  | "aldunis_folder"
-  | "provider_managed_instruction";
+  "aldunis_attachment" | "aldunis_folder" | "provider_managed_instruction";
 export interface ContextReceiptEntry {
   path: string;
   type: "text" | "image" | "folder" | "instruction" | "unsupported";
@@ -434,14 +447,7 @@ export interface PullRequestDraft {
 }
 
 export type ReleaseWorkflowAction =
-  | "prepare"
-  | "evaluate"
-  | "publish"
-  | "promote"
-  | "plan"
-  | "apply"
-  | "reconcile"
-  | "rollback";
+  "prepare" | "evaluate" | "publish" | "promote" | "plan" | "apply" | "reconcile" | "rollback";
 
 export interface ReleaseDeliveryPlan {
   id: string;
@@ -539,7 +545,8 @@ export interface TenkaiTerminalOutcomeInspection {
   outcomes: TenkaiTerminalOutcomeProjection[];
   warning: string | null;
 }
-export type PreviewState = "approval_pending" | "starting" | "running" | "stopping" | "stopped" | "failed";
+export type PreviewState =
+  "approval_pending" | "starting" | "running" | "stopping" | "stopped" | "failed";
 export interface PreviewSnapshot {
   id: string;
   repository: string;
@@ -558,7 +565,16 @@ export interface ElementReference {
   text: string | null;
   screenshot: string | null;
 }
-export type ProviderState = "idle" | "starting" | "streaming" | "waiting_for_approval" | "waiting_for_input" | "cancelling" | "completed" | "cancelled" | "failed";
+export type ProviderState =
+  | "idle"
+  | "starting"
+  | "streaming"
+  | "waiting_for_approval"
+  | "waiting_for_input"
+  | "cancelling"
+  | "completed"
+  | "cancelled"
+  | "failed";
 export type ProviderPlanStepStatus = "pending" | "active" | "completed" | "neutral";
 export interface ProviderPlanStep {
   content: string;
@@ -585,48 +601,57 @@ export interface ProviderBrowserObservation {
 export type ProviderEvent =
   | { kind: "session_started"; sessionId: string; model: string | null }
   | {
-    kind: "governance_correlation";
-    governance: "sekai-chisei";
-    runId: string;
-    operationId: string;
-    correlationId?: string;
-  }
+      kind: "governance_correlation";
+      governance: "sekai-chisei";
+      runId: string;
+      operationId: string;
+      correlationId?: string;
+    }
   | { kind: "assistant_text"; text: string }
   | { kind: "thinking"; text: string }
   | {
-    kind: "plan_updated";
-    artifact: ProviderPlanArtifact;
-    bodyMode?: "replace" | "append";
-  }
+      kind: "plan_updated";
+      artifact: ProviderPlanArtifact;
+      bodyMode?: "replace" | "append";
+    }
   | { kind: "tool_started"; toolCallId: string; name: string }
   | {
-    kind: "approval_pending";
-    id: string;
-    runId: string;
-    conversationId: string;
-    repository: string;
-    worktree: string;
-    provider: string;
-    toolCallId: string;
-    toolName: string;
-    scope: { summary: string; target: string; details: string[] };
-    state: ApprovalState;
-    expiresAt: string;
-  }
+      kind: "approval_pending";
+      id: string;
+      runId: string;
+      conversationId: string;
+      repository: string;
+      worktree: string;
+      provider: string;
+      toolCallId: string;
+      toolName: string;
+      scope: { summary: string; target: string; details: string[] };
+      state: ApprovalState;
+      expiresAt: string;
+    }
   | { kind: "approval_resolved"; id: string; state: ApprovalState }
   | ({ kind: "input_requested" } & ChildInputRequest)
   | { kind: "input_resolved"; id: string; state: "answered" | "cancelled" }
   | { kind: "tool_finished"; toolCallId: string; failed: boolean }
   | ({ kind: "browser_observation" } & ProviderBrowserObservation)
+  | {
+      kind: "context_usage";
+      usedTokens: number;
+      maxTokens: number | null;
+      totalProcessedTokens?: number | null;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+    }
   | { kind: "turn_completed"; sessionId: string; costUsd: number | null }
   | { kind: "cancelled" }
   | {
-    kind: "failed";
-    message: string;
-    sessionId?: string;
-    code?: "unsupported_external_tool";
-  };
-export type ApprovalState = "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
+      kind: "failed";
+      message: string;
+      sessionId?: string;
+      code?: "unsupported_external_tool";
+    };
+export type ApprovalState =
+  "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
 export interface DelegatedApprovalProjection {
   parentThreadId: string;
   childThreadId: string;

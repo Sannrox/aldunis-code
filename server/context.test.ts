@@ -19,17 +19,18 @@ async function fixture() {
   await mkdir(join(root, "src"), { recursive: true });
   await mkdir(join(root, "auth"));
   await writeFile(join(root, "src", "main.ts"), "export const ready = true;\n");
+  await writeFile(join(root, "src", "sidebar-state.ts"), "export const sidebarState = true;\n");
   await writeFile(join(root, "auth", "login.ts"), "export const login = true;\n");
   await writeFile(join(root, "auth-token.ts"), "export const authToken = true;\n");
   await writeFile(join(root, ".env"), "TOKEN=secret\n");
   await writeFile(join(root, "credentials.yaml"), "token: secret\n");
   await writeFile(join(root, "api-key.yml"), "api_key: secret\n");
   await writeFile(join(root, "password.conf"), "password=secret\n");
-  await writeFile(join(root, "secret.toml"), "token = \"secret\"\n");
-  await writeFile(join(root, "credentials.json.bak"), "{\"token\":\"secret\"}\n");
+  await writeFile(join(root, "secret.toml"), 'token = "secret"\n');
+  await writeFile(join(root, "credentials.json.bak"), '{"token":"secret"}\n');
   await writeFile(join(root, "token.env.backup"), "TOKEN=secret\n");
   await writeFile(join(root, "secret.yaml.old"), "token: secret\n");
-  await writeFile(join(root, "api-token.json.local"), "{\"token\":\"secret\"}\n");
+  await writeFile(join(root, "api-token.json.local"), '{"token":"secret"}\n');
   await writeFile(join(root, "secret.yaml.production"), "token: secret\n");
   await writeFile(join(root, "auth.env.private"), "TOKEN=secret\n");
   await writeFile(join(root, "auth.config.ts"), "export const authConfig = true;\n");
@@ -38,10 +39,25 @@ async function fixture() {
   await writeFile(join(root, "id_ed25519.pub"), "ssh-ed25519 public-key\n");
   await mkdir(join(root, "data"));
   await writeFile(join(root, "data", "sekai.sock.gateway-token"), "gateway-secret-token\n");
+  await writeFile(join(root, "data", "sekai.db"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "data", "provider-registry-state.json"), "{}\n");
+  await writeFile(join(root, "data", "provider-registry-state.json.initialized"), "true\n");
+  await writeFile(join(root, "data", "provider-registry-state.json.lock"), "lock\n");
+  await writeFile(join(root, "data", "sidebar-state.ts"), "export const dataState = true;\n");
+  await writeFile(join(root, "data", "state-machine-state.md"), "documented state\n");
+  await writeFile(join(root, "data", "a.db"), Buffer.from([1, 0, 3]));
+  await writeFile(join(root, "data", "[a].db"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "data", "tracked-fixture.db"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "runtime.sqlite"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "runtime.sqlite-wal"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "runtime.sqlite-journal"), Buffer.from([1, 2, 3]));
+  await writeFile(join(root, "data", "session-state.json"), "{}\n");
+  await writeFile(join(root, "data", "session.lock"), "lock\n");
+  await writeFile(join(root, "yarn.lock"), "fixture lockfile\n");
   await mkdir(join(root, "secret"));
-  await writeFile(join(root, "secret", "config.json"), "{\"token\":\"secret\"}\n");
+  await writeFile(join(root, "secret", "config.json"), '{"token":"secret"}\n');
   await mkdir(join(root, "secrets"));
-  await writeFile(join(root, "secrets", "clientSecret.json"), "{\"value\":\"secret\"}\n");
+  await writeFile(join(root, "secrets", "clientSecret.json"), '{"value":"secret"}\n');
   await writeFile(join(root, "tokens.yaml"), "access_token: secret\n");
   await writeFile(join(root, "apiToken.txt"), "secret\n");
   await mkdir(join(root, "design-tokens"));
@@ -67,18 +83,51 @@ async function fixture() {
   await mkdir(join(root, "generated"));
   await writeFile(join(root, "generated", "output.txt"), "target must stay ignored\n");
   await writeFile(join(root, ".gitignore"), "generated/\n");
-  await import("node:child_process").then(({ execFile }) => new Promise<void>((resolve, reject) => {
-    execFile("git", ["init", "-q", root], (error) => error ? reject(error) : resolve());
-  }));
+  await import("node:child_process").then(
+    ({ execFile }) =>
+      new Promise<void>((resolve, reject) => {
+        execFile("git", ["init", "-q", root], (error) => (error ? reject(error) : resolve()));
+      }),
+  );
+  await import("node:child_process").then(
+    ({ execFile }) =>
+      new Promise<void>((resolve, reject) => {
+        execFile(
+          "git",
+          ["-C", root, "add", "--", "data/a.db", "data/tracked-fixture.db"],
+          (error) => (error ? reject(error) : resolve()),
+        );
+      }),
+  );
   return { parent, root };
 }
 
-test("file discovery is repository-scoped and hides secret-like names", async () => {
+test("file discovery is repository-scoped and hides protected names", async () => {
   const { root } = await fixture();
   assert.deepEqual(await searchRepositoryFiles(root, "main"), ["src/main.ts"]);
   const files = await searchRepositoryFiles(root, "", 50);
   assert.equal(files.includes(".env"), false);
   assert.equal(files.includes("data/sekai.sock.gateway-token"), false);
+  assert.equal(files.includes("src/sidebar-state.ts"), true);
+  assert.equal(files.includes("data/sidebar-state.ts"), true);
+  assert.equal(files.includes("data/state-machine-state.md"), true);
+  assert.equal(files.includes("yarn.lock"), true);
+  assert.equal(files.includes("data/a.db"), true);
+  assert.equal(files.includes("data/[a].db"), false);
+  assert.equal(files.includes("data/tracked-fixture.db"), true);
+  for (const runtimePath of [
+    "data/sekai.db",
+    "data/provider-registry-state.json",
+    "data/provider-registry-state.json.initialized",
+    "data/provider-registry-state.json.lock",
+    "runtime.sqlite",
+    "runtime.sqlite-wal",
+    "runtime.sqlite-journal",
+    "data/session-state.json",
+    "data/session.lock",
+  ]) {
+    assert.equal(files.includes(runtimePath), false, runtimePath);
+  }
   assert.equal(files.includes("secret/config.json"), false);
   assert.equal(files.includes("secrets/clientSecret.json"), false);
   assert.equal(files.includes("tokens.yaml"), false);
@@ -120,27 +169,48 @@ test("file discovery is repository-scoped and hides secret-like names", async ()
 test("browsing searches names and bounded text deterministically", async () => {
   const { root } = await fixture();
   const byName = await browseRepositoryFiles(root, "main");
-  assert.deepEqual(byName.files.map(({ path, match }) => ({ path, match })), [
-    { path: "src/main.ts", match: "name" },
-  ]);
+  assert.deepEqual(
+    byName.files.map(({ path, match }) => ({ path, match })),
+    [{ path: "src/main.ts", match: "name" }],
+  );
   const byContent = await browseRepositoryFiles(root, "search target");
-  assert.deepEqual(byContent.files.map(({ path, match }) => ({ path, match })), [
-    { path: "notes.txt", match: "content" },
-  ]);
-  assert.equal(byContent.files.some(({ path }) => path.startsWith(".")), false);
+  assert.deepEqual(
+    byContent.files.map(({ path, match }) => ({ path, match })),
+    [{ path: "notes.txt", match: "content" }],
+  );
+  assert.equal(
+    byContent.files.some(({ path }) => path.startsWith(".")),
+    false,
+  );
   assert.equal((await browseRepositoryFiles(root, "target must stay ignored")).files.length, 0);
   assert.deepEqual((await browseRepositoryFiles(root, "gateway-token")).files, []);
-  assert.deepEqual((await browseRepositoryFiles(root, "login")).files.map(({ path }) => path), ["auth/login.ts"]);
-  assert.deepEqual((await browseRepositoryFiles(root, "auth-token.ts")).files.map(({ path }) => path), ["auth-token.ts"]);
+  assert.deepEqual((await browseRepositoryFiles(root, "sekai.db")).files, []);
+  assert.deepEqual((await browseRepositoryFiles(root, "provider-registry-state")).files, []);
+  assert.deepEqual((await browseRepositoryFiles(root, "runtime.sqlite")).files, []);
+  assert.deepEqual((await browseRepositoryFiles(root, "session-state")).files, []);
+  assert.deepEqual((await browseRepositoryFiles(root, "session.lock")).files, []);
+  assert.deepEqual(
+    (await browseRepositoryFiles(root, "login")).files.map(({ path }) => path),
+    ["auth/login.ts"],
+  );
+  assert.deepEqual(
+    (await browseRepositoryFiles(root, "auth-token.ts")).files.map(({ path }) => path),
+    ["auth-token.ts"],
+  );
   assert.deepEqual((await browseRepositoryFiles(root, "credentials")).files, []);
 });
 
 test("content search reports when its byte budget makes results incomplete", async () => {
   const { root } = await fixture();
   await mkdir(join(root, "bulk"));
-  await Promise.all(Array.from({ length: 33 }, (_, index) => (
-    writeFile(join(root, "bulk", `${String(index).padStart(2, "0")}.txt`), "x".repeat(128 * 1024))
-  )));
+  await Promise.all(
+    Array.from({ length: 33 }, (_, index) =>
+      writeFile(
+        join(root, "bulk", `${String(index).padStart(2, "0")}.txt`),
+        "x".repeat(128 * 1024),
+      ),
+    ),
+  );
   await writeFile(join(root, "z-tail.txt"), "late unique content");
   const result = await browseRepositoryFiles(root, "late unique content");
   assert.equal(result.files.length, 0);
@@ -155,6 +225,7 @@ test("preview reports text, images, binary, truncation, missing, and symlinks ex
   assert.match(text.content ?? "", /ready/);
   assert.equal((await previewRepositoryFile(root, "image.png")).attachable, true);
   assert.equal((await previewRepositoryFile(root, "binary.dat")).attachable, false);
+  assert.equal((await previewRepositoryFile(root, "data/a.db")).kind, "binary");
   assert.equal((await previewRepositoryFile(root, "oversized.txt")).attachable, false);
   const truncated = await previewRepositoryFile(root, "preview-truncated.txt");
   assert.equal(truncated.truncated, true);
@@ -164,6 +235,16 @@ test("preview reports text, images, binary, truncation, missing, and symlinks ex
   await assert.rejects(
     () => previewRepositoryFile(root, "data/sekai.sock.gateway-token"),
     /secret-like/,
+  );
+  await assert.rejects(() => previewRepositoryFile(root, "data/sekai.db"), /local runtime state/);
+  await assert.rejects(
+    () => previewRepositoryFile(root, "data/provider-registry-state.json"),
+    /local runtime state/,
+  );
+  await assert.rejects(() => previewRepositoryFile(root, "data/[a].db"), /local runtime state/);
+  await assert.rejects(
+    () => previewRepositoryFile(root, "runtime.sqlite-journal"),
+    /local runtime state/,
   );
   await writeFile(join(parent, "outside.txt"), "outside");
   await symlink(join(parent, "outside.txt"), join(root, "linked-preview.txt"));
@@ -178,12 +259,15 @@ test("text and supported images resolve into bounded local context", async () =>
     "id_ed25519.pub",
     "image.png",
   ]);
-  assert.deepEqual(attachments.map(({ path, kind }) => ({ path, kind })), [
-    { path: "src/main.ts", kind: "text" },
-    { path: "auth-token.ts", kind: "text" },
-    { path: "id_ed25519.pub", kind: "text" },
-    { path: "image.png", kind: "image" },
-  ]);
+  assert.deepEqual(
+    attachments.map(({ path, kind }) => ({ path, kind })),
+    [
+      { path: "src/main.ts", kind: "text" },
+      { path: "auth-token.ts", kind: "text" },
+      { path: "id_ed25519.pub", kind: "text" },
+      { path: "image.png", kind: "image" },
+    ],
+  );
   const prompt = composePrompt("Review this.", attachments);
   assert.match(prompt, /export const ready/);
   assert.match(prompt, /<image path="image.png"/);
@@ -191,6 +275,9 @@ test("text and supported images resolve into bounded local context", async () =>
 
 test("context packages resolve folders deterministically and retain metadata only", async () => {
   const { parent, root } = await fixture();
+  const runtime = await assembleContextPackage(root, [{ path: "data/sekai.db", kind: "file" }]);
+  assert.deepEqual(runtime.attachments, []);
+  assert.equal(runtime.entries[0]?.omissionReason, "ignored, secret-like, or local runtime path");
   await writeFile(join(root, "AGENTS.md"), "# provider-owned instructions\n");
   await writeFile(join(parent, "outside.txt"), "outside");
   await symlink(join(parent, "outside.txt"), join(root, "src", "linked.txt"));
@@ -198,10 +285,10 @@ test("context packages resolve folders deterministically and retain metadata onl
     { path: "src", kind: "folder" },
     { path: "generated", kind: "folder" },
   ]);
-  assert.deepEqual(assembled.attachments.map((attachment) => attachment.path), [
-    "src/main.ts",
-    "src/secret-manager.ts",
-  ]);
+  assert.deepEqual(
+    assembled.attachments.map((attachment) => attachment.path),
+    ["src/main.ts", "src/secret-manager.ts", "src/sidebar-state.ts"],
+  );
   assert.equal(assembled.entries.find((entry) => entry.path === "src/main.ts")?.digest?.length, 64);
   assert.equal(
     assembled.entries.find((entry) => entry.path === "src/linked.txt")?.omissionReason,
@@ -218,8 +305,9 @@ test("context packages resolve folders deterministically and retain metadata onl
   assert.equal(JSON.stringify(assembled.entries).includes("export const ready"), false);
   assert.equal(
     assembled.totalBytes,
-    Buffer.byteLength("export const ready = true;\n")
-      + Buffer.byteLength("export const manager = true;\n"),
+    Buffer.byteLength("export const ready = true;\n") +
+      Buffer.byteLength("export const manager = true;\n") +
+      Buffer.byteLength("export const sidebarState = true;\n"),
   );
   assert.equal(assembled.estimatedTokens, Math.ceil(assembled.totalBytes / 4));
 });
@@ -266,9 +354,11 @@ test("the repository root is a valid folder pin", async () => {
 test("context packages enforce deterministic file and byte limits", async () => {
   const { root } = await fixture();
   await mkdir(join(root, "many"));
-  await Promise.all(Array.from({ length: 101 }, (_, index) => (
-    writeFile(join(root, "many", `${String(index).padStart(3, "0")}.txt`), `${index}`)
-  )));
+  await Promise.all(
+    Array.from({ length: 101 }, (_, index) =>
+      writeFile(join(root, "many", `${String(index).padStart(3, "0")}.txt`), `${index}`),
+    ),
+  );
   const fileLimited = await assembleContextPackage(root, [{ path: "many", kind: "folder" }]);
   assert.equal(fileLimited.attachments.length, 100);
   assert.equal(
@@ -277,38 +367,41 @@ test("context packages enforce deterministic file and byte limits", async () => 
   );
 
   await mkdir(join(root, "rejected-first"));
-  await Promise.all(Array.from({ length: 100 }, (_, index) => (
-    writeFile(
-      join(root, "rejected-first", `a-${String(index).padStart(3, "0")}.bin`),
-      Buffer.from([0]),
-    )
-  )));
-  await writeFile(join(root, "rejected-first", "z-valid.txt"), "valid");
-  const rejectedFirst = await assembleContextPackage(
-    root,
-    [{ path: "rejected-first", kind: "folder" }],
+  await Promise.all(
+    Array.from({ length: 100 }, (_, index) =>
+      writeFile(
+        join(root, "rejected-first", `a-${String(index).padStart(3, "0")}.bin`),
+        Buffer.from([0]),
+      ),
+    ),
   );
+  await writeFile(join(root, "rejected-first", "z-valid.txt"), "valid");
+  const rejectedFirst = await assembleContextPackage(root, [
+    { path: "rejected-first", kind: "folder" },
+  ]);
   assert.deepEqual(
     rejectedFirst.attachments.map((attachment) => attachment.path),
     ["rejected-first/z-valid.txt"],
   );
   assert.equal(
-    rejectedFirst.entries.filter((entry) => entry.omissionReason === "unsupported binary file").length,
+    rejectedFirst.entries.filter((entry) => entry.omissionReason === "unsupported binary file")
+      .length,
     100,
   );
 
   await mkdir(join(root, "inspection-bound"));
-  await Promise.all(Array.from({ length: 201 }, (_, index) => (
-    writeFile(
-      join(root, "inspection-bound", `a-${String(index).padStart(3, "0")}.bin`),
-      Buffer.from([0]),
-    )
-  )));
-  await writeFile(join(root, "inspection-bound", "z-valid.txt"), "too late");
-  const inspectionBound = await assembleContextPackage(
-    root,
-    [{ path: "inspection-bound", kind: "folder" }],
+  await Promise.all(
+    Array.from({ length: 201 }, (_, index) =>
+      writeFile(
+        join(root, "inspection-bound", `a-${String(index).padStart(3, "0")}.bin`),
+        Buffer.from([0]),
+      ),
+    ),
   );
+  await writeFile(join(root, "inspection-bound", "z-valid.txt"), "too late");
+  const inspectionBound = await assembleContextPackage(root, [
+    { path: "inspection-bound", kind: "folder" },
+  ]);
   const inspectedFolderEntries = inspectionBound.entries.filter(
     (entry) => entry.source === "aldunis_folder",
   );
@@ -323,7 +416,10 @@ test("context packages enforce deterministic file and byte limits", async () => 
   await writeFile(join(root, "large", "a.txt"), "a".repeat(1_100_000));
   await writeFile(join(root, "large", "b.txt"), "b".repeat(1_100_000));
   const byteLimited = await assembleContextPackage(root, [{ path: "large", kind: "folder" }]);
-  assert.deepEqual(byteLimited.attachments.map((attachment) => attachment.path), ["large/a.txt"]);
+  assert.deepEqual(
+    byteLimited.attachments.map((attachment) => attachment.path),
+    ["large/a.txt"],
+  );
   assert.equal(
     byteLimited.entries.find((entry) => entry.path === "large/b.txt")?.omissionReason,
     "package byte limit",
@@ -353,13 +449,19 @@ test("remote context assembly does not enumerate provider instruction paths", as
 });
 
 test("visible element references compose as bounded escaped structured context", () => {
-  const prompt = composePrompt("Explain this.", [], [{
-    selector: "main > button:nth-of-type(1)",
-    tag: "button",
-    role: "button",
-    name: `Save "draft"`,
-    text: "<untrusted> page text",
-  }]);
+  const prompt = composePrompt(
+    "Explain this.",
+    [],
+    [
+      {
+        selector: "main > button:nth-of-type(1)",
+        tag: "button",
+        role: "button",
+        name: `Save "draft"`,
+        text: "<untrusted> page text",
+      },
+    ],
+  );
   assert.match(prompt, /<visible-element/);
   assert.match(prompt, /Save &quot;draft&quot;/);
   assert.match(prompt, /&lt;untrusted&gt; page text/);
@@ -368,13 +470,28 @@ test("visible element references compose as bounded escaped structured context",
 
 test("missing, binary, oversized, secret-like, excessive, and escaping inputs fail explicitly", async () => {
   const { parent, root } = await fixture();
-  await assert.rejects(() => resolveContextAttachments(root, ["missing.ts"]), /missing or was deleted/);
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["missing.ts"]),
+    /missing or was deleted/,
+  );
   await assert.rejects(() => resolveContextAttachments(root, ["binary.dat"]), /binary/);
   await assert.rejects(() => resolveContextAttachments(root, ["oversized.txt"]), /exceeds/);
   await assert.rejects(() => resolveContextAttachments(root, [".env"]), /secret-like/);
   await assert.rejects(
     () => resolveContextAttachments(root, ["data/sekai.sock.gateway-token"]),
     /secret-like/,
+  );
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["data/sekai.db"]),
+    /local runtime state/,
+  );
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["data/session-state.json"]),
+    /local runtime state/,
+  );
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["data/[a].db"]),
+    /local runtime state/,
   );
   for (const secretPath of [
     "credentials.yaml",
@@ -390,12 +507,22 @@ test("missing, binary, oversized, secret-like, excessive, and escaping inputs fa
   ]) {
     await assert.rejects(() => resolveContextAttachments(root, [secretPath]), /secret-like/);
   }
-  await assert.rejects(() => resolveContextAttachments(root, ["secret/config.json"]), /secret-like/);
-  await assert.rejects(() => resolveContextAttachments(root, ["secrets/clientSecret.json"]), /secret-like/);
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["secret/config.json"]),
+    /secret-like/,
+  );
+  await assert.rejects(
+    () => resolveContextAttachments(root, ["secrets/clientSecret.json"]),
+    /secret-like/,
+  );
   await assert.rejects(() => resolveContextAttachments(root, ["tokens.yaml"]), /secret-like/);
   await assert.rejects(() => resolveContextAttachments(root, ["apiToken.txt"]), /secret-like/);
   await assert.rejects(
-    () => resolveContextAttachments(root, Array.from({ length: MAX_CONTEXT_FILES + 1 }, (_, index) => `${index}.ts`)),
+    () =>
+      resolveContextAttachments(
+        root,
+        Array.from({ length: MAX_CONTEXT_FILES + 1 }, (_, index) => `${index}.ts`),
+      ),
     /Attach at most/,
   );
   await writeFile(join(parent, "outside.txt"), "outside");

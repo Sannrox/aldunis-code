@@ -35,6 +35,10 @@ export function isSupportedDeepLink(value: string): boolean {
   }
 }
 
+export function shouldHideWindowOnClose(platform: string, shuttingDown: boolean): boolean {
+  return platform === "darwin" && !shuttingDown;
+}
+
 export async function listenOnLoopback(server: Server): Promise<string> {
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
@@ -55,6 +59,6 @@ export async function listenOnLoopback(server: Server): Promise<string> {
 export async function closeServer(server: Server): Promise<void> {
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }

@@ -40,14 +40,14 @@ primary.
 something wants a decision, or something failed. It is never applied to
 things that are merely in progress or merely finished.
 
-| Meaning | Treatment |
-| --- | --- |
-| Pending approval | amber label |
-| Awaiting input | indigo label |
-| Failed | red label |
-| Working | muted spinner, no label |
-| Completed | faint check, no label |
-| Diff added / removed | green / red, retained |
+| Meaning              | Treatment               |
+| -------------------- | ----------------------- |
+| Pending approval     | amber label             |
+| Awaiting input       | indigo label            |
+| Failed               | red label               |
+| Working              | muted spinner, no label |
+| Completed            | faint check, no label   |
+| Diff added / removed | green / red, retained   |
 
 Diff coloring stays even under a monochrome system. Glyphs and tinted rows
 do some of the work, but scanning a long diff without hue is measurably
@@ -80,6 +80,16 @@ Settling moves a finished thread to a collapsed `Settled (N)` shelf at the
 bottom of the sidebar, sorted by when the work ended rather than when the
 thread was touched. It is reversible: `Unsettle` returns the thread to the
 list. Settling is a sidebar state and nothing more.
+
+**Snooze** is a separate temporary hide, inspired by T3 Code. Row actions
+offer presets (in 1 hour, this evening when meaningful, tomorrow morning,
+next week). Snoozed threads leave Active/Attention and appear in a
+`Snoozed (N)` shelf with a compact wake label (`20m` / `3h` / `2d`). When
+the wake time elapses the row returns without a server write. Pending
+approval or awaiting input cannot be snoozed and, if they arise while
+snoozed, surface immediately in Needs attention. Running provider work may
+remain snoozed — snooze never stops the agent, archives history, or
+releases a worktree. Settling clears snooze; snoozing clears settle.
 
 The workbench sidebar can be collapsed from its header or with `Mod+B` (`⌘B` on
 macOS, `Ctrl+B` on Windows/Linux). The preference is local to the current
@@ -140,6 +150,41 @@ approval for mutating provider tools — and it previously appeared only after
 the fact, inside an approval card. Stating it before the prompt is sent puts
 it where the decision is actually made.
 
+## Composer drafts and previous worktree
+
+Unsent composer text is stashed in the browser profile only (per conversation
+and per new-chat pane). Switching threads restores the matching draft; a
+successful send clears it. Drafts never leave the local browser.
+
+New conversations in shared-checkout mode may show a **Previous worktree**
+control when another recent conversation in the same project used a different
+path. Choosing it selects that worktree once; it does not create or release
+checkouts.
+
+## Pull request status
+
+When GitHub CLI can resolve a pull request for a conversation worktree branch,
+the sidebar row shows a compact `PR #n` / `Merged #n` / `Closed #n` control that
+opens the PR URL. Absence of a PR, `gh`, or a GitHub remote is silent — no error
+chrome. Status is a live projection, not durable conversation state.
+
+## Message copy
+
+Submitted prompts and completed assistant answers expose a ghost icon button
+in the turn footer. The control is hover/focus-visible on fine pointers and
+always visible on coarse pointers. Brief “copied” / failure feedback uses
+polite live text; the success hue is temporary action confirmation, not a
+persistent “healthy” badge.
+
+## Context window
+
+When a provider reports live token/context usage (Codex
+`thread/tokenUsage/updated`, ACP `usage_update`), the composer shows a compact
+ring meter beside the run controls. The control is muted at rest and only uses
+the status/warning hue above 90% fill. Details open on click and state that the
+snapshot is live stream data, not durable history. When usage is unknown, the
+meter is absent — nothing renders to report that context is fine.
+
 ## Voice input
 
 Voice input is a secondary action in the conversation composer. The microphone
@@ -196,15 +241,15 @@ is a user mistaking a local action for an authoritative one.
 
 Use the live application and automated checks as the source of truth:
 
-| Concern | Source |
-| --- | --- |
-| Semantic tokens and component styling | `src/styles.css` |
-| Shell layout | `src/mock-shell.css` |
-| Shared UI primitives | `src/components/ui/` |
-| Sidebar and settled shelf | `src/features/code/sidebar.tsx` |
-| Preferences and worktree limits | `src/features/dialogs/preferences-dialog.tsx` |
-| Structural style checks | `src/styles.verification.test.ts` |
-| Exploratory reference mock | `docs/design/workbench-mock.html` |
+| Concern                               | Source                                        |
+| ------------------------------------- | --------------------------------------------- |
+| Semantic tokens and component styling | `src/styles.css`                              |
+| Shell layout                          | `src/mock-shell.css`                          |
+| Shared UI primitives                  | `src/components/ui/`                          |
+| Sidebar and settled shelf             | `src/features/code/sidebar.tsx`               |
+| Preferences and worktree limits       | `src/features/dialogs/preferences-dialog.tsx` |
+| Structural style checks               | `src/styles.verification.test.ts`             |
+| Exploratory reference mock            | `docs/design/workbench-mock.html`             |
 
 The HTML mock is design evidence, not a runtime contract. When it differs from
 the shipped application, update or annotate the mock rather than documenting

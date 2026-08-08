@@ -68,7 +68,10 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.threads[0].model, "claude-sonnet-5");
   assert.equal(rebuilt.turns[0].status, "completed");
   assert.equal(rebuilt.turns[0].mode, "plan");
-  assert.deepEqual(rebuilt.messages.map((message) => message.role), ["user", "assistant"]);
+  assert.deepEqual(
+    rebuilt.messages.map((message) => message.role),
+    ["user", "assistant"],
+  );
   assert.equal(rebuilt.activities[0].name, "Read");
   assert.ok(
     rebuilt.messages[1]!.eventSequence! < rebuilt.activities[0]!.eventSequence!,
@@ -93,8 +96,14 @@ test("provider thinking stays live-only and is excluded from local history", asy
   });
 
   const projection = await store.load();
-  assert.equal(projection.messages.some((message) => message.text.includes("private reasoning sentinel")), false);
-  assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /private reasoning sentinel/);
+  assert.equal(
+    projection.messages.some((message) => message.text.includes("private reasoning sentinel")),
+    false,
+  );
+  assert.doesNotMatch(
+    await readFile(join(directory, "events.v1.jsonl"), "utf8"),
+    /private reasoning sentinel/,
+  );
 });
 
 test("browser observations never enter local history or activity projections", async () => {
@@ -117,7 +126,10 @@ test("browser observations never enter local history or activity projections", a
   const projection = await new LocalStateStore(directory).load();
   assert.equal(projection.activities.length, 0);
   assert.equal(JSON.stringify(projection).includes("data:image"), false);
-  assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("browser_observation"), false);
+  assert.equal(
+    (await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("browser_observation"),
+    false,
+  );
 });
 
 test("project Chisei namespace bindings persist locally and validate their bounded identity", async () => {
@@ -194,12 +206,19 @@ test("provider plans update one persisted artifact and survive restart without d
   assert.equal(afterSecondTurn.plans.length, 2);
   assert.deepEqual(
     afterSecondTurn.plans.map((plan) => [plan.turnId, plan.body]),
-    [[turn.id, "First final"], [next.turn.id, "Second turn"]],
+    [
+      [turn.id, "First final"],
+      [next.turn.id, "Second turn"],
+    ],
   );
-  await assert.rejects(() => store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
-    kind: "plan_updated",
-    artifact: { id: "spoof", provider: "claude-code", body: "wrong provider" },
-  }), /does not match/);
+  await assert.rejects(
+    () =>
+      store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+        kind: "plan_updated",
+        artifact: { id: "spoof", provider: "claude-code", body: "wrong provider" },
+      }),
+    /does not match/,
+  );
 });
 
 test("context receipts retain immutable metadata without repository content", async () => {
@@ -217,15 +236,17 @@ test("context receipts retain immutable metadata without repository content", as
     threadId: thread.id,
     turnId: turn.id,
     pins: [{ path: "src", kind: "folder" }],
-    entries: [{
-      path: "src/main.ts",
-      type: "text",
-      source: "aldunis_folder",
-      bytes: 24,
-      truncated: false,
-      digest: "a".repeat(64),
-      omissionReason: null,
-    }],
+    entries: [
+      {
+        path: "src/main.ts",
+        type: "text",
+        source: "aldunis_folder",
+        bytes: 24,
+        truncated: false,
+        digest: "a".repeat(64),
+        omissionReason: null,
+      },
+    ],
     totalBytes: 24,
     estimatedTokens: 6,
     digest: "b".repeat(64),
@@ -311,13 +332,15 @@ test("automation fires are durable, idempotent, and bind turn and provider ident
   await store.finishAutomationFire(claimed.fire.id, "completed");
 
   const rebuilt = await new LocalStateStore(directory).load();
-  assert.deepEqual(rebuilt.automationFires, [{
-    ...rebuilt.automationFires[0],
-    status: "completed",
-    turnId: started.turn.id,
-    providerRunId: "provider-run-1",
-    error: null,
-  }]);
+  assert.deepEqual(rebuilt.automationFires, [
+    {
+      ...rebuilt.automationFires[0],
+      status: "completed",
+      turnId: started.turn.id,
+      providerRunId: "provider-run-1",
+      error: null,
+    },
+  ]);
   assert.equal(
     (await store.latestAutomationFire("automation-1"))?.key,
     "scheduled:2026-01-01T00:01:00.000Z",
@@ -369,28 +392,33 @@ test("governed Shikigami correlation receipts survive restart without sensitive 
     operationId: runId,
   });
   const rebuilt = await new LocalStateStore(directory).load();
-  assert.deepEqual(rebuilt.governanceCorrelations, [{
-    schemaVersion: 2,
-    id: rebuilt.governanceCorrelations[0].id,
-    provider: "shikigami",
-    governance: "sekai-chisei",
-    threadId: thread.id,
-    turnId: turn.id,
-    runId,
-    operationId: runId,
-    createdAt: rebuilt.governanceCorrelations[0].createdAt,
-  }]);
+  assert.deepEqual(rebuilt.governanceCorrelations, [
+    {
+      schemaVersion: 2,
+      id: rebuilt.governanceCorrelations[0].id,
+      provider: "shikigami",
+      governance: "sekai-chisei",
+      threadId: thread.id,
+      turnId: turn.id,
+      runId,
+      operationId: runId,
+      createdAt: rebuilt.governanceCorrelations[0].createdAt,
+    },
+  ]);
   const journal = await readFile(join(directory, "events.v1.jsonl"), "utf8");
-  const correlationLine = journal.split("\n").find((line) => line.includes("governance_correlation_saved"));
+  const correlationLine = journal
+    .split("\n")
+    .find((line) => line.includes("governance_correlation_saved"));
   assert.ok(correlationLine);
   assert.doesNotMatch(correlationLine, /sensitive prompt sentinel|\/fixture/);
   await assert.rejects(
-    () => store.recordProviderEvent(thread.id, turn.id, "shikigami", {
-      kind: "governance_correlation",
-      governance: "sekai-chisei",
-      runId,
-      operationId: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-    }),
+    () =>
+      store.recordProviderEvent(thread.id, turn.id, "shikigami", {
+        kind: "governance_correlation",
+        governance: "sekai-chisei",
+        runId,
+        operationId: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      }),
     /incompatible/,
   );
   await store.recordProviderEvent(thread.id, turn.id, "shikigami", {
@@ -469,13 +497,16 @@ test("typed provider failures survive reload without arbitrary error text", asyn
   });
 
   const rebuilt = await new LocalStateStore(directory).load();
-  assert.deepEqual(rebuilt.activities.map((activity) => activity.message), [
-    "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
-    "Provider failed.",
-    "Codex app-server emitted an unsupported notification.",
-    "Provider failed.",
-    "Claude Code authentication failed. Re-authenticate in Claude Code and try again.",
-  ]);
+  assert.deepEqual(
+    rebuilt.activities.map((activity) => activity.message),
+    [
+      "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+      "Provider failed.",
+      "Codex app-server emitted an unsupported notification.",
+      "Provider failed.",
+      "Claude Code authentication failed. Re-authenticate in Claude Code and try again.",
+    ],
+  );
 });
 
 test("provider mode rejections retain a safe actionable diagnostic", async () => {
@@ -552,25 +583,38 @@ test("host restart marks orphaned active and approval turns interrupted", async 
   const restarted = new LocalStateStore(directory);
   await restarted.recoverInterruptedTurns();
   const projection = await restarted.load();
-  assert.deepEqual(projection.turns.map((turn) => turn.status), ["interrupted", "interrupted"]);
+  assert.deepEqual(
+    projection.turns.map((turn) => turn.status),
+    ["interrupted", "interrupted"],
+  );
   assert.ok(projection.turns.every((turn) => turn.completedAt));
 });
 
 test("concurrent writes remain strictly ordered and crash-safe", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  await Promise.all(Array.from({ length: 12 }, (_, index) => store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture",
-    prompt: `Turn ${index}`,
-    mode: "ask",
-    provider: "claude-code",
-  })));
+  await Promise.all(
+    Array.from({ length: 12 }, (_, index) =>
+      store.startTurn({
+        projectId: "project-1",
+        worktree: "/fixture",
+        prompt: `Turn ${index}`,
+        mode: "ask",
+        provider: "claude-code",
+      }),
+    ),
+  );
 
   const projection = await new LocalStateStore(directory).load();
   const contents = await readFile(join(directory, "events.v1.jsonl"), "utf8");
-  const sequences = contents.trim().split("\n").map((line) => JSON.parse(line).sequence);
-  assert.deepEqual(sequences, Array.from({ length: sequences.length }, (_, index) => index + 1));
+  const sequences = contents
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).sequence);
+  assert.deepEqual(
+    sequences,
+    Array.from({ length: sequences.length }, (_, index) => index + 1),
+  );
   assert.equal(projection.threads.length, 12);
   assert.equal(projection.turns.length, 12);
   assert.equal(projection.messages.length, 12);
@@ -617,7 +661,10 @@ test("intact forked history is renumbered in physical append order", async () =>
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line).sequence);
-  assert.deepEqual(repaired, Array.from({ length: repaired.length }, (_, index) => index + 1));
+  assert.deepEqual(
+    repaired,
+    Array.from({ length: repaired.length }, (_, index) => index + 1),
+  );
 });
 
 test("forward sequence gaps still fail visibly without rewriting history", async () => {
@@ -654,12 +701,13 @@ test("new conversations stop at the bounded per-project retention limit", async 
     });
   }
   await assert.rejects(
-    () => store.startTurn({
-      projectId: "project-1",
-      worktree: "/fixture",
-      prompt: "One too many",
-      mode: "ask",
-    }),
+    () =>
+      store.startTurn({
+        projectId: "project-1",
+        worktree: "/fixture",
+        prompt: "One too many",
+        mode: "ask",
+      }),
     (error: unknown) => error instanceof LocalStateError && error.status === 429,
   );
 });
@@ -674,14 +722,18 @@ test("existing conversations cannot silently change their bound worktree", async
     mode: "ask",
     provider: "claude-code",
   });
-  await assert.rejects(() => store.startTurn({
-    projectId: "project-1",
-    worktree: "/repo/worktree-b",
-    prompt: "Move silently",
-    mode: "ask",
-    provider: "claude-code",
-    threadId: first.thread.id,
-  }), /bound to a different canonical worktree/);
+  await assert.rejects(
+    () =>
+      store.startTurn({
+        projectId: "project-1",
+        worktree: "/repo/worktree-b",
+        prompt: "Move silently",
+        mode: "ask",
+        provider: "claude-code",
+        threadId: first.thread.id,
+      }),
+    /bound to a different canonical worktree/,
+  );
   assert.equal((await store.load()).threads[0].worktree, "/repo/worktree-a");
 });
 
@@ -707,15 +759,19 @@ test("workspace mode persists and cannot be changed on an existing conversation"
     workspaceMode: "aldunis-managed",
   });
   assert.equal(continued.thread.workspaceMode, "aldunis-managed");
-  await assert.rejects(() => store.startTurn({
-    projectId: "project-1",
-    worktree: "/repo/managed",
-    prompt: "Switch to shared",
-    mode: "ask",
-    provider: "codex-cli",
-    threadId: first.thread.id,
-    workspaceMode: "shared",
-  }), /different workspace mode/);
+  await assert.rejects(
+    () =>
+      store.startTurn({
+        projectId: "project-1",
+        worktree: "/repo/managed",
+        prompt: "Switch to shared",
+        mode: "ask",
+        provider: "codex-cli",
+        threadId: first.thread.id,
+        workspaceMode: "shared",
+      }),
+    /different workspace mode/,
+  );
 });
 
 test("concurrent managed conversation starts claim one worktree", async () => {
@@ -746,7 +802,7 @@ test("concurrent managed conversation starts claim one worktree", async () => {
 
 test("corruption and incompatible schemas fail visibly without discarding history", async () => {
   const corrupt = await fixtureStore();
-  await writeFile(join(corrupt.directory, "events.v1.jsonl"), "{\"schemaVersion\":1", "utf8");
+  await writeFile(join(corrupt.directory, "events.v1.jsonl"), '{"schemaVersion":1', "utf8");
   await assert.rejects(
     () => new LocalStateStore(corrupt.directory).load(),
     (error: unknown) => error instanceof LocalStateError && /corrupt at line 1/.test(error.message),
@@ -760,7 +816,8 @@ test("corruption and incompatible schemas fail visibly without discarding histor
   );
   await assert.rejects(
     () => new LocalStateStore(incompatible.directory).load(),
-    (error: unknown) => error instanceof LocalStateError && /incompatible schema/.test(error.message),
+    (error: unknown) =>
+      error instanceof LocalStateError && /incompatible schema/.test(error.message),
   );
 });
 
@@ -806,7 +863,10 @@ test("project deletion and retention physically remove sensitive conversation da
     inputReceipts: [],
     automationFires: [],
   });
-  assert.equal((await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"), false);
+  assert.equal(
+    (await readFile(join(deleted.directory, "events.v1.jsonl"), "utf8")).includes("sentinel"),
+    false,
+  );
 
   const retained = await fixtureStore();
   await retained.store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -831,7 +891,10 @@ test("project deletion and retention physically remove sensitive conversation da
   assert.equal(projection.projects.length, 1);
   assert.equal(projection.threads.length, 0);
   assert.equal(projection.automationFires.length, 0);
-  assert.equal((await readFile(join(retained.directory, "events.v1.jsonl"), "utf8")).includes("sensitive"), false);
+  assert.equal(
+    (await readFile(join(retained.directory, "events.v1.jsonl"), "utf8")).includes("sensitive"),
+    false,
+  );
 });
 
 test("version-one history loads with null thread lifecycle timestamps", async () => {
@@ -928,7 +991,10 @@ test("archive and delete reject active and unresolved conversations at the state
     provider: "claude-code",
   });
   await assert.rejects(() => store.archiveConversation(thread.id), /provider work is active/);
-  await assert.rejects(() => store.previewConversationDeletion(thread.id), /provider work is active/);
+  await assert.rejects(
+    () => store.previewConversationDeletion(thread.id),
+    /provider work is active/,
+  );
   await assert.rejects(() => store.deleteConversation(thread.id), /provider work is active/);
 });
 
@@ -1033,19 +1099,25 @@ test("delegated conversation relationships persist, enforce one parent, and deta
   await store.deleteConversation(firstParent.id);
   const rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.delegatedRelationships.length, 0);
-  assert.equal(rebuilt.threads.some((thread) => thread.id === child.id), true);
+  assert.equal(
+    rebuilt.threads.some((thread) => thread.id === child.id),
+    true,
+  );
 });
 
 test("delegated conversation relationships remain an acyclic forest", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  const createConversation = async (name: string) => (await store.startTurn({
-    projectId: "project-1",
-    worktree: `/fixture/${name}`,
-    prompt: name,
-    mode: "ask",
-    provider: "codex-cli",
-  })).thread;
+  const createConversation = async (name: string) =>
+    (
+      await store.startTurn({
+        projectId: "project-1",
+        worktree: `/fixture/${name}`,
+        prompt: name,
+        mode: "ask",
+        provider: "codex-cli",
+      })
+    ).thread;
   const parent = await createConversation("parent");
   const child = await createConversation("child");
   const grandchild = await createConversation("grandchild");
@@ -1080,20 +1152,24 @@ test("delegated conversation relationships remain an acyclic forest", async () =
 test("concurrent inverse delegated links cannot race into a cycle", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
-  const first = (await store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture/first",
-    prompt: "first",
-    mode: "ask",
-    provider: "codex-cli",
-  })).thread;
-  const second = (await store.startTurn({
-    projectId: "project-1",
-    worktree: "/fixture/second",
-    prompt: "second",
-    mode: "ask",
-    provider: "codex-cli",
-  })).thread;
+  const first = (
+    await store.startTurn({
+      projectId: "project-1",
+      worktree: "/fixture/first",
+      prompt: "first",
+      mode: "ask",
+      provider: "codex-cli",
+    })
+  ).thread;
+  const second = (
+    await store.startTurn({
+      projectId: "project-1",
+      worktree: "/fixture/second",
+      prompt: "second",
+      mode: "ask",
+      provider: "codex-cli",
+    })
+  ).thread;
 
   const results = await Promise.allSettled([
     store.linkDelegatedConversation(first.id, second.id),
@@ -1301,11 +1377,7 @@ test("child input requests and parent coordination receipts persist and resolve 
   assert.equal((await store.load()).inputRequests.length, 2);
   assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
 
-  const resolved = await store.resolveInputRequest(
-    "request-1",
-    "Continue",
-    parent.thread.id,
-  );
+  const resolved = await store.resolveInputRequest("request-1", "Continue", parent.thread.id);
   assert.equal(resolved.receipt.parentThreadId, parent.thread.id);
   assert.equal(resolved.receipt.answerDigest.length, 64);
   assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
@@ -1368,11 +1440,7 @@ test("native Shikigami resume claims the exact parked turn once and never stores
   assert.equal(claimed.request.resumeState, "claimed");
   assert.equal(claimed.checkpoint.id, "checkpoint-native-resume");
   await assert.rejects(
-    () => store.claimNativeShikigamiResume(
-      "native-resume-request",
-      started.thread.id,
-      runId,
-    ),
+    () => store.claimNativeShikigamiResume("native-resume-request", started.thread.id, runId),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
   await store.markNativeShikigamiResumeStarted("native-resume-request");
@@ -1486,13 +1554,23 @@ test("recovery cancels dead native input RPCs but preserves child follow-up requ
   }
   await store.recoverInterruptedTurns();
   const projection = await store.load();
-  const nativeRequests = projection.inputRequests.filter((request) => request.responseMode === "native_resume");
-  const followUpRequest = projection.inputRequests.find((request) => request.responseMode === "child_follow_up");
+  const nativeRequests = projection.inputRequests.filter(
+    (request) => request.responseMode === "native_resume",
+  );
+  const followUpRequest = projection.inputRequests.find(
+    (request) => request.responseMode === "child_follow_up",
+  );
   assert.equal(nativeRequests.length, 2);
   assert.ok(nativeRequests.every((request) => request.state === "cancelled"));
-  assert.equal(projection.turns.find((turn) => turn.id === nativeRequests[0].turnId)?.status, "interrupted");
+  assert.equal(
+    projection.turns.find((turn) => turn.id === nativeRequests[0].turnId)?.status,
+    "interrupted",
+  );
   assert.equal(followUpRequest?.state, "pending");
-  assert.equal(projection.turns.find((turn) => turn.id === followUpRequest?.turnId)?.status, "waiting_for_user");
+  assert.equal(
+    projection.turns.find((turn) => turn.id === followUpRequest?.turnId)?.status,
+    "waiting_for_user",
+  );
 });
 
 test("recovery reopens a claimed child answer when no follow-up turn was persisted", async () => {
@@ -1640,13 +1718,15 @@ test("checkpoint states rebuild and are removed with their conversation", async 
     completedIndexIdentity: "completed-index",
     completedHead: "baseline-head",
     state: "completed",
-    files: [{
-      path: "created.txt",
-      state: "added",
-      previousPath: null,
-      additions: 2,
-      deletions: 0,
-    }],
+    files: [
+      {
+        path: "created.txt",
+        state: "added",
+        previousPath: null,
+        additions: 2,
+        deletions: 0,
+      },
+    ],
   });
   await store.saveCheckpoint({
     ...(await store.load()).checkpoints[0],
@@ -1662,18 +1742,23 @@ test("checkpoint states rebuild and are removed with their conversation", async 
   assert.equal(rebuilt.checkpoints.length, 2);
   assert.equal(rebuilt.checkpoints[0].state, "completed");
   assert.equal(rebuilt.checkpoints[0].baselineIdentity, "baseline-tree");
-  assert.deepEqual(rebuilt.checkpoints[0].files, [{
-    path: "created.txt",
-    state: "added",
-    previousPath: null,
-    additions: 2,
-    deletions: 0,
-  }]);
+  assert.deepEqual(rebuilt.checkpoints[0].files, [
+    {
+      path: "created.txt",
+      state: "added",
+      previousPath: null,
+      additions: 2,
+      deletions: 0,
+    },
+  ]);
   assert.equal(rebuilt.checkpoints[1].state, "completed");
 
   await store.deleteProject("project-1");
   assert.equal((await store.load()).checkpoints.length, 0);
-  assert.equal((await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"), false);
+  assert.equal(
+    (await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"),
+    false,
+  );
 });
 
 test("diff annotations survive restart, resolve explicitly, and follow conversation retention", async () => {
@@ -1734,14 +1819,15 @@ test("an existing conversation cannot silently switch provider state", async () 
     model: "gpt-5.6",
   });
   await assert.rejects(
-    () => store.startTurn({
-      projectId: "project-1",
-      worktree: "/fixture",
-      prompt: "Switch provider",
-      mode: "build",
-      threadId: thread.id,
-      provider: "claude-code",
-    }),
+    () =>
+      store.startTurn({
+        projectId: "project-1",
+        worktree: "/fixture",
+        prompt: "Switch provider",
+        mode: "build",
+        threadId: thread.id,
+        provider: "claude-code",
+      }),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
 });
@@ -1807,10 +1893,10 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   });
 
   const preview = await store.previewFork(thread.id);
-  assert.deepEqual(preview.messages.map((message) => message.text), [
-    "Inspect the boundary",
-    "The boundary is explicit.",
-  ]);
+  assert.deepEqual(
+    preview.messages.map((message) => message.text),
+    ["Inspect the boundary", "The boundary is explicit."],
+  );
   assert.equal(preview.prompt.includes("native-secret-session"), false);
   assert.equal(preview.prompt.includes("raw-tool-call"), false);
   assert.equal(preview.prompt.includes("private source plan sentinel"), false);
@@ -1887,14 +1973,15 @@ test("managed conversation forks require a distinct managed worktree", async () 
   assert.equal(concurrentForks.filter((result) => result.status === "rejected").length, 1);
 
   await assert.rejects(
-    () => store.createFork({
-      sourceThreadId: thread.id,
-      provider: "codex-cli",
-      profileId: null,
-      model: "default",
-      worktree: "/managed/source",
-      expectedDigest: preview.digest,
-    }),
+    () =>
+      store.createFork({
+        sourceThreadId: thread.id,
+        provider: "codex-cli",
+        profileId: null,
+        model: "default",
+        worktree: "/managed/source",
+        expectedDigest: preview.digest,
+      }),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
 
@@ -1941,6 +2028,82 @@ test("settle and unsettle are idempotent and never archive the conversation", as
   assert.equal(rebuilt.threads[0].settledAt, null);
   assert.equal(rebuilt.threads[0].worktree, "/fixture/worktree-must-remain");
   assert.equal(rebuilt.threads[0].archivedAt ?? null, null);
+});
+
+test("snooze is visibility-only, clears settle, and rejects unresolved operator blocks", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/worktree-must-remain",
+    prompt: "Keep running under snooze",
+    mode: "build",
+    provider: "claude-code",
+  });
+
+  // Running work may be snoozed — visibility only.
+  const wake = new Date(Date.now() + 3_600_000).toISOString();
+  const snoozedWhileRunning = await store.snoozeConversation(thread.id, wake);
+  assert.equal(snoozedWhileRunning.snoozedUntil, wake);
+  assert.ok(snoozedWhileRunning.snoozedAt);
+  assert.equal(snoozedWhileRunning.settledAt ?? null, null);
+  assert.equal(snoozedWhileRunning.worktree, "/fixture/worktree-must-remain");
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_pending",
+    id: "approval-snooze",
+    runId: "run-snooze",
+    conversationId: thread.id,
+    repository: "/fixture",
+    worktree: "/fixture/worktree-must-remain",
+    toolCallId: "tool-1",
+    toolName: "Bash",
+    scope: { summary: "run", target: "shell", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  await assert.rejects(
+    () => store.snoozeConversation(thread.id, new Date(Date.now() + 7_200_000).toISOString()),
+    /tool approval is unresolved/,
+  );
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "approval_resolved",
+    id: "approval-snooze",
+    state: "denied",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-snooze",
+    costUsd: 0,
+  });
+
+  const settled = await store.settleConversation(thread.id);
+  assert.ok(settled.settledAt);
+  assert.equal(settled.snoozedUntil ?? null, null);
+
+  const later = new Date(Date.now() + 86_400_000).toISOString();
+  const resnoozed = await store.snoozeConversation(thread.id, later);
+  assert.equal(resnoozed.snoozedUntil, later);
+  assert.equal(resnoozed.settledAt ?? null, null);
+
+  const again = await store.snoozeConversation(thread.id, later);
+  assert.equal(again.snoozedUntil, later);
+  assert.equal(again.snoozedAt, resnoozed.snoozedAt);
+
+  const unsnoozed = await store.unsnoozeConversation(thread.id);
+  assert.equal(unsnoozed.snoozedUntil ?? null, null);
+  assert.equal(unsnoozed.snoozedAt ?? null, null);
+  assert.equal((await store.unsnoozeConversation(thread.id)).snoozedUntil ?? null, null);
+
+  await assert.rejects(
+    () => store.snoozeConversation(thread.id, new Date(Date.now() - 1_000).toISOString()),
+    /future/,
+  );
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(rebuilt.threads[0].snoozedUntil ?? null, null);
+  assert.equal(rebuilt.threads[0].worktree, "/fixture/worktree-must-remain");
 });
 
 test("thread status projection and wokeAt track operator-attention transitions", async () => {
@@ -2062,14 +2225,15 @@ test("cross-provider fork fails closed when reviewed context changes", async () 
     text: "Context changed.",
   });
   await assert.rejects(
-    () => store.createFork({
-      sourceThreadId: thread.id,
-      provider: "codex-cli",
-      profileId: null,
-      model: "default",
-      worktree: "/fixture",
-      expectedDigest: preview.digest,
-    }),
+    () =>
+      store.createFork({
+        sourceThreadId: thread.id,
+        provider: "codex-cli",
+        profileId: null,
+        model: "default",
+        worktree: "/fixture",
+        expectedDigest: preview.digest,
+      }),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
   assert.equal((await store.load()).forks.length, 0);
@@ -2093,9 +2257,12 @@ test("fork preview coalesces consecutive assistant stream chunks", async () => {
     });
   }
   const preview = await store.previewFork(thread.id);
-  assert.deepEqual(preview.messages.map((message) => ({ role: message.role, text: message.text })), [
-    { role: "user", text: "How to install" },
-    { role: "assistant", text: "Hello world!" },
-  ]);
+  assert.deepEqual(
+    preview.messages.map((message) => ({ role: message.role, text: message.text })),
+    [
+      { role: "user", text: "How to install" },
+      { role: "assistant", text: "Hello world!" },
+    ],
+  );
   assert.equal(preview.messages.length, 2);
 });
