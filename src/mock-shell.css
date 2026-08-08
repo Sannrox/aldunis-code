@@ -2887,8 +2887,14 @@ html[data-desktop-shell="macos"] .sb-hd .sidebar-toggle--collapse {
 .main[data-sidebar-state="collapsed"] .topbar {
   padding-left: 56px !important;
 }
+.main[data-sidebar-state="collapsed"] .pane-switcher {
+  padding-left: 56px !important;
+}
 html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] .topbar {
   padding-left: 16px !important;
+}
+html[data-desktop-shell="macos"] .main[data-sidebar-state="collapsed"] .pane-switcher {
+  padding-left: 8px !important;
 }
 .main[data-sidebar-state="collapsed"] > .domain-page {
   padding-top: 68px;
