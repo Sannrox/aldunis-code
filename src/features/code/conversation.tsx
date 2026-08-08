@@ -4690,7 +4690,6 @@ export function Conversation({
                 </button>
                 {contextUsage && <ContextWindowMeter usage={contextUsage} />}
                 <div className="composer-run-settings" role="group" aria-label="Run settings">
-                  <span className="composer-run-settings-label">Run settings</span>
                   <div className="composer-provider" ref={providerMenuRef}>
                     <button
                       type="button"
@@ -5234,7 +5233,6 @@ export function Conversation({
                     >
                       <path d="M12 19V5M5 12l7-7 7 7" />
                     </svg>
-                    <span className="send-label">{threadId ? "Send" : "Start"}</span>
                   </button>
                 )}
               </div>
