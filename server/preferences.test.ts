@@ -18,10 +18,16 @@ test("preferences are versioned, persisted atomically, and survive restart", asy
     assert.equal(saved.managedWorktreeLimit, 10);
     assert.equal(saved.orchestrationThreadsBeta, false);
     assert.equal(saved.showThinking, false);
+    assert.equal(saved.conversationOpenScroll, "latest");
     assert.equal(saved.conversationSearchShortcut, "mod+shift+f");
     const restarted = await new PreferencesStore(directory).load();
     assert.deepEqual(restarted, { preferences: saved, recovered: false });
-    assert.equal((await readFile(join(directory, "preferences.v1.json"), "utf8")).includes("\"schemaVersion\": 1"), true);
+    assert.equal(
+      (await readFile(join(directory, "preferences.v1.json"), "utf8")).includes(
+        '"schemaVersion": 1',
+      ),
+      true,
+    );
   } finally {
     await rm(directory, { recursive: true });
   }
@@ -30,7 +36,7 @@ test("preferences are versioned, persisted atomically, and survive restart", asy
 test("invalid preferences recover visibly to safe defaults", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-preferences-"));
   try {
-    await writeFile(join(directory, "preferences.v1.json"), "{\"schemaVersion\":99}");
+    await writeFile(join(directory, "preferences.v1.json"), '{"schemaVersion":99}');
     assert.deepEqual(await new PreferencesStore(directory).load(), {
       preferences: DEFAULT_PREFERENCES,
       recovered: true,
@@ -40,7 +46,8 @@ test("invalid preferences recover visibly to safe defaults", async () => {
       /invalid value/,
     );
     await assert.rejects(
-      () => new PreferencesStore(directory).save({ ...DEFAULT_PREFERENCES, managedWorktreeLimit: 0 }),
+      () =>
+        new PreferencesStore(directory).save({ ...DEFAULT_PREFERENCES, managedWorktreeLimit: 0 }),
       /invalid value/,
     );
   } finally {
@@ -55,6 +62,7 @@ test("legacy version-one preferences gain safe beta and managed-worktree default
       managedWorktreeLimit: _managedWorktreeLimit,
       orchestrationThreadsBeta: _orchestrationThreadsBeta,
       showThinking: _showThinking,
+      conversationOpenScroll: _conversationOpenScroll,
       ...legacy
     } = DEFAULT_PREFERENCES;
     await writeFile(join(directory, "preferences.v1.json"), JSON.stringify(legacy));
@@ -62,6 +70,7 @@ test("legacy version-one preferences gain safe beta and managed-worktree default
     assert.equal(loaded.managedWorktreeLimit, 10);
     assert.equal(loaded.orchestrationThreadsBeta, false);
     assert.equal(loaded.showThinking, false);
+    assert.equal(loaded.conversationOpenScroll, "latest");
     assert.equal(loaded.conversationSearchShortcut, "mod+shift+f");
   } finally {
     await rm(directory, { recursive: true });

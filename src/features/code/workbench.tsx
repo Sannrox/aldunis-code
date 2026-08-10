@@ -616,6 +616,7 @@ export function CodeWorkbench({
   chiseiBindingAdministrationAvailable = true,
   orchestrationThreadsBeta = false,
   showThinking = false,
+  conversationOpenScroll = "latest",
   managedMode = false,
   managedModel,
   managedAccount,
@@ -642,6 +643,7 @@ export function CodeWorkbench({
   chiseiBindingAdministrationAvailable?: boolean;
   orchestrationThreadsBeta?: boolean;
   showThinking?: boolean;
+  conversationOpenScroll?: "latest" | "remember";
   managedMode?: boolean;
   managedModel?: string;
   managedAccount?: ManagedAccount | null;
@@ -1839,6 +1841,7 @@ export function CodeWorkbench({
                           onSelectProject={onSelectProject}
                           profiles={profiles}
                           showThinking={showThinking}
+                          conversationOpenScroll={conversationOpenScroll}
                           managedMode={managedMode}
                           managedModel={managedModel}
                           initialPrompt={initialRepairPrompt}
@@ -1940,6 +1943,7 @@ export function CodeWorkbench({
                               onSelectProject={onSelectProject}
                               profiles={profiles}
                               showThinking={showThinking}
+                              conversationOpenScroll={conversationOpenScroll}
                               managedMode={managedMode}
                               managedModel={managedModel}
                               onOpenRepository={onAddProject}

@@ -22,7 +22,7 @@ Typical contents (names may evolve; do not commit these files):
 | File / area                  | Purpose                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------ |
 | `events.v1.jsonl`            | Append-only conversation and autonomy history log                              |
-| `preferences.v1.json`        | Theme, density, worktree limit, shortcuts, display flags                       |
+| `preferences.v1.json`        | Theme, density, worktree limit, shortcuts, display flags, open-scroll mode     |
 | `automations.v1.json`        | Scheduled automations                                                          |
 | `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references        |
 | Profile / secret store       | Provider profile metadata (all providers + adapters) + env secrets             |

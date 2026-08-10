@@ -32,6 +32,7 @@ export function preferencesHaveUnsavedChanges(draft: Preferences, saved: Prefere
     draft.reducedMotion !== saved.reducedMotion ||
     draft.orchestrationThreadsBeta !== saved.orchestrationThreadsBeta ||
     draft.showThinking !== saved.showThinking ||
+    draft.conversationOpenScroll !== saved.conversationOpenScroll ||
     draft.commandPaletteShortcut !== saved.commandPaletteShortcut ||
     draft.conversationSearchShortcut !== saved.conversationSearchShortcut ||
     draft.managedWorktreeLimit !== saved.managedWorktreeLimit
@@ -434,6 +435,33 @@ export function PreferencesDialog({
                       checked={draft.showThinking}
                       onChange={(event) => update("showThinking", event.target.checked)}
                     />
+                  </div>
+                </div>
+                <div className="field">
+                  <div className="fl">
+                    <label className="fn" htmlFor="preferences-conversation-open-scroll">
+                      Open conversation at
+                    </label>
+                    <div className="fd">
+                      Jump to the latest message, or restore where you last scrolled in that thread.
+                      Live auto-follow while reading is unchanged.
+                    </div>
+                  </div>
+                  <div className="fc">
+                    <select
+                      id="preferences-conversation-open-scroll"
+                      name="preferences-conversation-open-scroll"
+                      value={draft.conversationOpenScroll}
+                      onChange={(event) =>
+                        update(
+                          "conversationOpenScroll",
+                          event.target.value as Preferences["conversationOpenScroll"],
+                        )
+                      }
+                    >
+                      <option value="latest">Latest message</option>
+                      <option value="remember">Last scroll position</option>
+                    </select>
                   </div>
                 </div>
                 <div className="field">

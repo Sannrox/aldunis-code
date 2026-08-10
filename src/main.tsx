@@ -454,6 +454,7 @@ function App() {
         chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
         showThinking={preferences.showThinking}
+        conversationOpenScroll={preferences.conversationOpenScroll}
         managedMode={hostCapabilities.managed}
         managedModel={hostCapabilities.provider?.model}
         managedAccount={hostCapabilities.account}
