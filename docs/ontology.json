@@ -168,6 +168,10 @@
       "description": "A loopback-only Aldunis Code preview session that starts one selected worktree's declared development command after scoped approval and renders it in a sandboxed iframe with browser permissions denied."
     },
     {
+      "name": "PreviewHostContractModule",
+      "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal."
+    },
+    {
       "name": "FloatingWebPreview",
       "description": "A transient presentation of a running ConstrainedWebPreview in a fixed in-workbench window so the operator can keep the local application visible while continuing the conversation; it adds no provider-browser, navigation, credential, or persistence authority."
     },
@@ -586,6 +590,26 @@
       "description": "Presents a running loopback-only preview in a transient fixed window without changing the preview's origin, sandbox, denied permissions, or approval boundary.",
       "domain": "ConstrainedWebPreview",
       "range": "FloatingWebPreview",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "coordinates_constrained_preview",
+      "description": "The renderer host-contract module serializes scoped preview intents and validates host snapshots without moving preview authority out of the local host.",
+      "domain": "PreviewHostContractModule",
+      "range": "ConstrainedWebPreview",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "coordinates_shared_browser_session",
+      "description": "The renderer host-contract module retains the validated conversation and origin binding needed for control, status, confirmed close, and best-effort cleanup.",
+      "domain": "PreviewHostContractModule",
+      "range": "SharedBrowserSession",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -1151,6 +1175,24 @@
       "subject": "ConstrainedWebPreview",
       "source": "Aldunis Code constrained web preview contract",
       "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PreviewHostContractModule",
+      "source": "Aldunis Code preview host-contract implementation",
+      "locator": "src/lib/preview-host.ts; src/lib/preview-host.test.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_constrained_preview",
+      "source": "Aldunis Code preview host-contract implementation",
+      "locator": "src/lib/preview-host.ts; server/host.ts; server/preview.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_shared_browser_session",
+      "source": "Aldunis Code preview host-contract implementation",
+      "locator": "src/lib/preview-host.ts; server/host.ts; server/browser.ts",
       "confidence": 1.0
     },
     {

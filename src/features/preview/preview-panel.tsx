@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   PreviewSnapshot,
   PreviewState,
@@ -9,18 +9,13 @@ import type {
 } from "../../types";
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
+import { createPreviewHost, previewHostErrorMessage } from "../../lib/preview-host";
 
 export interface PreviewPanelStatus {
   state: PreviewState | "inactive";
   error: string | null;
 }
 
-export function previewActionError(cause: unknown, fallback: string): string {
-  if (cause instanceof TypeError && cause.message === "Failed to fetch") {
-    return "Preview service is unavailable. The action was not confirmed; retry when the local host is ready.";
-  }
-  return cause instanceof Error ? cause.message : fallback;
-}
 export function PreviewPanel({
   repository,
   pane = "primary",
@@ -63,68 +58,63 @@ export function PreviewPanel({
   } | null>(null);
   const sharedBrowserViewRef = useRef<HTMLElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const previewHost = useMemo(
+    () =>
+      createPreviewHost({
+        root: repository.root,
+        worktree: repository.selectedWorktree,
+      }),
+    [repository.root, repository.selectedWorktree],
+  );
+  const previewHostRef = useRef(previewHost);
+  const conversationIdRef = useRef(conversationId);
+  const disposalTimersRef = useRef(new Map<typeof previewHost, number>());
+  previewHostRef.current = previewHost;
+  conversationIdRef.current = conversationId;
   browserSessionRef.current = browserSession;
   const sharedBrowser = browserSession;
   const hasSharedBrowser = Boolean(sharedBrowser);
   const hasAgentObservation = !hasSharedBrowser && Boolean(agentObservation);
-  const desktopBrowserAvailable = Boolean(window.aldunisDesktopCapabilities?.sharedBrowser && conversationId);
+  const desktopBrowserAvailable = Boolean(
+    window.aldunisDesktopCapabilities?.sharedBrowser && conversationId,
+  );
   const request = async () => {
     setError(null);
     setReference(null);
     try {
-      const response = await fetch("/api/previews/request", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          origin,
-        }),
-      });
-      const body = await response.json() as PreviewSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Preview could not be prepared.");
-      setPreview(body as PreviewSnapshot);
+      const state = await previewHost.perform({ kind: "preview.prepare", origin });
+      if (previewHostRef.current !== previewHost) return;
+      setPreview(state.preview);
     } catch (cause) {
-      setError(previewActionError(cause, "Preview could not be prepared."));
+      if (previewHostRef.current !== previewHost) return;
+      setError(previewHostErrorMessage(cause, "Preview could not be prepared."));
     }
   };
   const decide = async (decision: "allow_once" | "deny") => {
     if (!preview) return;
     setError(null);
     try {
-      const response = await fetch(`/api/previews/${preview.id}/decide`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          decision,
-        }),
-      });
-      const body = await response.json() as PreviewSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Preview decision failed.");
-      setPreview(body as PreviewSnapshot);
-      if ((body as PreviewSnapshot).state === "running") setFrameState("loading");
+      const state = await previewHost.perform({ kind: "preview.decide", decision });
+      if (previewHostRef.current !== previewHost) return;
+      setPreview(state.preview);
+      if (state.preview?.state === "running") setFrameState("loading");
     } catch (cause) {
-      setError(previewActionError(cause, "Preview decision failed."));
+      if (previewHostRef.current !== previewHost) return;
+      setError(previewHostErrorMessage(cause, "Preview decision failed."));
     }
   };
   const stop = async () => {
     if (!preview) return;
     setError(null);
     try {
-      const response = await fetch(`/api/previews/${preview.id}/stop`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
-      });
-      const body = await response.json() as PreviewSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Preview could not be stopped.");
-      setPreview(body as PreviewSnapshot);
+      const state = await previewHost.perform({ kind: "preview.stop" });
+      if (previewHostRef.current !== previewHost) return;
+      setPreview(state.preview);
       setFrameState("idle");
       setReference(null);
     } catch (cause) {
-      setError(previewActionError(cause, "Preview could not be stopped."));
+      if (previewHostRef.current !== previewHost) return;
+      setError(previewHostErrorMessage(cause, "Preview could not be stopped."));
     }
   };
   const openSharedBrowser = async () => {
@@ -138,77 +128,52 @@ export function PreviewPanel({
     }
     setError(null);
     try {
-      const response = await fetch("/api/browser/sessions/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          conversationId,
-          origin: preview.origin,
-        }),
-      });
-      const body = await response.json() as BrowserSessionSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error ?? "Shared browser could not be opened." : "Shared browser could not be opened.");
+      const state = await previewHost.perform({ kind: "browser.open", conversationId });
+      if (previewHostRef.current !== previewHost) return;
+      if (conversationIdRef.current !== conversationId) {
+        await previewHost.perform({ kind: "browser.release" });
+        return;
+      }
       browserSessionScopeRef.current = {
         conversationId,
         root: repository.root,
         worktree: repository.selectedWorktree,
       };
-      const nextSession = body as BrowserSessionSnapshot;
+      const nextSession = state.browser;
+      if (!nextSession) throw new Error("Shared browser could not be opened.");
       browserSessionRef.current = nextSession;
       setBrowserSession(nextSession);
     } catch (cause) {
-      setError(previewActionError(cause, "Shared browser could not be opened."));
+      if (previewHostRef.current !== previewHost) return;
+      setError(previewHostErrorMessage(cause, "Shared browser could not be opened."));
     }
   };
   const updateBrowserControl = async (enabled: boolean) => {
     if (!browserSession || !conversationId) return;
     setError(null);
     try {
-      const response = await fetch("/api/browser/sessions/control", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          conversationId,
-          origin: browserSession.origin,
-          sessionId: browserSession.id,
-          enabled,
-        }),
-      });
-      const body = await response.json() as BrowserSessionSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error ?? "Browser control could not be updated." : "Browser control could not be updated.");
-      setBrowserSession(body as BrowserSessionSnapshot);
+      const state = await previewHost.perform({ kind: "browser.control", enabled });
+      if (previewHostRef.current !== previewHost) return;
+      setBrowserSession(state.browser);
     } catch (cause) {
-      setError(previewActionError(cause, "Browser control could not be updated."));
+      if (previewHostRef.current !== previewHost) return;
+      setError(previewHostErrorMessage(cause, "Browser control could not be updated."));
     }
   };
   const closeSharedBrowser = async (): Promise<boolean> => {
     if (!browserSession || !conversationId) return true;
     setError(null);
     try {
-      const response = await fetch("/api/browser/sessions/close", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          conversationId,
-          origin: browserSession.origin,
-          sessionId: browserSession.id,
-        }),
-      });
-      const body = await response.json() as BrowserSessionSnapshot | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error ?? "Shared browser could not be closed." : "Shared browser could not be closed.");
+      await previewHost.perform({ kind: "browser.close" });
+      if (previewHostRef.current !== previewHost) return false;
       browserSessionRef.current = null;
       setBrowserSession(null);
       browserSessionScopeRef.current = null;
       setPictureInPicture(false);
       return true;
     } catch (cause) {
-      setError(previewActionError(cause, "Shared browser could not be closed."));
+      if (previewHostRef.current !== previewHost) return false;
+      setError(previewHostErrorMessage(cause, "Shared browser could not be closed."));
       return false;
     }
   };
@@ -222,98 +187,109 @@ export function PreviewPanel({
     });
   };
   const togglePictureInPicture = async () => {
-    if (!browserSession || !window.aldunisDesktopCapabilities?.sharedBrowser || !window.aldunisDesktop) return;
+    if (
+      !browserSession ||
+      !window.aldunisDesktopCapabilities?.sharedBrowser ||
+      !window.aldunisDesktop
+    )
+      return;
     setError(null);
     const next = !pictureInPicture;
     const opened = await window.aldunisDesktop.setBrowserPictureInPicture(browserSession.id, next);
     if (!opened && next) {
-      setError("Picture-in-picture could not be opened. Keep the shared browser docked in the workspace.");
+      setError(
+        "Picture-in-picture could not be opened. Keep the shared browser docked in the workspace.",
+      );
       return;
     }
     setPictureInPicture(next);
   };
   useEffect(() => {
+    for (const [host, timer] of disposalTimersRef.current) {
+      window.clearTimeout(timer);
+      disposalTimersRef.current.delete(host);
+      if (host !== previewHost) void host.dispose({ stopPreview: true });
+    }
+    browserSessionScopeRef.current = null;
+    browserSessionRef.current = null;
+    setPreview(null);
+    setBrowserSession(null);
+    setPictureInPicture(false);
+    return () => {
+      browserSessionScopeRef.current = null;
+      browserSessionRef.current = null;
+      const timer = window.setTimeout(() => {
+        disposalTimersRef.current.delete(previewHost);
+        void previewHost.dispose();
+      }, 0);
+      disposalTimersRef.current.set(previewHost, timer);
+    };
+  }, [previewHost]);
+  useEffect(() => {
     const scope = browserSessionScopeRef.current;
-    if (!scope || scope.conversationId === conversationId || !browserSession) return;
-    const previous = browserSession;
+    if (!scope || scope.conversationId === conversationId || !browserSessionRef.current) return;
     browserSessionScopeRef.current = null;
     browserSessionRef.current = null;
     setBrowserSession(null);
     setPictureInPicture(false);
-    void fetch("/api/browser/sessions/close", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        root: scope.root,
-        worktree: scope.worktree,
-        conversationId: scope.conversationId,
-        origin: previous.origin,
-        sessionId: previous.id,
-      }),
-    }).catch(() => undefined);
-  }, [browserSession, conversationId]);
-  useEffect(() => () => {
-    const scope = browserSessionScopeRef.current;
-    const previous = browserSessionRef.current;
-    if (!scope || !previous) return;
-    browserSessionScopeRef.current = null;
-    browserSessionRef.current = null;
-    void fetch("/api/browser/sessions/close", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        root: scope.root,
-        worktree: scope.worktree,
-        conversationId: scope.conversationId,
-        origin: previous.origin,
-        sessionId: previous.id,
-      }),
-    }).catch(() => undefined);
-  }, []);
+    void previewHost.perform({ kind: "browser.release" });
+  }, [browserSession, conversationId, previewHost]);
   useEffect(() => {
     if (!preview || !["starting", "running", "stopping"].includes(preview.state)) return;
+    let inFlight = false;
     const timer = window.setInterval(async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const response = await fetch(`/api/previews/${preview.id}/status`, { method: "POST" });
-        const body = await response.json() as PreviewSnapshot;
-        if (response.ok) setPreview(body);
+        const state = await previewHost.perform({ kind: "preview.status" });
+        if (previewHostRef.current !== previewHost) return;
+        setPreview(state.preview);
       } catch {
+        if (previewHostRef.current !== previewHost) return;
         setError("Preview status is unavailable.");
+      } finally {
+        inFlight = false;
       }
     }, 1_000);
     return () => window.clearInterval(timer);
   }, [preview?.id, preview?.state]);
   useEffect(() => {
     if (!browserSession || !conversationId) return;
+    let inFlight = false;
     const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const response = await fetch("/api/browser/sessions/status", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            root: repository.root,
-            worktree: repository.selectedWorktree,
-            conversationId,
-            origin: browserSession.origin,
-            sessionId: browserSession.id,
-          }),
-        });
-        const body = await response.json() as BrowserSessionSnapshot | { error?: string };
-        if (!response.ok) throw new Error("error" in body ? body.error ?? "Shared browser status is unavailable." : "Shared browser status is unavailable.");
-        setBrowserSession(body as BrowserSessionSnapshot);
+        const state = await previewHost.perform({ kind: "browser.status" });
+        if (previewHostRef.current !== previewHost) return;
+        setBrowserSession(state.browser);
       } catch (cause) {
-        setError(previewActionError(cause, "Shared browser status is unavailable."));
+        if (previewHostRef.current !== previewHost) return;
+        setError(previewHostErrorMessage(cause, "Shared browser status is unavailable."));
+      } finally {
+        inFlight = false;
       }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 1_000);
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 1_000);
     return () => window.clearInterval(timer);
-  }, [browserSession?.id, browserSession?.origin, conversationId, repository.root, repository.selectedWorktree]);
+  }, [
+    browserSession?.id,
+    browserSession?.origin,
+    conversationId,
+    previewHost,
+    repository.root,
+    repository.selectedWorktree,
+  ]);
   useEffect(() => {
     if (!browserSession || !desktopBrowserAvailable) return;
-    const view = sharedBrowserViewRef.current as (HTMLElement & {
-      getWebContentsId?: () => number;
-    }) | null;
+    const view = sharedBrowserViewRef.current as
+      | (HTMLElement & {
+          getWebContentsId?: () => number;
+        })
+      | null;
     if (!view) return;
     let guestId: number | null = null;
     const register = () => {
@@ -321,13 +297,12 @@ export function PreviewPanel({
         const candidate = view.getWebContentsId?.();
         if (typeof candidate !== "number" || !Number.isInteger(candidate)) return;
         guestId = candidate;
-        void window.aldunisDesktop?.registerBrowserView(
-          browserSession.id,
-          candidate,
-          browserSession.origin,
-        ).then((registered) => {
-          if (!registered) setError("The shared browser view could not be registered with the desktop host.");
-        });
+        void window.aldunisDesktop
+          ?.registerBrowserView(browserSession.id, candidate, browserSession.origin)
+          .then((registered) => {
+            if (!registered)
+              setError("The shared browser view could not be registered with the desktop host.");
+          });
       } catch {
         setError("The shared browser view could not be registered with the desktop host.");
       }
@@ -349,7 +324,7 @@ export function PreviewPanel({
   useEffect(() => {
     if (frameState !== "loading") return;
     const timer = window.setTimeout(() => {
-      setFrameState((current) => current === "loading" ? "stale" : current);
+      setFrameState((current) => (current === "loading" ? "stale" : current));
     }, 8_000);
     return () => window.clearTimeout(timer);
   }, [frameState]);
@@ -362,18 +337,22 @@ export function PreviewPanel({
       const value = event.data as Record<string, unknown>;
       if (value?.type === "aldunis-preview:element-error") {
         setReferencePending(false);
-        setError(typeof value.message === "string" ? value.message.slice(0, 240) : "Element is unavailable or stale.");
+        setError(
+          typeof value.message === "string"
+            ? value.message.slice(0, 240)
+            : "Element is unavailable or stale.",
+        );
         return;
       }
       if (value?.type !== "aldunis-preview:element-reference") return;
-      const screenshot = typeof value.screenshot === "string"
-        && value.screenshot.startsWith("data:image/")
-        && value.screenshot.length <= 512_000
-        ? value.screenshot
-        : null;
-      const short = (candidate: unknown, limit: number) => (
-        typeof candidate === "string" ? candidate.slice(0, limit) : null
-      );
+      const screenshot =
+        typeof value.screenshot === "string" &&
+        value.screenshot.startsWith("data:image/") &&
+        value.screenshot.length <= 512_000
+          ? value.screenshot
+          : null;
+      const short = (candidate: unknown, limit: number) =>
+        typeof candidate === "string" ? candidate.slice(0, limit) : null;
       const selector = short(value.selector, 240);
       const tag = short(value.tag, 32);
       if (!selector || !tag) {
@@ -405,7 +384,10 @@ export function PreviewPanel({
     );
     window.setTimeout(() => {
       setReferencePending((pending) => {
-        if (pending) setError("The page did not provide an element reference. Its preview bridge may be unavailable.");
+        if (pending)
+          setError(
+            "The page did not provide an element reference. Its preview bridge may be unavailable.",
+          );
         return false;
       });
     }, 10_000);
@@ -414,8 +396,10 @@ export function PreviewPanel({
   useEffect(() => {
     onStatusChange?.({
       state: browserSession
-        ? browserSession.state === "ready" ? "running" : "starting"
-        : preview?.state ?? "inactive",
+        ? browserSession.state === "ready"
+          ? "running"
+          : "starting"
+        : (preview?.state ?? "inactive"),
       error: browserSession?.error ?? error,
     });
   }, [browserSession?.error, browserSession?.state, error, onStatusChange, preview?.state]);
@@ -434,15 +418,31 @@ export function PreviewPanel({
   return (
     <section
       className={`preview-panel${floating ? " preview-panel--floating" : ""}`}
-      aria-label={hasSharedBrowser
-        ? `Shared browser, ${pane} pane`
-        : hasAgentObservation ? `Agent browser view, ${pane} pane` : `Web preview, ${pane} pane`}
+      aria-label={
+        hasSharedBrowser
+          ? `Shared browser, ${pane} pane`
+          : hasAgentObservation
+            ? `Agent browser view, ${pane} pane`
+            : `Web preview, ${pane} pane`
+      }
       hidden={!active}
     >
       <header>
         <div>
-          <p className="eyebrow">{hasSharedBrowser ? "SHARED BROWSER" : hasAgentObservation ? "PROVIDER OBSERVATION" : "CONSTRAINED PREVIEW"}</p>
-          <h2>{hasSharedBrowser ? "Shared local browser" : hasAgentObservation ? "Agent browser view" : "Local web application"}</h2>
+          <p className="eyebrow">
+            {hasSharedBrowser
+              ? "SHARED BROWSER"
+              : hasAgentObservation
+                ? "PROVIDER OBSERVATION"
+                : "CONSTRAINED PREVIEW"}
+          </p>
+          <h2>
+            {hasSharedBrowser
+              ? "Shared local browser"
+              : hasAgentObservation
+                ? "Agent browser view"
+                : "Local web application"}
+          </h2>
         </div>
         <div>
           {(running || hasAgentObservation || hasSharedBrowser) && (
@@ -452,16 +452,27 @@ export function PreviewPanel({
               variant={floating ? "primary" : "default"}
               onClick={onToggleFloating}
               aria-pressed={floating}
-              aria-label={floating
-                ? `Dock ${hasSharedBrowser ? "shared browser" : hasAgentObservation ? "agent browser view" : "preview"}, ${pane} pane`
-                : `Float ${hasSharedBrowser ? "shared browser" : hasAgentObservation ? "agent browser view" : "preview"}, ${pane} pane`}
-              title={floating ? "Return the view to the workspace" : "Keep the view visible while you chat"}
+              aria-label={
+                floating
+                  ? `Dock ${hasSharedBrowser ? "shared browser" : hasAgentObservation ? "agent browser view" : "preview"}, ${pane} pane`
+                  : `Float ${hasSharedBrowser ? "shared browser" : hasAgentObservation ? "agent browser view" : "preview"}, ${pane} pane`
+              }
+              title={
+                floating
+                  ? "Return the view to the workspace"
+                  : "Keep the view visible while you chat"
+              }
             >
               {floating ? "Dock" : "Float"}
             </Button>
           )}
           {running && (
-            <Button type="button" size="sm" onClick={() => void stop()} aria-label={`Stop local web preview, ${pane} pane`}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void stop()}
+              aria-label={`Stop local web preview, ${pane} pane`}
+            >
               Stop
             </Button>
           )}
@@ -471,7 +482,11 @@ export function PreviewPanel({
               size="sm"
               onClick={() => void togglePictureInPicture()}
               aria-pressed={pictureInPicture}
-              aria-label={pictureInPicture ? "Close shared browser picture-in-picture" : "Open shared browser picture-in-picture"}
+              aria-label={
+                pictureInPicture
+                  ? "Close shared browser picture-in-picture"
+                  : "Open shared browser picture-in-picture"
+              }
             >
               {pictureInPicture ? "Close PiP" : "PiP"}
             </Button>
@@ -486,7 +501,10 @@ export function PreviewPanel({
         <>
           <div className="preview-policy">
             <strong>Shared loopback browser</strong>
-            <span>The workspace and picture-in-picture show the same Electron page. Navigation stays on localhost, and agent control is a separate session rule.</span>
+            <span>
+              The workspace and picture-in-picture show the same Electron page. Navigation stays on
+              localhost, and agent control is a separate session rule.
+            </span>
           </div>
           <div className="shared-browser-workspace">
             <div className="preview-toolbar shared-browser-toolbar">
@@ -494,7 +512,11 @@ export function PreviewPanel({
                 {sharedBrowser.title ?? sharedBrowser.url ?? sharedBrowser.origin}
               </span>
               <span className={`browser-control-badge ${sharedBrowser.controller}`}>
-                {sharedBrowser.controller === "agent" ? "agent controls" : sharedBrowser.controller === "human" ? "human controls" : "view only"}
+                {sharedBrowser.controller === "agent"
+                  ? "agent controls"
+                  : sharedBrowser.controller === "human"
+                    ? "human controls"
+                    : "view only"}
               </span>
               {sharedBrowser.agentControl ? (
                 <Button
@@ -503,10 +525,17 @@ export function PreviewPanel({
                   variant={sharedBrowser.controller === "human" ? "primary" : "default"}
                   onClick={() => void updateBrowserControl(sharedBrowser.controller === "human")}
                 >
-                  {sharedBrowser.controller === "human" ? "Return control to agent" : "Pause agent control"}
+                  {sharedBrowser.controller === "human"
+                    ? "Return control to agent"
+                    : "Pause agent control"}
                 </Button>
               ) : (
-                <Button type="button" size="sm" variant="primary" onClick={() => void updateBrowserControl(true)}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  onClick={() => void updateBrowserControl(true)}
+                >
                   Allow agent control
                 </Button>
               )}
@@ -516,7 +545,9 @@ export function PreviewPanel({
             </div>
             {desktopBrowserAvailable ? (
               React.createElement("webview", {
-                ref: (value: HTMLElement | null) => { sharedBrowserViewRef.current = value; },
+                ref: (value: HTMLElement | null) => {
+                  sharedBrowserViewRef.current = value;
+                },
                 title: "Shared local application browser",
                 src: "about:blank",
                 partition: sharedBrowser.partition,
@@ -527,17 +558,27 @@ export function PreviewPanel({
             ) : (
               <div className="shared-browser-unavailable" role="status">
                 <strong>Desktop browser host required</strong>
-                <p>Run Aldunis Code as the desktop application to open the shared browser. Provider observation remains available below when a provider supplies a frame.</p>
+                <p>
+                  Run Aldunis Code as the desktop application to open the shared browser. Provider
+                  observation remains available below when a provider supplies a frame.
+                </p>
               </div>
             )}
-            <p>The session uses a conversation-scoped persistent partition. Cookies and page state stay in the desktop profile; screenshots and page text are not added to conversation history.</p>
+            <p>
+              The session uses a conversation-scoped persistent partition. Cookies and page state
+              stay in the desktop profile; screenshots and page text are not added to conversation
+              history.
+            </p>
           </div>
         </>
       ) : hasAgentObservation ? (
         <>
           <div className="preview-policy">
             <strong>Ephemeral snapshot</strong>
-            <span>Provider-supplied, read-only image bytes. No page controls, browser credentials, or history are attached.</span>
+            <span>
+              Provider-supplied, read-only image bytes. No page controls, browser credentials, or
+              history are attached.
+            </span>
           </div>
           <div className="browser-observation-workspace">
             <div className="preview-toolbar">
@@ -549,20 +590,35 @@ export function PreviewPanel({
             <figure>
               <img
                 src={agentObservation?.imageData}
-                alt={agentObservation?.title ? `Provider browser: ${agentObservation.title}` : "Provider browser snapshot"}
+                alt={
+                  agentObservation?.title
+                    ? `Provider browser: ${agentObservation.title}`
+                    : "Provider browser snapshot"
+                }
               />
             </figure>
-            <p>Source: {agentObservation?.provider}. The frame disappears when this turn is replaced or the view is closed.</p>
+            <p>
+              Source: {agentObservation?.provider}. The frame disappears when this turn is replaced
+              or the view is closed.
+            </p>
           </div>
         </>
       ) : (
         <>
           <div className="preview-policy">
             <strong>Loopback only</strong>
-            <span>Popups, downloads, clipboard, browser permissions, and top navigation are denied.</span>
+            <span>
+              Popups, downloads, clipboard, browser permissions, and top navigation are denied.
+            </span>
           </div>
           {!preview && (
-            <form className="preview-setup" onSubmit={(event) => { event.preventDefault(); void request(); }}>
+            <form
+              className="preview-setup"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void request();
+              }}
+            >
               <label htmlFor="preview-origin">Configured preview origin</label>
               <input
                 id="preview-origin"
@@ -579,7 +635,9 @@ export function PreviewPanel({
           )}
           {preview?.state === "approval_pending" && (
             <section className="preview-approval">
-              <span><Icon name="shield" /></span>
+              <span>
+                <Icon name="shield" />
+              </span>
               <div>
                 <strong>Start development server once?</strong>
                 <code title={preview.command}>{preview.command}</code>
@@ -626,7 +684,11 @@ export function PreviewPanel({
                   size="sm"
                   onClick={selectElement}
                   disabled={referencePending || frameState !== "visible"}
-                  aria-label={referencePending ? "Choose an element in the preview" : "Reference element in the preview"}
+                  aria-label={
+                    referencePending
+                      ? "Choose an element in the preview"
+                      : "Reference element in the preview"
+                  }
                 >
                   {referencePending ? "Choose an element…" : "Reference element"}
                 </Button>
@@ -642,12 +704,22 @@ export function PreviewPanel({
               />
               {reference && (
                 <aside className="element-reference">
-                  <header><strong>Element context</strong><span>{reference.tag}{reference.role ? ` · ${reference.role}` : ""}</span></header>
+                  <header>
+                    <strong>Element context</strong>
+                    <span>
+                      {reference.tag}
+                      {reference.role ? ` · ${reference.role}` : ""}
+                    </span>
+                  </header>
                   <code title={reference.selector}>{reference.selector}</code>
                   {reference.name && <p>Accessible name: {reference.name}</p>}
                   {reference.text && <p>{reference.text}</p>}
-                  {reference.screenshot && <img src={reference.screenshot} alt="Selected element snapshot" />}
-                  <small>Only this bounded reference is attached; unrelated page data is not collected.</small>
+                  {reference.screenshot && (
+                    <img src={reference.screenshot} alt="Selected element snapshot" />
+                  )}
+                  <small>
+                    Only this bounded reference is attached; unrelated page data is not collected.
+                  </small>
                 </aside>
               )}
             </div>
@@ -655,12 +727,21 @@ export function PreviewPanel({
           {preview && !["approval_pending", "running"].includes(preview.state) && (
             <div className={`preview-status ${preview.state}`}>
               <strong>{preview.state.replace("_", " ")}</strong>
-              <p>{preview.message ?? (preview.state === "starting" ? "Starting the approved command…" : "Preview is inactive.")}</p>
+              <p>
+                {preview.message ??
+                  (preview.state === "starting"
+                    ? "Starting the approved command…"
+                    : "Preview is inactive.")}
+              </p>
             </div>
           )}
         </>
       )}
-      {error && <div className="provider-error" role="alert">{error}</div>}
+      {error && (
+        <div className="provider-error" role="alert">
+          {error}
+        </div>
+      )}
     </section>
   );
 }
