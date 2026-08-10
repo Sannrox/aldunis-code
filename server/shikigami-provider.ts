@@ -21,10 +21,7 @@ import { promisify } from "node:util";
 import TOML from "@iarna/toml";
 import { withElectronRunAsNode } from "./electron-runtime.ts";
 import type { ManagedShikigamiRuntime } from "./managed-host.ts";
-import {
-  isMutatingTool,
-  PermissionBroker,
-} from "./permission.ts";
+import { isMutatingTool, PermissionBroker } from "./permission.ts";
 import {
   formatShikigamiModeViolation,
   SHIKIGAMI_MODE_VIOLATION_CODE,
@@ -128,13 +125,13 @@ export function confirmShikigamiRunId(current: string | null, candidate: string)
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
 export function assertSupportedShikigamiVersion(output: string): string {
-  const match = output.match(/shikigami\s+(\d+)\.(\d+)\.(\d+)/i)
-    ?? output.match(/(\d+)\.(\d+)\.(\d+)/);
+  const match =
+    output.match(/shikigami\s+(\d+)\.(\d+)\.(\d+)/i) ?? output.match(/(\d+)\.(\d+)\.(\d+)/);
   if (!match || Number(match[1]) !== SUPPORTED_SHIKIGAMI_MAJOR) {
     throw new ProviderProtocolError(
       `Unsupported shikigami version. Aldunis Code requires major version ${SUPPORTED_SHIKIGAMI_MAJOR}.`,
@@ -157,9 +154,11 @@ export function supportsShikigamiModelCatalog(version: string): boolean {
   const major = Number(match[1]);
   const minor = Number(match[2]);
   const patch = Number(match[3]);
-  return major > SUPPORTED_SHIKIGAMI_MAJOR
-    || (major === SUPPORTED_SHIKIGAMI_MAJOR
-      && (minor > 0 || (minor === 0 && patch >= MODEL_CATALOG_MIN_PATCH)));
+  return (
+    major > SUPPORTED_SHIKIGAMI_MAJOR ||
+    (major === SUPPORTED_SHIKIGAMI_MAJOR &&
+      (minor > 0 || (minor === 0 && patch >= MODEL_CATALOG_MIN_PATCH)))
+  );
 }
 
 export function assertManagedShikigamiVersion(output: string): string {
@@ -214,19 +213,23 @@ export function normalizeShikigamiEvent(
   }
   if (event.type === "tool_start") {
     const name = typeof event.name === "string" ? event.name : "tool";
-    return [{
-      kind: "tool_started",
-      toolCallId: tools.start(name),
-      name,
-    }];
+    return [
+      {
+        kind: "tool_started",
+        toolCallId: tools.start(name),
+        name,
+      },
+    ];
   }
   if (event.type === "tool_end") {
     const name = typeof event.name === "string" ? event.name : "tool";
-    return [{
-      kind: "tool_finished",
-      toolCallId: tools.end(name),
-      failed: event.ok === false,
-    }];
+    return [
+      {
+        kind: "tool_finished",
+        toolCallId: tools.end(name),
+        failed: event.ok === false,
+      },
+    ];
   }
   if (event.type === "model_turn") {
     // content_preview is truncated mid-turn progress; do not persist as assistant text
@@ -240,17 +243,20 @@ export function normalizeShikigamiEvent(
     return text ? [{ kind: "assistant_text", text: `[${level}] ${text}` }] : [];
   }
   if (event.type === "run_finished") {
-    const runId = typeof event.run_id === "string"
-      ? confirmShikigamiRunId(null, event.run_id)
-      : confirmShikigamiRunId(null, "");
+    const runId =
+      typeof event.run_id === "string"
+        ? confirmShikigamiRunId(null, event.run_id)
+        : confirmShikigamiRunId(null, "");
     const success = event.success === true;
     const summary = typeof event.summary === "string" ? event.summary : "";
     if (!success) {
-      return [{
-        kind: "failed",
-        message: summary || "Shikigami run reported failure.",
-        sessionId: runId,
-      }];
+      return [
+        {
+          kind: "failed",
+          message: summary || "Shikigami run reported failure.",
+          sessionId: runId,
+        },
+      ];
     }
     return [
       ...(summary ? [{ kind: "assistant_text" as const, text: summary }] : []),
@@ -258,9 +264,9 @@ export function normalizeShikigamiEvent(
     ];
   }
   if (
-    event.type === "prompt"
-    || event.type === "context_compacted"
-    || event.type === "todos_updated"
+    event.type === "prompt" ||
+    event.type === "context_compacted" ||
+    event.type === "todos_updated"
   ) {
     return [];
   }
@@ -296,14 +302,7 @@ export function toolsForMode(mode: InteractionMode): string[] {
   if (mode === "plan") {
     return ["read_file", "glob", "grep", "report", "todo_write"];
   }
-  return [
-    "read_file",
-    "glob",
-    "grep",
-    "report",
-    "todo_write",
-    ...SHIKIGAMI_MUTATING_TOOLS,
-  ];
+  return ["read_file", "glob", "grep", "report", "todo_write", ...SHIKIGAMI_MUTATING_TOOLS];
 }
 
 function managedToolsForMode(mode: InteractionMode): string[] {
@@ -318,7 +317,7 @@ export function parseToolArgsJson(argsJson: unknown): Record<string, unknown> {
   try {
     const parsed = JSON.parse(argsJson) as unknown;
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
+      ? (parsed as Record<string, unknown>)
       : {};
   } catch {
     return {};
@@ -340,29 +339,30 @@ function booleanSetting(section: unknown, key: string): boolean | undefined {
 }
 
 function configPathForCwd(input: string, cwd: string): string {
-  const expanded = input === "~"
-    ? homedir()
-    : input.startsWith("~/")
-    ? join(homedir(), input.slice(2))
-    : input;
+  const expanded =
+    input === "~" ? homedir() : input.startsWith("~/") ? join(homedir(), input.slice(2)) : input;
   return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
 }
 
 /** Read native settings without modifying the operator's config file. */
-export async function loadShikigamiConfig(options: {
-  environment?: NodeJS.ProcessEnv;
-  cwd?: string;
-  explicitPath?: string;
-} = {}): Promise<ShikigamiConfigSource> {
+export async function loadShikigamiConfig(
+  options: {
+    environment?: NodeJS.ProcessEnv;
+    cwd?: string;
+    explicitPath?: string;
+  } = {},
+): Promise<ShikigamiConfigSource> {
   const environment = options.environment ?? process.env;
   const cwd = resolve(options.cwd ?? process.cwd());
   const explicit = options.explicitPath?.trim() || environment.SHIKIGAMI_CONFIG?.trim() || "";
   const candidates = explicit
     ? [configPathForCwd(explicit, cwd)]
     : [
-      configPathForCwd(environment.SHIKIGAMI_STATE?.trim() || ".shikigami-state", cwd),
-      join(cwd, "shikigami.toml"),
-    ].map((candidate) => candidate.endsWith(".toml") ? candidate : join(candidate, "shikigami.toml"));
+        configPathForCwd(environment.SHIKIGAMI_STATE?.trim() || ".shikigami-state", cwd),
+        join(cwd, "shikigami.toml"),
+      ].map((candidate) =>
+        candidate.endsWith(".toml") ? candidate : join(candidate, "shikigami.toml"),
+      );
 
   for (const path of candidates) {
     try {
@@ -374,7 +374,8 @@ export async function loadShikigamiConfig(options: {
         throw new ProviderProtocolError("The selected Shikigami config could not be parsed.");
       }
       const values = record(parsed);
-      if (!values) throw new ProviderProtocolError("The selected Shikigami config is not a TOML table.");
+      if (!values)
+        throw new ProviderProtocolError("The selected Shikigami config is not a TOML table.");
       return { path, values };
     } catch (error) {
       if (error instanceof ProviderProtocolError) throw error;
@@ -389,8 +390,10 @@ export async function loadShikigamiConfig(options: {
 }
 
 function nativeConfigHasGovernedProfile(config: JsonRecord): boolean {
-  return stringSetting(config.profile, "name")?.toLowerCase() === "governed"
-    && Object.keys(table(config.model)).length === 0;
+  return (
+    stringSetting(config.profile, "name")?.toLowerCase() === "governed" &&
+    Object.keys(table(config.model)).length === 0
+  );
 }
 
 /** Parse the stable JSON model catalog emitted by Shikigami. */
@@ -402,18 +405,13 @@ export function parseShikigamiModelCatalog(output: string): ShikigamiModel[] {
     return [];
   }
   const root = record(value);
-  const rows = root && Array.isArray(root.available_models)
-    ? root.available_models
-    : [];
-  const defaultModel = typeof root?.default_model === "string"
-    ? root.default_model.trim()
-    : "";
+  const rows = root && Array.isArray(root.available_models) ? root.available_models : [];
+  const defaultModel = typeof root?.default_model === "string" ? root.default_model.trim() : "";
   const seen = new Set<string>();
   const models: ShikigamiModel[] = [];
   for (const row of rows) {
     const entry = record(row);
-    const id = stringSetting(entry, "canonical_model")
-      || stringSetting(entry, "upstream_model");
+    const id = stringSetting(entry, "canonical_model") || stringSetting(entry, "upstream_model");
     if (!id || seen.has(id)) continue;
     seen.add(id);
     models.push({
@@ -462,26 +460,31 @@ export function resolveModelAdapter(
   apiKeyEnv: string;
 } {
   const model = table(baseConfig.model);
-  const configuredAdapter = stringSetting(model, "adapter")
-    ?? (stringSetting(baseConfig.profile, "name")?.toLowerCase() === "governed" ? "plane" : undefined);
+  const configuredAdapter =
+    stringSetting(model, "adapter") ??
+    (stringSetting(baseConfig.profile, "name")?.toLowerCase() === "governed" ? "plane" : undefined);
   const forced = environment.SHIKIGAMI_MODEL_ADAPTER?.trim().toLowerCase();
-  const apiKeyEnv = environment.SHIKIGAMI_API_KEY_ENV?.trim()
-    || stringSetting(model, "api_key_env")
-    || "OPENAI_API_KEY";
-  const adapterName = forced || configuredAdapter || (environment[apiKeyEnv]?.trim() ? "http" : "scripted");
+  const apiKeyEnv =
+    environment.SHIKIGAMI_API_KEY_ENV?.trim() ||
+    stringSetting(model, "api_key_env") ||
+    "OPENAI_API_KEY";
+  const adapterName =
+    forced || configuredAdapter || (environment[apiKeyEnv]?.trim() ? "http" : "scripted");
   if (adapterName !== "scripted" && adapterName !== "http" && adapterName !== "plane") {
     throw new ProviderProtocolError(`Unsupported Shikigami model adapter: ${adapterName}.`);
   }
-  const modelId = environment.SHIKIGAMI_MODEL?.trim()
-    || stringSetting(model, "model")
-    || (adapterName === "scripted" ? "scripted" : "gpt-4.1-mini");
+  const modelId =
+    environment.SHIKIGAMI_MODEL?.trim() ||
+    stringSetting(model, "model") ||
+    (adapterName === "scripted" ? "scripted" : "gpt-4.1-mini");
   return {
     adapter: adapterName,
     authenticated: adapterName !== "http" || Boolean(environment[apiKeyEnv]?.trim()),
     modelId,
-    baseUrl: environment.SHIKIGAMI_BASE_URL?.trim()
-      || stringSetting(model, "base_url")
-      || "https://api.openai.com/v1",
+    baseUrl:
+      environment.SHIKIGAMI_BASE_URL?.trim() ||
+      stringSetting(model, "base_url") ||
+      "https://api.openai.com/v1",
     apiKeyEnv,
   };
 }
@@ -514,7 +517,7 @@ export function buildShikigamiConfig(options: {
   config.version = 1;
   config.profile = {
     ...baseProfile,
-    name: options.managed ? "aldunis-code-managed" : baseProfile.name ?? "aldunis-code",
+    name: options.managed ? "aldunis-code-managed" : (baseProfile.name ?? "aldunis-code"),
   };
   // Workspace, tools, events, and the Code approval hook are host-owned.
   config.workspace = { adapter: "inplace", root: options.worktree };
@@ -523,7 +526,9 @@ export function buildShikigamiConfig(options: {
     mode: "custom",
     enabled: tools,
     bash_timeout_secs: 60,
-    ...(typeof baseTools.respect_ignore === "boolean" ? { respect_ignore: baseTools.respect_ignore } : {}),
+    ...(typeof baseTools.respect_ignore === "boolean"
+      ? { respect_ignore: baseTools.respect_ignore }
+      : {}),
     // Native MCP definitions are not implicitly imported into Code runs.
     mcp_servers: [],
   };
@@ -570,17 +575,16 @@ export function buildShikigamiConfig(options: {
   const hooks = Array.isArray(config.hooks)
     ? config.hooks.filter((hook): hook is JsonRecord => record(hook) !== null)
     : [];
-  const permissionHook = options.nodeExecutable
-    && options.permissionHookPath
-    && options.permissionConfigPath
-    ? {
-      event: "pre_tool",
-      command: options.nodeExecutable,
-      args: [options.permissionHookPath, options.permissionConfigPath],
-      timeout_ms: PRE_TOOL_HOOK_TIMEOUT_MS,
-      fail_closed: true,
-    }
-    : null;
+  const permissionHook =
+    options.nodeExecutable && options.permissionHookPath && options.permissionConfigPath
+      ? {
+          event: "pre_tool",
+          command: options.nodeExecutable,
+          args: [options.permissionHookPath, options.permissionConfigPath],
+          timeout_ms: PRE_TOOL_HOOK_TIMEOUT_MS,
+          fail_closed: true,
+        }
+      : null;
   if (permissionHook) config.hooks = [...hooks, permissionHook];
   else if (hooks.length > 0) config.hooks = hooks;
   else delete config.hooks;
@@ -648,9 +652,10 @@ export class ShikigamiAdapter {
       try {
         version = assertSupportedShikigamiVersion(`${result.stdout}\n${result.stderr}`);
       } catch (error) {
-        const detail = error instanceof ProviderProtocolError
-          ? error.message
-          : "Unsupported shikigami version. Aldunis Code requires 1.0.2+.";
+        const detail =
+          error instanceof ProviderProtocolError
+            ? error.message
+            : "Unsupported shikigami version. Aldunis Code requires 1.0.2+.";
         return {
           id: this.id,
           installed: true,
@@ -687,9 +692,10 @@ export class ShikigamiAdapter {
         version,
         models: [],
         name: "Shikigami",
-        detail: error instanceof ProviderProtocolError
-          ? error.message
-          : "The selected Shikigami config could not be loaded.",
+        detail:
+          error instanceof ProviderProtocolError
+            ? error.message
+            : "The selected Shikigami config could not be loaded.",
       };
     }
     let resolved: ReturnType<typeof resolveModelAdapter>;
@@ -703,32 +709,38 @@ export class ShikigamiAdapter {
         version,
         models: [],
         name: "Shikigami",
-        detail: error instanceof ProviderProtocolError
-          ? error.message
-          : "The selected Shikigami model configuration is invalid.",
+        detail:
+          error instanceof ProviderProtocolError
+            ? error.message
+            : "The selected Shikigami model configuration is invalid.",
       };
     }
     const { adapter, authenticated, modelId, apiKeyEnv } = resolved;
-    const discoveredModels = authenticated && (adapter === "plane" || modelId === "auto")
-      ? await probeShikigamiModelCatalog({
-        executable,
-        environment: env,
-        configPath: options.configPath,
-        cwd: options.cwd,
-        version,
-      })
-      : [];
-    const configuredModels: ShikigamiModel[] = adapter === "scripted"
-      ? [{ id: "scripted", displayName: "Scripted (offline)", isDefault: true }]
-      : [{
-        id: modelId,
-        displayName: adapter === "plane" ? modelId : modelId || "HTTP model",
-        isDefault: true,
-      }];
+    const discoveredModels =
+      authenticated && (adapter === "plane" || modelId === "auto")
+        ? await probeShikigamiModelCatalog({
+            executable,
+            environment: env,
+            configPath: options.configPath,
+            cwd: options.cwd,
+            version,
+          })
+        : [];
+    const configuredModels: ShikigamiModel[] =
+      adapter === "scripted"
+        ? [{ id: "scripted", displayName: "Scripted (offline)", isDefault: true }]
+        : [
+            {
+              id: modelId,
+              displayName: adapter === "plane" ? modelId : modelId || "HTTP model",
+              isDefault: true,
+            },
+          ];
     const models = discoveredModels.length > 0 ? discoveredModels : configuredModels;
-    const detail = !authenticated && adapter === "http"
-      ? `Set ${apiKeyEnv}, or force SHIKIGAMI_MODEL_ADAPTER=scripted.`
-      : null;
+    const detail =
+      !authenticated && adapter === "http"
+        ? `Set ${apiKeyEnv}, or force SHIKIGAMI_MODEL_ADAPTER=scripted.`
+        : null;
     return {
       id: this.id,
       installed: true,
@@ -749,7 +761,11 @@ export class ShikigamiAdapter {
     // Conversation-scoped state outside the worktree so inplace tools cannot
     // read/write harness checkpoints (requires shikigami inplace safety).
     const conversationKey = options.conversationId.trim();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(conversationKey)) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        conversationKey,
+      )
+    ) {
       throw new ProviderProtocolError(
         "Shikigami provider requires a UUID conversation id for state isolation.",
       );
@@ -774,10 +790,10 @@ export class ShikigamiAdapter {
     const nativeConfig = managed
       ? { path: null, values: {} as JsonRecord }
       : await loadShikigamiConfig({
-        environment: sourceEnvironment,
-        cwd: options.worktree,
-        explicitPath: profile?.configPath,
-      });
+          environment: sourceEnvironment,
+          cwd: options.worktree,
+          explicitPath: profile?.configPath,
+        });
     let version: string;
     try {
       const result = await execFileAsync(executable, ["version"], {
@@ -796,12 +812,12 @@ export class ShikigamiAdapter {
 
     const resolvedModel = managed
       ? {
-        adapter: "plane" as const,
-        authenticated: true,
-        modelId: managed.model,
-        baseUrl: "",
-        apiKeyEnv: "",
-      }
+          adapter: "plane" as const,
+          authenticated: true,
+          modelId: managed.model,
+          baseUrl: "",
+          apiKeyEnv: "",
+        }
       : resolveModelAdapter(sourceEnvironment, nativeConfig.values);
     const { adapter: modelAdapter, authenticated } = resolvedModel;
     if (!managed && modelAdapter === "http" && !authenticated) {
@@ -813,21 +829,21 @@ export class ShikigamiAdapter {
     const modelId = managed
       ? managed.model
       : options.model && options.model !== "default"
-      ? options.model
-      : resolvedModel.modelId;
+        ? options.model
+        : resolvedModel.modelId;
     const baseGovernance = table(nativeConfig.values.governance);
     const governanceAdapter = managed
       ? undefined
-      : sourceEnvironment.SHIKIGAMI_GOVERNANCE_ADAPTER?.trim()
-      || stringSetting(baseGovernance, "adapter")
-      || (nativeConfig.path ? undefined : "local");
+      : sourceEnvironment.SHIKIGAMI_GOVERNANCE_ADAPTER?.trim() ||
+        stringSetting(baseGovernance, "adapter") ||
+        (nativeConfig.path ? undefined : "local");
     const failClosed = managed
       ? undefined
       : sourceEnvironment.SHIKIGAMI_FAIL_CLOSED !== undefined
-      ? sourceEnvironment.SHIKIGAMI_FAIL_CLOSED === "1"
-        || sourceEnvironment.SHIKIGAMI_FAIL_CLOSED.toLowerCase() === "true"
-      : booleanSetting(baseGovernance, "fail_closed")
-      ?? (nativeConfig.path ? undefined : false);
+        ? sourceEnvironment.SHIKIGAMI_FAIL_CLOSED === "1" ||
+          sourceEnvironment.SHIKIGAMI_FAIL_CLOSED.toLowerCase() === "true"
+        : (booleanSetting(baseGovernance, "fail_closed") ??
+          (nativeConfig.path ? undefined : false));
 
     const id = randomUUID();
     const permissionToken = this.permissions.createRunToken(id);
@@ -853,7 +869,8 @@ export class ShikigamiAdapter {
         governanceAdapter,
         failClosed,
         baseConfig: nativeConfig.path !== null ? nativeConfig.values : undefined,
-        preserveNativeModel: nativeConfig.path !== null && nativeConfigHasGovernedProfile(nativeConfig.values),
+        preserveNativeModel:
+          nativeConfig.path !== null && nativeConfigHasGovernedProfile(nativeConfig.values),
         nodeExecutable: process.execPath,
         permissionHookPath: PERMISSION_HOOK_PATH,
         permissionConfigPath,
@@ -868,12 +885,11 @@ export class ShikigamiAdapter {
       : null;
     if (resumeId) {
       const versionMatch = version.match(/^(\d+)\.(\d+)\.(\d+)$/);
-      const supportsResume = versionMatch
-        && Number(versionMatch[1]) === SUPPORTED_SHIKIGAMI_MAJOR
-        && (
-          Number(versionMatch[2]) > 0
-          || Number(versionMatch[2]) === 0 && Number(versionMatch[3]) >= MIN_PATCH_FOR_RESUME
-        );
+      const supportsResume =
+        versionMatch &&
+        Number(versionMatch[1]) === SUPPORTED_SHIKIGAMI_MAJOR &&
+        (Number(versionMatch[2]) > 0 ||
+          (Number(versionMatch[2]) === 0 && Number(versionMatch[3]) >= MIN_PATCH_FOR_RESUME));
       if (!supportsResume) {
         throw new ProviderProtocolError(
           "Native Shikigami parked-run resume requires Shikigami 1.0.5+.",
@@ -936,10 +952,10 @@ export class ShikigamiAdapter {
       expectedRunId: resumeId,
       runId: null,
       governed: Boolean(
-        managed
-        || governanceAdapter === "sekai-chisei"
-        || sourceEnvironment.SHIKIGAMI_PROFILE?.trim().toLowerCase() === "governed"
-        || stringSetting(nativeConfig.values.profile, "name")?.toLowerCase() === "governed",
+        managed ||
+        governanceAdapter === "sekai-chisei" ||
+        sourceEnvironment.SHIKIGAMI_PROFILE?.trim().toLowerCase() === "governed" ||
+        stringSetting(nativeConfig.values.profile, "name")?.toLowerCase() === "governed",
       ),
       permissionToken,
     };
@@ -1007,9 +1023,10 @@ export class ShikigamiAdapter {
             pendingTerminal = null;
             yield {
               kind: "failed",
-              message: error instanceof ProviderProtocolError
-                ? error.message
-                : "Shikigami emitted an unreadable event.",
+              message:
+                error instanceof ProviderProtocolError
+                  ? error.message
+                  : "Shikigami emitted an unreadable event.",
               ...(error instanceof ProviderProtocolError
                 ? { code: "provider_protocol_error" as const }
                 : {}),
@@ -1026,7 +1043,9 @@ export class ShikigamiAdapter {
               try {
                 active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
                 if (active.expectedRunId && active.runId !== active.expectedRunId) {
-                  throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+                  throw new ProviderProtocolError(
+                    "Shikigami resume reported a different run identity.",
+                  );
                 }
               } catch (error) {
                 sawTerminal = true;
@@ -1035,9 +1054,10 @@ export class ShikigamiAdapter {
                 this.#terminate(active.child);
                 yield {
                   kind: "failed",
-                  message: error instanceof ProviderProtocolError
-                    ? error.message
-                    : "Shikigami emitted an invalid run identity.",
+                  message:
+                    error instanceof ProviderProtocolError
+                      ? error.message
+                      : "Shikigami emitted an invalid run identity.",
                   code: "provider_protocol_error",
                 };
                 break;
@@ -1050,7 +1070,9 @@ export class ShikigamiAdapter {
                 try {
                   active.runId = confirmShikigamiRunId(active.runId, event.sessionId);
                   if (active.expectedRunId && active.runId !== active.expectedRunId) {
-                    throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+                    throw new ProviderProtocolError(
+                      "Shikigami resume reported a different run identity.",
+                    );
                   }
                 } catch (error) {
                   sawTerminal = true;
@@ -1059,9 +1081,10 @@ export class ShikigamiAdapter {
                   this.#terminate(active.child);
                   yield {
                     kind: "failed",
-                    message: error instanceof ProviderProtocolError
-                      ? error.message
-                      : "Shikigami emitted an invalid run identity.",
+                    message:
+                      error instanceof ProviderProtocolError
+                        ? error.message
+                        : "Shikigami emitted an invalid run identity.",
                     code: "provider_protocol_error",
                   };
                   break;
@@ -1119,9 +1142,10 @@ export class ShikigamiAdapter {
           sawTerminal = true;
           yield {
             kind: "failed",
-            message: error instanceof ProviderProtocolError
-              ? error.message
-              : "Shikigami event stream failed.",
+            message:
+              error instanceof ProviderProtocolError
+                ? error.message
+                : "Shikigami event stream failed.",
           };
         }
       }
@@ -1133,7 +1157,9 @@ export class ShikigamiAdapter {
           try {
             active.runId = confirmShikigamiRunId(active.runId, runMatch[1]);
             if (active.expectedRunId && active.runId !== active.expectedRunId) {
-              throw new ProviderProtocolError("Shikigami resume reported a different run identity.");
+              throw new ProviderProtocolError(
+                "Shikigami resume reported a different run identity.",
+              );
             }
           } catch (error) {
             sawTerminal = true;
@@ -1142,9 +1168,10 @@ export class ShikigamiAdapter {
             this.#terminate(active.child);
             yield {
               kind: "failed",
-              message: error instanceof ProviderProtocolError
-                ? error.message
-                : "Shikigami emitted an invalid run identity.",
+              message:
+                error instanceof ProviderProtocolError
+                  ? error.message
+                  : "Shikigami emitted an invalid run identity.",
               code: "provider_protocol_error",
             };
           }
@@ -1158,7 +1185,10 @@ export class ShikigamiAdapter {
             operationId: active.runId,
           };
         }
-        if (!active.cancelled && (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout))) {
+        if (
+          !active.cancelled &&
+          (/parked reason=/i.test(stdout) || /termination=parked/i.test(stdout))
+        ) {
           sawTerminal = true;
           pendingTerminal = null;
           const resumeId = active.runId ?? "<run-id>";
@@ -1244,9 +1274,10 @@ export class ShikigamiAdapter {
         } else {
           yield {
             kind: "failed",
-            message: code == null
-              ? "Shikigami exited before completing the turn."
-              : `Shikigami exited with code ${code}.`,
+            message:
+              code == null
+                ? "Shikigami exited before completing the turn."
+                : `Shikigami exited with code ${code}.`,
           };
         }
       }

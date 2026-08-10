@@ -3,10 +3,7 @@ import test from "node:test";
 import { electronMcpEnvironment, withElectronRunAsNode } from "./electron-runtime.ts";
 
 test("Electron MCP helpers get ELECTRON_RUN_AS_NODE so process.execPath does not open a second dock icon", () => {
-  const electron = electronMcpEnvironment(
-    { ALDUNIS_BROWSER_TOKEN: "token" },
-    "43.2.0",
-  );
+  const electron = electronMcpEnvironment({ ALDUNIS_BROWSER_TOKEN: "token" }, "43.2.0");
   assert.equal(electron.ELECTRON_RUN_AS_NODE, "1");
   assert.equal(electron.ALDUNIS_BROWSER_TOKEN, "token");
 
