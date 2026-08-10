@@ -170,7 +170,10 @@ export class PermissionError extends Error {
 }
 
 export class PermissionBroker {
+  /** Live approvals that still hold tool payloads and resolver state. */
   readonly #approvals = new Map<string, PendingApproval>();
+  /** Lightweight terminal snapshots (no tool payloads or resolved promises). */
+  readonly #terminal = new Map<string, ApprovalSnapshot>();
   readonly #tokens = new Map<string, string>();
   readonly #claimed = new Set<string>();
   readonly #resolving = new Set<string>();
@@ -289,25 +292,14 @@ export class PermissionBroker {
     },
     decision: "allow_once" | "deny",
   ): ApprovalSnapshot {
-    const approval = this.#approvals.get(id);
-    if (!approval) throw new PermissionError("The approval request does not exist.", 404);
-    if (
-      approval.runId !== context.runId ||
-      approval.conversationId !== context.conversationId ||
-      approval.repository !== context.repository ||
-      approval.worktree !== context.worktree ||
-      approval.toolCallId !== context.toolCallId
-    ) {
-      throw new PermissionError("The approval request is bound to a different context.", 403);
-    }
+    const approval = this.#requireLiveApproval(id, context);
     if (approval.state === "pending" && Date.parse(approval.expiresAt) <= Date.now()) {
       this.#finish(approval, "expired");
     }
     if (approval.state !== "pending") {
       throw new PermissionError("The approval request has already been resolved.", 409);
     }
-    this.#finish(approval, decision === "allow_once" ? "allowed_once" : "denied");
-    return this.#snapshot(approval);
+    return this.#finish(approval, decision === "allow_once" ? "allowed_once" : "denied");
   }
 
   async decideAfter(
@@ -322,17 +314,7 @@ export class PermissionBroker {
     decision: "allow_once" | "deny",
     beforeResolve: (snapshot: ApprovalSnapshot) => Promise<void>,
   ): Promise<ApprovalSnapshot> {
-    const approval = this.#approvals.get(id);
-    if (!approval) throw new PermissionError("The approval request does not exist.", 404);
-    if (
-      approval.runId !== context.runId ||
-      approval.conversationId !== context.conversationId ||
-      approval.repository !== context.repository ||
-      approval.worktree !== context.worktree ||
-      approval.toolCallId !== context.toolCallId
-    ) {
-      throw new PermissionError("The approval request is bound to a different context.", 403);
-    }
+    const approval = this.#requireLiveApproval(id, context);
     if (approval.state === "pending" && Date.parse(approval.expiresAt) <= Date.now()) {
       this.#finish(approval, "expired");
     }
@@ -349,11 +331,12 @@ export class PermissionBroker {
         throw new PermissionError("The approval request closed before it could be released.", 409);
       }
       if (nextState === "allowed_once") {
-        approval.resolve({ behavior: "allow", updatedInput: approval.originalInput });
+        const updatedInput = approval.originalInput;
+        approval.resolve({ behavior: "allow", updatedInput });
       } else {
         approval.resolve({ behavior: "deny", message: "The local action was denied." });
       }
-      return this.#snapshot(approval);
+      return this.#sealTerminal(approval);
     } catch (error) {
       if (approval.state === nextState) {
         approval.state = "provider_failed";
@@ -361,6 +344,7 @@ export class PermissionBroker {
           behavior: "deny",
           message: "Aldunis Code could not persist the approval decision.",
         });
+        this.#sealTerminal(approval);
       }
       throw error;
     } finally {
@@ -369,8 +353,8 @@ export class PermissionBroker {
   }
 
   closeRun(runId: string, state: Extract<ApprovalState, "cancelled" | "provider_failed">): void {
-    // Terminal run closure releases retained approvals so long-lived hosts do not
-    // accumulate originalInput, claim markers, and resolved snapshots forever.
+    // Finish any live approvals, then drop both live and terminal records so a
+    // long-lived host cannot retain tool payloads or claim markers forever.
     for (const approval of [...this.#approvals.values()]) {
       if (approval.runId !== runId) continue;
       if (this.#resolving.has(approval.id)) {
@@ -380,40 +364,82 @@ export class PermissionBroker {
           behavior: "deny",
           message: `Aldunis Code closed the approval request (${state.replace("_", " ")}).`,
         });
+        this.#sealTerminal(approval);
       } else if (approval.state === "pending") {
         this.#finish(approval, state);
+      } else {
+        this.#sealTerminal(approval);
       }
-      this.#approvals.delete(approval.id);
-      this.#claimed.delete(approval.id);
     }
     this.#tokens.delete(runId);
+    this.#forgetRun(runId);
   }
 
   approvalFor(runId: string, toolCallId: string): ApprovalSnapshot | null {
-    const approval = [...this.#approvals.values()].find(
-      (candidate) => candidate.runId === runId && candidate.toolCallId === toolCallId,
-    );
-    return approval ? this.#snapshot(approval) : null;
+    for (const approval of this.#approvals.values()) {
+      if (approval.runId === runId && approval.toolCallId === toolCallId) {
+        return this.#snapshot(approval);
+      }
+    }
+    for (const snapshot of this.#terminal.values()) {
+      if (snapshot.runId === runId && snapshot.toolCallId === toolCallId) return { ...snapshot };
+    }
+    return null;
   }
 
   approvalsFor(runId: string): ApprovalSnapshot[] {
-    return [...this.#approvals.values()]
-      .filter((approval) => approval.runId === runId)
-      .map((approval) => this.#snapshot(approval));
+    return this.#allSnapshots().filter((approval) => approval.runId === runId);
   }
 
   approvals(): ApprovalSnapshot[] {
-    return [...this.#approvals.values()].map((approval) => this.#snapshot(approval));
+    return this.#allSnapshots();
   }
 
-  #finish(approval: PendingApproval, state: ApprovalState): void {
-    if (approval.state !== "pending") return;
+  /** Test and diagnostics: live records still holding tool payloads. */
+  get retainedPayloadApprovalCount(): number {
+    return this.#approvals.size;
+  }
+
+  #requireLiveApproval(
+    id: string,
+    context: {
+      runId: string;
+      conversationId: string;
+      repository: string;
+      worktree: string;
+      toolCallId: string;
+    },
+  ): PendingApproval {
+    const approval = this.#approvals.get(id);
+    if (!approval) {
+      if (this.#terminal.has(id)) {
+        throw new PermissionError("The approval request has already been resolved.", 409);
+      }
+      throw new PermissionError("The approval request does not exist.", 404);
+    }
+    if (
+      approval.runId !== context.runId ||
+      approval.conversationId !== context.conversationId ||
+      approval.repository !== context.repository ||
+      approval.worktree !== context.worktree ||
+      approval.toolCallId !== context.toolCallId
+    ) {
+      throw new PermissionError("The approval request is bound to a different context.", 403);
+    }
+    return approval;
+  }
+
+  #finish(approval: PendingApproval, state: ApprovalState): ApprovalSnapshot {
+    if (approval.state !== "pending") {
+      return this.#terminal.get(approval.id) ?? this.#snapshot(approval);
+    }
     approval.state = state;
     clearTimeout(approval.timer);
     const snapshot = this.#snapshot(approval);
     for (const listener of this.#listeners) listener(snapshot);
     if (state === "allowed_once") {
-      approval.resolve({ behavior: "allow", updatedInput: approval.originalInput });
+      const updatedInput = approval.originalInput;
+      approval.resolve({ behavior: "allow", updatedInput });
     } else {
       approval.resolve({
         behavior: "deny",
@@ -423,6 +449,40 @@ export class PermissionBroker {
             : `Aldunis Code closed the approval request (${state.replace("_", " ")}).`,
       });
     }
+    return this.#sealTerminal(approval);
+  }
+
+  #sealTerminal(approval: PendingApproval): ApprovalSnapshot {
+    clearTimeout(approval.timer);
+    // Drop the pending record so tool payloads and the resolved decision promise
+    // are no longer rooted by the broker during the rest of a long provider run.
+    approval.originalInput = {};
+    const snapshot = this.#snapshot(approval);
+    this.#approvals.delete(approval.id);
+    this.#terminal.set(approval.id, snapshot);
+    return snapshot;
+  }
+
+  #forgetRun(runId: string): void {
+    for (const [id, approval] of this.#approvals) {
+      if (approval.runId !== runId) continue;
+      clearTimeout(approval.timer);
+      this.#approvals.delete(id);
+      this.#claimed.delete(id);
+      this.#resolving.delete(id);
+    }
+    for (const [id, snapshot] of this.#terminal) {
+      if (snapshot.runId !== runId) continue;
+      this.#terminal.delete(id);
+      this.#claimed.delete(id);
+    }
+  }
+
+  #allSnapshots(): ApprovalSnapshot[] {
+    return [
+      ...[...this.#approvals.values()].map((approval) => this.#snapshot(approval)),
+      ...[...this.#terminal.values()].map((snapshot) => ({ ...snapshot })),
+    ];
   }
 
   #assertToken(runId: string, token: string): void {
@@ -446,6 +506,6 @@ export class PermissionBroker {
       timer: _timer,
       ...snapshot
     } = approval;
-    return snapshot;
+    return { ...snapshot };
   }
 }
