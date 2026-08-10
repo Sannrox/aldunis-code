@@ -245,7 +245,9 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
       typeof item.text === "string" && item.text
         ? item.text
         : Array.isArray(item.summary)
-          ? item.summary.filter((part): part is string => typeof part === "string" && !!part).join("\n")
+          ? item.summary
+              .filter((part): part is string => typeof part === "string" && !!part)
+              .join("\n")
           : "";
     return completed && text ? [{ kind: "thinking", text }] : [];
   }
