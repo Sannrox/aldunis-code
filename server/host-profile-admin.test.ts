@@ -18,11 +18,11 @@ async function listen(remote: boolean) {
   const state = new LocalStateStore(directory);
   const profiles = new ClaudeProfileStore(directory);
   const remoteAuth = remote
-    ? {
+    ? ({
         verify: async () => ({}),
-      } as unknown as RemoteAuth
+      } as unknown as RemoteAuth)
     : undefined;
-  const server = createLocalHost(directory, state, profiles, remoteAuth);
+  const server = createLocalHost({ dist: directory, state, profiles, remoteAuth });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
@@ -43,7 +43,7 @@ async function post(url: string, route: string, body: unknown) {
 
 async function close(server: ReturnType<typeof createLocalHost>) {
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -57,7 +57,7 @@ test("loopback clients can save, refresh, and delete provider profiles", async (
       environment: [],
     });
     assert.equal(savedResponse.status, 200);
-    const saved = await savedResponse.json() as { id: string };
+    const saved = (await savedResponse.json()) as { id: string };
 
     const kinds: ProfileProbeKind[] = ["availability", "version", "authentication", "models"];
     for (const kind of kinds) {
@@ -70,7 +70,10 @@ test("loopback clients can save, refresh, and delete provider profiles", async (
 
     const deleted = await post(fixture.url, "/api/provider/profiles/delete", { id: saved.id });
     assert.equal(deleted.status, 200);
-    assert.equal((await fixture.profiles.list()).some((profile) => profile.id === saved.id), false);
+    assert.equal(
+      (await fixture.profiles.list()).some((profile) => profile.id === saved.id),
+      false,
+    );
   } finally {
     await close(fixture.server);
   }
@@ -80,15 +83,21 @@ test("provider discovery reports readiness and models for each Shikigami profile
   const fixture = await listen(false);
   const executable = join(fixture.directory, "shikigami-profile-probe");
   const config = join(fixture.directory, "custom-shikigami.toml");
-  await writeFile(executable, "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'shikigami 1.0.4'; fi\n");
+  await writeFile(
+    executable,
+    "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'shikigami 1.0.4'; fi\n",
+  );
   await chmod(executable, 0o700);
-  await writeFile(config, [
-    "[model]",
-    'adapter = "http"',
-    'model = "custom-model"',
-    'api_key_env = "PROFILE_DISCOVERY_KEY"',
-    'base_url = "https://example.invalid/v1"',
-  ].join("\n"));
+  await writeFile(
+    config,
+    [
+      "[model]",
+      'adapter = "http"',
+      'model = "custom-model"',
+      'api_key_env = "PROFILE_DISCOVERY_KEY"',
+      'base_url = "https://example.invalid/v1"',
+    ].join("\n"),
+  );
   await fixture.profiles.save({
     name: "Custom Shikigami",
     provider: "shikigami",
@@ -100,7 +109,7 @@ test("provider discovery reports readiness and models for each Shikigami profile
   try {
     const response = await post(fixture.url, "/api/providers/discover", {});
     assert.equal(response.status, 200);
-    const body = await response.json() as {
+    const body = (await response.json()) as {
       providers?: Array<{
         id: string;
         profileDiscoveries?: Array<{
@@ -112,7 +121,9 @@ test("provider discovery reports readiness and models for each Shikigami profile
       }>;
     };
     const shikigami = body.providers?.find((provider) => provider.id === "shikigami");
-    const custom = shikigami?.profileDiscoveries?.find((profile) => profile.profileId !== "default:shikigami");
+    const custom = shikigami?.profileDiscoveries?.find(
+      (profile) => profile.profileId !== "default:shikigami",
+    );
     assert.ok(custom);
     assert.equal(custom.installed, true);
     assert.equal(custom.authenticated, true);
@@ -132,14 +143,20 @@ test("provider discovery resolves native Shikigami config from the selected work
   await writeFile(join(repository, "README.md"), "fixture\n");
   await execFileAsync("git", ["-C", repository, "add", "README.md"]);
   await execFileAsync("git", ["-C", repository, "commit", "-qm", "fixture"]);
-  await writeFile(executable, "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'shikigami 1.0.4'; fi\n");
+  await writeFile(
+    executable,
+    "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'shikigami 1.0.4'; fi\n",
+  );
   await chmod(executable, 0o700);
-  await writeFile(join(repository, "shikigami.toml"), [
-    "[model]",
-    'adapter = "http"',
-    'model = "native-worktree-model"',
-    'api_key_env = "WORKTREE_DISCOVERY_KEY"',
-  ].join("\n"));
+  await writeFile(
+    join(repository, "shikigami.toml"),
+    [
+      "[model]",
+      'adapter = "http"',
+      'model = "native-worktree-model"',
+      'api_key_env = "WORKTREE_DISCOVERY_KEY"',
+    ].join("\n"),
+  );
   await fixture.profiles.save({
     name: "Native worktree Shikigami",
     provider: "shikigami",
@@ -153,7 +170,7 @@ test("provider discovery resolves native Shikigami config from the selected work
       worktree: repository,
     });
     assert.equal(response.status, 200);
-    const body = await response.json() as {
+    const body = (await response.json()) as {
       providers?: Array<{
         id: string;
         profileDiscoveries?: Array<{
@@ -163,7 +180,9 @@ test("provider discovery resolves native Shikigami config from the selected work
       }>;
     };
     const shikigami = body.providers?.find((provider) => provider.id === "shikigami");
-    const native = shikigami?.profileDiscoveries?.find((profile) => profile.profileId !== "default:shikigami");
+    const native = shikigami?.profileDiscoveries?.find(
+      (profile) => profile.profileId !== "default:shikigami",
+    );
     assert.equal(native?.models?.[0]?.id, "native-worktree-model");
   } finally {
     await close(fixture.server);
@@ -208,11 +227,13 @@ test("remote clients cannot save, delete, or refresh provider profiles", async (
     const retained = (await fixture.profiles.list()).find((profile) => profile.id === saved.id);
     assert.equal(retained?.name, "Protected profile");
     assert.equal(retained?.binaryPath, executable);
-    assert.deepEqual(retained?.environment, [{
-      name: "REMOTE_PROFILE_SENTINEL",
-      sensitive: false,
-      value: "original",
-    }]);
+    assert.deepEqual(retained?.environment, [
+      {
+        name: "REMOTE_PROFILE_SENTINEL",
+        sensitive: false,
+        value: "original",
+      },
+    ]);
     await assert.rejects(readFile(sentinel), { code: "ENOENT" });
   } finally {
     await close(fixture.server);

@@ -148,6 +148,10 @@
       ]
     },
     {
+      "name": "LocalApplicationHost",
+      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
+    },
+    {
       "name": "LocalUsageReceipt",
       "description": "A bounded, provider-reported numeric observation for one Aldunis Code turn. It contains token and optional cost fields only, supports the local Usage view, excludes prompts, tool payloads, repository content, and credentials, and is not billing truth or Chisei usage authority."
     },
@@ -1069,6 +1073,12 @@
       "subject": "LocalConversation",
       "source": "Aldunis Code local state contract",
       "locator": "server/state.ts#Thread",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalApplicationHost",
+      "source": "Aldunis Code local host composition interface",
+      "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; Issue #575",
       "confidence": 1.0
     },
     {

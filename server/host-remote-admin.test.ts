@@ -13,49 +13,44 @@ async function listen(remote = false, publicOrigin?: string, allowLocalControl =
   const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-admin-"));
   let verifyCalls = 0;
   const remoteAuth = remote
-    ? {
+    ? ({
         verify: async () => {
           verifyCalls += 1;
           return {};
         },
         descriptor: async () => ({ hostId: "host-test", protocolVersion: 1 as const }),
-        listSessions: async () => [{
-          id: "session-test",
-          label: "Test browser",
-          createdAt: "2026-08-04T12:00:00.000Z",
-          expiresAt: "2099-08-04T12:00:00.000Z",
-          revokedAt: null,
-        }],
+        listSessions: async () => [
+          {
+            id: "session-test",
+            label: "Test browser",
+            createdAt: "2026-08-04T12:00:00.000Z",
+            expiresAt: "2099-08-04T12:00:00.000Z",
+            revokedAt: null,
+          },
+        ],
         issuePairing: async () => ({
           id: "pairing-test",
           credential: "one-time-credential",
           expiresAt: "2099-08-04T12:10:00.000Z",
         }),
         revoke: async (sessionId: string) => sessionId === "session-test",
-      } as unknown as RemoteAuth
+      } as unknown as RemoteAuth)
     : undefined;
-  const server = createLocalHost(
-    directory,
-    new LocalStateStore(directory),
-    undefined,
+  const server = createLocalHost({
+    dist: directory,
+    state: new LocalStateStore(directory),
     remoteAuth,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
     publicOrigin,
-    undefined,
     allowLocalControl,
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
     server,
     url: `http://127.0.0.1:${address.port}`,
-    get verifyCalls() { return verifyCalls; },
+    get verifyCalls() {
+      return verifyCalls;
+    },
   };
 }
 
@@ -74,7 +69,7 @@ async function post(
 
 async function close(server: ReturnType<typeof createLocalHost>) {
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -107,20 +102,29 @@ test("local Connections controls can inspect, pair, and revoke sessions", async 
     assert.deepEqual(await status.json(), {
       remoteEnabled: true,
       descriptor: { hostId: "host-test", protocolVersion: 1 },
-      sessions: [{
-        id: "session-test",
-        label: "Test browser",
-        createdAt: "2026-08-04T12:00:00.000Z",
-        expiresAt: "2099-08-04T12:00:00.000Z",
-        revokedAt: null,
-      }],
+      sessions: [
+        {
+          id: "session-test",
+          label: "Test browser",
+          createdAt: "2026-08-04T12:00:00.000Z",
+          expiresAt: "2099-08-04T12:00:00.000Z",
+          revokedAt: null,
+        },
+      ],
     });
-    const ipv6Host = await post(fixture.url, "/api/remote/admin/status", {}, { host: "[::1]:4174" });
+    const ipv6Host = await post(
+      fixture.url,
+      "/api/remote/admin/status",
+      {},
+      { host: "[::1]:4174" },
+    );
     assert.equal(ipv6Host.status, 200);
     const pairing = await post(fixture.url, "/api/remote/admin/pair");
     assert.equal(pairing.status, 200);
     assert.match((await pairing.json()).pairingUrl, /#pair=one-time-credential$/);
-    const revoked = await post(fixture.url, "/api/remote/admin/revoke", { sessionId: "session-test" });
+    const revoked = await post(fixture.url, "/api/remote/admin/revoke", {
+      sessionId: "session-test",
+    });
     assert.deepEqual(await revoked.json(), { revoked: true });
     assert.equal(fixture.verifyCalls, 0);
   } finally {
@@ -145,10 +149,15 @@ test("pairing links use the configured public origin", async () => {
 test("Connections administration fails closed for forwarded requests", async () => {
   const fixture = await listen(true);
   try {
-    const forwarded = await post(fixture.url, "/api/remote/admin/status", {}, {
-      "x-forwarded-for": "192.0.2.10",
-      "x-forwarded-host": "remote.example",
-    });
+    const forwarded = await post(
+      fixture.url,
+      "/api/remote/admin/status",
+      {},
+      {
+        "x-forwarded-for": "192.0.2.10",
+        "x-forwarded-host": "remote.example",
+      },
+    );
     assert.equal(forwarded.status, 403);
     assert.equal(fixture.verifyCalls, 1);
   } finally {

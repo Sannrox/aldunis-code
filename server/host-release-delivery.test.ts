@@ -29,26 +29,35 @@ async function fixture(remote = false) {
   ]);
   await mkdir(join(repository, "artifact"));
   await writeFile(join(repository, "artifact", "payload.txt"), "payload\n");
-  await writeFile(join(repository, "package.json"), JSON.stringify({
-    name: "widget",
-    scripts: {
-      build: "node -e \"process.exit(0)\"",
-      test: "node -e \"process.exit(0)\"",
-    },
-  }));
-  await writeFile(join(repository, "package-lock.json"), JSON.stringify({
-    name: "widget",
-    lockfileVersion: 3,
-    packages: {},
-  }));
-  await writeFile(join(repository, "tenkai.toml"), [
-    "[product]",
-    'name = "widget"',
-    'version = "1.2.3"',
-    "[deploy]",
-    'install = "true"',
-    'inputs = ["artifact"]',
-  ].join("\n"));
+  await writeFile(
+    join(repository, "package.json"),
+    JSON.stringify({
+      name: "widget",
+      scripts: {
+        build: 'node -e "process.exit(0)"',
+        test: 'node -e "process.exit(0)"',
+      },
+    }),
+  );
+  await writeFile(
+    join(repository, "package-lock.json"),
+    JSON.stringify({
+      name: "widget",
+      lockfileVersion: 3,
+      packages: {},
+    }),
+  );
+  await writeFile(
+    join(repository, "tenkai.toml"),
+    [
+      "[product]",
+      'name = "widget"',
+      'version = "1.2.3"',
+      "[deploy]",
+      'install = "true"',
+      'inputs = ["artifact"]',
+    ].join("\n"),
+  );
   await execFileAsync("git", ["-C", repository, "add", "."]);
   await execFileAsync("git", ["-C", repository, "commit", "-qm", "fixture"]);
   const state = new LocalStateStore(directory);
@@ -58,15 +67,13 @@ async function fixture(remote = false) {
     root: repository,
     chiseiNamespace: "team/widget",
   });
-  const remoteAuth = remote
-    ? { verify: async () => ({}) } as unknown as RemoteAuth
-    : undefined;
-  const server = createLocalHost(
-    directory,
+  const remoteAuth = remote ? ({ verify: async () => ({}) } as unknown as RemoteAuth) : undefined;
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
+    profiles: new ClaudeProfileStore(directory),
     remoteAuth,
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
@@ -88,7 +95,7 @@ async function post(url: string, route: string, body: unknown) {
 
 async function close(server: ReturnType<typeof createLocalHost>) {
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -106,7 +113,7 @@ test("loopback routes preview, execute, and resume a clean candidate without exp
       input: { manifestPath: "tenkai.toml" },
     });
     assert.equal(previewResponse.status, 200);
-    const preview = await previewResponse.json() as { id: string; details: string[] };
+    const preview = (await previewResponse.json()) as { id: string; details: string[] };
     assert.match(preview.details.join("\n"), /candidate: sha256:/);
     const executed = await post(
       current.url,
@@ -114,11 +121,11 @@ test("loopback routes preview, execute, and resume a clean candidate without exp
       context,
     );
     assert.equal(executed.status, 200);
-    assert.equal((await executed.json() as { state: string }).state, "candidate_ready");
+    assert.equal(((await executed.json()) as { state: string }).state, "candidate_ready");
 
     const inspection = await post(current.url, "/api/release-delivery/inspect", context);
     assert.equal(inspection.status, 200);
-    const inspected = await inspection.json() as {
+    const inspected = (await inspection.json()) as {
       terminalOutcomes?: { authority?: string; state?: string; outcomes?: unknown[] };
     };
     assert.equal(inspected.terminalOutcomes?.authority, "tenkai");
@@ -126,7 +133,10 @@ test("loopback routes preview, execute, and resume a clean candidate without exp
     assert.deepEqual(inspected.terminalOutcomes?.outcomes, []);
     const serialized = JSON.stringify(inspected);
     assert.doesNotMatch(serialized, /ALDUNIS_CHISEI_TOKEN|TENKAI_DATABASE|package-lock/);
-    assert.doesNotMatch(serialized, new RegExp(current.directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(
+      serialized,
+      new RegExp(current.directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
   } finally {
     await close(current.server);
   }
@@ -189,7 +199,7 @@ test("release routes reject a sibling worktree's project binding", async () => {
       input: { manifestPath: "tenkai.toml" },
     });
     assert.equal(previewResponse.status, 200);
-    const preview = await previewResponse.json() as { id: string };
+    const preview = (await previewResponse.json()) as { id: string };
     const wrongExecution = await post(
       current.url,
       `/api/release-delivery/plans/${preview.id}/execute`,
@@ -202,7 +212,7 @@ test("release routes reject a sibling worktree's project binding", async () => {
       correctContext,
     );
     assert.equal(execution.status, 200);
-    const session = await execution.json() as { id: string };
+    const session = (await execution.json()) as { id: string };
     const wrongReceipt = await post(current.url, "/api/release-delivery/receipt", {
       ...wrongContext,
       sessionId: session.id,

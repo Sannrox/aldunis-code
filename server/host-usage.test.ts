@@ -10,7 +10,7 @@ import { LocalStateStore } from "./state.ts";
 test("usage summary exposes only the requested local receipt range", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-usage-host-"));
   const state = new LocalStateStore(directory);
-  const server = createLocalHost(directory, state);
+  const server = createLocalHost({ dist: directory, state });
   try {
     await state.saveProject({ id: "project-1", name: "Fixture", root: "/fixture" });
     const { thread, turn } = await state.startTurn({

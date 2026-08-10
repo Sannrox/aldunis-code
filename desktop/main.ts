@@ -142,19 +142,12 @@ if (!gotSingleInstanceLock) {
           });
         },
       );
-      backend = createLocalHost(
-        join(applicationRoot, "dist"),
+      backend = createLocalHost({
+        dist: join(applicationRoot, "dist"),
         state,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        browser,
-        join(applicationRoot, "dist-electron", "browser-mcp.mjs"),
-      );
+        browserHost: browser,
+        browserMcpPath: join(applicationRoot, "dist-electron", "browser-mcp.mjs"),
+      });
       localApplicationUrl = await listenOnLoopback(backend);
       approvedOrigins = new Set([new URL(localApplicationUrl).origin]);
       window = new BrowserWindow({

@@ -12,7 +12,7 @@ async function listen(remote = false) {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-host-"));
   const state = new LocalStateStore(directory);
   const remoteAuth = remote ? ({ verify: async () => ({}) } as unknown as RemoteAuth) : undefined;
-  const server = createLocalHost(directory, state, undefined, remoteAuth);
+  const server = createLocalHost({ dist: directory, state, remoteAuth });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return { directory, state, server, url: `http://127.0.0.1:${address.port}` };

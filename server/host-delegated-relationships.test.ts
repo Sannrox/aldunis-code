@@ -17,24 +17,27 @@ const execFileAsync = promisify(execFile);
 test("host linking rejects direct and longer delegated cycles", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-delegated-relationships-"));
   const state = new LocalStateStore(directory);
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-  );
+    profiles: new ClaudeProfileStore(directory),
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address() as AddressInfo;
     const url = `http://127.0.0.1:${address.port}`;
     await fetch(`${url}/api/state/load`, { method: "POST" });
     await state.saveProject({ id: "project", name: "Project", root: directory });
-    const createConversation = async (name: string) => (await state.startTurn({
-      projectId: "project",
-      worktree: join(directory, name),
-      prompt: name,
-      mode: "ask",
-      provider: "codex-cli",
-    })).thread;
+    const createConversation = async (name: string) =>
+      (
+        await state.startTurn({
+          projectId: "project",
+          worktree: join(directory, name),
+          prompt: name,
+          mode: "ask",
+          provider: "codex-cli",
+        })
+      ).thread;
     const first = await createConversation("first");
     const second = await createConversation("second");
     const third = await createConversation("third");
@@ -42,14 +45,12 @@ test("host linking rejects direct and longer delegated cycles", async () => {
       ...DEFAULT_PREFERENCES,
       orchestrationThreadsBeta: true,
     });
-    const link = (parentThreadId: string, childThreadId: string) => fetch(
-      `${url}/api/state/delegated-conversations/link`,
-      {
+    const link = (parentThreadId: string, childThreadId: string) =>
+      fetch(`${url}/api/state/delegated-conversations/link`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ parentThreadId, childThreadId }),
-      },
-    );
+      });
 
     assert.equal((await link(first.id, second.id)).status, 200);
     const directCycle = await link(second.id, first.id);
@@ -66,7 +67,7 @@ test("host linking rejects direct and longer delegated cycles", async () => {
     });
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
@@ -81,7 +82,17 @@ test("host requires delegated Build children to use available managed worktrees"
   await writeFile(join(repository, "README.md"), "fixture\n");
   await execFileAsync("git", ["-C", repository, "add", "README.md"]);
   await execFileAsync("git", ["-C", repository, "commit", "-qm", "fixture"]);
-  await execFileAsync("git", ["-C", repository, "worktree", "add", "-q", "-b", "user/child", userWorktree, "HEAD"]);
+  await execFileAsync("git", [
+    "-C",
+    repository,
+    "worktree",
+    "add",
+    "-q",
+    "-b",
+    "user/child",
+    userWorktree,
+    "HEAD",
+  ]);
   const canonicalRepository = await canonicalizeRepositoryRoot(repository);
 
   const state = new LocalStateStore(directory);
@@ -97,17 +108,16 @@ test("host requires delegated Build children to use available managed worktrees"
     ...DEFAULT_PREFERENCES,
     orchestrationThreadsBeta: true,
   });
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-  );
+    profiles: new ClaudeProfileStore(directory),
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address() as AddressInfo;
-    const request = (worktree: string, conversationId: string) => fetch(
-      `http://127.0.0.1:${address.port}/api/provider/runs`,
-      {
+    const request = (worktree: string, conversationId: string) =>
+      fetch(`http://127.0.0.1:${address.port}/api/provider/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -122,17 +132,18 @@ test("host requires delegated Build children to use available managed worktrees"
           model: "default",
           contextPins: [],
         }),
-      },
-    );
+      });
     const response = await request(repository, "child-conversation");
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), {
-      error: "A Build child requires an isolated worktree. Start it from a managed child worktree or use Ask/Plan for the parent worktree.",
+      error:
+        "A Build child requires an isolated worktree. Start it from a managed child worktree or use Ask/Plan for the parent worktree.",
     });
     const userResponse = await request(userWorktree, "user-child-conversation");
     assert.equal(userResponse.status, 409);
     assert.deepEqual(await userResponse.json(), {
-      error: "A Build child requires an available Aldunis-managed worktree. Create one through the worktree approval flow.",
+      error:
+        "A Build child requires an available Aldunis-managed worktree. Create one through the worktree approval flow.",
     });
     const providerResponse = await fetch(`http://127.0.0.1:${address.port}/api/provider/runs`, {
       method: "POST",
@@ -154,12 +165,21 @@ test("host requires delegated Build children to use available managed worktrees"
     assert.deepEqual(await providerResponse.json(), {
       error: "A delegated child must use the parent conversation's provider.",
     });
-    assert.equal((await state.load()).threads.some((thread) => thread.id === "child-conversation"), false);
-    assert.equal((await state.load()).threads.some((thread) => thread.id === "user-child-conversation"), false);
-    assert.equal((await state.load()).threads.some((thread) => thread.id === "provider-child-conversation"), false);
+    assert.equal(
+      (await state.load()).threads.some((thread) => thread.id === "child-conversation"),
+      false,
+    );
+    assert.equal(
+      (await state.load()).threads.some((thread) => thread.id === "user-child-conversation"),
+      false,
+    );
+    assert.equal(
+      (await state.load()).threads.some((thread) => thread.id === "provider-child-conversation"),
+      false,
+    );
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
