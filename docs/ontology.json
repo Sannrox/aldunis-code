@@ -14,6 +14,10 @@
       "description": "An internal deep module that hides local host route selection, authorization-sensitive request handling, dependency coordination, response normalization, and failure mapping behind one request-dispatch interface."
     },
     {
+      "name": "BrowserRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates shared-browser route recognition, desktop and managed-mode admission, conversation-to-worktree binding, provider authorization, session lifecycle validation, and broker invocation behind one internal dispatch interface."
+    },
+    {
       "name": "ProviderRunExecutionModule",
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one internal interface while provider-specific behavior remains in adapters."
     },
@@ -894,6 +898,16 @@
       }
     },
     {
+      "name": "delegates_browser_route_dispatch",
+      "description": "The local host dispatch module delegates recognized shared-browser requests and request-scoped authority facts to one internal browser route module without moving browser ownership or creating a new trust seam.",
+      "domain": "LocalApiDispatchModule",
+      "range": "BrowserRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
       "name": "executes_local_conversation_run",
       "description": "Concentrates the server-side lifecycle for one local conversation run while provider process variation remains behind existing adapters and permission authority remains with the PermissionBroker.",
       "domain": "ProviderRunExecutionModule",
@@ -925,6 +939,18 @@
       "subject": "LocalApiDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#591",
       "locator": "server/host.ts#handleApi",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BrowserRouteDispatchModule",
+      "source": "Aldunis Code shared-browser route dispatch implementation",
+      "locator": "server/browser-routes.ts#handleBrowserRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_browser_route_dispatch",
+      "source": "Aldunis Code local host browser dispatch interface",
+      "locator": "server/host.ts#handleApi; server/browser-routes.ts#handleBrowserRoute",
       "confidence": 1.0
     },
     {
