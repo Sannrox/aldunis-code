@@ -531,43 +531,80 @@ function createInternalPermissionCallback(permissions: PermissionBroker): {
   return { server, url };
 }
 
+interface LocalApiDispatchContext {
+  provider: ClaudeCodeAdapter;
+  codex: CodexCliAdapter;
+  shikigami: ShikigamiAdapter;
+  permissions: PermissionBroker;
+  delivery: DeliveryBroker;
+  releaseDelivery: ReleaseDeliveryBroker;
+  state: LocalStateStore;
+  profiles: ClaudeProfileStore;
+  previews: PreviewManager;
+  preferences: PreferencesStore;
+  automations: AutomationStore;
+  automationScheduler: AutomationScheduler;
+  autonomy: AutonomyEngine;
+  worktrees: WorktreeManager;
+  directories: DirectoryBrowser;
+  adapters: ProviderAdapterStore;
+  providerDiscovery: ProviderDiscovery;
+  activeAcp: Map<string, AcpProviderAdapter>;
+  wake: WakeBroker;
+  withDelegatedControlLock: DelegatedControlLock;
+  runChildFollowUp: (body: Record<string, unknown>) => Promise<void>;
+  chisei: ChiseiProjectionClient;
+  remoteAuth?: RemoteAuth;
+  internalApprovalUrl?: Promise<string>;
+  managedHost?: ManagedHost;
+  browser?: SharedBrowserBroker | null;
+  browserMcpPath?: string;
+  publicOrigin?: string | (() => string | undefined);
+  remoteRequest: boolean;
+  internalRequest: boolean;
+  localControlRequest: boolean;
+  managedIdentity?: ManagedIdentity;
+}
+
 async function handleApi(
   request: IncomingMessage,
   response: ServerResponse,
-  provider: ClaudeCodeAdapter,
-  codex: CodexCliAdapter,
-  shikigami: ShikigamiAdapter,
-  permissions: PermissionBroker,
-  delivery: DeliveryBroker,
-  releaseDelivery: ReleaseDeliveryBroker,
-  state: LocalStateStore,
-  profiles: ClaudeProfileStore,
-  previews: PreviewManager,
-  preferences: PreferencesStore,
-  automations: AutomationStore,
-  automationScheduler: AutomationScheduler,
-  autonomy: AutonomyEngine,
-  worktrees: WorktreeManager,
-  directories: DirectoryBrowser,
-  adapters: ProviderAdapterStore,
-  providerDiscovery: ProviderDiscovery,
-  activeAcp: Map<string, AcpProviderAdapter>,
-  wake: WakeBroker,
-  withDelegatedControlLock: DelegatedControlLock,
-  runChildFollowUp: (body: Record<string, unknown>) => Promise<void>,
-  chisei: ChiseiProjectionClient,
-  remoteRequest: boolean,
-  internalRequest: boolean,
-  localControlRequest: boolean,
-  remoteAuth?: RemoteAuth,
-  internalApprovalUrl?: Promise<string>,
-  managedHost?: ManagedHost,
-  managedIdentity?: ManagedIdentity,
-  browser?: SharedBrowserBroker | null,
-  browserMcpPath?: string,
-  publicOrigin?: string | (() => string | undefined),
-  localBindHost?: string,
+  context: LocalApiDispatchContext,
 ): Promise<boolean> {
+  const {
+    provider,
+    codex,
+    shikigami,
+    permissions,
+    delivery,
+    releaseDelivery,
+    state,
+    profiles,
+    previews,
+    preferences,
+    automations,
+    automationScheduler,
+    autonomy,
+    worktrees,
+    directories,
+    adapters,
+    providerDiscovery,
+    activeAcp,
+    wake,
+    withDelegatedControlLock,
+    runChildFollowUp,
+    chisei,
+    remoteAuth,
+    internalApprovalUrl,
+    managedHost,
+    browser,
+    browserMcpPath,
+    publicOrigin,
+    remoteRequest,
+    internalRequest,
+    localControlRequest,
+    managedIdentity,
+  } = context;
   const url = new URL(request.url ?? "/", "http://localhost");
   const route = url.pathname;
   if (!route.startsWith("/api/")) return false;
@@ -3067,7 +3104,10 @@ async function handleApi(
       const contextPins =
         body.contextPins !== undefined
           ? (body.contextPins as ContextPin[])
-          : ((body.attachments ?? []) as string[]).map((path) => ({ path, kind: "file" as const }));
+          : ((body.attachments ?? []) as string[]).map((path) => ({
+              path,
+              kind: "file" as const,
+            }));
       if (remoteRequest && contextPins.some((pin) => pin.kind === "folder")) {
         throw new RepositoryError(
           "Remote folder pinning requires an authenticated repository grant and is unavailable.",
@@ -5265,9 +5305,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       }
     }
     if (
-      await handleApi(
-        request,
-        response,
+      await handleApi(request, response, {
         provider,
         codex,
         shikigami,
@@ -5290,18 +5328,17 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         withDelegatedControlLock,
         runChildFollowUp,
         chisei,
-        Boolean(remoteAuth) && !internalRequest,
-        internalRequest,
-        localControlRequest,
         remoteAuth,
-        internalPermissionCallback?.url,
+        internalApprovalUrl: internalPermissionCallback?.url,
         managedHost,
-        managedIdentity,
         browser,
         browserMcpPath,
         publicOrigin,
-        localBindHost,
-      )
+        remoteRequest: Boolean(remoteAuth) && !internalRequest,
+        internalRequest,
+        localControlRequest,
+        managedIdentity,
+      })
     )
       return;
     await serveStatic(request, response, dist);

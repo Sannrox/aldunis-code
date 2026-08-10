@@ -6,6 +6,14 @@
       "description": "The local Aldunis Code executable boundary that parses structured host and remote-auth commands before startup while preserving loopback defaults and legacy flag compatibility."
     },
     {
+      "name": "AldunisLocalHost",
+      "description": "The local Aldunis Code HTTP host that composes repository, provider, approval, persistence, automation, projection, and presentation modules while preserving loopback and authenticated managed-mode authority."
+    },
+    {
+      "name": "LocalApiDispatchModule",
+      "description": "An internal deep module that hides local host route selection, authorization-sensitive request handling, dependency coordination, response normalization, and failure mapping behind one request-dispatch interface."
+    },
+    {
       "name": "HostCommand",
       "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
     },
@@ -319,6 +327,16 @@
     }
   ],
   "relations": [
+    {
+      "name": "dispatches_through_local_api",
+      "description": "The local host delegates accepted HTTP requests and request-scoped authority facts to one internal dispatch module without creating a new network, product, or trust seam.",
+      "domain": "AldunisLocalHost",
+      "range": "LocalApiDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
     {
       "name": "targets_existing_conversation",
       "description": "Binds a timer-only automation to one existing local conversation; scheduling never creates a new conversation or worktree.",
@@ -841,6 +859,24 @@
     }
   ],
   "provenance": [
+    {
+      "subject": "AldunisLocalHost",
+      "source": "Aldunis Code local host composition",
+      "locator": "server/host.ts#createLocalHost; docs/architecture.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalApiDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#591",
+      "locator": "server/host.ts#handleApi",
+      "confidence": 1.0
+    },
+    {
+      "subject": "dispatches_through_local_api",
+      "source": "Aldunis Code local host dispatch interface",
+      "locator": "server/host.ts#createLocalHost; server/host.ts#handleApi",
+      "confidence": 1.0
+    },
     {
       "subject": "AldunisCodeCli",
       "source": "Aldunis Code CLI command contract",
