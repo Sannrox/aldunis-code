@@ -17,6 +17,7 @@ import {
   isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
+  prepareForUpdateShutdown,
   selectedDirectoryPath,
   shouldHideWindowOnClose,
 } from "./lifecycle.ts";
@@ -94,9 +95,16 @@ async function closeLocalServices(): Promise<void> {
 
 async function prepareForUpdate(): Promise<void> {
   shuttingDown = true;
-  desktopUpdater?.dispose();
-  await closeLocalServices();
-  if (window && !window.isDestroyed()) window.destroy();
+  await prepareForUpdateShutdown({
+    disposeUpdater: () => desktopUpdater?.dispose(),
+    destroyWindow: () => {
+      if (window && !window.isDestroyed()) window.destroy();
+    },
+    closeServices: closeLocalServices,
+    onCloseError: () => {
+      console.error("Local services could not be closed cleanly before installing the update.");
+    },
+  });
 }
 
 if (!gotSingleInstanceLock) {

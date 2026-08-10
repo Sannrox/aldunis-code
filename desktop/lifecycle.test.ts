@@ -9,6 +9,7 @@ import {
   isSupportedDeepLink,
   listenOnLoopback,
   localApplicationUrl,
+  prepareForUpdateShutdown,
   selectedDirectoryPath,
   shouldHideWindowOnClose,
 } from "./lifecycle.ts";
@@ -111,6 +112,41 @@ test("desktop main adapts the CommonJS updater and wires update shutdown", async
   assert.match(source, /window\.on\("close", \(event\) =>/);
   assert.match(source, /app\.on\("activate", showWindow\);/);
   assert.match(source, /process\.platform !== "darwin"/);
+});
+
+test("update shutdown disconnects the renderer before closing local services", async () => {
+  const events: string[] = [];
+
+  await prepareForUpdateShutdown({
+    disposeUpdater: () => events.push("dispose updater"),
+    destroyWindow: () => events.push("destroy window"),
+    closeServices: async () => {
+      events.push("close services");
+    },
+  });
+
+  assert.deepEqual(events, ["dispose updater", "destroy window", "close services"]);
+});
+
+test("update shutdown continues after local service cleanup fails", async () => {
+  const events: string[] = [];
+
+  await prepareForUpdateShutdown({
+    disposeUpdater: () => events.push("dispose updater"),
+    destroyWindow: () => events.push("destroy window"),
+    closeServices: async () => {
+      events.push("close services");
+      throw new Error("sensitive cleanup failure");
+    },
+    onCloseError: () => events.push("report bounded error"),
+  });
+
+  assert.deepEqual(events, [
+    "dispose updater",
+    "destroy window",
+    "close services",
+    "report bounded error",
+  ]);
 });
 
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
