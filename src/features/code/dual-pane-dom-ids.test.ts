@@ -40,3 +40,21 @@ test("conversation scopes tool activity and composer menu ids by pane", () => {
     assert.doesNotMatch(conversationSource, pattern, `unscoped dual-pane id: ${pattern}`);
   }
 });
+
+test("collapsed disclosure controls omit aria-controls until the target is mounted", () => {
+  // Conditional panels are not in the DOM when closed; pointing aria-controls at a
+  // missing id fails accessibility audits and confuses assistive tech.
+  assert.match(
+    conversationSource,
+    /aria-controls=\{\s*workspaceSetupVisible \? `\$\{pane\}-new-chat-context-body` : undefined\s*\}/,
+  );
+  assert.match(
+    conversationSource,
+    /aria-controls=\{\s*planOpen && planPanelMode === "plan" \? `\$\{pane\}-provider-plan-panel` : undefined\s*\}/,
+  );
+  assert.match(
+    conversationSource,
+    /aria-controls=\{\s*planOpen && planPanelMode === "graph" \? `\$\{pane\}-provider-plan-panel` : undefined\s*\}/,
+  );
+  assert.doesNotMatch(conversationSource, /aria-controls=\{`\$\{pane\}-new-chat-context-body`\}/);
+});

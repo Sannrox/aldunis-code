@@ -3192,7 +3192,9 @@ export function Conversation({
                 setPlanOpen(true);
               }}
               aria-expanded={planOpen && planPanelMode === "plan"}
-              aria-controls={`${pane}-provider-plan-panel`}
+              aria-controls={
+                planOpen && planPanelMode === "plan" ? `${pane}-provider-plan-panel` : undefined
+              }
             >
               Plan
             </button>
@@ -3212,7 +3214,9 @@ export function Conversation({
                 setPlanOpen(true);
               }}
               aria-expanded={planOpen && planPanelMode === "graph"}
-              aria-controls={`${pane}-provider-plan-panel`}
+              aria-controls={
+                planOpen && planPanelMode === "graph" ? `${pane}-provider-plan-panel` : undefined
+              }
               title="Work Graph (Beta)"
             >
               Graph{" "}
@@ -3856,7 +3860,9 @@ export function Conversation({
                   className="new-chat-context-summary"
                   disabled={workspaceSetupRequired}
                   aria-expanded={workspaceSetupVisible}
-                  aria-controls={`${pane}-new-chat-context-body`}
+                  aria-controls={
+                    workspaceSetupVisible ? `${pane}-new-chat-context-body` : undefined
+                  }
                   aria-label={
                     workspaceSetupRequired
                       ? `Workspace: ${workspaceSummary}. Setup details are required until a project and worktree are selected.`
