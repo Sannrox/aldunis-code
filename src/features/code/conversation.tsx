@@ -2967,7 +2967,9 @@ export function Conversation({
             key={`${keyPrefix}-tools-${blockIndex}`}
             rows={block.rows}
             providerLabel={providerLabel}
-            groupId={`${keyPrefix}-tools-${blockIndex}`}
+            // Scope by pane so dual-pane layouts do not emit duplicate DOM ids
+            // (aria-controls targets must stay unique document-wide).
+            groupId={`${pane}-${keyPrefix}-tools-${blockIndex}`}
           />
         );
       },
@@ -3814,7 +3816,9 @@ export function Conversation({
                           title={repository?.root ?? "Choose a project"}
                           aria-haspopup="listbox"
                           aria-expanded={projectMenuOpen}
-                          aria-controls={projectMenuOpen ? "new-chat-project-menu" : undefined}
+                          aria-controls={
+                            projectMenuOpen ? `${pane}-new-chat-project-menu` : undefined
+                          }
                           aria-label={
                             repository
                               ? `Project ${repository.name}. Open project selector.`
@@ -3832,7 +3836,7 @@ export function Conversation({
                         </button>
                         {projectMenuOpen && (
                           <div
-                            id="new-chat-project-menu"
+                            id={`${pane}-new-chat-project-menu`}
                             className="new-chat-context-menu composer-provider-menu"
                             role="listbox"
                             aria-label="Choose project"
@@ -3892,7 +3896,9 @@ export function Conversation({
                           className="new-chat-context-row new-chat-context-row--button"
                           aria-haspopup="listbox"
                           aria-expanded={workspaceMenuOpen}
-                          aria-controls={workspaceMenuOpen ? "new-chat-workspace-menu" : undefined}
+                          aria-controls={
+                            workspaceMenuOpen ? `${pane}-new-chat-workspace-menu` : undefined
+                          }
                           title={workspaceCopy.detail}
                           aria-label={`Workspace strategy: ${workspaceCopy.label}. Open workspace strategy menu.`}
                           onClick={(event) => {
@@ -3910,7 +3916,7 @@ export function Conversation({
                         </button>
                         {workspaceMenuOpen && (
                           <div
-                            id="new-chat-workspace-menu"
+                            id={`${pane}-new-chat-workspace-menu`}
                             className="new-chat-context-menu composer-provider-menu"
                             role="listbox"
                             aria-label="Choose workspace strategy"
@@ -4549,10 +4555,10 @@ export function Conversation({
                         })}
                         {provider === "claude-code" && claudeProfiles.length > 1 && (
                           <div className="composer-provider-profile">
-                            <label htmlFor="composer-claude-profile">
+                            <label htmlFor={`${pane}-composer-claude-profile`}>
                               Claude Code profile
                               <select
-                                id="composer-claude-profile"
+                                id={`${pane}-composer-claude-profile`}
                                 value={profileId}
                                 aria-label="Claude Code profile"
                                 onChange={(event) => setProfileId(event.target.value)}
@@ -4568,10 +4574,10 @@ export function Conversation({
                         )}
                         {provider === "shikigami" && shikigamiProfiles.length > 1 && (
                           <div className="composer-provider-profile">
-                            <label htmlFor="composer-shikigami-profile">
+                            <label htmlFor={`${pane}-composer-shikigami-profile`}>
                               Shikigami profile
                               <select
-                                id="composer-shikigami-profile"
+                                id={`${pane}-composer-shikigami-profile`}
                                 value={profileId}
                                 onChange={(event) => {
                                   const nextProfileId = event.target.value;
@@ -4749,7 +4755,11 @@ export function Conversation({
                         aria-haspopup={managedMode ? undefined : "listbox"}
                         aria-expanded={managedMode ? undefined : modeMenuOpen}
                         aria-controls={
-                          managedMode ? undefined : modeMenuOpen ? "composer-mode-menu" : undefined
+                          managedMode
+                            ? undefined
+                            : modeMenuOpen
+                              ? `${pane}-composer-mode-menu`
+                              : undefined
                         }
                         title={
                           managedMode
@@ -4785,7 +4795,7 @@ export function Conversation({
                       </button>
                       {modeMenuOpen && canPickMode && (
                         <div
-                          id="composer-mode-menu"
+                          id={`${pane}-composer-mode-menu`}
                           className="composer-provider-menu"
                           role="listbox"
                           aria-label="Choose interaction mode"
@@ -4841,7 +4851,7 @@ export function Conversation({
                         aria-expanded={canPickWorkspace ? workspaceMenuOpen : undefined}
                         aria-controls={
                           canPickWorkspace && workspaceMenuOpen
-                            ? "composer-workspace-menu"
+                            ? `${pane}-composer-workspace-menu`
                             : undefined
                         }
                         title={
@@ -4869,7 +4879,7 @@ export function Conversation({
                       </button>
                       {workspaceMenuOpen && canPickWorkspace && (
                         <div
-                          id="composer-workspace-menu"
+                          id={`${pane}-composer-workspace-menu`}
                           className="composer-provider-menu workspace-mode-menu"
                           role="listbox"
                           aria-label="Choose conversation workspace"
