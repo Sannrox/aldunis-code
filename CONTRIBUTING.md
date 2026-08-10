@@ -98,6 +98,21 @@ formatting churn, updated docs when behavior changes, and tests that cover the
 observable outcome. Draft pull requests are appropriate for early design or
 cross-platform feedback.
 
+### Commits
+
+Keep commits narrow and use short imperative subjects, preferably in
+Conventional Commit form:
+
+```text
+feat(ui): add local usage dashboard
+fix(provider): preserve approval state
+docs: explain the worktree lifecycle
+```
+
+Use a scope when it helps identify the affected subsystem. Conventional
+Commit prefixes improve consistency and navigation; they do not replace the
+Issue, pull request, or release workflow described above.
+
 ### Verification expectations
 
 At minimum for application changes:
