@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { electronMcpEnvironment } from "./electron-runtime.ts";
 
 export const BROWSER_MCP_NAME = "aldunis_browser";
 export const MAX_BROWSER_OPERATION_TEXT = 8_000;
@@ -317,6 +318,8 @@ export class SharedBrowserBroker {
     endpoint: string;
     command: string;
     script: string;
+    /** Injected for tests; production uses process.versions.electron. */
+    electronVersion?: string;
   }): BrowserMcpConfiguration {
     let url: URL;
     try {
@@ -337,11 +340,15 @@ export class SharedBrowserBroker {
       name: BROWSER_MCP_NAME,
       command: input.command,
       args: [input.script],
-      environment: {
-        ALDUNIS_BROWSER_TOOL_URL: url.toString(),
-        ALDUNIS_BROWSER_CONVERSATION_ID: input.conversationId,
-        ALDUNIS_BROWSER_TOKEN: token,
-      },
+      environment: electronMcpEnvironment(
+        {
+          ALDUNIS_BROWSER_TOOL_URL: url.toString(),
+          ALDUNIS_BROWSER_CONVERSATION_ID: input.conversationId,
+          ALDUNIS_BROWSER_TOKEN: token,
+        },
+        // Empty string forces non-Electron mode in tests; omit to use the host.
+        "electronVersion" in input ? input.electronVersion : process.versions.electron,
+      ),
     };
   }
 

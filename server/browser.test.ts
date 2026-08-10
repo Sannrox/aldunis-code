@@ -150,6 +150,28 @@ test("shared browser broker reuses the provider token and fails closed on contro
   );
 });
 
+test("shared browser MCP env forces Electron Node mode so desktop turns do not dock a second app", () => {
+  const broker = new SharedBrowserBroker(new FakeBrowserHost());
+  const desktop = broker.providerMcpConfiguration({
+    conversationId: "conversation-electron",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/Applications/Aldunis Code.app/Contents/MacOS/Aldunis Code",
+    script: "/app/browser-mcp.mjs",
+    electronVersion: "43.2.0",
+  });
+  assert.equal(desktop.environment.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(desktop.environment.ALDUNIS_BROWSER_CONVERSATION_ID, "conversation-electron");
+
+  const loopbackHost = broker.providerMcpConfiguration({
+    conversationId: "conversation-node",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/usr/bin/node",
+    script: "/app/browser-mcp.mjs",
+    electronVersion: "",
+  });
+  assert.equal(loopbackHost.environment.ELECTRON_RUN_AS_NODE, undefined);
+});
+
 test("shared browser preserves a pre-opened session token across close and reopen", async () => {
   const broker = new SharedBrowserBroker(new FakeBrowserHost());
   const firstSession = broker.open("conversation-2", "http://127.0.0.1:4173");

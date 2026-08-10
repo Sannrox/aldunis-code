@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import TOML from "@iarna/toml";
+import { withElectronRunAsNode } from "./electron-runtime.ts";
+import type { ManagedShikigamiRuntime } from "./managed-host.ts";
 import {
   isMutatingTool,
   PermissionBroker,
@@ -32,7 +34,6 @@ import {
   type ProviderStartOptions,
   ProviderProtocolError,
 } from "./provider.ts";
-import type { ManagedShikigamiRuntime } from "./managed-host.ts";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
@@ -595,9 +596,7 @@ export function permissionHookRuntimeEnvironment(
   env: NodeJS.ProcessEnv,
   electronVersion: string | undefined = process.versions.electron,
 ): NodeJS.ProcessEnv {
-  return electronVersion
-    ? { ...env, ELECTRON_RUN_AS_NODE: "1" }
-    : { ...env };
+  return withElectronRunAsNode(env, electronVersion);
 }
 
 /**
@@ -610,18 +609,19 @@ export function managedShikigamiEnvironment(
   workDir: string,
   electronVersion: string | undefined = process.versions.electron,
 ): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = {
-    PATH: runtime.path ?? "/usr/local/bin:/usr/bin:/bin",
-    HOME: workDir,
-    TMPDIR: join(workDir, "tmp"),
-    TMP: join(workDir, "tmp"),
-    TEMP: join(workDir, "tmp"),
-    LANG: "C.UTF-8",
-    LC_ALL: "C.UTF-8",
-    [runtime.tokenEnv]: runtime.token,
-  };
-  if (electronVersion) environment.ELECTRON_RUN_AS_NODE = "1";
-  return environment;
+  return withElectronRunAsNode(
+    {
+      PATH: runtime.path ?? "/usr/local/bin:/usr/bin:/bin",
+      HOME: workDir,
+      TMPDIR: join(workDir, "tmp"),
+      TMP: join(workDir, "tmp"),
+      TEMP: join(workDir, "tmp"),
+      LANG: "C.UTF-8",
+      LC_ALL: "C.UTF-8",
+      [runtime.tokenEnv]: runtime.token,
+    },
+    electronVersion,
+  );
 }
 
 export class ShikigamiAdapter {
