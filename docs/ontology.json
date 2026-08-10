@@ -356,6 +356,10 @@
     {
       "name": "ConversationLifecycleRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation lifecycle route recognition, request validation, managed-host admission, explicit managed-worktree release guards, deletion ordering, delegated relationship admission, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, or approval authority."
+    },
+    {
+      "name": "ProviderAdapterAdministrationRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates declarative provider adapter administration route recognition, remote and managed-host admission, response redaction, explicit approval, action routing, and default-profile seeding behind one internal dispatch interface without changing provider trust, credential, process, or approval authority."
     }
   ],
   "relations": [
@@ -394,6 +398,16 @@
       "description": "The local API dispatch module delegates LocalConversation lifecycle requests and request-scoped authority facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "ConversationLifecycleRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_provider_adapter_administration_route_dispatch",
+      "description": "The local API dispatch module delegates declarative provider adapter administration requests and request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ProviderAdapterAdministrationRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1011,6 +1025,18 @@
       "subject": "delegates_conversation_lifecycle_route_dispatch",
       "source": "Aldunis Code conversation lifecycle route dispatch interface",
       "locator": "server/host.ts#handleApi; server/conversation-lifecycle-routes.ts#handleConversationLifecycleRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderAdapterAdministrationRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#633",
+      "locator": "server/provider-adapter-routes.ts#handleProviderAdapterRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_provider_adapter_administration_route_dispatch",
+      "source": "Aldunis Code provider adapter administration route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/provider-adapter-routes.ts#handleProviderAdapterRoute",
       "confidence": 1.0
     },
     {
