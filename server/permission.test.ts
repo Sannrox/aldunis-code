@@ -220,7 +220,10 @@ test("closeRun purges retained approvals for a completed provider run", async ()
   const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
   assert.equal(broker.decide(approval.id, decisionContext(), "allow_once").state, "allowed_once");
   assert.equal((await waiting).behavior, "allow");
+  // Mid-run: keep a lightweight terminal snapshot for UI/replay, drop tool payload.
   assert.equal(broker.approvalsFor(context.runId).length, 1);
+  assert.equal(broker.retainedPayloadApprovalCount, 0);
+  assert.equal(broker.approvalFor(context.runId, context.toolCallId)?.state, "allowed_once");
   broker.closeRun(context.runId, "provider_failed");
   assert.equal(broker.approvalsFor(context.runId).length, 0);
   assert.equal(broker.approvalFor(context.runId, context.toolCallId), null);
