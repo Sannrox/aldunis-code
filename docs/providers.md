@@ -50,6 +50,7 @@ The composer keeps these entry types distinct, matching the selected provider:
 - "/" lists Aldunis built-in commands and commands in the selected provider capability projection, grouped as **Built-in** and **Provider**. Claude Code currently advertises provider commands; other providers show built-ins until their adapter exposes normalized command metadata.
 - "$" lists enabled provider skills.
 - "@" searches bounded repository files that can be attached as conversation context.
+- Drag-and-drop or paste of GIF/JPEG/PNG/WebP images (up to 2 MB) stages bounded local context. Images already inside the active worktree pin as repository-relative paths; external images write under gitignored `aldunis-code-composer-images/` in that worktree (hidden from Changes/browse, still attachable).
 
 Selecting an entry only inserts the typed prompt token or adds a local context
 pin. It never executes a general-purpose terminal command; provider tools remain

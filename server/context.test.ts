@@ -10,8 +10,11 @@ import {
   MAX_CONTEXT_FILES,
   previewRepositoryFile,
   resolveContextAttachments,
+  resolveWorktreeImagePath,
   searchRepositoryFiles,
+  stageComposerImage,
 } from "./context.ts";
+import { isComposerAttachmentPath } from "./local-runtime.ts";
 
 async function fixture() {
   const parent = await mkdtemp(join(tmpdir(), "aldunis-context-"));
@@ -74,7 +77,16 @@ async function fixture() {
   await writeFile(join(root, "api-token.txt.template"), "token=\n");
   await writeFile(join(root, "oauth-token.json.md"), "OAuth token format\n");
   await writeFile(join(root, "binary.dat"), Buffer.from([1, 0, 2]));
-  await writeFile(join(root, "image.png"), Buffer.from([137, 80, 78, 71]));
+  await writeFile(
+    join(root, "image.png"),
+    Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+      0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
+      0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8,
+      0xcf, 0xc0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4, 0xef, 0x00, 0x00,
+      0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ]),
+  );
   await writeFile(join(root, "oversized.txt"), "x".repeat(64 * 1024 + 1));
   await writeFile(join(root, "preview-truncated.txt"), "y".repeat(128 * 1024 + 1));
   await writeFile(join(root, "notes.txt"), "bounded content search target\n");
@@ -528,4 +540,83 @@ test("missing, binary, oversized, secret-like, excessive, and escaping inputs fa
   await writeFile(join(parent, "outside.txt"), "outside");
   await symlink(join(parent, "outside.txt"), join(root, "linked.txt"));
   await assert.rejects(() => resolveContextAttachments(root, ["linked.txt"]), /symlink/);
+});
+
+test("stageComposerImage writes bounded attachable images under aldunis-code-composer-images", async () => {
+  const { root } = await fixture();
+  const png = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+    0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  ]);
+  const staged = await stageComposerImage(root, {
+    mediaType: "image/png",
+    data: png.toString("base64"),
+    name: "shot.png",
+    conversationId: "11111111-1111-1111-1111-111111111111",
+  });
+  assert.equal(staged.mediaType, "image/png");
+  assert.ok(
+    staged.path.startsWith("aldunis-code-composer-images/11111111-1111-1111-1111-111111111111/"),
+  );
+  assert.equal(isComposerAttachmentPath(staged.path), true);
+  assert.equal(isComposerAttachmentPath("src/aldunis-code-composer-images/template.ts"), false);
+  const packageResult = await assembleContextPackage(root, [{ path: staged.path, kind: "file" }]);
+  assert.deepEqual(
+    packageResult.attachments.map(({ path, kind }) => ({ path, kind })),
+    [{ path: staged.path, kind: "image" }],
+  );
+  // Staged images are gitignored so accidental `git add -A` cannot commit them.
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  const status = await execFileAsync(
+    "git",
+    ["-C", root, "status", "--porcelain", "--", staged.path],
+    { encoding: "utf8" },
+  );
+  assert.equal(status.stdout.trim(), "");
+  const browse = await browseRepositoryFiles(root, "shot");
+  assert.equal(
+    browse.files.some((file) => file.path === staged.path),
+    false,
+  );
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "application/pdf",
+        data: Buffer.from("%PDF").toString("base64"),
+      }),
+    /GIF, JPEG, PNG, and WebP/,
+  );
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: Buffer.from("not-a-png").toString("base64"),
+      }),
+    /does not match the declared image type/,
+  );
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: Buffer.alloc(2 * 1024 * 1024 + 1, 1).toString("base64"),
+      }),
+    /at most 2 MB/,
+  );
+});
+
+test("resolveWorktreeImagePath pins in-tree images and rejects escapes", async () => {
+  const { parent, root } = await fixture();
+  const resolved = await resolveWorktreeImagePath(root, join(root, "image.png"));
+  assert.equal(resolved?.path, "image.png");
+  assert.equal(resolved?.mediaType, "image/png");
+  assert.ok((resolved?.size ?? 0) >= 8);
+  assert.equal(await resolveWorktreeImagePath(root, join(parent, "outside.png")), null);
+  await writeFile(join(parent, "outside.png"), Buffer.from([137, 80, 78, 71]));
+  assert.equal(await resolveWorktreeImagePath(root, join(parent, "outside.png")), null);
+  assert.equal(await resolveWorktreeImagePath(root, join(root, "src/main.ts")), null);
 });

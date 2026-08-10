@@ -4307,6 +4307,35 @@ select.ui-input {
 .cbox {
   position: relative;
 }
+.cbox.is-drop-target {
+  border-radius: 12px;
+  outline: 2px dashed color-mix(in srgb, var(--primary) 70%, var(--border));
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.cbox.is-staging-images {
+  opacity: 0.92;
+}
+.composer-drop-affordance {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cbox.is-drop-target,
+  .composer-drop-affordance {
+    transition: none;
+  }
+}
 
 @media (max-width: 720px) {
   .new-chat-context {
