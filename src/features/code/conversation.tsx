@@ -2937,7 +2937,9 @@ export function Conversation({
     waiting_for_approval: "Waiting for your approval…",
     waiting_for_input: "Waiting for your input…",
     cancelling: "Cancelling…",
-    completed: "Turn completed",
+    // Successful completion is implied by the answer stopping and the settle
+    // notice; only cancelled/failed need explicit recovery copy in the turn.
+    completed: "",
     cancelled: `${providerLabel} cancelled · send another prompt to resume`,
     failed: failureRecovery.message,
   };
@@ -3719,9 +3721,7 @@ export function Conversation({
                         )}
                       </div>
                     )}
-                    {(providerState === "completed" ||
-                      providerState === "cancelled" ||
-                      providerState === "failed") && (
+                    {(providerState === "cancelled" || providerState === "failed") && (
                       <p className="provider-state">{stateCopy[providerState]}</p>
                     )}
                     {checkpoint && (
