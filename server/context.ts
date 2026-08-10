@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { lstat, readFile, stat } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, sep } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { RepositoryError, constrainPath } from "./repository.ts";
-import { isLocalRuntimePath } from "./local-runtime.ts";
+import { isComposerAttachmentPath, isLocalRuntimePath } from "./local-runtime.ts";
 
 const execFileAsync = promisify(execFile);
 export const MAX_CONTEXT_FILES = 8;
@@ -23,6 +23,61 @@ const IMAGE_TYPES: Record<string, string> = {
   ".png": "image/png",
   ".webp": "image/webp",
 };
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/gif": ".gif",
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+};
+/** Unlikely to collide with user project trees; reserved for host-staged composer images. */
+export const COMPOSER_ATTACHMENT_DIR = "aldunis-code-composer-images";
+const MANAGED_STAGED_IMAGE_NAME = /^.+-[0-9a-f]{8}\.(gif|jpe?g|png|webp)$/i;
+const MAX_STAGED_IMAGES_PER_WORKTREE = 32;
+const MAX_STAGED_BYTES_PER_WORKTREE = 32 * 1024 * 1024;
+
+function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
+  if (mediaType === "image/png") {
+    return (
+      bytes.length >= 8 &&
+      bytes[0] === 0x89 &&
+      bytes[1] === 0x50 &&
+      bytes[2] === 0x4e &&
+      bytes[3] === 0x47 &&
+      bytes[4] === 0x0d &&
+      bytes[5] === 0x0a &&
+      bytes[6] === 0x1a &&
+      bytes[7] === 0x0a
+    );
+  }
+  if (mediaType === "image/jpeg") {
+    return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  if (mediaType === "image/gif") {
+    return (
+      bytes.length >= 6 &&
+      bytes[0] === 0x47 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x38 &&
+      (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+      bytes[5] === 0x61
+    );
+  }
+  if (mediaType === "image/webp") {
+    return (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 &&
+      bytes[1] === 0x49 &&
+      bytes[2] === 0x46 &&
+      bytes[3] === 0x46 &&
+      bytes[8] === 0x57 &&
+      bytes[9] === 0x45 &&
+      bytes[10] === 0x42 &&
+      bytes[11] === 0x50
+    );
+  }
+  return false;
+}
 const SECRET_NAMES =
   /(^|\/)(\.env(?:\.[^/]*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|credentials(?:\.json)?(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|[^/]+\.(?:key|pem|p12|pfx)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?)$/i;
 const SECRET_CONFIG_NAME_PART =
@@ -283,6 +338,12 @@ export async function assembleContextPackage(
       continue;
     }
     if (!availableSet.has(pin.path)) {
+      // Host-staged composer images are intentionally gitignored so screenshots
+      // cannot be `git add -A`'d by accident, but remain explicit attach targets.
+      if (pin.kind === "file" && isComposerAttachmentPath(pin.path)) {
+        selected.set(pin.path, "aldunis_attachment");
+        continue;
+      }
       entries.push(
         omittedEntry(
           pin.path,
@@ -479,6 +540,8 @@ export async function browseRepositoryFiles(
   let searchBudgetExhausted = false;
   for (const path of paths) {
     if (signal?.aborted) throw signal.reason;
+    // Staged composer images are attachable context, not a browse surface.
+    if (isComposerAttachmentPath(path)) continue;
     if (!needle || path.toLocaleLowerCase().includes(needle)) {
       matches.push({ path, match: needle ? "name" : null });
       continue;
@@ -599,6 +662,288 @@ export async function previewRepositoryFile(
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Stage a bounded image into the worktree so it can be pinned as ordinary
+ * local context. Files land under `aldunis-code-composer-images/` (non-hidden)
+ * and stay out of the Changes review surface via `isComposerAttachmentPath`.
+ */
+export async function stageComposerImage(
+  worktree: string,
+  input: {
+    mediaType: string;
+    data: string;
+    name?: string;
+    conversationId?: string;
+  },
+): Promise<{ path: string; mediaType: string; size: number }> {
+  return withComposerAttachmentLock(worktree, async () => {
+    const mediaType = input.mediaType.trim().toLocaleLowerCase();
+    const extension = IMAGE_EXTENSIONS[mediaType];
+    if (!extension) {
+      throw new RepositoryError(
+        "Only GIF, JPEG, PNG, and WebP images can be staged into the composer.",
+        415,
+      );
+    }
+    const base64 = input.data.replace(/\s+/g, "");
+    if (!base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) {
+      throw new RepositoryError("Image data must be valid base64.", 400);
+    }
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.from(base64, "base64");
+    } catch {
+      throw new RepositoryError("Image data must be valid base64.", 400);
+    }
+    // Reject empty and padded-garbage payloads that decode to nothing useful.
+    if (bytes.length === 0) throw new RepositoryError("Image data is empty.", 400);
+    if (bytes.length > MAX_IMAGE_BYTES) {
+      throw new RepositoryError(`Images must be at most ${MAX_IMAGE_BYTES / 1024 / 1024} MB.`, 413);
+    }
+    if (!matchesImageSignature(bytes, mediaType)) {
+      throw new RepositoryError("Image data does not match the declared image type.", 415);
+    }
+    const scope =
+      typeof input.conversationId === "string" && /^[0-9a-f-]{8,36}$/i.test(input.conversationId)
+        ? input.conversationId.toLocaleLowerCase()
+        : "shared";
+    const originalName =
+      (input.name ?? `image${extension}`).replaceAll("\\", "/").split("/").pop() ?? "image";
+    const safeStem = originalName
+      .replace(extname(originalName), "")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    const fileName = `${safeStem || "image"}-${randomUUID().slice(0, 8)}${extension}`;
+    const relativePath = `${COMPOSER_ATTACHMENT_DIR}/${scope}/${fileName}`;
+    const rootAttachmentDir = join(worktree, COMPOSER_ATTACHMENT_DIR);
+    await ensureComposerAttachmentDirectory(worktree, rootAttachmentDir);
+    const canonicalRoot = await constrainPath(worktree, rootAttachmentDir);
+    await ensureComposerAttachmentIgnore(canonicalRoot);
+    const directory = join(canonicalRoot, scope);
+    await ensureDirectory(directory);
+    const canonicalDirectory = await constrainPath(worktree, directory);
+    await enforceComposerAttachmentQuota(canonicalRoot, bytes.length);
+    const canonical = join(canonicalDirectory, fileName);
+    await writeFile(canonical, bytes, { flag: "wx" });
+    return { path: relativePath, mediaType, size: bytes.length };
+  });
+}
+
+async function listManagedStagedImages(
+  rootAttachmentDir: string,
+): Promise<Array<{ path: string; size: number; mtimeMs: number }>> {
+  const scopes = await readdir(rootAttachmentDir, { withFileTypes: true }).catch(() => []);
+  const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
+  for (const scope of scopes) {
+    if (!scope.isDirectory()) continue;
+    const scopeDir = join(rootAttachmentDir, scope.name);
+    const entries = await readdir(scopeDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !MANAGED_STAGED_IMAGE_NAME.test(entry.name)) continue;
+      const path = join(scopeDir, entry.name);
+      const details = await stat(path).catch(() => null);
+      if (!details) continue;
+      files.push({ path, size: details.size, mtimeMs: details.mtimeMs });
+    }
+  }
+  return files;
+}
+
+/** Bound disk use without deleting files still referenced by conversation pins. */
+async function enforceComposerAttachmentQuota(
+  rootAttachmentDir: string,
+  incomingBytes: number,
+): Promise<void> {
+  const files = await listManagedStagedImages(rootAttachmentDir);
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0) + incomingBytes;
+  if (
+    files.length >= MAX_STAGED_IMAGES_PER_WORKTREE ||
+    totalBytes > MAX_STAGED_BYTES_PER_WORKTREE
+  ) {
+    throw new RepositoryError(
+      `Composer image staging is full (at most ${MAX_STAGED_IMAGES_PER_WORKTREE} images or ${MAX_STAGED_BYTES_PER_WORKTREE / 1024 / 1024} MB under ${COMPOSER_ATTACHMENT_DIR}/). Remove older staged images and try again.`,
+      413,
+    );
+  }
+}
+
+const composerAttachmentLocks = new Map<string, Promise<void>>();
+
+async function withComposerAttachmentLock<T>(
+  worktree: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const key = resolve(worktree);
+  const previous = composerAttachmentLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolveGate) => {
+    release = resolveGate;
+  });
+  const chain = previous.then(() => gate);
+  composerAttachmentLocks.set(key, chain);
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (composerAttachmentLocks.get(key) === chain) composerAttachmentLocks.delete(key);
+  }
+}
+
+async function ensureDirectory(path: string): Promise<void> {
+  const existing = await lstat(path).catch(() => null);
+  if (existing?.isSymbolicLink()) {
+    throw new RepositoryError("Composer attachment path cannot be a symlink.", 403);
+  }
+  if (existing && !existing.isDirectory()) {
+    throw new RepositoryError("Composer attachment path is not a directory.", 409);
+  }
+  if (existing) return;
+  try {
+    await mkdir(path, { recursive: false });
+  } catch (error) {
+    // Concurrent staging can win the create race; revalidate the winner.
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const raced = await lstat(path).catch(() => null);
+    if (!raced || raced.isSymbolicLink() || !raced.isDirectory()) {
+      throw new RepositoryError("Composer attachment path is not a directory.", 409);
+    }
+  }
+}
+
+async function ensureComposerAttachmentDirectory(
+  worktree: string,
+  rootAttachmentDir: string,
+): Promise<void> {
+  await ensureDirectory(rootAttachmentDir);
+  // Confirm the created/existing directory still lives inside the worktree.
+  await constrainPath(worktree, rootAttachmentDir);
+}
+
+async function ensureComposerAttachmentIgnore(rootAttachmentDir: string): Promise<void> {
+  const ignoreFile = join(rootAttachmentDir, ".gitignore");
+  // Exact rule only: ignore everything in this directory, including this file.
+  // No negation rules, so screenshots and the ignore file stay out of `git add -A`.
+  const required = "*\n";
+  const current = await readFile(ignoreFile, "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (current === null) {
+    try {
+      await writeFile(ignoreFile, required, { flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      // Another request created the ignore file; re-read and validate below.
+    }
+  }
+  const effective = await readFile(ignoreFile, "utf8").catch(() => null);
+  if (effective === required) return;
+  throw new RepositoryError(
+    "aldunis-code-composer-images/.gitignore must use the Aldunis-managed ignore rule (* only).",
+    409,
+  );
+}
+
+/**
+ * When the desktop shell exposes an absolute path for a dropped file, pin it
+ * directly when it already lives inside the selected worktree and is visible
+ * to Git-backed context assembly. Ignored in-tree images return null so the
+ * host can stage a bounded copy under `aldunis-code-composer-images/` instead.
+ */
+export async function resolveWorktreeImagePath(
+  worktree: string,
+  absolutePath: string,
+): Promise<{ path: string; mediaType: string; size: number } | null> {
+  if (!absolutePath || absolutePath.includes("\0") || !isAbsolute(absolutePath)) return null;
+  const normalizedWorktree = resolve(worktree);
+  const candidate = resolve(absolutePath);
+  const relativePath = relative(normalizedWorktree, candidate).replaceAll("\\", "/");
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  if (isHidden(relativePath) || isSecretLikePath(relativePath)) return null;
+  if (
+    isLocalRuntimePath(relativePath) &&
+    !(await isTrackedRepositoryPath(worktree, relativePath))
+  ) {
+    return null;
+  }
+  const direct = await lstat(candidate).catch(() => null);
+  if (!direct || direct.isSymbolicLink() || !direct.isFile()) return null;
+  const mediaType = IMAGE_TYPES[extname(relativePath).toLocaleLowerCase()];
+  if (!mediaType) return null;
+  if (direct.size > MAX_IMAGE_BYTES) {
+    throw new RepositoryError(
+      `${relativePath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
+      413,
+    );
+  }
+  // Ensure the path still canonicalizes inside the worktree (symlink races).
+  const canonical = await constrainPath(worktree, candidate);
+  const bytes = await readFile(canonical);
+  if (!matchesImageSignature(bytes, mediaType)) {
+    throw new RepositoryError("Image data does not match the declared image type.", 415);
+  }
+  if (isComposerAttachmentPath(relativePath)) {
+    return { path: relativePath, mediaType, size: bytes.length };
+  }
+  const available = await repositoryPaths(worktree);
+  if (!available.includes(relativePath)) {
+    // Ignored/unlisted — caller should stage a copy rather than pin a no-op path.
+    return null;
+  }
+  return { path: relativePath, mediaType, size: bytes.length };
+}
+
+/** Read a worktree-local image and stage a gitignored attachable copy. */
+export async function stageWorktreeImageCopy(
+  worktree: string,
+  absolutePath: string,
+  options: { conversationId?: string } = {},
+): Promise<{ path: string; mediaType: string; size: number } | null> {
+  if (!absolutePath || absolutePath.includes("\0") || !isAbsolute(absolutePath)) return null;
+  const normalizedWorktree = resolve(worktree);
+  const candidate = resolve(absolutePath);
+  const relativePath = relative(normalizedWorktree, candidate).replaceAll("\\", "/");
+  if (
+    !relativePath ||
+    relativePath === ".." ||
+    relativePath.startsWith("../") ||
+    isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  if (isHidden(relativePath) || isSecretLikePath(relativePath)) return null;
+  const direct = await lstat(candidate).catch(() => null);
+  if (!direct || direct.isSymbolicLink() || !direct.isFile()) return null;
+  const mediaType = IMAGE_TYPES[extname(relativePath).toLocaleLowerCase()];
+  if (!mediaType) return null;
+  const canonical = await constrainPath(worktree, candidate);
+  const bytes = await readFile(canonical);
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    throw new RepositoryError(
+      `${relativePath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
+      413,
+    );
+  }
+  if (!matchesImageSignature(bytes, mediaType)) {
+    throw new RepositoryError("Image data does not match the declared image type.", 415);
+  }
+  return stageComposerImage(worktree, {
+    mediaType,
+    data: bytes.toString("base64"),
+    name: relativePath.split("/").pop() ?? `image${IMAGE_EXTENSIONS[mediaType]}`,
+    ...(options.conversationId ? { conversationId: options.conversationId } : {}),
+  });
 }
 
 export async function resolveContextAttachments(

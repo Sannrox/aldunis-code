@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { checkpointDiff, RepositoryError, type CheckpointFile } from "./repository.ts";
-import { isLocalRuntimePath } from "./local-runtime.ts";
+import { isComposerAttachmentPath, isLocalRuntimePath } from "./local-runtime.ts";
+
+function isHiddenReviewPath(path: string): boolean {
+  return isLocalRuntimePath(path) || isComposerAttachmentPath(path);
+}
 
 const execFileAsync = promisify(execFile);
 export const MAX_DIFF_BYTES = 256 * 1024;
@@ -455,7 +459,7 @@ async function pairWorktreeRenames(
       (entry) => entry.initial === "deleted" && entry.path === previousPath,
     );
     const added = entries.find(
-      (entry) => entry.code === "??" && !isLocalRuntimePath(entry.path) && entry.path === path,
+      (entry) => entry.code === "??" && !isHiddenReviewPath(entry.path) && entry.path === path,
     );
     if (!deleted || !added) continue;
     added.initial = "renamed";
@@ -575,7 +579,7 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
   await pairExactRenames(
     worktree,
     entries,
-    (entry) => !isLocalRuntimePath(entry.path),
+    (entry) => !isHiddenReviewPath(entry.path),
     () => {},
   );
 
@@ -588,10 +592,10 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
   ];
   const addPaths = await boundedSnapshotPaths(worktree, [
     ...entries
-      .filter((entry) => entry.code === "??" && !isLocalRuntimePath(entry.path))
+      .filter((entry) => entry.code === "??" && !isHiddenReviewPath(entry.path))
       .map((entry) => entry.path),
     ...entries.flatMap((entry) =>
-      entry.previousPath && !isLocalRuntimePath(entry.path) ? [entry.path] : [],
+      entry.previousPath && !isHiddenReviewPath(entry.path) ? [entry.path] : [],
     ),
   ]);
   const needsSnapshot =
@@ -606,12 +610,13 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
     }
 
     // A user's checkout may predate Aldunis' own /data ignore rule. Keep
-    // local databases and generated runtime state out of review even then,
-    // after preserving a genuine unstaged rename into one of those paths.
+    // local databases, generated runtime state, and staged composer images
+    // out of review even then, after preserving a genuine unstaged rename
+    // into one of those paths.
     const changes: ChangedFile[] = [];
     for (const entry of entries) {
       const { code, path, previousPath, initial } = entry;
-      if (code === "??" && initial === "added" && isLocalRuntimePath(path)) continue;
+      if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
       const oversized = await isOversized(worktree, path, initial === "deleted", previousPath);
       const binary =
         !oversized &&
