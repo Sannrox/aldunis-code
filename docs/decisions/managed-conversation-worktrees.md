@@ -16,16 +16,15 @@ behalf of the workbench.
 Creation follows a preview-and-approve flow:
 
 1. Canonicalize the repository and target path.
-2. Resolve the repository default branch to an exact commit from agreeing
-   remote HEADs or a conventional local branch.
-   New worktrees do not inherit the selected checkout's or parent conversation's
-   current branch; ambiguous repositories fail closed at creation. The
-   repository can still be opened for shared-workspace use while that default
-   is unresolved.
+2. Resolve the starting commit from an **operator-selected base branch** when
+   provided. When the base is omitted, use the repository default branch
+   (agreeing remote HEADs or a conventional local branch). Ambiguous defaults
+   still allow repository open; creation then requires an explicit base.
 3. Validate a clean index, attached HEAD, branch and path availability,
    submodule absence, and Git-operation locks. Unstaged and untracked changes
    remain in the source checkout and are not copied into the new worktree.
-4. Render the repository, base name and commit, new branch, and target path.
+4. Render the start-from branch, new branch, and (under details) repository,
+   base commit, and target path.
 5. After one scoped approval, revalidate the exact plan and execute
    `git worktree add` without a shell.
 6. Persist Aldunis ownership separately from Git and bind the conversation to
@@ -51,6 +50,8 @@ removal. There is no automatic cleanup.
 - Worktree behavior stays provider-independent. Provider setup, worktree
   coordination, and cleanup remain separate capabilities with separate
   authority and approval boundaries.
+- Operators can base a new conversation worktree on `main`, a feature branch,
+  or another local head without leaving the create flow.
 - A registry failure after Git creation leaves the checkout intact and reports
   that it must be treated as user-created; rollback never deletes user files.
 - Moving an owned worktree outside Aldunis Code is detected through its branch

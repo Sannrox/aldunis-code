@@ -1,7 +1,8 @@
 /**
- * Resolve a "previous worktree" seed for new conversations (T3-inspired).
+ * Resolve a "previous worktree" seed for shared-checkout reuse (T3-inspired).
  * Picks the most recently updated conversation worktree in the project that
- * is not the current selection and is not archived.
+ * is not the current selection and is not archived. Only the shared workspace
+ * path should surface this seed — managed create uses a base-branch dialog.
  */
 
 export interface PreviousWorktreeSeedInput {

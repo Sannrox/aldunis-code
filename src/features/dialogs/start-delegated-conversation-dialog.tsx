@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type {
   ClaudeProfile,
   ConversationSummary,
@@ -8,6 +8,7 @@ import type {
 } from "../../types";
 import { Button } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
+import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktree-base";
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
 
@@ -48,7 +49,36 @@ export function StartDelegatedConversationDialog({
   const taskId = `delegated-task-${parent.id}`;
   const modeId = `delegated-mode-${parent.id}`;
   const worktreeId = `delegated-worktree-${parent.id}`;
-  const base = repository?.defaultBranch ?? "";
+  const baseId = `delegated-base-${parent.id}`;
+  const baseOptions = useMemo(() => {
+    if (!repository) return [] as string[];
+    const options = worktreeBaseBranchOptions(repository);
+    const parentBranch = repository.worktrees
+      .find((item) => item.path === parent.worktree)
+      ?.branch?.trim();
+    if (parentBranch && !options.includes(parentBranch)) options.push(parentBranch);
+    return options.sort((left, right) => left.localeCompare(right));
+  }, [parent.worktree, repository]);
+  const initialBase = useMemo(() => {
+    if (!repository) return "";
+    const preferred =
+      repository.defaultBranch?.trim() ||
+      repository.worktrees.find((item) => item.path === parent.worktree)?.branch?.trim() ||
+      defaultWorktreeBase(repository);
+    return preferred;
+  }, [parent.worktree, repository]);
+  const [base, setBase] = useState(initialBase);
+  useEffect(() => {
+    setBase(initialBase);
+    setPlan(null);
+  }, [initialBase]);
+  useEffect(() => {
+    if (baseOptions.length > 0 && base && !baseOptions.includes(base)) {
+      setBase(baseOptions[0]!);
+    } else if (baseOptions.length > 0 && !base.trim()) {
+      setBase(baseOptions[0]!);
+    }
+  }, [base, baseOptions]);
   const claudeProfileId =
     parent.profileId ??
     profiles.find((profile) => profile.id === "default:claude-code")?.id ??
@@ -290,15 +320,49 @@ export function StartDelegatedConversationDialog({
               <option value="isolated">New managed worktree · recommended</option>
               <option value="parent">Parent worktree · Ask/Plan only</option>
             </select>
+            {isolated && (
+              <>
+                <label htmlFor={baseId}>Start from</label>
+                {baseOptions.length > 0 ? (
+                  <select
+                    id={baseId}
+                    value={baseOptions.includes(base) ? base : baseOptions[0]}
+                    onChange={(event) => {
+                      setBase(event.target.value);
+                      setPlan(null);
+                    }}
+                    disabled={busy}
+                  >
+                    {baseOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                        {option === repository?.defaultBranch ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={baseId}
+                    value={base}
+                    onChange={(event) => {
+                      setBase(event.target.value);
+                      setPlan(null);
+                    }}
+                    placeholder="main"
+                    disabled={busy}
+                  />
+                )}
+              </>
+            )}
             <p className="delegated-start-note">
               {claudeProfileMissing || shikigamiProfileMissing
                 ? parent.profileId
                   ? `The parent’s ${providerLabel} profile is unavailable; restore it before starting a child.`
                   : `Configure a ${providerLabel} profile before starting a child.`
                 : isolated
-                  ? base
+                  ? base.trim()
                     ? `The child will branch from ${base} and use a new managed checkout.`
-                    : "The repository default branch could not be determined; configure one remote HEAD or a conventional local default branch before creating a worktree."
+                    : "Choose a starting branch for the child worktree."
                   : "Shared worktrees are limited to read-only and planning children."}
             </p>
             <footer>
@@ -313,7 +377,7 @@ export function StartDelegatedConversationDialog({
                   !prompt.trim() ||
                   claudeProfileMissing ||
                   shikigamiProfileMissing ||
-                  (isolated && !base)
+                  (isolated && !base.trim())
                 }
               >
                 {busy ? "Starting…" : isolated ? "Preview isolated child" : "Start child"}

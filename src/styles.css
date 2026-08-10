@@ -3789,6 +3789,29 @@ select.ui-input {
   display: grid;
   gap: 1px;
 }
+.new-chat-context-row--static {
+  pointer-events: none;
+}
+.new-chat-context-worktree-picker--create .new-chat-context-row--static {
+  opacity: 0.92;
+}
+.worktree-plan-details {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font: 12px var(--font-sans);
+}
+.worktree-plan-details summary {
+  cursor: pointer;
+  color: var(--foreground);
+  font: 12px var(--font-sans);
+}
+.worktree-plan-details summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.worktree-plan-details dl {
+  margin: 8px 0 0;
+}
 .new-chat-worktree-tools {
   display: flex;
   align-items: center;

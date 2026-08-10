@@ -10,7 +10,8 @@ export const WORKSPACE_MODE_COPY: Record<WorkspaceMode, WorkspaceModeCopy> = {
   shared: {
     label: "Shared checkout",
     shortLabel: "Shared",
-    detail: "Use the selected worktree. This is explicit and can be shared by multiple conversations.",
+    detail:
+      "Use the selected worktree. This is explicit and can be shared by multiple conversations.",
   },
   "aldunis-managed": {
     label: "Aldunis worktree",
@@ -20,13 +21,19 @@ export const WORKSPACE_MODE_COPY: Record<WorkspaceMode, WorkspaceModeCopy> = {
   "provider-native": {
     label: "Provider-native",
     shortLabel: "Native",
-    detail: "Let the selected provider create and own the isolated workspace when its adapter supports that contract.",
+    detail:
+      "Let the selected provider create and own the isolated workspace when its adapter supports that contract.",
   },
 };
 
-/** The two workspace strategies exposed when creating a conversation. */
+/**
+ * Workspace strategies exposed when creating a conversation.
+ * Create (managed) is default; shared reuses an existing checkout; native is
+ * adapter-gated.
+ */
 export const NEW_CONVERSATION_WORKSPACE_MODES: WorkspaceMode[] = [
   "aldunis-managed",
+  "shared",
   "provider-native",
 ];
 
