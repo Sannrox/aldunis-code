@@ -27,11 +27,7 @@ import {
   ProviderModelError,
   validateProviderModel,
 } from "./provider-models.ts";
-import {
-  adapterReference,
-  ProviderAdapterError,
-  ProviderAdapterStore,
-} from "./provider-adapters.ts";
+import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
 import { listChangedFiles, readCheckpointFileDiff, readFileDiff } from "./changes.ts";
 import {
@@ -74,7 +70,6 @@ import {
   ClaudeProfileStore,
   DEFAULT_SHIKIGAMI_PROFILE_ID,
   ProfileError,
-  type AdapterProfileSeed,
   type ProfileProbeKind,
 } from "./profiles.ts";
 import {
@@ -115,6 +110,7 @@ import { handleBrowserRoute } from "./browser-routes.ts";
 import { handleAutonomyRoute } from "./autonomy-routes.ts";
 import { handleReviewRoute } from "./review-routes.ts";
 import { handleConversationLifecycleRoute } from "./conversation-lifecycle-routes.ts";
+import { handleProviderAdapterRoute } from "./provider-adapter-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -174,29 +170,6 @@ export function isLocalControlRequest(
     (requestHost === boundAddress ||
       (!isLoopbackAddress(boundAddress) && requestHost === publicOriginHost)),
   );
-}
-
-function adapterProfileSeed(adapter: {
-  manifest: {
-    id: string;
-    version: string;
-    presentation: { name: string };
-    executable: { names: string[] };
-    environment: Array<{ name: string; required: boolean; sensitive: boolean }>;
-  };
-}): AdapterProfileSeed {
-  return {
-    provider: adapterReference(adapter.manifest),
-    name: adapter.manifest.presentation.name,
-    binaryPath: adapter.manifest.executable.names[0] ?? "",
-    environment: adapter.manifest.environment
-      .filter((entry) => entry.required || entry.sensitive)
-      .map((entry) => ({
-        name: entry.name,
-        sensitive: entry.sensitive,
-        value: "",
-      })),
-  };
 }
 
 const MAX_BODY_BYTES = 128 * 1024;
@@ -749,109 +722,19 @@ async function handleApi(
       sendJson(response, 200, await providerDiscovery.discover({ cwd: discoveryCwd }));
       return true;
     }
-    if (route === "/api/provider/adapters/list") {
-      if (managedHost) {
-        sendJson(response, 200, { adapters: [], administrationAvailable: false });
-        return true;
-      }
-      const installed = await adapters.list();
-      sendJson(response, 200, {
-        adapters: remoteRequest
-          ? installed.map((adapter) => ({ ...adapter, source: "Source available on host only" }))
-          : installed,
-        administrationAvailable: !remoteRequest,
-      });
+    if (
+      await handleProviderAdapterRoute(route, request, response, {
+        adapters,
+        profiles,
+        listReviewedAdapters: () => listReviewedAdapters(adapters),
+        prepareReviewedAdapter: (slug) => prepareReviewedAdapter(adapters, slug),
+        remote: remoteRequest,
+        managed: Boolean(managedHost),
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/provider/adapters/catalog") {
-      if (managedHost) {
-        sendJson(response, 200, { adapters: [], administrationAvailable: false });
-        return true;
-      }
-      const catalog = await listReviewedAdapters(adapters);
-      sendJson(response, 200, {
-        adapters: remoteRequest
-          ? catalog.map((entry) => ({
-              ...entry,
-              source: "Reviewed package available on host only",
-              package: null,
-              executablePath: entry.executableFound ? "available on host" : null,
-            }))
-          : catalog,
-        administrationAvailable: !remoteRequest,
-      });
-      return true;
-    }
-    if (route === "/api/provider/adapters/catalog/prepare") {
-      if (remoteRequest || managedHost)
-        throw new ProviderAdapterError(
-          "This host cannot administer provider adapters in the active mode.",
-          403,
-        );
-      const body = (await readJson(request)) as { slug?: unknown };
-      const prepared = await prepareReviewedAdapter(adapters, body.slug);
-      sendJson(response, 200, prepared);
-      return true;
-    }
-    if (route === "/api/provider/adapters/inspect") {
-      if (managedHost)
-        throw new ProviderAdapterError(
-          "Provider adapter administration is unavailable in managed hosted mode.",
-          403,
-        );
-      const body = (await readJson(request)) as {
-        source?: unknown;
-        digest?: unknown;
-        manifest?: unknown;
-      };
-      sendJson(response, 200, adapters.inspect(body));
-      return true;
-    }
-    if (route === "/api/provider/adapters/install" || route === "/api/provider/adapters/update") {
-      if (remoteRequest || managedHost)
-        throw new ProviderAdapterError(
-          "This host cannot administer provider adapters in the active mode.",
-          403,
-        );
-      const body = (await readJson(request)) as {
-        source?: unknown;
-        digest?: unknown;
-        manifest?: unknown;
-        approved?: unknown;
-      };
-      if (body.approved !== true)
-        throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
-      const installed = route.endsWith("/install")
-        ? await adapters.install(body)
-        : await adapters.update(body);
-      // Every installed adapter gets a stable default profile (may be empty).
-      await profiles.ensureProviderDefault(adapterProfileSeed(installed));
-      sendJson(response, 200, installed);
-      return true;
-    }
-    const adapterAction = route.match(
-      /^\/api\/provider\/adapters\/([a-z0-9.-]+)\/(enable|disable|rollback|uninstall)$/,
-    );
-    if (adapterAction) {
-      if (remoteRequest || managedHost)
-        throw new ProviderAdapterError(
-          "This host cannot administer provider adapters in the active mode.",
-          403,
-        );
-      const body = (await readJson(request)) as { approved?: unknown };
-      if (body.approved !== true)
-        throw new ProviderAdapterError("Explicit adapter approval is required.", 403);
-      const [, id, action] = adapterAction;
-      if (action === "uninstall") {
-        await adapters.uninstall(id);
-        sendJson(response, 200, { uninstalled: true });
-      } else if (action === "rollback") {
-        sendJson(response, 200, await adapters.rollback(id));
-      } else {
-        sendJson(response, 200, await adapters.setEnabled(id, action === "enable"));
-      }
-      return true;
-    }
     const remoteAdminAction = route.match(/^\/api\/remote\/admin\/(status|pair|revoke)$/);
     if (remoteAdminAction) {
       if (!localControlRequest || managedHost) {
