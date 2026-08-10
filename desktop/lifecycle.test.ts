@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
   closeServer,
+  isLiveDesktopWindow,
   isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
@@ -57,6 +58,12 @@ test("macOS desktop close hides the window while explicit shutdown still closes 
   assert.equal(shouldHideWindowOnClose("darwin", true), false);
   assert.equal(shouldHideWindowOnClose("win32", false), false);
   assert.equal(shouldHideWindowOnClose("linux", false), false);
+});
+
+test("desktop activation ignores missing and destroyed windows", () => {
+  assert.equal(isLiveDesktopWindow(null), false);
+  assert.equal(isLiveDesktopWindow({ isDestroyed: () => true }), false);
+  assert.equal(isLiveDesktopWindow({ isDestroyed: () => false }), true);
 });
 
 test("native directory selection returns one path and cancellation returns no authority", () => {

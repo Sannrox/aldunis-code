@@ -39,6 +39,12 @@ export function shouldHideWindowOnClose(platform: string, shuttingDown: boolean)
   return platform === "darwin" && !shuttingDown;
 }
 
+export function isLiveDesktopWindow<T extends { isDestroyed(): boolean }>(
+  candidate: T | null,
+): candidate is T {
+  return candidate !== null && !candidate.isDestroyed();
+}
+
 export async function listenOnLoopback(server: Server): Promise<string> {
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
