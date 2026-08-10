@@ -25,15 +25,13 @@ async function fixture(remote = false) {
   const canonicalRepository = await realpath(repository);
   const state = new LocalStateStore(directory);
   await state.saveProject({ id: "project-1", name: "Fixture", root: canonicalRepository });
-  const remoteAuth = remote
-    ? { verify: async () => ({}) } as unknown as RemoteAuth
-    : undefined;
-  const server = createLocalHost(
-    directory,
+  const remoteAuth = remote ? ({ verify: async () => ({}) } as unknown as RemoteAuth) : undefined;
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
+    profiles: new ClaudeProfileStore(directory),
     remoteAuth,
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
@@ -54,7 +52,7 @@ async function post(url: string, route: string, body: unknown) {
 
 async function close(server: ReturnType<typeof createLocalHost>) {
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -74,7 +72,7 @@ for (const remote of [false, true]) {
         model: "stale-model",
       });
       assert.equal(response.status, 409);
-      const body = await response.json() as { error?: string };
+      const body = (await response.json()) as { error?: string };
       assert.match(body.error ?? "", /Refresh provider discovery and retry/);
       assert.equal((await current.state.load()).threads.length, 0);
     } finally {
@@ -98,7 +96,7 @@ test("fork validation stores the resolved provider default", async () => {
       sourceThreadId: source.thread.id,
     });
     assert.equal(previewResponse.status, 200);
-    const preview = await previewResponse.json() as { digest: string };
+    const preview = (await previewResponse.json()) as { digest: string };
     const response = await post(current.url, "/api/forks/create", {
       sourceThreadId: source.thread.id,
       provider: "claude-code",
@@ -107,7 +105,10 @@ test("fork validation stores the resolved provider default", async () => {
       expectedDigest: preview.digest,
     });
     assert.equal(response.status, 201);
-    const body = await response.json() as { thread: { model?: string | null }; fork: { model: string } };
+    const body = (await response.json()) as {
+      thread: { model?: string | null };
+      fork: { model: string };
+    };
     assert.equal(body.thread.model, "default");
     assert.equal(body.fork.model, "default");
   } finally {

@@ -4,19 +4,11 @@ import { isIP } from "node:net";
 import { promisify } from "node:util";
 import packageJson from "../package.json" with { type: "json" };
 import { createLocalHost, assertLoopbackHost } from "./host.ts";
-import {
-  CliUsageError,
-  formatCliHelp,
-  parseCliArgs,
-  type CliInvocation,
-} from "./cli.ts";
+import { CliUsageError, formatCliHelp, parseCliArgs, type CliInvocation } from "./cli.ts";
 import { loadManagedHostConfiguration, ManagedHost } from "./managed-host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
-import {
-  DEFAULT_HOST_PORT,
-  DEFAULT_SSH_REMOTE_PORT,
-} from "../src/ports.ts";
+import { DEFAULT_HOST_PORT, DEFAULT_SSH_REMOTE_PORT } from "../src/ports.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,9 +16,12 @@ let cliInvocation: CliInvocation;
 try {
   cliInvocation = parseCliArgs(process.argv.slice(2));
 } catch (error) {
-  const message = error instanceof CliUsageError
-    ? error.message
-    : error instanceof Error ? error.message : String(error);
+  const message =
+    error instanceof CliUsageError
+      ? error.message
+      : error instanceof Error
+        ? error.message
+        : String(error);
   console.error(`Error: ${message}`);
   console.error(formatCliHelp());
   process.exit(1);
@@ -55,7 +50,8 @@ if (cliInvocation.kind === "auth") {
 const { options } = cliInvocation;
 const host = options.host ?? "127.0.0.1";
 const remoteMode = options.remote;
-const portValue = options.port ?? String(remoteMode === "ssh" ? DEFAULT_SSH_REMOTE_PORT : DEFAULT_HOST_PORT);
+const portValue =
+  options.port ?? String(remoteMode === "ssh" ? DEFAULT_SSH_REMOTE_PORT : DEFAULT_HOST_PORT);
 const port = Number(portValue);
 const publicUrlInput = options.publicUrl;
 const tlsCertificatePath = options.tlsCert;
@@ -73,12 +69,16 @@ if (managedMode && remoteMode) {
 function isPrivateAddress(value: string): boolean {
   if (isIP(value) === 4) {
     const [first, second] = value.split(".").map(Number);
-    return first === 10
-      || (first === 172 && second >= 16 && second <= 31)
-      || (first === 192 && second === 168);
+    return (
+      first === 10 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168)
+    );
   }
-  return isIP(value) === 6 && (value.toLocaleLowerCase().startsWith("fd")
-    || value.toLocaleLowerCase().startsWith("fc"));
+  return (
+    isIP(value) === 6 &&
+    (value.toLocaleLowerCase().startsWith("fd") || value.toLocaleLowerCase().startsWith("fc"))
+  );
 }
 
 const loopbackHost = host === "127.0.0.1" || host === "::1" || host === "localhost";
@@ -88,11 +88,15 @@ if (!remoteMode && !managedMode) {
   assertLoopbackHost(host);
 } else if (managedMode) {
   if (!loopbackHost && !isPrivateAddress(host)) {
-    throw new Error("Managed hosted mode requires a loopback or private bind address behind its gateway.");
+    throw new Error(
+      "Managed hosted mode requires a loopback or private bind address behind its gateway.",
+    );
   }
 } else if (remoteMode === "lan") {
   if (!isPrivateAddress(host)) {
-    throw new Error("LAN remote access requires an explicit private IPv4 or unique-local IPv6 address.");
+    throw new Error(
+      "LAN remote access requires an explicit private IPv4 or unique-local IPv6 address.",
+    );
   }
 } else if (remoteMode === "tailscale" || remoteMode === "ssh") {
   assertLoopbackHost(host);
@@ -102,11 +106,15 @@ if (!remoteMode && !managedMode) {
 let configuredPublicUrl: string | undefined;
 if (remoteMode === "lan") {
   if (!publicUrlInput) {
-    throw new Error("LAN remote access requires --public-url with the certificate-matched HTTPS origin.");
+    throw new Error(
+      "LAN remote access requires --public-url with the certificate-matched HTTPS origin.",
+    );
   }
   const value = new URL(publicUrlInput);
   if (value.protocol !== "https:" || value.username || value.password || value.hash) {
-    throw new Error("The LAN public URL must be an HTTPS origin without credentials or a fragment.");
+    throw new Error(
+      "The LAN public URL must be an HTTPS origin without credentials or a fragment.",
+    );
   }
   configuredPublicUrl = value.origin;
   if (!tlsCertificatePath || !tlsKeyPath) {
@@ -114,7 +122,9 @@ if (remoteMode === "lan") {
   }
 }
 if (managedNetworkBind && (!tlsCertificatePath || !tlsKeyPath)) {
-  throw new Error("Managed hosted mode requires --tls-cert and --tls-key PEM files for non-loopback binds.");
+  throw new Error(
+    "Managed hosted mode requires --tls-cert and --tls-key PEM files for non-loopback binds.",
+  );
 }
 if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid port: ${portValue}`);
@@ -123,34 +133,26 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
 const remoteAuth = remoteMode
   ? new RemoteAuth(defaultStateDirectory(), { allowLoopbackHttp: remoteMode === "ssh" })
   : undefined;
-const managedHost = managedMode
-  ? new ManagedHost(await loadManagedHostConfiguration())
-  : undefined;
-const tls = remoteMode === "lan" || managedNetworkBind
-  ? {
-      cert: await readFile(tlsCertificatePath!),
-      key: await readFile(tlsKeyPath!),
-    }
-  : undefined;
+const managedHost = managedMode ? new ManagedHost(await loadManagedHostConfiguration()) : undefined;
+const tls =
+  remoteMode === "lan" || managedNetworkBind
+    ? {
+        cert: await readFile(tlsCertificatePath!),
+        key: await readFile(tlsKeyPath!),
+      }
+    : undefined;
 let publicUrl = configuredPublicUrl;
 const state = new LocalStateStore();
 const releaseWriterLease = await state.acquireWriterLease();
-const server = createLocalHost(
-  undefined,
+const server = createLocalHost({
   state,
-  undefined,
   remoteAuth,
   tls,
-  undefined,
-  undefined,
-  undefined,
   managedHost,
-  undefined,
-  undefined,
-  remoteMode === "ssh" ? undefined : () => publicUrl,
-  host,
-  remoteMode !== "ssh",
-);
+  publicOrigin: remoteMode === "ssh" ? undefined : () => publicUrl,
+  localBindHost: host,
+  allowLocalControl: remoteMode !== "ssh",
+});
 let tailscaleConfigured = false;
 
 async function disableTailscaleServe(): Promise<void> {
@@ -177,8 +179,12 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   });
 }
 
-process.once("SIGINT", () => { void shutdown("SIGINT"); });
-process.once("SIGTERM", () => { void shutdown("SIGTERM"); });
+process.once("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
 
 server.listen(port, host, async () => {
   const formattedHost = isIP(host) === 6 ? `[${host}]` : host;
@@ -210,7 +216,9 @@ server.listen(port, host, async () => {
       }
       publicUrl = endpointUrl.origin;
     } catch {
-      console.error("Tailscale Serve setup failed. Remote access remains on loopback and fails closed.");
+      console.error(
+        "Tailscale Serve setup failed. Remote access remains on loopback and fails closed.",
+      );
       await disableTailscaleServe();
       server.close();
       process.exitCode = 1;
@@ -218,7 +226,9 @@ server.listen(port, host, async () => {
     }
   } else if (remoteMode === "lan") {
     publicUrl = configuredPublicUrl!;
-    console.warn(`LAN mode is available only through the certificate-matched HTTPS origin ${publicUrl}.`);
+    console.warn(
+      `LAN mode is available only through the certificate-matched HTTPS origin ${publicUrl}.`,
+    );
   } else {
     console.log(`SSH remote workbench is available through the loopback forward at ${localUrl}.`);
     return;

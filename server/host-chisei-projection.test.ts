@@ -62,17 +62,14 @@ async function fixture(remote = false) {
       };
     },
   } as unknown as ChiseiProjectionClient;
-  const remoteAuth = remote ? { verify: async () => ({}) } as unknown as RemoteAuth : undefined;
-  const server = createLocalHost(
-    directory,
+  const remoteAuth = remote ? ({ verify: async () => ({}) } as unknown as RemoteAuth) : undefined;
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
+    profiles: new ClaudeProfileStore(directory),
     remoteAuth,
-    undefined,
-    undefined,
-    undefined,
     chisei,
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {
@@ -94,7 +91,7 @@ async function post(url: string, route: string, body: unknown) {
 
 async function close(server: ReturnType<typeof createLocalHost>) {
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
+    server.close((error) => (error ? reject(error) : resolve()));
   });
 }
 
@@ -112,10 +109,7 @@ test("Chisei reads derive namespace authority from the local project binding", a
     });
     assert.equal(listed.status, 200);
     assert.deepEqual(current.calls, [{ projectId: "project-1", namespace: "team/project" }]);
-    assert.equal(
-      (await current.state.load()).projects[0].chiseiNamespace,
-      "team/project",
-    );
+    assert.equal((await current.state.load()).projects[0].chiseiNamespace, "team/project");
   } finally {
     await close(current.server);
   }
@@ -160,7 +154,7 @@ test("operation inspection derives authority from a persisted project correlatio
       operationId: "attacker-selected-id",
     });
     assert.equal(allowed.status, 200);
-    assert.equal((await allowed.json() as { operationId: string }).operationId, operationId);
+    assert.equal(((await allowed.json()) as { operationId: string }).operationId, operationId);
     const denied = await post(current.url, "/api/integrations/chisei/operations/detail", {
       projectId: "project-2",
       correlationId,
@@ -189,10 +183,12 @@ test("sample-observation readback derives namespace authority from the local pro
       observedAt: new Date(1_000).toISOString(),
       readAt: new Date(2_000).toISOString(),
     });
-    assert.deepEqual(current.observationCalls, [{
-      namespace: "team/project",
-      requestId: "tenkai:outcome:v2:event-1",
-    }]);
+    assert.deepEqual(current.observationCalls, [
+      {
+        namespace: "team/project",
+        requestId: "tenkai:outcome:v2:event-1",
+      },
+    ]);
   } finally {
     await close(current.server);
   }

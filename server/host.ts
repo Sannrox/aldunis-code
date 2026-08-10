@@ -4867,22 +4867,40 @@ async function serveStatic(
   createReadStream(filePath).pipe(response);
 }
 
-export function createLocalHost(
-  dist = fileURLToPath(new URL("../dist", import.meta.url)),
-  state = new LocalStateStore(),
-  profiles = new ClaudeProfileStore(state.directory),
-  remoteAuth?: RemoteAuth,
-  tls?: { key: Buffer; cert: Buffer },
-  permissions = new PermissionBroker(),
-  childFollowUpOverride?: (body: Record<string, unknown>) => Promise<void>,
-  chisei = new ChiseiProjectionClient(),
-  managedHost?: ManagedHost,
-  browserHost?: BrowserHost,
-  browserMcpPath?: string,
-  publicOrigin?: string | (() => string | undefined),
-  localBindHost?: string,
-  allowLocalControl = true,
-) {
+export interface LocalHostOptions {
+  dist?: string;
+  state?: LocalStateStore;
+  profiles?: ClaudeProfileStore;
+  remoteAuth?: RemoteAuth;
+  tls?: { key: Buffer; cert: Buffer };
+  permissions?: PermissionBroker;
+  childFollowUp?: (body: Record<string, unknown>) => Promise<void>;
+  chisei?: ChiseiProjectionClient;
+  managedHost?: ManagedHost;
+  browserHost?: BrowserHost;
+  browserMcpPath?: string;
+  publicOrigin?: string | (() => string | undefined);
+  localBindHost?: string;
+  allowLocalControl?: boolean;
+}
+
+export function createLocalHost(options: LocalHostOptions = {}) {
+  const dist = options.dist ?? fileURLToPath(new URL("../dist", import.meta.url));
+  const state = options.state ?? new LocalStateStore();
+  const profiles = options.profiles ?? new ClaudeProfileStore(state.directory);
+  const permissions = options.permissions ?? new PermissionBroker();
+  const chisei = options.chisei ?? new ChiseiProjectionClient();
+  const allowLocalControl = options.allowLocalControl ?? true;
+  const {
+    remoteAuth,
+    tls,
+    childFollowUp: childFollowUpOverride,
+    managedHost,
+    browserHost,
+    browserMcpPath,
+    publicOrigin,
+    localBindHost,
+  } = options;
   const internalPermissionCallback =
     remoteAuth || managedHost ? createInternalPermissionCallback(permissions) : undefined;
   const delivery = new DeliveryBroker();

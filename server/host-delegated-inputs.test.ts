@@ -14,21 +14,18 @@ test("parent resolves one exact delegated input and records a child-bound receip
   const state = new LocalStateStore(directory);
   const followedUp: Array<Record<string, unknown>> = [];
   let followUpAttempts = 0;
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-    undefined,
-    undefined,
-    undefined,
-    async (body) => {
+    profiles: new ClaudeProfileStore(directory),
+    childFollowUp: async (body) => {
       followUpAttempts += 1;
       if (followUpAttempts === 1) {
         throw new LocalStateError("Worktree checkpoint is still closing.", 409);
       }
       followedUp.push(body);
     },
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   await fetch(`http://127.0.0.1:${address.port}/api/state/load`, { method: "POST" });
@@ -71,10 +68,9 @@ test("parent resolves one exact delegated input and records a child-bound receip
     orchestrationThreadsBeta: true,
   });
   try {
-    const loaded = await fetch(
-      `http://127.0.0.1:${address.port}/api/state/load`,
-      { method: "POST" },
-    ).then((response) => response.json()) as {
+    const loaded = (await fetch(`http://127.0.0.1:${address.port}/api/state/load`, {
+      method: "POST",
+    }).then((response) => response.json())) as {
       delegatedInputs: Array<{ request: { id: string } }>;
     };
     assert.deepEqual(
@@ -105,7 +101,7 @@ test("parent resolves one exact delegated input and records a child-bound receip
     assert.deepEqual(followedUp[0].contextPins, [{ kind: "file", path: "src/example.ts" }]);
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
@@ -114,17 +110,14 @@ test("parent-routed Shikigami input resumes the parked run once without persisti
   const directory = await mkdtemp(join(tmpdir(), "aldunis-native-input-"));
   const state = new LocalStateStore(directory);
   const resumed: Array<Record<string, unknown>> = [];
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-    undefined,
-    undefined,
-    undefined,
-    async (body) => {
+    profiles: new ClaudeProfileStore(directory),
+    childFollowUp: async (body) => {
       resumed.push(body);
     },
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   await fetch("http://127.0.0.1:" + address.port + "/api/state/load", { method: "POST" });
@@ -179,8 +172,10 @@ test("parent-routed Shikigami input resumes the parked run once without persisti
     orchestrationThreadsBeta: true,
   });
   try {
-    const route = "http://127.0.0.1:" + address.port
-      + "/api/provider/input-requests/00000000-0000-4000-8000-000000000002/respond";
+    const route =
+      "http://127.0.0.1:" +
+      address.port +
+      "/api/provider/input-requests/00000000-0000-4000-8000-000000000002/respond";
     const body = JSON.stringify({
       childThreadId: child.thread.id,
       parentThreadId: parent.thread.id,
@@ -202,10 +197,13 @@ test("parent-routed Shikigami input resumes the parked run once without persisti
     assert.equal(projection.inputRequests[0].resumeState, "starting");
     assert.equal(projection.inputReceipts.length, 1);
     assert.equal(projection.turns[0].status, "active");
-    assert.doesNotMatch(await readFile(join(directory, "events.v1.jsonl"), "utf8"), /secret answer/);
+    assert.doesNotMatch(
+      await readFile(join(directory, "events.v1.jsonl"), "utf8"),
+      /secret answer/,
+    );
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
@@ -214,15 +212,14 @@ test("beta-disabled parent routing fails while the child route remains actionabl
   const directory = await mkdtemp(join(tmpdir(), "aldunis-delegated-input-"));
   const state = new LocalStateStore(directory);
   let childFollowUps = 0;
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-    undefined,
-    undefined,
-    undefined,
-    async () => { childFollowUps += 1; },
-  );
+    profiles: new ClaudeProfileStore(directory),
+    childFollowUp: async () => {
+      childFollowUps += 1;
+    },
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address() as AddressInfo;
@@ -282,7 +279,7 @@ test("beta-disabled parent routing fails while the child route remains actionabl
     assert.equal(childFollowUps, 1);
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });

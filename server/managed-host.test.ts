@@ -19,7 +19,7 @@ function base64url(value: unknown): string {
 }
 
 function assertion(
-  privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'],
+  privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
   overrides: Record<string, unknown> = {},
 ): string {
   const now = Math.floor(Date.now() / 1000);
@@ -65,13 +65,15 @@ function configuration(
     instanceId: "code-instance-test",
     publicKey,
     logoutUrl: "https://aldunis.test/logout",
-    repositories: [{
-      id: "code",
-      name: "Aldunis Code",
-      root,
-      device: statSync(root).dev,
-      inode: statSync(root).ino,
-    }],
+    repositories: [
+      {
+        id: "code",
+        name: "Aldunis Code",
+        root,
+        device: statSync(root).dev,
+        inode: statSync(root).ino,
+      },
+    ],
     shikigami: {
       executable: process.execPath,
       model: "operator-approved-model",
@@ -92,20 +94,22 @@ test("managed assertions fail closed for missing, altered, wrong-audience, and r
   const body = Buffer.from("{}", "utf8");
   const valid = assertion(keys.privateKey);
 
-  await assert.rejects(
-    () => managed.verify(request("/api/host/capabilities"), body),
-    /required/,
-  );
+  await assert.rejects(() => managed.verify(request("/api/host/capabilities"), body), /required/);
   await managed.verify(request("/api/host/capabilities", "POST", valid), body);
   await assert.rejects(
     () => managed.verify(request("/api/host/capabilities", "POST", valid), body),
     /already used/,
   );
   await assert.rejects(
-    () => managed.verify(
-      request("/api/host/capabilities", "POST", assertion(keys.privateKey, { aud: "wrong-audience" })),
-      body,
-    ),
+    () =>
+      managed.verify(
+        request(
+          "/api/host/capabilities",
+          "POST",
+          assertion(keys.privateKey, { aud: "wrong-audience" }),
+        ),
+        body,
+      ),
     /issuer or audience/,
   );
   const altered = assertion(keys.privateKey, { tenant_id: "tenant-tampered" });
@@ -115,10 +119,11 @@ test("managed assertions fail closed for missing, altered, wrong-audience, and r
   );
   const wrongKey = generateKeyPairSync("ed25519");
   await assert.rejects(
-    () => managed.verify(
-      request("/api/host/capabilities", "POST", assertion(wrongKey.privateKey)),
-      body,
-    ),
+    () =>
+      managed.verify(
+        request("/api/host/capabilities", "POST", assertion(wrongKey.privateKey)),
+        body,
+      ),
     /signature/,
   );
 });
@@ -148,9 +153,11 @@ test("managed verification returns a bounded account projection from signed clai
   assert.equal(identity.sessionExpiresAt, new Date(sessionExp * 1000).toISOString());
   assert.equal(identity.logoutUrl, "https://aldunis.test/logout");
 
-  const account = (managed.capabilities(identity) as {
-    account?: Record<string, unknown> | null;
-  }).account;
+  const account = (
+    managed.capabilities(identity) as {
+      account?: Record<string, unknown> | null;
+    }
+  ).account;
   assert.equal(account?.displayName, "Ada Lovelace");
   assert.equal("subject" in (account ?? {}), false);
 });
@@ -176,11 +183,13 @@ test("managed startup configuration is required and Shikigami runtime excludes a
   const validConfiguration = configuration(keys.publicKey, root);
   const replacedIdentity = new ManagedHost({
     ...validConfiguration,
-    repositories: [{
-      ...validConfiguration.repositories[0]!,
-      device: 0,
-      inode: 0,
-    }],
+    repositories: [
+      {
+        ...validConfiguration.repositories[0]!,
+        device: 0,
+        inode: 0,
+      },
+    ],
   });
   await assert.rejects(
     () => replacedIdentity.selectWorktree(root, root),
@@ -194,28 +203,23 @@ test("managed HTTP routes require gateway assertions and reject local control ov
   const keys = generateKeyPairSync("ed25519");
   const root = await realpath(process.cwd());
   const managed = new ManagedHost(configuration(keys.publicKey, root));
-  const server = createLocalHost(
-    directory,
-    state,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    managed,
-  );
+  const server = createLocalHost({ dist: directory, state, managedHost: managed });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
-  const post = async (route: string, body: Record<string, unknown>, token = assertion(keys.privateKey)) => fetch(`${url}${route}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-aldunis-code-assertion": token,
-    },
-    body: JSON.stringify(body),
-  });
+  const post = async (
+    route: string,
+    body: Record<string, unknown>,
+    token = assertion(keys.privateKey),
+  ) =>
+    fetch(`${url}${route}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aldunis-code-assertion": token,
+      },
+      body: JSON.stringify(body),
+    });
   try {
     const descriptor = await fetch(`${url}/api/remote/descriptor`, {
       method: "POST",
@@ -234,7 +238,7 @@ test("managed HTTP routes require gateway assertions and reject local control ov
 
     const capabilities = await post("/api/host/capabilities", {});
     assert.equal(capabilities.status, 200);
-    const capabilityBody = await capabilities.json() as {
+    const capabilityBody = (await capabilities.json()) as {
       mode: string;
       managed: boolean;
       account?: {
@@ -253,7 +257,10 @@ test("managed HTTP routes require gateway assertions and reject local control ov
     assert.equal(arbitraryPath.status, 403);
     const opened = await post("/api/repositories/open", { repositoryId: "code" });
     assert.equal(opened.status, 200);
-    assert.equal((await opened.json() as { managedRepositoryId?: string }).managedRepositoryId, "code");
+    assert.equal(
+      ((await opened.json()) as { managedRepositoryId?: string }).managedRepositoryId,
+      "code",
+    );
 
     const binding = await post("/api/integrations/chisei/bind", {});
     assert.equal(binding.status, 403);
@@ -297,6 +304,8 @@ test("managed HTTP routes require gateway assertions and reject local control ov
     const after = await state.load();
     assert.equal(after.turns.length, before.turns.length);
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 });
