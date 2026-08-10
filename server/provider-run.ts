@@ -283,7 +283,7 @@ export async function handleProviderRun(
       text?: string | null;
     }>,
   );
-  const projection = await state.load();
+  const projection = await state.inspect();
   const project =
     typeof body.projectId === "string"
       ? projection.projects.find((item) => item.id === body.projectId && item.root === context.root)
@@ -815,7 +815,9 @@ export async function handleProviderRun(
           : undefined,
       );
       await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
-      const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
+      const checkpoint = (await state.inspect()).checkpoints.find(
+        (item) => item.id === checkpointId,
+      );
       if (!resumedCheckpoint && checkpoint && checkpoint.state === "baseline") {
         await state.saveCheckpoint({
           ...checkpoint,
@@ -857,10 +859,10 @@ export async function handleProviderRun(
     });
     let completed = false;
     let historyFailed = false;
-    let previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+    let previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
     // Starting a turn moves the thread to running before the first event.
     await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
-    previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+    previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
     for await (const event of run.events) {
       let outgoingEvent = event;
       try {
@@ -925,9 +927,9 @@ export async function handleProviderRun(
             event.kind === "input_requested" ||
             event.kind === "input_resolved",
         );
-        previousStatus = projectThreadStatus(await state.load(), persisted.thread.id).status;
+        previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
         if (event.kind === "governance_correlation") {
-          const correlation = (await state.load()).governanceCorrelations.find(
+          const correlation = (await state.inspect()).governanceCorrelations.find(
             (item) => item.turnId === persisted.turn.id,
           );
           if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
@@ -952,7 +954,7 @@ export async function handleProviderRun(
       if (event.kind === "turn_completed") completed = true;
       output.write(`${JSON.stringify(outgoingEvent)}\n`);
     }
-    const checkpoint = (await state.load()).checkpoints.find((item) => item.id === checkpointId);
+    const checkpoint = (await state.inspect()).checkpoints.find((item) => item.id === checkpointId);
     if (checkpoint?.state === "baseline" && baselineIdentity) {
       if (historyFailed) {
         await state.saveCheckpoint({
@@ -1008,7 +1010,7 @@ export async function handleProviderRun(
           });
         }
       } else if (
-        (await state.load()).inputRequests.some(
+        (await state.inspect()).inputRequests.some(
           (item) =>
             item.turnId === persisted.turn.id &&
             item.state === "pending" &&

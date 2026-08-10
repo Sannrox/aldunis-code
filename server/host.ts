@@ -328,7 +328,9 @@ async function publishThreadStatusTransition(
   previous: ThreadStatus | null,
   force = false,
 ): Promise<void> {
-  const next = projectThreadStatus(await state.load(), threadId);
+  // inspect(): status projection is read-only; avoid structuredClone on every
+  // provider event and wake publish during long turns.
+  const next = projectThreadStatus(await state.inspect(), threadId);
   if (!force && previous !== null && previous === next.status) return;
   wake.publish({
     threadId,
@@ -458,7 +460,7 @@ async function selectedReleaseProject(
   projectId: string,
   context: { root: string; worktree: string },
 ) {
-  const projection = await state.load();
+  const projection = await state.inspect();
   const project = projection.projects.find((item) => item.id === projectId);
   if (
     !project ||
@@ -652,7 +654,7 @@ async function handleApi(
       throw new BrowserError("A repository, worktree, and conversation are required.");
     }
     const context = await selectedWorktree(body.root, body.worktree);
-    const projection = await state.load();
+    const projection = await state.inspect();
     const thread = projection.threads.find((candidate) => candidate.id === body.conversationId);
     const project = thread
       ? projection.projects.find((candidate) => candidate.id === thread.projectId)
@@ -683,7 +685,7 @@ async function handleApi(
       if (!isUsageRangeDays(rangeDays)) {
         throw new LocalStateError("Usage range must be 7, 30, or 90 days.", 400);
       }
-      const projection = await state.load();
+      const projection = await state.inspect();
       const visibleProjection = managedHost
         ? filterManagedProjection(projection, managedHost)
         : projection;
@@ -842,11 +844,12 @@ async function handleApi(
           response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
           return;
         }
+        // Membership filter only; inspect avoids cloning full history per wake.
         void state
-          .load()
+          .inspect()
           .then((projection) => {
             if (response.writableEnded) return;
-            const visible = filterManagedProjection(projection, managedHost);
+            const visible = filterManagedProjection(projection as StateProjection, managedHost);
             if (!visible.threads.some((thread) => thread.id === event.threadId)) return;
             response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
           })
@@ -1102,7 +1105,7 @@ async function handleApi(
             return openRepository(body.path);
           })();
       repository.worktrees = await worktrees.list(repository.root);
-      const projection = await state.load();
+      const projection = await state.inspect();
       // One project record per git repository (common dir), not per worktree path.
       let existing = projection.projects.find((project) => project.root === repository.root);
       if (!existing) {
@@ -1140,7 +1143,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/projects/list") {
-      const projection = await state.load();
+      const projection = await state.inspect();
       const projects = await collapseProjectsByRepository(projection.projects);
       const visibleProjects = managedHost
         ? projects.filter((project) => {
@@ -1203,7 +1206,7 @@ async function handleApi(
       ) {
         throw new LocalStateError("A valid local project and bounded filters are required.", 400);
       }
-      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
       if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
       if (!project.chiseiNamespace) {
         throw new ChiseiClientError(
@@ -1233,7 +1236,7 @@ async function handleApi(
       ) {
         throw new LocalStateError("A valid local project and Action id are required.", 400);
       }
-      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
       if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
       if (!project.chiseiNamespace) {
         throw new ChiseiClientError(
@@ -1259,7 +1262,7 @@ async function handleApi(
           400,
         );
       }
-      const project = (await state.load()).projects.find((item) => item.id === body.projectId);
+      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
       if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
       if (!project.chiseiNamespace) {
         throw new ChiseiClientError(
@@ -1286,7 +1289,7 @@ async function handleApi(
       if (typeof body.projectId !== "string" || typeof body.correlationId !== "string") {
         throw new LocalStateError("A project and governance correlation are required.", 400);
       }
-      const projection = await state.load();
+      const projection = await state.inspect();
       const correlation = projection.governanceCorrelations.find(
         (item) => item.id === body.correlationId,
       );
@@ -1382,7 +1385,7 @@ async function handleApi(
       const created = await worktrees.create(body.planId, currentPreferences.managedWorktreeLimit);
       const repository = await openRepository(created.repository);
       repository.worktrees = await worktrees.list(created.repository);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find(
         (candidate) => candidate.root === created.repository,
       );
@@ -1403,7 +1406,7 @@ async function handleApi(
         throw new RepositoryError("A repository and managed worktree are required.");
       }
       const context = await selectedWorktree(body.root, body.path);
-      const projection = await state.load();
+      const projection = await state.inspect();
       if (projection.threads.some((thread) => thread.worktree === context.worktree)) {
         throw new RepositoryError(
           "A conversation is still bound to this worktree. Conversation deletion never removes worktrees; remove or retain that history first.",
@@ -1420,7 +1423,7 @@ async function handleApi(
       }
       const plan = worktrees.removalPlan(body.planId);
       if (managedHost) await managedHost.verifyRepositoryRoot(plan.repository);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find((candidate) => candidate.root === plan.repository);
       let projectLockAcquired = false;
       try {
@@ -1434,7 +1437,7 @@ async function handleApi(
           activeCheckpointProjects.add(project.id);
           projectLockAcquired = true;
         }
-        const current = await state.load();
+        const current = await state.inspect();
         if (current.threads.some((thread) => thread.worktree === plan.path)) {
           throw new RepositoryError(
             "A conversation became bound to this worktree after preview. Removal was cancelled.",
@@ -1450,45 +1453,53 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/load") {
+      // Preferences first so orchestration-disabled installs skip transcript scans.
+      const { preferences: currentPreferences } = await preferences.load();
       // Inspect avoids cloning multi-MB transcript arrays that this route never
       // returns; workbench/list consumers only need lifecycle metadata.
       const projection = await state.inspect();
       const visibleProjection = managedHost
         ? filterManagedProjection(projection as StateProjection, managedHost)
         : (projection as StateProjection);
+      // Materialize projection-derived fields before later awaits so the response
+      // stays coherent if a provider event mutates live state mid-flight.
+      // Delegated outcomes/inputs need transcript arrays; derive them before
+      // projectWorkbenchState strips messages/activities/inputRequests.
+      const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
+      const delegatedOutcomes = orchestrationEnabled
+        ? projectDelegatedConversationOutcomes(visibleProjection)
+        : [];
+      const delegatedInputs = orchestrationEnabled ? projectDelegatedInputs(visibleProjection) : [];
+      const delegatedApprovals = orchestrationEnabled
+        ? projectDelegatedApprovals(
+            visibleProjection,
+            permissions.approvals().filter((approval) => {
+              if (!managedHost) return true;
+              try {
+                managedHost.repositoryForRoot(approval.repository);
+                return visibleProjection.threads.some(
+                  (thread) => thread.id === approval.conversationId,
+                );
+              } catch {
+                return false;
+              }
+            }),
+          )
+        : [];
       const workbench = projectWorkbenchState(visibleProjection);
-      const { preferences: currentPreferences } = await preferences.load();
+      const threadStatuses = projectThreadStatuses(workbench);
+      const managedWorktreeCount = await worktrees.countActiveManaged();
+      const managedWorktreePaths = await worktrees.listActiveManagedPaths();
       sendJson(response, 200, {
         ...workbench,
-        delegatedRelationships: currentPreferences.orchestrationThreadsBeta
-          ? workbench.delegatedRelationships
-          : [],
-        delegatedOutcomes: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedConversationOutcomes(visibleProjection)
-          : [],
-        delegatedApprovals: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedApprovals(
-              visibleProjection,
-              permissions.approvals().filter((approval) => {
-                if (!managedHost) return true;
-                try {
-                  managedHost.repositoryForRoot(approval.repository);
-                  return visibleProjection.threads.some(
-                    (thread) => thread.id === approval.conversationId,
-                  );
-                } catch {
-                  return false;
-                }
-              }),
-            )
-          : [],
-        delegatedInputs: currentPreferences.orchestrationThreadsBeta
-          ? projectDelegatedInputs(visibleProjection)
-          : [],
-        threadStatuses: projectThreadStatuses(visibleProjection),
-        managedWorktreeCount: await worktrees.countActiveManaged(),
+        delegatedRelationships: orchestrationEnabled ? workbench.delegatedRelationships : [],
+        delegatedOutcomes,
+        delegatedApprovals,
+        delegatedInputs,
+        threadStatuses,
+        managedWorktreeCount,
         managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
-        managedWorktreePaths: await worktrees.listActiveManagedPaths(),
+        managedWorktreePaths,
       });
       return true;
     }
@@ -1571,7 +1582,7 @@ async function handleApi(
           403,
         );
       }
-      const projection = await state.load();
+      const projection = await state.inspect();
       const source = projection.threads.find((thread) => thread.id === body.sourceThreadId);
       const project = source
         ? projection.projects.find((candidate) => candidate.id === source.projectId)
@@ -1687,7 +1698,7 @@ async function handleApi(
       }
       const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
       const archived = body.archived ?? "exclude";
-      const projection = await state.load();
+      const projection = await state.inspect();
       const visibleProjection = managedHost
         ? filterManagedProjection(projection, managedHost)
         : projection;
@@ -1726,7 +1737,7 @@ async function handleApi(
       if (typeof body.threadId !== "string" || typeof body.title !== "string") {
         throw new LocalStateError("A conversation and title are required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.renameConversation(body.threadId, body.title));
       return true;
     }
@@ -1735,7 +1746,7 @@ async function handleApi(
       if (typeof body.threadId !== "string" || typeof body.pinned !== "boolean") {
         throw new LocalStateError("A conversation and pin state are required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.setConversationPinned(body.threadId, body.pinned));
       return true;
     }
@@ -1744,7 +1755,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.archiveConversation(body.threadId));
       return true;
     }
@@ -1753,7 +1764,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.restoreConversation(body.threadId));
       return true;
     }
@@ -1762,7 +1773,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.settleConversation(body.threadId));
       return true;
     }
@@ -1771,7 +1782,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.unsettleConversation(body.threadId));
       return true;
     }
@@ -1783,7 +1794,7 @@ async function handleApi(
       if (typeof body.snoozedUntil !== "string") {
         throw new LocalStateError("A snooze wake time is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.snoozeConversation(body.threadId, body.snoozedUntil));
       return true;
     }
@@ -1792,7 +1803,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.unsnoozeConversation(body.threadId));
       return true;
     }
@@ -1801,7 +1812,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, await state.markConversationVisited(body.threadId));
       return true;
     }
@@ -1810,7 +1821,7 @@ async function handleApi(
       if (typeof body.threadId !== "string" || body.confirm !== true) {
         throw new LocalStateError("A confirmed conversation worktree release is required.", 400);
       }
-      const projection = await state.load();
+      const projection = await state.inspect();
       const thread = projection.threads.find((item) => item.id === body.threadId);
       if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
       const project = projection.projects.find((item) => item.id === thread.projectId);
@@ -1845,7 +1856,7 @@ async function handleApi(
       if (typeof body.threadId !== "string") {
         throw new LocalStateError("A conversation is required.", 400);
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(response, 200, {
         threadId: body.threadId,
         affectedRecords: await state.previewConversationDeletion(body.threadId),
@@ -1862,7 +1873,7 @@ async function handleApi(
         response,
         200,
         await withDelegatedControlLock(async () => {
-          if (managedHost) assertManagedThread(await state.load(), body.threadId as string);
+          if (managedHost) assertManagedThread(await state.inspect(), body.threadId as string);
           return state.deleteConversation(body.threadId as string);
         }),
       );
@@ -1885,7 +1896,7 @@ async function handleApi(
             throw new LocalStateError("Orchestration threads beta is disabled.", 403);
           }
           if (managedHost) {
-            const projection = await state.load();
+            const projection = await state.inspect();
             assertManagedThread(projection, body.parentThreadId!);
             assertManagedThread(projection, body.childThreadId!);
           }
@@ -1908,7 +1919,7 @@ async function handleApi(
           throw new LocalStateError("Orchestration threads beta is disabled.", 403);
         }
         if (managedHost) {
-          const projection = await state.load();
+          const projection = await state.inspect();
           assertManagedThread(projection, body.parentThreadId!);
           assertManagedThread(projection, body.childThreadId!);
         }
@@ -1972,7 +1983,7 @@ async function handleApi(
       ) {
         throw new AutomationError("name, threadId, prompt, and schedule are required.");
       }
-      const projection = await state.load();
+      const projection = await state.inspect();
       if (!projection.threads.some((thread) => thread.id === body.threadId)) {
         throw new AutomationError("Target conversation was not found.", 404);
       }
@@ -2075,7 +2086,7 @@ async function handleApi(
         sendJson(response, 200, snapshot);
         return true;
       }
-      const visible = filterManagedProjection(await state.load(), managedHost);
+      const visible = filterManagedProjection(await state.inspect(), managedHost);
       const projectIds = new Set(visible.projects.map((project) => project.id));
       const runs = snapshot.runs.filter(
         (run) => run.projectId === null || projectIds.has(run.projectId),
@@ -2214,7 +2225,7 @@ async function handleApi(
         enabled?: unknown;
       };
       if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
-      const current = (await state.load()).heartbeatMonitors.find(
+      const current = (await state.inspect()).heartbeatMonitors.find(
         (monitor) => monitor.id === body.id,
       );
       if (!current) throw new AutonomyError("Heartbeat not found.", 404);
@@ -2252,7 +2263,7 @@ async function handleApi(
         throw new AutonomyError("Remote clients cannot run heartbeats.", 403);
       const body = (await readJson(request)) as { id?: unknown };
       if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
-      const monitor = (await state.load()).heartbeatMonitors.find(
+      const monitor = (await state.inspect()).heartbeatMonitors.find(
         (candidate) => candidate.id === body.id,
       );
       if (!monitor) throw new AutonomyError("Heartbeat not found.", 404);
@@ -2310,7 +2321,7 @@ async function handleApi(
         enabled?: unknown;
       };
       if (typeof body.id !== "string") throw new AutonomyError("A standing order is required.");
-      const current = (await state.load()).standingOrders.find((order) => order.id === body.id);
+      const current = (await state.inspect()).standingOrders.find((order) => order.id === body.id);
       if (!current) throw new AutonomyError("Standing order not found.", 404);
       const updated = parseStandingOrder({
         ...current,
@@ -2379,7 +2390,7 @@ async function handleApi(
         cooldownSeconds?: unknown;
       };
       if (typeof body.id !== "string") throw new AutonomyError("A hook is required.");
-      const current = (await state.load()).autonomyHooks.find((hook) => hook.id === body.id);
+      const current = (await state.inspect()).autonomyHooks.find((hook) => hook.id === body.id);
       if (!current) throw new AutonomyError("Hook not found.", 404);
       const updated = parseAutonomyHook({
         ...current,
@@ -2395,7 +2406,7 @@ async function handleApi(
           : {}),
         updatedAt: new Date().toISOString(),
       });
-      const flow = (await state.load()).autonomyFlows.find(
+      const flow = (await state.inspect()).autonomyFlows.find(
         (candidate) => candidate.id === updated.flowId,
       );
       if (!flow?.readOnly)
@@ -2419,7 +2430,7 @@ async function handleApi(
         throw new RepositoryError("A project is required.");
       }
       await withDelegatedControlLock(async () => {
-        const projection = await state.load();
+        const projection = await state.inspect();
         if (managedHost) {
           assertManagedProject(projection, body.projectId as string);
         }
@@ -2473,7 +2484,7 @@ async function handleApi(
       }
       await withDelegatedControlLock(async () => {
         const cutoff = new Date(body.olderThan as string);
-        const projection = await state.load();
+        const projection = await state.inspect();
         const expiredThreads = new Set(
           projection.threads
             .filter((thread) => new Date(thread.updatedAt) < cutoff)
@@ -2527,7 +2538,7 @@ async function handleApi(
         throw new RepositoryError("A repository and worktree are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const checkpoint = projection.checkpoints.find(
         (item) => item.id === previewMatch[1] && item.worktree === context.worktree,
       );
@@ -2605,7 +2616,7 @@ async function handleApi(
         throw new RepositoryError("A repository, worktree, and changed path are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const checkpoint = projection.checkpoints.find(
         (item) => item.id === checkpointDiffMatch[1] && item.worktree === context.worktree,
       );
@@ -2662,7 +2673,7 @@ async function handleApi(
         throw new RepositoryError("Preview and confirm the exact rewind before continuing.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const checkpoint = projection.checkpoints.find(
         (item) => item.id === rewindMatch[1] && item.worktree === context.worktree,
       );
@@ -3123,20 +3134,20 @@ async function handleApi(
           if (!currentPreferences.orchestrationThreadsBeta) {
             throw new PermissionError("Parent-routed approvals require beta orchestration.", 403);
           }
-          const projection = await state.load();
+          const projection = await state.inspect();
           assertParentRoutedApproval(projection, permissions.approvals(), {
             parentThreadId,
             childThreadId: conversationId,
             approvalId: approvalMatch[1],
           });
         }
-        const previousStatus = projectThreadStatus(await state.load(), conversationId).status;
+        const previousStatus = projectThreadStatus(await state.inspect(), conversationId).status;
         const decided = await permissions.decideAfter(
           approvalMatch[1],
           { runId, conversationId, repository, worktree, toolCallId },
           decision,
           async (resolution) => {
-            const projection = await state.load();
+            const projection = await state.inspect();
             const turn = projection.turns.find((item) => item.providerRunId === runId);
             const thread = turn
               ? projection.threads.find((item) => item.id === turn.threadId)
@@ -3195,7 +3206,7 @@ async function handleApi(
           if (!currentPreferences.orchestrationThreadsBeta) {
             throw new LocalStateError("Parent-routed input requires beta orchestration.", 403);
           }
-          const inputProjection = await state.load();
+          const inputProjection = await state.inspect();
           if (managedHost) {
             assertManagedThread(inputProjection, body.parentThreadId);
             assertManagedThread(inputProjection, body.childThreadId as string);
@@ -3210,7 +3221,7 @@ async function handleApi(
             throw new LocalStateError("The input request has already been resolved.", 409);
           }
         } else {
-          const inputProjection = await state.load();
+          const inputProjection = await state.inspect();
           if (managedHost) assertManagedThread(inputProjection, body.childThreadId as string);
           const requestProjection = inputProjection.inputRequests.find(
             (item) =>
@@ -3225,7 +3236,7 @@ async function handleApi(
         }
         await state.validateInputResponse(selectedRequest.id, body.answer as string);
         if (selectedRequest.responseMode === "child_follow_up") {
-          const projection = await state.load();
+          const projection = await state.inspect();
           const child = projection.threads.find((item) => item.id === body.childThreadId);
           const childSession = projection.providerSessions.find(
             (item) => item.threadId === body.childThreadId && item.provider === child?.provider,
@@ -3284,7 +3295,7 @@ async function handleApi(
           return result;
         }
         if (selectedRequest.responseMode === "native_resume") {
-          const projection = await state.load();
+          const projection = await state.inspect();
           const child = projection.threads.find((item) => item.id === body.childThreadId);
           const childSession = projection.providerSessions.find(
             (item) => item.threadId === body.childThreadId && item.provider === child?.provider,
@@ -3401,7 +3412,7 @@ async function handleApi(
           400,
         );
       }
-      if (managedHost) assertManagedThread(await state.load(), body.threadId);
+      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
       sendJson(
         response,
         200,
@@ -3429,7 +3440,7 @@ async function handleApi(
         throw new RepositoryError("A repository, worktree, and conversation are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
         (item) =>
@@ -3479,7 +3490,7 @@ async function handleApi(
         throw new RepositoryError("A valid annotation target and comment are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
         (item) =>
@@ -3546,7 +3557,7 @@ async function handleApi(
         );
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
         (item) =>
@@ -3583,7 +3594,7 @@ async function handleApi(
         throw new RepositoryError("A conversation and selected annotations are required.");
       }
       const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.load();
+      const projection = await state.inspect();
       const project = projection.projects.find((item) => item.root === context.root);
       const thread = projection.threads.find(
         (item) =>
@@ -4161,7 +4172,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     approval: ApprovalSnapshot,
     recordResolution: boolean,
   ): Promise<void> => {
-    const projection = await state.load();
+    const projection = await state.inspect();
     const turn = projection.turns.find((item) => item.providerRunId === approval.runId);
     const thread = turn ? projection.threads.find((item) => item.id === turn.threadId) : undefined;
     if (!turn || !thread) return;
@@ -4198,7 +4209,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
 
   async function isThreadBusy(threadId: string): Promise<boolean> {
-    const projection = await state.load();
+    const projection = await state.inspect();
     return projection.turns.some(
       (turn) =>
         turn.threadId === threadId &&
@@ -4276,7 +4287,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         error: "The provider outcome could not be proven because the local host was not listening.",
       };
     }
-    const projection = await state.load();
+    const projection = await state.inspect();
     const thread = projection.threads.find((item) => item.id === automation.threadId);
     if (!thread) throw new AutomationError("Target conversation was not found.", 404);
     const project = projection.projects.find((item) => item.id === thread.projectId);
@@ -4389,7 +4400,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       finish: (fireId, status, error) => state.finishAutomationFire(fireId, status, error),
     },
     onFinished: async (automation) => {
-      const projection = await state.load();
+      const projection = await state.inspect();
       const thread = projection.threads.find((candidate) => candidate.id === automation.threadId);
       await autonomy.dispatch("automation_completed", thread?.projectId ?? null);
     },

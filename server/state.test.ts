@@ -2599,3 +2599,30 @@ test("compactAssistantStreamHistory rewrites legacy token-per-event logs", async
   assert.equal(assistants[0]?.text, "ABCD");
   assert.equal(await recovered.compactAssistantStreamHistory(), null);
 });
+
+test("inspect reuses the live projection while load returns an isolated clone", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const first = await store.inspect();
+  const second = await store.inspect();
+  assert.equal(first, second);
+  assert.equal(first.projects.length, 1);
+
+  const clone = await store.load();
+  assert.notEqual(clone, first);
+  assert.deepEqual(clone.projects, first.projects);
+  // Mutating the load() clone must not corrupt the live projection used by
+  // hot paths (status projection, wake filters, provider event loops).
+  clone.projects[0] = { ...clone.projects[0]!, name: "mutated-clone" };
+  clone.projects.push({
+    schemaVersion: 2,
+    id: "ghost",
+    name: "ghost",
+    root: "/ghost",
+    openedAt: new Date().toISOString(),
+  });
+  assert.equal((await store.inspect()).projects.length, 1);
+  assert.equal((await store.inspect()).projects[0]?.name, "fixture");
+  assert.equal((await store.load()).projects.length, 1);
+  assert.equal((await store.load()).projects[0]?.name, "fixture");
+});

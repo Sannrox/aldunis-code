@@ -4,17 +4,40 @@ import type { StateProjection } from "./state.ts";
  * Workbench/list payload: keep lifecycle metadata, drop transcript bodies.
  * `/api/state/load` is polled and SSE-driven; shipping full messages/activities
  * on every status change dominated loopback bandwidth and client parse cost.
+ *
+ * Array membership is shallow-copied so a concurrent provider event cannot grow
+ * or shrink the lists while the host finishes preferences/worktree awaits. Nested
+ * records remain shared (no multi-MB structuredClone).
  */
 export function projectWorkbenchState(projection: StateProjection): StateProjection {
   return {
-    ...projection,
+    schemaVersion: projection.schemaVersion,
+    sequence: projection.sequence,
+    projects: projection.projects.slice(),
+    threads: projection.threads.slice(),
+    turns: projection.turns.slice(),
     messages: [],
     activities: [],
     plans: [],
     contextReceipts: [],
-    inputRequests: [],
+    usageReceipts: projection.usageReceipts.slice(),
+    governanceCorrelations: projection.governanceCorrelations.slice(),
+    providerSessions: projection.providerSessions.slice(),
+    checkpoints: projection.checkpoints.slice(),
     annotations: [],
     fileReviews: [],
+    conversationDeletions: projection.conversationDeletions.slice(),
+    forks: projection.forks.slice(),
+    delegatedRelationships: projection.delegatedRelationships.slice(),
+    inputRequests: [],
+    inputReceipts: projection.inputReceipts.slice(),
+    automationFires: projection.automationFires.slice(),
+    autonomyRuns: projection.autonomyRuns.slice(),
+    autonomyTasks: projection.autonomyTasks.slice(),
+    autonomyFlows: projection.autonomyFlows.slice(),
+    heartbeatMonitors: projection.heartbeatMonitors.slice(),
+    standingOrders: projection.standingOrders.slice(),
+    autonomyHooks: projection.autonomyHooks.slice(),
   };
 }
 

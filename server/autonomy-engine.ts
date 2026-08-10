@@ -186,13 +186,14 @@ export class AutonomyEngine {
   constructor(private readonly state: LocalStateStore) {}
 
   async ensureBuiltInFlows(): Promise<void> {
-    const projection = await this.state.load();
+    const projection = await this.state.inspect();
     const existing = new Set(projection.autonomyFlows.map((flow) => flow.id));
     const flows = builtInAutonomyFlows().filter((flow) => !existing.has(flow.id));
     if (flows.length) await this.state.saveAutonomyRecords({ flows });
   }
 
   async snapshot(limit = 50): Promise<AutonomyStateSnapshot> {
+    // Public API surface: clone so callers cannot mutate live journaled records.
     const projection = await this.state.load();
     return {
       runs: projection.autonomyRuns
@@ -254,6 +255,7 @@ export class AutonomyEngine {
 
   async startFlow(input: RunStartInput): Promise<AutonomyRun> {
     await this.ensureBuiltInFlows();
+    // load() isolates nested flow budget/step objects on the returned run.
     const projection = await this.state.load();
     const flow = projection.autonomyFlows.find((candidate) => candidate.id === input.flowId);
     if (!flow || !flow.enabled)
@@ -299,6 +301,7 @@ export class AutonomyEngine {
   }
 
   async resumeRun(runId: string): Promise<AutonomyRun> {
+    // Return a clone so the caller cannot mutate the live queued record.
     const run = (await this.state.load()).autonomyRuns.find((candidate) => candidate.id === runId);
     if (!run) throw new AutonomyError("The autonomy run is unavailable.", 404);
     if (run.status !== "queued")
@@ -309,7 +312,7 @@ export class AutonomyEngine {
 
   async tickHeartbeats(now = new Date()): Promise<void> {
     await this.ensureBuiltInFlows();
-    const projection = await this.state.load();
+    const projection = await this.state.inspect();
     for (const monitor of projection.heartbeatMonitors) {
       if (!isHeartbeatDue(monitor, now)) continue;
       const existing = monitor.lastRunId
@@ -335,7 +338,7 @@ export class AutonomyEngine {
     event: AutonomyHookEvent,
     projectId: string | null = null,
   ): Promise<AutonomyRun[]> {
-    const projection = await this.state.load();
+    const projection = await this.state.inspect();
     const now = Date.now();
     const started: AutonomyRun[] = [];
     for (const hook of projection.autonomyHooks) {
@@ -446,7 +449,7 @@ export class AutonomyEngine {
     cooldownSeconds?: number;
   }): Promise<AutonomyHook> {
     await this.ensureBuiltInFlows();
-    const flow = (await this.state.load()).autonomyFlows.find(
+    const flow = (await this.state.inspect()).autonomyFlows.find(
       (candidate) => candidate.id === input.flowId,
     );
     if (!flow || !flow.readOnly)
@@ -517,7 +520,7 @@ export class AutonomyEngine {
   }
 
   async #executeRun(runId: string): Promise<void> {
-    let projection = await this.state.load();
+    let projection = await this.state.inspect();
     const initialRun = projection.autonomyRuns.find((candidate) => candidate.id === runId);
     if (!initialRun || isTerminal(initialRun.status)) return;
     const flow = projection.autonomyFlows.find((candidate) => candidate.id === initialRun.flowId);
@@ -540,7 +543,7 @@ export class AutonomyEngine {
         await this.failRun(run, "The workflow runtime budget was exhausted.");
         return;
       }
-      projection = await this.state.load();
+      projection = await this.state.inspect();
       const currentRun = projection.autonomyRuns.find((candidate) => candidate.id === runId);
       if (!currentRun || currentRun.status === "cancelled") return;
       run = currentRun;
@@ -623,7 +626,7 @@ export class AutonomyEngine {
         return;
       }
     }
-    projection = await this.state.load();
+    projection = await this.state.inspect();
     const completedRun = projection.autonomyRuns.find((candidate) => candidate.id === runId);
     if (!completedRun || completedRun.status === "cancelled") return;
     run = completedRun;
@@ -916,7 +919,7 @@ export class AutonomyEngine {
   }
 
   async updateHeartbeatStatus(runId: string, status: AutonomyRun["status"]): Promise<void> {
-    const projection = await this.state.load();
+    const projection = await this.state.inspect();
     const monitor = projection.heartbeatMonitors.find((candidate) => candidate.lastRunId === runId);
     if (!monitor) return;
     await this.state.saveAutonomyRecords({

@@ -138,6 +138,24 @@ test("workbench projection drops transcript bodies while keeping threads", () =>
   assert.equal(projection.messages.length, 2);
 });
 
+test("workbench projection freezes list membership against live array growth", () => {
+  const projection = sampleProjection();
+  const workbench = projectWorkbenchState(projection);
+  projection.threads.push({
+    ...projection.threads[0]!,
+    id: "thread-c",
+    title: "C",
+  });
+  projection.turns.push({
+    ...projection.turns[0]!,
+    id: "turn-c",
+    threadId: "thread-c",
+  });
+  assert.equal(workbench.threads.length, 2);
+  assert.equal(workbench.turns.length, 2);
+  assert.equal(projection.threads.length, 3);
+});
+
 test("conversation history is scoped to one thread", () => {
   const projection = sampleProjection();
   const history = projectConversationHistory(projection, "thread-a");
