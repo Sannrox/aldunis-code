@@ -843,6 +843,7 @@ async function handleApi(
         if (response.writableEnded) return;
         response.write(": heartbeat\n\n");
       }, 30_000);
+      heartbeat.unref();
       const cleanup = () => {
         clearInterval(heartbeat);
         unsubscribe();
