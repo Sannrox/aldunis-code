@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  describeMutation,
-  PermissionBroker,
-  PermissionError,
-} from "./permission.ts";
+import { describeMutation, PermissionBroker, PermissionError } from "./permission.ts";
 
 const context = {
   runId: "run-1",
@@ -34,32 +30,44 @@ function decisionContext(overrides: Partial<typeof context> = {}) {
 test("mutation scopes retain targets while redacting sensitive values", () => {
   const scope = describeMutation("Write", context.toolInput);
   assert.match(scope.target, /src\/main\.ts/);
-  assert.equal(scope.details.some((detail) => detail.includes("sk-secret")), false);
-  assert.equal(scope.details.some((detail) => detail.includes("[redacted]")), true);
+  assert.equal(
+    scope.details.some((detail) => detail.includes("sk-secret")),
+    false,
+  );
+  assert.equal(
+    scope.details.some((detail) => detail.includes("[redacted]")),
+    true,
+  );
 });
 
 test("multi-file mutation scopes expose bounded paths without file contents", () => {
-  assert.deepEqual(describeMutation("Edit", {
-    path: "src/first.ts",
-    paths: ["src/first.ts", "src/second.ts"],
-    patch: "private source text",
-  }), {
-    summary: "Edit a file",
-    target: "path: src/first.ts",
-    details: ["path: src/first.ts", "path: src/second.ts", "patch: [content redacted]"],
-  });
+  assert.deepEqual(
+    describeMutation("Edit", {
+      path: "src/first.ts",
+      paths: ["src/first.ts", "src/second.ts"],
+      patch: "private source text",
+    }),
+    {
+      summary: "Edit a file",
+      target: "path: src/first.ts",
+      details: ["path: src/first.ts", "path: src/second.ts", "patch: [content redacted]"],
+    },
+  );
 });
 
 test("network approval scopes display destination and protocol", () => {
-  assert.deepEqual(describeMutation("Bash", {
-    host: "api.example.test",
-    protocol: "https",
-    reason: "Fetch metadata",
-  }), {
-    summary: "Allow network access",
-    target: "host: api.example.test",
-    details: ["protocol: https", "reason: Fetch metadata"],
-  });
+  assert.deepEqual(
+    describeMutation("Bash", {
+      host: "api.example.test",
+      protocol: "https",
+      reason: "Fetch metadata",
+    }),
+    {
+      summary: "Allow network access",
+      target: "host: api.example.test",
+      details: ["protocol: https", "reason: Fetch metadata"],
+    },
+  );
 });
 
 test("multi-file approval display is bounded with an explicit omitted count", () => {
@@ -80,10 +88,10 @@ test("allow-once is bound to one exact call and cannot be replayed", async () =>
   const allowed = broker.decide(approval.id, decisionContext(), "allow_once");
   assert.equal(allowed.state, "allowed_once");
   assert.deepEqual(await waiting, { behavior: "allow", updatedInput: context.toolInput });
-  assert.deepEqual(
-    await broker.awaitRegisteredDecision(context.runId, token, approval.id),
-    { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." },
-  );
+  assert.deepEqual(await broker.awaitRegisteredDecision(context.runId, token, approval.id), {
+    behavior: "deny",
+    message: "Aldunis Code rejected an unmatched permission request.",
+  });
   assert.throws(
     () => broker.decide(approval.id, decisionContext(), "allow_once"),
     (error: unknown) => error instanceof PermissionError && error.status === 409,
@@ -114,10 +122,7 @@ test("identical concurrent callbacks atomically claim distinct registered approv
   assert.equal(broker.decide(first.id, decisionContext(), "allow_once").state, "allowed_once");
   assert.deepEqual(await firstWaiting, { behavior: "allow", updatedInput: context.toolInput });
 
-  assert.equal(
-    broker.decide(second.id, decisionContext(secondContext), "deny").state,
-    "denied",
-  );
+  assert.equal(broker.decide(second.id, decisionContext(secondContext), "deny").state, "denied");
   assert.equal((await secondWaiting).behavior, "deny");
 });
 
@@ -128,7 +133,10 @@ test("registered decision identifiers fail closed when missing, mismatched, or r
   const approval = broker.register(context);
   assert.ok(approval);
 
-  const unmatched = { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
+  const unmatched = {
+    behavior: "deny",
+    message: "Aldunis Code rejected an unmatched permission request.",
+  };
   assert.deepEqual(
     await broker.awaitRegisteredDecision(context.runId, token, "missing"),
     unmatched,
@@ -154,14 +162,9 @@ test("approval persistence completes before the provider is released", async () 
   assert.ok(approval);
   const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
   let persisted = false;
-  const deciding = broker.decideAfter(
-    approval.id,
-    decisionContext(),
-    "allow_once",
-    async () => {
-      persisted = true;
-    },
-  );
+  const deciding = broker.decideAfter(approval.id, decisionContext(), "allow_once", async () => {
+    persisted = true;
+  });
   assert.equal(persisted, true);
   assert.equal((await deciding).state, "allowed_once");
   assert.deepEqual(await waiting, { behavior: "allow", updatedInput: context.toolInput });
@@ -174,9 +177,10 @@ test("approval persistence failure denies the provider action", async () => {
   assert.ok(approval);
   const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
   await assert.rejects(
-    () => broker.decideAfter(approval.id, decisionContext(), "allow_once", async () => {
-      throw new Error("fixture persistence failure");
-    }),
+    () =>
+      broker.decideAfter(approval.id, decisionContext(), "allow_once", async () => {
+        throw new Error("fixture persistence failure");
+      }),
     /fixture persistence failure/,
   );
   assert.equal((await waiting).behavior, "deny");
@@ -190,7 +194,9 @@ test("run cancellation revokes an approval while persistence is in flight", asyn
   assert.ok(approval);
   const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
   let finishPersistence!: () => void;
-  const persistence = new Promise<void>((resolve) => { finishPersistence = resolve; });
+  const persistence = new Promise<void>((resolve) => {
+    finishPersistence = resolve;
+  });
   const deciding = broker.decideAfter(
     approval.id,
     decisionContext(),
@@ -201,7 +207,24 @@ test("run cancellation revokes an approval while persistence is in flight", asyn
   finishPersistence();
   await assert.rejects(deciding, /closed before it could be released/);
   assert.equal((await waiting).behavior, "deny");
-  assert.equal(broker.approvalFor(context.runId, context.toolCallId)?.state, "cancelled");
+  // closeRun releases retained approval records after resolving them.
+  assert.equal(broker.approvalFor(context.runId, context.toolCallId), null);
+  assert.equal(broker.approvalsFor(context.runId).length, 0);
+});
+
+test("closeRun purges retained approvals for a completed provider run", async () => {
+  const broker = new PermissionBroker();
+  const token = broker.createRunToken(context.runId);
+  const approval = broker.register(context);
+  assert.ok(approval);
+  const waiting = broker.awaitRegisteredDecision(context.runId, token, approval.id);
+  assert.equal(broker.decide(approval.id, decisionContext(), "allow_once").state, "allowed_once");
+  assert.equal((await waiting).behavior, "allow");
+  assert.equal(broker.approvalsFor(context.runId).length, 1);
+  broker.closeRun(context.runId, "provider_failed");
+  assert.equal(broker.approvalsFor(context.runId).length, 0);
+  assert.equal(broker.approvalFor(context.runId, context.toolCallId), null);
+  assert.equal(broker.approvals().length, 0);
 });
 
 test("deny, cancellation, expiry, and provider failure resolve fail-closed", async () => {
@@ -236,18 +259,22 @@ test("deny, cancellation, expiry, and provider failure resolve fail-closed", asy
     });
   }
 
+  // Approval timers are unref'd so they do not pin a quiet host process. Claim
+  // first, then keep a ref'd wait so the unref expiry can fire under the test runner.
   const expiring = new PermissionBroker(5);
   const expiryStates: string[] = [];
   expiring.subscribe((approval) => expiryStates.push(approval.state));
   const expiryToken = expiring.createRunToken("run-expired");
   const expiryInput = { ...context, runId: "run-expired" };
   assert.ok(expiring.register(expiryInput));
-  const expired = await expiring.awaitDecision(
+  const expiredWaiting = expiring.awaitDecision(
     expiryInput.runId,
     expiryToken,
     expiryInput.toolName,
     expiryInput.toolInput,
   );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const expired = await expiredWaiting;
   assert.equal(expired.behavior, "deny");
   assert.match("message" in expired ? expired.message : "", /expired/);
   assert.deepEqual(expiryStates, ["expired"]);
@@ -256,11 +283,12 @@ test("deny, cancellation, expiry, and provider failure resolve fail-closed", asy
   const overdueApproval = overdue.register({ ...context, runId: "run-overdue" });
   assert.ok(overdueApproval);
   assert.throws(
-    () => overdue.decide(
-      overdueApproval.id,
-      decisionContext({ ...context, runId: "run-overdue" }),
-      "allow_once",
-    ),
+    () =>
+      overdue.decide(
+        overdueApproval.id,
+        decisionContext({ ...context, runId: "run-overdue" }),
+        "allow_once",
+      ),
     (error: unknown) => error instanceof PermissionError && error.status === 409,
   );
 });
@@ -271,11 +299,12 @@ test("cross-worktree and unmatched provider requests are rejected", async () => 
   const approval = broker.register(context);
   assert.ok(approval);
   assert.throws(
-    () => broker.decide(
-      approval.id,
-      decisionContext({ worktree: "/repository/other-worktree" }),
-      "allow_once",
-    ),
+    () =>
+      broker.decide(
+        approval.id,
+        decisionContext({ worktree: "/repository/other-worktree" }),
+        "allow_once",
+      ),
     (error: unknown) => error instanceof PermissionError && error.status === 403,
   );
   assert.deepEqual(

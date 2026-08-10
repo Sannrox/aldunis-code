@@ -20,6 +20,7 @@ class FakeBrowserHost implements BrowserHost {
     error: null,
   };
   operations: BrowserOperation[] = [];
+  closedSessionIds: string[] = [];
 
   getState(): BrowserHostState {
     return { ...this.state };
@@ -57,7 +58,8 @@ class FakeBrowserHost implements BrowserHost {
     this.state.controller = enabled ? "agent" : "human";
   }
 
-  close(): void {
+  close(sessionId: string): void {
+    this.closedSessionIds.push(sessionId);
     this.state.connected = false;
   }
 
@@ -192,7 +194,15 @@ test("shared browser preserves a pre-opened session token across close and reope
     conversationId: "conversation-2",
     origin: firstSession.origin,
   });
-  broker.open("conversation-2", firstSession.origin);
+  // Closed session records are released; only the provider token is retained.
+  assert.throws(
+    () => {
+      void broker.snapshot(firstSession.id);
+    },
+    (error: unknown) => error instanceof Error && /does not exist/.test(error.message),
+  );
+  const reopened = broker.open("conversation-2", firstSession.origin);
+  assert.notEqual(reopened.id, firstSession.id);
   const secondConfiguration = broker.providerMcpConfiguration({
     conversationId: "conversation-2",
     endpoint: "http://127.0.0.1:4173/api/browser/tools",
@@ -203,4 +213,18 @@ test("shared browser preserves a pre-opened session token across close and reope
     secondConfiguration.environment.ALDUNIS_BROWSER_TOKEN,
     firstConfiguration.environment.ALDUNIS_BROWSER_TOKEN,
   );
+});
+
+test("shared browser replaces a failed session on the next open", async () => {
+  const host = new FakeBrowserHost();
+  const broker = new SharedBrowserBroker(host);
+  const failed = broker.open("conversation-failed", "http://127.0.0.1:4173");
+  host.state.error = "view crashed";
+  host.state.connected = false;
+  const snapshot = await broker.snapshot(failed.id);
+  assert.equal(snapshot.state, "failed");
+  const reopened = broker.open("conversation-failed", "http://127.0.0.1:4173");
+  assert.notEqual(reopened.id, failed.id);
+  assert.equal(reopened.state, "awaiting_view");
+  assert.deepEqual(host.closedSessionIds, [failed.id]);
 });

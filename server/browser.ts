@@ -227,6 +227,11 @@ export class SharedBrowserBroker {
       token: string;
     }
   >();
+  /**
+   * Tokens published to provider MCP config for reopen stability.
+   * Grown only on publish (not every open/close). One small UUID per
+   * conversation that used browser tools — not every preview glance.
+   */
   readonly #providerTokens = new Map<string, string>();
 
   constructor(private readonly host: BrowserHost | null) {}
@@ -239,17 +244,27 @@ export class SharedBrowserBroker {
         session.snapshot.conversationId === conversationId && session.snapshot.state !== "closed",
     );
     if (existing) {
-      if (existing.snapshot.origin !== origin) {
-        throw new BrowserError(
-          "Close the existing shared browser before changing its loopback origin.",
-          409,
-          "browser_origin_conflict",
-        );
+      // Failed sessions are not reusable; retire the host entry and drop the
+      // broker record so a later open is not blocked and capture/PiP do not leak.
+      if (existing.snapshot.state === "failed") {
+        this.#rememberPublishedToken(conversationId, existing.token);
+        void Promise.resolve(this.host?.close(existing.snapshot.id)).catch(() => undefined);
+        this.#sessions.delete(existing.snapshot.id);
+      } else {
+        if (existing.snapshot.origin !== origin) {
+          throw new BrowserError(
+            "Close the existing shared browser before changing its loopback origin.",
+            409,
+            "browser_origin_conflict",
+          );
+        }
+        return { ...existing.snapshot };
       }
-      return { ...existing.snapshot };
     }
     const now = new Date().toISOString();
     const id = randomUUID();
+    // Prefer a previously published provider token; do not grow the map on open alone.
+    const token = this.#providerTokens.get(conversationId) ?? randomUUID();
     const snapshot: BrowserSessionSnapshot = {
       schemaVersion: 1,
       id,
@@ -267,7 +282,7 @@ export class SharedBrowserBroker {
     };
     this.#sessions.set(id, {
       snapshot,
-      token: this.#providerTokens.get(conversationId) ?? randomUUID(),
+      token,
     });
     return { ...snapshot };
   }
@@ -307,13 +322,18 @@ export class SharedBrowserBroker {
     const session = this.#get(idInput);
     this.#assertContext(session.snapshot, context);
     await this.host?.close(session.snapshot.id);
-    // Keep the token stable for an already-running provider. It has no authority
-    // while the session is closed because executeProvider requires an active session.
+    // Keep a previously published provider token stable for reopen. Session records
+    // are released so long-lived hosts do not retain every past browser session.
+    // The token has no authority while no session is open because executeProvider
+    // requires an active session.
+    this.#rememberPublishedToken(session.snapshot.conversationId, session.token);
     session.snapshot.state = "closed";
     session.snapshot.agentControl = false;
     session.snapshot.controller = "none";
     session.snapshot.updatedAt = new Date().toISOString();
-    return { ...session.snapshot };
+    const snapshot = { ...session.snapshot };
+    this.#sessions.delete(session.snapshot.id);
+    return snapshot;
   }
 
   async setPictureInPicture(
@@ -355,7 +375,7 @@ export class SharedBrowserBroker {
         candidate.snapshot.state !== "closed",
     );
     const token = session?.token ?? this.#providerTokens.get(input.conversationId) ?? randomUUID();
-    this.#providerTokens.set(input.conversationId, token);
+    this.#publishProviderToken(input.conversationId, token);
     return {
       name: BROWSER_MCP_NAME,
       command: input.command,
@@ -443,6 +463,19 @@ export class SharedBrowserBroker {
       session.snapshot.updatedAt = new Date().toISOString();
     }
     return result;
+  }
+
+  /**
+   * Remember a token only when this conversation already published one to the
+   * provider. Avoids growing the map on open/close alone.
+   */
+  #rememberPublishedToken(conversationId: string, token: string): void {
+    if (!this.#providerTokens.has(conversationId)) return;
+    this.#providerTokens.set(conversationId, token);
+  }
+
+  #publishProviderToken(conversationId: string, token: string): void {
+    this.#providerTokens.set(conversationId, token);
   }
 
   #get(idInput: unknown) {
