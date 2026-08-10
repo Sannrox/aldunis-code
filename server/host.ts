@@ -4860,11 +4860,44 @@ async function serveStatic(
   } catch {
     filePath = join(dist, "index.html");
   }
-  response.writeHead(200, {
-    "content-type": contentTypes[extname(filePath)] ?? "application/octet-stream",
-    "x-content-type-options": "nosniff",
+  try {
+    if (!(await stat(filePath)).isFile()) {
+      response.writeHead(404, {
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-type-options": "nosniff",
+      });
+      response.end("Not found");
+      return;
+    }
+  } catch {
+    response.writeHead(404, {
+      "content-type": "text/plain; charset=utf-8",
+      "x-content-type-options": "nosniff",
+    });
+    response.end("Not found");
+    return;
+  }
+  const stream = createReadStream(filePath);
+  let opened = false;
+  stream.on("open", () => {
+    opened = true;
+    response.writeHead(200, {
+      "content-type": contentTypes[extname(filePath)] ?? "application/octet-stream",
+      "x-content-type-options": "nosniff",
+    });
+    stream.pipe(response);
   });
-  createReadStream(filePath).pipe(response);
+  stream.on("error", () => {
+    if (!opened && !response.headersSent) {
+      response.writeHead(500, {
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-type-options": "nosniff",
+      });
+      response.end("Failed to read static asset");
+      return;
+    }
+    response.destroy();
+  });
 }
 
 export interface LocalHostOptions {
