@@ -95,9 +95,7 @@ export function getDesktopUpdateDisabledReason(options: {
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null
-    ? value as Record<string, unknown>
-    : null;
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
 function readUpdateInfo(value: unknown): UpdateInfo | null {
@@ -113,12 +111,14 @@ function readUpdateInfo(value: unknown): UpdateInfo | null {
 
 function readProgress(value: unknown): number | null {
   const record = objectRecord(value);
-  if (!record || typeof record.percent !== "number" || !Number.isFinite(record.percent)) return null;
+  if (!record || typeof record.percent !== "number" || !Number.isFinite(record.percent))
+    return null;
   return Math.max(0, Math.min(100, record.percent));
 }
 
 function safeUpdateError(stage: DesktopUpdateErrorStage): string {
-  if (stage === "download") return "The update download failed. Check your connection and try again.";
+  if (stage === "download")
+    return "The update download failed. Check your connection and try again.";
   if (stage === "install") return "The update could not be installed. Try again later.";
   return "The update check failed. Check your connection and try again.";
 }
@@ -238,7 +238,8 @@ export class DesktopUpdater {
   }
 
   async downloadUpdate(): Promise<DesktopUpdateSnapshot> {
-    if (this.disposed || this.state.phase !== "available" || !this.pendingUpdate) return this.getState();
+    if (this.disposed || this.state.phase !== "available" || !this.pendingUpdate)
+      return this.getState();
     this.setState({ phase: "downloading", progress: 0, error: undefined, errorStage: undefined });
     try {
       await this.options.engine.downloadUpdate();
@@ -253,7 +254,11 @@ export class DesktopUpdater {
       }
     } catch {
       if (!this.disposed) {
-        this.setState({ phase: "error", error: safeUpdateError("download"), errorStage: "download" });
+        this.setState({
+          phase: "error",
+          error: safeUpdateError("download"),
+          errorStage: "download",
+        });
       }
     }
     return this.getState();
@@ -264,7 +269,10 @@ export class DesktopUpdater {
     this.setState({ phase: "installing", error: undefined, errorStage: undefined });
     try {
       await this.options.prepareForInstall?.();
-      if (this.disposed || this.state.phase !== "installing") return this.getState();
+      // The desktop host disposes the updater while it closes local services.
+      // The installing phase is the handoff signal, so disposal during that
+      // preparation must not prevent Electron from receiving quitAndInstall.
+      if (this.state.phase !== "installing") return this.getState();
       this.options.engine.quitAndInstall(false, true);
     } catch {
       if (!this.disposed) {
@@ -281,22 +289,25 @@ export class DesktopUpdater {
   private registerEventListeners(): void {
     const listeners: Record<UpdateEvent, UpdateListener> = {
       "checking-for-update": () => {
-        if (!this.disposed) this.setState({ phase: "checking", error: undefined, errorStage: undefined });
+        if (!this.disposed)
+          this.setState({ phase: "checking", error: undefined, errorStage: undefined });
       },
       "update-available": (value: unknown) => {
         const info = readUpdateInfo(value);
-        if (info && info.version !== this.options.currentVersion && !this.disposed) this.setAvailable(info);
+        if (info && info.version !== this.options.currentVersion && !this.disposed)
+          this.setAvailable(info);
       },
       "update-not-available": () => {
         if (!this.disposed) this.finishCheck("idle");
       },
       error: () => {
         if (!this.disposed) {
-          const stage: DesktopUpdateErrorStage = this.state.phase === "downloading"
-            ? "download"
-            : this.state.phase === "installing"
-              ? "install"
-              : "check";
+          const stage: DesktopUpdateErrorStage =
+            this.state.phase === "downloading"
+              ? "download"
+              : this.state.phase === "installing"
+                ? "install"
+                : "check";
           this.setState({
             phase: "error",
             error: safeUpdateError(stage),

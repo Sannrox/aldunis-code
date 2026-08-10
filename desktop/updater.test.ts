@@ -52,7 +52,10 @@ class FakeUpdaterEngine implements DesktopUpdaterEngine {
   }
 }
 
-function createUpdater(engine = new FakeUpdaterEngine(), overrides: Partial<ConstructorParameters<typeof DesktopUpdater>[0]> = {}) {
+function createUpdater(
+  engine = new FakeUpdaterEngine(),
+  overrides: Partial<ConstructorParameters<typeof DesktopUpdater>[0]> = {},
+) {
   return {
     engine,
     updater: new DesktopUpdater({
@@ -69,24 +72,33 @@ function createUpdater(engine = new FakeUpdaterEngine(), overrides: Partial<Cons
 }
 
 test("desktop updater disables unsupported package contexts before touching the engine", () => {
-  assert.equal(getDesktopUpdateDisabledReason({
-    isPackaged: false,
-    platform: "darwin",
-    hasUpdateManifest: true,
-    isAppImage: false,
-  }), "development");
-  assert.equal(getDesktopUpdateDisabledReason({
-    isPackaged: true,
-    platform: "linux",
-    hasUpdateManifest: true,
-    isAppImage: false,
-  }), "linux-package");
-  assert.equal(getDesktopUpdateDisabledReason({
-    isPackaged: true,
-    platform: "win32",
-    hasUpdateManifest: false,
-    isAppImage: false,
-  }), "no-feed");
+  assert.equal(
+    getDesktopUpdateDisabledReason({
+      isPackaged: false,
+      platform: "darwin",
+      hasUpdateManifest: true,
+      isAppImage: false,
+    }),
+    "development",
+  );
+  assert.equal(
+    getDesktopUpdateDisabledReason({
+      isPackaged: true,
+      platform: "linux",
+      hasUpdateManifest: true,
+      isAppImage: false,
+    }),
+    "linux-package",
+  );
+  assert.equal(
+    getDesktopUpdateDisabledReason({
+      isPackaged: true,
+      platform: "win32",
+      hasUpdateManifest: false,
+      isAppImage: false,
+    }),
+    "no-feed",
+  );
 
   const { engine, updater } = createUpdater(new FakeUpdaterEngine(), {
     isPackaged: false,
@@ -155,6 +167,28 @@ test("desktop updater reports download progress and installs only after preparat
   const installing = await updater.installUpdate();
   assert.equal(installing.phase, "installing");
   assert.equal(prepared, true);
+  assert.deepEqual(engine.quitArguments, [false, true]);
+});
+
+test("desktop updater hands off installation after shutdown preparation disposes it", async () => {
+  const engine = new FakeUpdaterEngine();
+  let updater: DesktopUpdater | null = null;
+  const created = createUpdater(engine, {
+    prepareForInstall: async () => {
+      updater?.dispose();
+    },
+  });
+  updater = created.updater;
+  updater.start();
+  await updater.checkForUpdate();
+
+  engine.downloadUpdate = async () => {
+    engine.emit("update-downloaded", { version: "0.2.0" });
+  };
+  await updater.downloadUpdate();
+
+  const installing = await updater.installUpdate();
+  assert.equal(installing.phase, "installing");
   assert.deepEqual(engine.quitArguments, [false, true]);
 });
 
@@ -231,5 +265,8 @@ test("desktop updater cleans event listeners and scheduled work", () => {
   updater.dispose();
   assert.deepEqual(timers, ["timeout:startup", "interval:poll"]);
   assert.equal(engine.listeners.size, 6);
-  assert.equal([...engine.listeners.values()].every((listeners) => listeners.size === 0), true);
+  assert.equal(
+    [...engine.listeners.values()].every((listeners) => listeners.size === 0),
+    true,
+  );
 });
