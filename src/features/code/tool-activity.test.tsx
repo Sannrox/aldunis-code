@@ -54,3 +54,20 @@ test("ToolActivity counts failures only among hidden calls", () => {
 
   assert.match(html, /\+2 previous tool calls · 1 failed/);
 });
+
+test("ToolActivity wires aria-controls to the supplied group id", () => {
+  const html = renderToStaticMarkup(
+    <ToolActivity
+      providerLabel="Grok Build"
+      groupId="primary-current-tools-1"
+      rows={[
+        { toolCallId: "call-read", name: "read_file", status: "done" },
+        { toolCallId: "call-search", name: "search_replace", status: "done" },
+        { toolCallId: "call-run", name: "run_terminal_command", status: "done" },
+      ]}
+    />,
+  );
+
+  assert.match(html, /id="primary-current-tools-1"/);
+  assert.match(html, /aria-controls="primary-current-tools-1"/);
+});
