@@ -95,14 +95,10 @@ import {
 } from "../../lib/composer-prompt-history";
 import { supportsComposerFieldSizing, syncComposerHeight } from "../../lib/composer-height";
 import {
-  appendVoiceTranscript,
-  collectVoiceTranscript,
-  composeVoiceDraft,
-  getVoiceRecognitionConstructor,
+  createVoiceInputModule,
+  initialVoiceInputSnapshot,
   matchesVoiceInputShortcut,
   VOICE_INPUT_SHORTCUT_LABEL,
-  voiceInputErrorMessage,
-  type VoiceRecognition,
 } from "../../lib/voice-input";
 import {
   buildComposerCommandItems,
@@ -299,8 +295,6 @@ export function formatHostLabel(hostname: string | undefined): string {
     ? "Local Aldunis host"
     : hostname;
 }
-
-type VoiceInputState = "idle" | "listening" | "unsupported" | "error";
 
 export { appendProviderEvent, preserveInputResolution } from "../../lib/conversation-run";
 
@@ -519,136 +513,24 @@ export function Conversation({
   const [stashPulse, setStashPulse] = useState(false);
   const stashPulseTimerRef = useRef<number | null>(null);
   const stashMenuRef = useRef<HTMLDivElement | null>(null);
-  const voiceRecognitionRef = useRef<VoiceRecognition | null>(null);
-  const voicePrefixRef = useRef("");
-  const voiceFinalTranscriptRef = useRef("");
-  const [voiceInputState, setVoiceInputState] = useState<VoiceInputState>(() =>
-    getVoiceRecognitionConstructor() ? "idle" : "unsupported",
+  const [voiceInputSnapshot, setVoiceInputSnapshot] = useState(initialVoiceInputSnapshot);
+  const [voiceInputModule] = useState(() =>
+    createVoiceInputModule({ onDraftChange: setDraft, onSnapshotChange: setVoiceInputSnapshot }),
   );
-  const [voiceInputInterim, setVoiceInputInterim] = useState("");
-  const [voiceInputError, setVoiceInputError] = useState<string | null>(null);
+  const {
+    state: voiceInputState,
+    interimTranscript: voiceInputInterim,
+    error: voiceInputError,
+  } = voiceInputSnapshot;
 
-  const stopVoiceInput = () => {
-    const recognition = voiceRecognitionRef.current;
-    // Clear the ref before stopping so a late onend/onerror from an older
-    // session cannot change the state of a newer session.
-    voiceRecognitionRef.current = null;
-    setVoiceInputInterim("");
-    if (!recognition) {
-      setVoiceInputState((current) => (current === "unsupported" ? current : "idle"));
-      return;
-    }
-    setVoiceInputState("idle");
-    try {
-      recognition.stop();
-    } catch {
-      recognition.abort?.();
-    }
-  };
-
-  const startVoiceInput = () => {
-    if (voiceRecognitionRef.current) {
-      stopVoiceInput();
-      return;
-    }
-    const Recognition = getVoiceRecognitionConstructor();
-    if (!Recognition) {
-      setVoiceInputState("unsupported");
-      setVoiceInputError(
-        "Voice input is not available in this browser. You can continue typing normally.",
-      );
-      return;
-    }
-
-    let recognition: VoiceRecognition;
-    try {
-      recognition = new Recognition();
-    } catch {
-      setVoiceInputState("error");
-      setVoiceInputError("Voice input could not start. Try again.");
-      return;
-    }
-
-    const prefix = draft.trimEnd();
-    voicePrefixRef.current = prefix ? `${prefix} ` : "";
-    voiceFinalTranscriptRef.current = "";
-    setVoiceInputInterim("");
-    setVoiceInputError(null);
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang =
-      typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US";
-    recognition.maxAlternatives = 1;
-    recognition.onstart = () => {
-      if (voiceRecognitionRef.current === recognition) setVoiceInputState("listening");
-    };
-    recognition.onresult = (event) => {
-      if (voiceRecognitionRef.current !== recognition) return;
-      const { finalTranscript, interimTranscript } = collectVoiceTranscript(
-        event.results,
-        event.resultIndex,
-      );
-      voiceFinalTranscriptRef.current = appendVoiceTranscript(
-        voiceFinalTranscriptRef.current,
-        finalTranscript,
-      );
-      setVoiceInputInterim(interimTranscript);
-      setDraft(
-        composeVoiceDraft(
-          voicePrefixRef.current,
-          voiceFinalTranscriptRef.current,
-          interimTranscript,
-        ),
-      );
-    };
-    recognition.onerror = (event) => {
-      if (voiceRecognitionRef.current !== recognition) return;
-      voiceRecognitionRef.current = null;
-      setVoiceInputInterim("");
-      if (event.error === "aborted") {
-        setVoiceInputState("idle");
-        return;
-      }
-      setVoiceInputState("error");
-      setVoiceInputError(voiceInputErrorMessage(event.error));
-    };
-    recognition.onend = () => {
-      if (voiceRecognitionRef.current !== recognition) return;
-      voiceRecognitionRef.current = null;
-      setVoiceInputInterim("");
-      setVoiceInputState("idle");
-    };
-    voiceRecognitionRef.current = recognition;
-    setVoiceInputState("listening");
-    try {
-      recognition.start();
-    } catch {
-      voiceRecognitionRef.current = null;
-      setVoiceInputInterim("");
-      setVoiceInputState("error");
-      setVoiceInputError("Voice input could not start. Try again.");
-    }
-  };
-
-  useEffect(
-    () => () => {
-      const recognition = voiceRecognitionRef.current;
-      voiceRecognitionRef.current = null;
-      recognition?.abort?.();
-    },
-    [],
-  );
+  useEffect(() => {
+    voiceInputModule.activate();
+    return () => voiceInputModule.dispose();
+  }, [voiceInputModule]);
   useEffect(() => {
     if (active) return;
-    const recognition = voiceRecognitionRef.current;
-    voiceRecognitionRef.current = null;
-    recognition?.abort?.();
-    voicePrefixRef.current = "";
-    voiceFinalTranscriptRef.current = "";
-    setVoiceInputInterim("");
-    setVoiceInputError(null);
-    setVoiceInputState(getVoiceRecognitionConstructor() ? "idle" : "unsupported");
-  }, [active]);
+    voiceInputModule.reset();
+  }, [active, voiceInputModule]);
   /** Scroll container for the transcript; auto-follows when the operator holds the tail. */
   const threadRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -1770,14 +1652,7 @@ export function Conversation({
   const boundConversationWorkspaceMode = conversation?.workspaceMode;
   const conversationScopeKey = boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
   useEffect(() => {
-    const recognition = voiceRecognitionRef.current;
-    voiceRecognitionRef.current = null;
-    recognition?.abort?.();
-    voicePrefixRef.current = "";
-    voiceFinalTranscriptRef.current = "";
-    setVoiceInputInterim("");
-    setVoiceInputError(null);
-    setVoiceInputState(getVoiceRecognitionConstructor() ? "idle" : "unsupported");
+    voiceInputModule.reset();
     setHistoryRestored(boundConversationId === null);
     setHistoryRestoreError(null);
     setThreadId(boundConversationId);
@@ -1835,6 +1710,7 @@ export function Conversation({
     managedModel,
     initialProvider,
     initialPrompt,
+    voiceInputModule,
   ]);
   // Remember new-chat run settings so the next empty composer opens with the same chips.
   // Domain handoffs force provider/mode; do not overwrite the operator's last-used defaults.
@@ -2170,8 +2046,7 @@ export function Conversation({
       )
         return;
       event.preventDefault();
-      if (voiceRecognitionRef.current) stopVoiceInput();
-      else startVoiceInput();
+      voiceInputModule.toggle(draft);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -2362,7 +2237,7 @@ export function Conversation({
     if (!value || !runRepository || !runWorktree || !providerReady || runActive || !historyRestored)
       return;
     if (promptOverride === undefined && voiceInputState === "listening") {
-      stopVoiceInput();
+      voiceInputModule.stop();
     }
     if (workspaceMode === "aldunis-managed" && !threadId && !preparedWorkspaceRepository) {
       setWorkspaceDialogOpen(true);
@@ -4477,8 +4352,8 @@ export function Conversation({
                 spellCheck
                 onChange={(event) => {
                   const value = event.target.value;
-                  if (voiceInputState === "listening") stopVoiceInput();
-                  setVoiceInputError(null);
+                  if (voiceInputState === "listening") voiceInputModule.stop();
+                  voiceInputModule.clearError();
                   setDraft(value);
                   // Typing while recalling a prior prompt exits history browse (live draft).
                   setPromptHistoryBrowse((current) =>
@@ -4488,7 +4363,7 @@ export function Conversation({
                   );
                 }}
                 onPaste={(event) => {
-                  setVoiceInputError(null);
+                  voiceInputModule.clearError();
                   const { images, rejected } = collectComposerImagesFromClipboard(
                     event.clipboardData,
                   );
@@ -4658,8 +4533,7 @@ export function Conversation({
                   }
                   disabled={!worktree || !providerReady || runActive || !historyRestored}
                   onClick={() => {
-                    if (voiceInputState === "listening") stopVoiceInput();
-                    else startVoiceInput();
+                    voiceInputModule.toggle(draft);
                   }}
                 >
                   <svg className="ic ic-lg" viewBox="0 0 24 24" aria-hidden="true">

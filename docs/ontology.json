@@ -51,7 +51,7 @@
     },
     {
       "name": "BrowserSpeechRecognition",
-      "description": "The browser-owned, optional speech-recognition capability used by Aldunis Code only to return transient transcript text to the conversation composer; microphone audio is not sent to or persisted by the Aldunis host."
+      "description": "A deep browser-owned optional speech-recognition module that hides recognition lifetime, stale-callback isolation, transcript assembly, pane reset, disposal, and normalized failures behind one ConversationComposer interface; microphone audio is not sent to or persisted by the Aldunis host."
     },
     {
       "name": "ConversationLifecycleControl",
@@ -1083,8 +1083,8 @@
     },
     {
       "subject": "BrowserSpeechRecognition",
-      "source": "Sannrox/aldunis-code",
-      "locator": "src/lib/voice-input.ts; docs/design-system.md#voice-input",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#626",
+      "locator": "src/lib/voice-input.ts#createVoiceInputModule; docs/design-system.md#voice-input",
       "confidence": 1.0
     },
     {
