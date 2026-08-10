@@ -124,6 +124,7 @@ import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.t
 import { ChiseiClientError, ChiseiProjectionClient } from "./chisei-client.ts";
 import type { WorkspaceMode } from "../src/types.ts";
 import { handleProviderRun } from "./provider-run.ts";
+import { handleBrowserRoute } from "./browser-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -644,34 +645,6 @@ async function handleApi(
     const project = assertManagedProject(projection, thread.projectId);
     return { thread, project };
   };
-  const assertBrowserContext = async (body: Record<string, unknown>) => {
-    if (
-      typeof body.root !== "string" ||
-      typeof body.worktree !== "string" ||
-      typeof body.conversationId !== "string" ||
-      !body.conversationId
-    ) {
-      throw new BrowserError("A repository, worktree, and conversation are required.");
-    }
-    const context = await selectedWorktree(body.root, body.worktree);
-    const projection = await state.inspect();
-    const thread = projection.threads.find((candidate) => candidate.id === body.conversationId);
-    const project = thread
-      ? projection.projects.find((candidate) => candidate.id === thread.projectId)
-      : undefined;
-    if (
-      !thread ||
-      !project ||
-      project.root !== context.root ||
-      thread.worktree !== context.worktree
-    ) {
-      throw new BrowserError(
-        "The selected conversation is not bound to this repository and worktree.",
-        403,
-      );
-    }
-    return { context, conversationId: body.conversationId };
-  };
   if (!isAllowedOrigin(request, Boolean(remoteAuth || managedHost))) {
     sendJson(response, 403, { error: "Repository access is limited to the local application." });
     return true;
@@ -692,144 +665,19 @@ async function handleApi(
       sendJson(response, 200, buildUsageReport(visibleProjection.usageReceipts, rangeDays));
       return true;
     }
-    if (route === "/api/browser/tools") {
-      if (!browser || remoteRequest || managedHost) {
-        throw new BrowserError(
-          "Shared browser tools are available in the local desktop host only.",
-          403,
-        );
-      }
-      const authorization = request.headers.authorization;
-      if (typeof authorization !== "string" || !authorization.startsWith("Bearer ")) {
-        throw new BrowserError(
-          "Browser tool authorization is required.",
-          403,
-          "browser_authorization_denied",
-        );
-      }
-      const body = (await readJson(request)) as { conversationId?: unknown; operation?: unknown };
-      if (typeof body.conversationId !== "string") {
-        throw new BrowserError("A browser conversation is required.");
-      }
-      sendJson(
-        response,
-        200,
-        await browser.executeProvider(
-          body.conversationId,
-          authorization.slice("Bearer ".length),
-          body.operation,
-        ),
-      );
+    if (
+      await handleBrowserRoute(route, request, response, {
+        browser,
+        remoteRequest,
+        managed: Boolean(managedHost),
+        // Pure membership lookup; inspect avoids cloning multi-MB history.
+        loadState: async () => (await state.inspect()) as StateProjection,
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/browser/sessions/open") {
-      if (!browser)
-        throw new BrowserError(
-          "Shared browser sessions are available in the desktop application only.",
-          503,
-        );
-      const body = (await readJson(request)) as Record<string, unknown>;
-      const { conversationId } = await assertBrowserContext(body);
-      if (typeof body.origin !== "string")
-        throw new BrowserError("A loopback browser origin is required.");
-      sendJson(response, 200, browser.open(conversationId, body.origin));
-      return true;
-    }
-    if (route === "/api/browser/sessions/status") {
-      if (!browser)
-        throw new BrowserError(
-          "Shared browser sessions are available in the desktop application only.",
-          503,
-        );
-      const body = (await readJson(request)) as Record<string, unknown>;
-      const { conversationId } = await assertBrowserContext(body);
-      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
-        throw new BrowserError("A browser session and loopback origin are required.");
-      }
-      const snapshot = await browser.snapshot(body.sessionId);
-      if (snapshot.conversationId !== conversationId || snapshot.origin !== body.origin) {
-        throw new BrowserError(
-          "The browser session is bound to a different conversation or origin.",
-          403,
-        );
-      }
-      sendJson(response, 200, snapshot);
-      return true;
-    }
-    if (route === "/api/browser/sessions/control") {
-      if (!browser)
-        throw new BrowserError(
-          "Shared browser sessions are available in the desktop application only.",
-          503,
-        );
-      const body = (await readJson(request)) as Record<string, unknown>;
-      const { conversationId } = await assertBrowserContext(body);
-      if (
-        typeof body.sessionId !== "string" ||
-        typeof body.origin !== "string" ||
-        typeof body.enabled !== "boolean"
-      ) {
-        throw new BrowserError(
-          "A browser session, loopback origin, and control state are required.",
-        );
-      }
-      sendJson(
-        response,
-        200,
-        await browser.setAgentControl(
-          body.sessionId,
-          { conversationId, origin: body.origin },
-          body.enabled,
-        ),
-      );
-      return true;
-    }
-    if (route === "/api/browser/sessions/close") {
-      if (!browser)
-        throw new BrowserError(
-          "Shared browser sessions are available in the desktop application only.",
-          503,
-        );
-      const body = (await readJson(request)) as Record<string, unknown>;
-      const { conversationId } = await assertBrowserContext(body);
-      if (typeof body.sessionId !== "string" || typeof body.origin !== "string") {
-        throw new BrowserError("A browser session and loopback origin are required.");
-      }
-      sendJson(
-        response,
-        200,
-        await browser.close(body.sessionId, { conversationId, origin: body.origin }),
-      );
-      return true;
-    }
-    if (route === "/api/browser/sessions/picture-in-picture") {
-      if (!browser)
-        throw new BrowserError(
-          "Shared browser sessions are available in the desktop application only.",
-          503,
-        );
-      const body = (await readJson(request)) as Record<string, unknown>;
-      const { conversationId } = await assertBrowserContext(body);
-      if (
-        typeof body.sessionId !== "string" ||
-        typeof body.origin !== "string" ||
-        typeof body.open !== "boolean"
-      ) {
-        throw new BrowserError(
-          "A browser session, loopback origin, and picture-in-picture state are required.",
-        );
-      }
-      sendJson(
-        response,
-        200,
-        await browser.setPictureInPicture(
-          body.sessionId,
-          { conversationId, origin: body.origin },
-          body.open,
-        ),
-      );
-      return true;
-    }
     if (isWakeStream) {
       response.writeHead(200, {
         "content-type": "text/event-stream; charset=utf-8",
