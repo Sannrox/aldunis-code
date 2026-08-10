@@ -115,15 +115,11 @@ import {
   type ComposerSuggestionMode,
 } from "../../lib/composer-commands";
 import {
-  absolutePathForDroppedFile,
   collectComposerImagesFromClipboard,
   collectComposerImagesFromDataTransfer,
   dataTransferHasFiles,
-  MAX_COMPOSER_IMAGE_BATCH,
-  mediaTypeForComposerImage,
-  readComposerImagePayload,
-  relativePathInsideWorktree,
 } from "../../lib/composer-images";
+import { stageComposerImages, stageComposerImageWithHost } from "../../lib/composer-image-staging";
 import {
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
@@ -2293,10 +2289,6 @@ export function Conversation({
   };
   const attachComposerImageFiles = useCallback(
     async (files: File[], options?: { preserveError?: boolean }) => {
-      if (!repository?.root || !worktree?.path) {
-        setContextError("Open a repository and worktree before attaching images.");
-        return;
-      }
       if (files.length === 0) return;
       if (composerImageBusy || runActive) {
         setContextError(
@@ -2306,81 +2298,32 @@ export function Conversation({
         );
         return;
       }
-      const room = Math.max(0, 100 - contextPins.length);
-      if (room === 0) {
-        setContextError("Pin at most 100 file or folder paths.");
-        return;
-      }
-      const batch = files.slice(0, Math.min(room, MAX_COMPOSER_IMAGE_BATCH));
-      if (files.length > batch.length) {
-        setContextError(
-          `Attached the first ${batch.length} image${batch.length === 1 ? "" : "s"}; pin budget or batch limit reached.`,
-        );
-      } else if (!options?.preserveError) {
-        setContextError(null);
-      }
       setComposerImageBusy(true);
-      const added: string[] = [];
-      const pinAdded = () => {
-        if (added.length === 0) return;
-        setAttachments((current) => {
-          const next = [...current];
-          for (const path of added) {
-            if (!next.includes(path) && next.length + folderPins.length < 100) next.push(path);
-          }
-          return next;
-        });
-      };
       try {
-        for (const file of batch) {
-          const absolutePath = absolutePathForDroppedFile(file);
-          const inTree =
-            absolutePath && worktree.path
-              ? relativePathInsideWorktree(worktree.path, absolutePath)
-              : null;
-          let body: Record<string, unknown>;
-          const extensionSupported =
-            typeof inTree === "string" && /\.(gif|jpe?g|png|webp)$/i.test(inTree);
-          if (inTree && extensionSupported && mediaTypeForComposerImage(file)) {
-            // Desktop drops of in-worktree files pin the existing path (no copy).
-            body = {
-              root: repository.root,
-              worktree: worktree.path,
-              absolutePath,
-            };
-          } else {
-            const payload = await readComposerImagePayload(file);
-            body = {
-              root: repository.root,
-              worktree: worktree.path,
-              mediaType: payload.mediaType,
-              data: payload.data,
-              name: payload.name,
-              conversationId,
-            };
-          }
-          const response = await fetch("/api/context/stage-image", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
+        const result = await stageComposerImages({
+          files,
+          repositoryRoot: repository?.root,
+          worktreePath: worktree?.path,
+          conversationId,
+          availablePins: 100 - contextPins.length,
+          stageImage: stageComposerImageWithHost,
+        });
+        if (result.paths.length > 0) {
+          setAttachments((current) => {
+            const next = [...current];
+            for (const path of result.paths) {
+              if (!next.includes(path) && next.length + folderPins.length < 100) next.push(path);
+            }
+            return next;
           });
-          const payload = (await response.json()) as {
-            attachment?: { path?: string };
-            error?: string;
-          };
-          if (!response.ok) {
-            throw new Error(payload.error ?? "The image could not be attached.");
-          }
-          const path = payload.attachment?.path;
-          if (typeof path === "string" && path && !added.includes(path)) added.push(path);
         }
-        pinAdded();
-      } catch (error) {
-        // Keep any images that already staged successfully in this batch.
-        pinAdded();
-        setContextError(
-          error instanceof Error ? error.message : "The image could not be attached.",
-        );
+        if (result.failure) setContextError(result.failure);
+        else if (result.omitted > 0) {
+          const attached = files.length - result.omitted;
+          setContextError(
+            `Attached the first ${attached} image${attached === 1 ? "" : "s"}; pin budget or batch limit reached.`,
+          );
+        } else if (!options?.preserveError) setContextError(null);
       } finally {
         setComposerImageBusy(false);
       }
