@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { electronMcpEnvironment } from "./electron-runtime.ts";
 import { type ApprovalSnapshot, isMutatingTool, PermissionBroker } from "./permission.ts";
 import { normalizeClaudeModelSlug } from "./profiles.ts";
 
@@ -526,16 +527,19 @@ export class ClaudeCodeAdapter {
     const id = randomUUID();
     const permissionToken = this.permissions.createRunToken(id);
     const permissionServer = fileURLToPath(new URL("./permission-mcp.mjs", import.meta.url));
+    // process.execPath is Electron in the desktop shell; without ELECTRON_RUN_AS_NODE
+    // Claude's MCP spawn opens a second docked Aldunis/Electron app on macOS.
+    const permissionMcpEnv = electronMcpEnvironment({
+      ALDUNIS_APPROVAL_URL: "${ALDUNIS_APPROVAL_URL}",
+      ALDUNIS_PROVIDER_RUN_ID: "${ALDUNIS_PROVIDER_RUN_ID}",
+      ALDUNIS_PROVIDER_RUN_TOKEN: "${ALDUNIS_PROVIDER_RUN_TOKEN}",
+    });
     const mcpConfig = JSON.stringify({
       mcpServers: {
         aldunis: {
           command: process.execPath,
           args: [permissionServer],
-          env: {
-            ALDUNIS_APPROVAL_URL: "${ALDUNIS_APPROVAL_URL}",
-            ALDUNIS_PROVIDER_RUN_ID: "${ALDUNIS_PROVIDER_RUN_ID}",
-            ALDUNIS_PROVIDER_RUN_TOKEN: "${ALDUNIS_PROVIDER_RUN_TOKEN}",
-          },
+          env: permissionMcpEnv,
         },
       },
     });

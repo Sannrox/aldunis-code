@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { electronMcpEnvironment } from "./electron-runtime.ts";
 
 export const BROWSER_MCP_NAME = "aldunis_browser";
 export const MAX_BROWSER_OPERATION_TEXT = 8_000;
@@ -6,13 +7,7 @@ export const MAX_BROWSER_SELECTOR = 1_000;
 export const MAX_BROWSER_URL = 2_048;
 
 const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
-const BROWSER_MUTATIONS = new Set([
-  "navigate",
-  "click",
-  "type",
-  "press",
-  "scroll",
-]);
+const BROWSER_MUTATIONS = new Set(["navigate", "click", "type", "press", "scroll"]);
 
 export type BrowserOperation =
   | { kind: "status" }
@@ -97,17 +92,21 @@ export interface BrowserMcpConfiguration {
 }
 
 export class BrowserError extends Error {
-  constructor(message: string, readonly status = 400, readonly code = "browser_error") {
+  constructor(
+    message: string,
+    readonly status = 400,
+    readonly code = "browser_error",
+  ) {
     super(message);
   }
 }
 
 function boundedString(value: unknown, maximum: number, field: string): string {
   if (
-    typeof value !== "string"
-    || value.length === 0
-    || value.length > maximum
-    || value.includes("\0")
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > maximum ||
+    value.includes("\0")
   ) {
     throw new BrowserError(`${field} must be a non-empty bounded string.`);
   }
@@ -123,10 +122,10 @@ export function assertBrowserUrl(value: unknown): string {
     throw new BrowserError("Browser navigation requires a valid loopback HTTP(S) URL.");
   }
   if (
-    (url.protocol !== "http:" && url.protocol !== "https:")
-    || !LOOPBACK_NAMES.has(url.hostname.replace(/^\[|\]$/g, ""))
-    || url.username
-    || url.password
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    !LOOPBACK_NAMES.has(url.hostname.replace(/^\[|\]$/g, "")) ||
+    url.username ||
+    url.password
   ) {
     throw new BrowserError(
       "Shared browser navigation is limited to loopback HTTP(S) URLs.",
@@ -152,21 +151,28 @@ function normalizeOperation(input: unknown): BrowserOperation {
   }
   const value = input as Record<string, unknown>;
   if (
-    value.kind !== "status"
-    && value.kind !== "snapshot"
-    && value.kind !== "navigate"
-    && value.kind !== "click"
-    && value.kind !== "type"
-    && value.kind !== "press"
-    && value.kind !== "scroll"
-    && value.kind !== "wait"
+    value.kind !== "status" &&
+    value.kind !== "snapshot" &&
+    value.kind !== "navigate" &&
+    value.kind !== "click" &&
+    value.kind !== "type" &&
+    value.kind !== "press" &&
+    value.kind !== "scroll" &&
+    value.kind !== "wait"
   ) {
-    throw new BrowserError("The browser operation is unsupported.", 400, "browser_operation_unsupported");
+    throw new BrowserError(
+      "The browser operation is unsupported.",
+      400,
+      "browser_operation_unsupported",
+    );
   }
   if (value.kind === "status" || value.kind === "snapshot") return { kind: value.kind };
   if (value.kind === "navigate") return { kind: "navigate", url: assertBrowserUrl(value.url) };
   if (value.kind === "type") {
-    return { kind: "type", text: boundedString(value.text, MAX_BROWSER_OPERATION_TEXT, "Browser text") };
+    return {
+      kind: "type",
+      text: boundedString(value.text, MAX_BROWSER_OPERATION_TEXT, "Browser text"),
+    };
   }
   if (value.kind === "press") {
     return { kind: "press", key: boundedString(value.key, 80, "Browser key") };
@@ -180,17 +186,19 @@ function normalizeOperation(input: unknown): BrowserOperation {
     return { kind: "scroll", x, y };
   }
   if (value.kind === "wait") {
-    const milliseconds = typeof value.milliseconds === "number" && Number.isFinite(value.milliseconds)
-      ? Math.trunc(value.milliseconds)
-      : 0;
+    const milliseconds =
+      typeof value.milliseconds === "number" && Number.isFinite(value.milliseconds)
+        ? Math.trunc(value.milliseconds)
+        : 0;
     if (milliseconds < 0 || milliseconds > 5_000) {
       throw new BrowserError("Browser wait must be between 0 and 5000 milliseconds.");
     }
     return { kind: "wait", milliseconds };
   }
-  const selector = value.selector === undefined
-    ? undefined
-    : boundedString(value.selector, MAX_BROWSER_SELECTOR, "Browser selector");
+  const selector =
+    value.selector === undefined
+      ? undefined
+      : boundedString(value.selector, MAX_BROWSER_SELECTOR, "Browser selector");
   const x = value.x === undefined ? undefined : value.x;
   const y = value.y === undefined ? undefined : value.y;
   if (x !== undefined && (typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > 20_000)) {
@@ -212,10 +220,13 @@ function safeTokenEqual(expected: string, supplied: string): boolean {
 }
 
 export class SharedBrowserBroker {
-  readonly #sessions = new Map<string, {
-    snapshot: BrowserSessionSnapshot;
-    token: string;
-  }>();
+  readonly #sessions = new Map<
+    string,
+    {
+      snapshot: BrowserSessionSnapshot;
+      token: string;
+    }
+  >();
   readonly #providerTokens = new Map<string, string>();
 
   constructor(private readonly host: BrowserHost | null) {}
@@ -224,7 +235,8 @@ export class SharedBrowserBroker {
     const conversationId = boundedString(conversationIdInput, 200, "Conversation ID");
     const origin = assertBrowserUrl(originInput);
     const existing = [...this.#sessions.values()].find(
-      (session) => session.snapshot.conversationId === conversationId && session.snapshot.state !== "closed",
+      (session) =>
+        session.snapshot.conversationId === conversationId && session.snapshot.state !== "closed",
     );
     if (existing) {
       if (existing.snapshot.origin !== origin) {
@@ -267,8 +279,9 @@ export class SharedBrowserBroker {
 
   snapshotForConversation(conversationId: string): Promise<BrowserSessionSnapshot | null> {
     const session = [...this.#sessions.values()].find(
-      (candidate) => candidate.snapshot.conversationId === conversationId
-        && candidate.snapshot.state !== "closed",
+      (candidate) =>
+        candidate.snapshot.conversationId === conversationId &&
+        candidate.snapshot.state !== "closed",
     );
     return session ? this.#refresh(session) : Promise.resolve(null);
   }
@@ -287,7 +300,10 @@ export class SharedBrowserBroker {
     return this.#refresh(session);
   }
 
-  async close(idInput: unknown, context: { conversationId: string; origin: string }): Promise<BrowserSessionSnapshot> {
+  async close(
+    idInput: unknown,
+    context: { conversationId: string; origin: string },
+  ): Promise<BrowserSessionSnapshot> {
     const session = this.#get(idInput);
     this.#assertContext(session.snapshot, context);
     await this.host?.close(session.snapshot.id);
@@ -307,7 +323,11 @@ export class SharedBrowserBroker {
   ): Promise<BrowserSessionSnapshot> {
     const session = this.#get(idInput);
     this.#assertContext(session.snapshot, context);
-    if (!this.host) throw new BrowserError("Picture-in-picture is available in the desktop application only.", 503);
+    if (!this.host)
+      throw new BrowserError(
+        "Picture-in-picture is available in the desktop application only.",
+        503,
+      );
     await this.host.setPictureInPicture(session.snapshot.id, open);
     return this.#refresh(session);
   }
@@ -317,6 +337,8 @@ export class SharedBrowserBroker {
     endpoint: string;
     command: string;
     script: string;
+    /** Injected for tests; production uses process.versions.electron. */
+    electronVersion?: string;
   }): BrowserMcpConfiguration {
     let url: URL;
     try {
@@ -328,8 +350,9 @@ export class SharedBrowserBroker {
       throw new BrowserError("The browser broker endpoint must use HTTP(S).", 500);
     }
     const session = [...this.#sessions.values()].find(
-      (candidate) => candidate.snapshot.conversationId === input.conversationId
-        && candidate.snapshot.state !== "closed",
+      (candidate) =>
+        candidate.snapshot.conversationId === input.conversationId &&
+        candidate.snapshot.state !== "closed",
     );
     const token = session?.token ?? this.#providerTokens.get(input.conversationId) ?? randomUUID();
     this.#providerTokens.set(input.conversationId, token);
@@ -337,11 +360,15 @@ export class SharedBrowserBroker {
       name: BROWSER_MCP_NAME,
       command: input.command,
       args: [input.script],
-      environment: {
-        ALDUNIS_BROWSER_TOOL_URL: url.toString(),
-        ALDUNIS_BROWSER_CONVERSATION_ID: input.conversationId,
-        ALDUNIS_BROWSER_TOKEN: token,
-      },
+      environment: electronMcpEnvironment(
+        {
+          ALDUNIS_BROWSER_TOOL_URL: url.toString(),
+          ALDUNIS_BROWSER_CONVERSATION_ID: input.conversationId,
+          ALDUNIS_BROWSER_TOKEN: token,
+        },
+        // Empty string forces non-Electron mode in tests; omit to use the host.
+        "electronVersion" in input ? input.electronVersion : process.versions.electron,
+      ),
     };
   }
 
@@ -353,14 +380,22 @@ export class SharedBrowserBroker {
     const conversationId = boundedString(conversationIdInput, 200, "Conversation ID");
     const token = boundedString(tokenInput, 200, "Browser token");
     const session = [...this.#sessions.values()].find(
-      (candidate) => candidate.snapshot.conversationId === conversationId
-        && candidate.snapshot.state !== "closed",
+      (candidate) =>
+        candidate.snapshot.conversationId === conversationId &&
+        candidate.snapshot.state !== "closed",
     );
     if (!session || !safeTokenEqual(session.token, token)) {
-      throw new BrowserError("The browser authorization is invalid.", 403, "browser_authorization_denied");
+      throw new BrowserError(
+        "The browser authorization is invalid.",
+        403,
+        "browser_authorization_denied",
+      );
     }
     const operation = normalizeOperation(operationInput);
-    if (operation.kind === "navigate" && new URL(operation.url).origin !== new URL(session.snapshot.origin).origin) {
+    if (
+      operation.kind === "navigate" &&
+      new URL(operation.url).origin !== new URL(session.snapshot.origin).origin
+    ) {
       throw new BrowserError(
         "Shared browser navigation is limited to the approved preview origin.",
         403,
@@ -370,11 +405,19 @@ export class SharedBrowserBroker {
     const refreshed = await this.#refresh(session);
     if (refreshed.state === "closed") throw new BrowserError("The browser session is closed.", 409);
     if (!this.host) {
-      return { ok: false, code: "browser_unavailable", message: "The shared browser is available in the desktop application only." };
+      return {
+        ok: false,
+        code: "browser_unavailable",
+        message: "The shared browser is available in the desktop application only.",
+      };
     }
     const hostState = await this.host.getState(session.snapshot.id);
     if (!hostState.connected) {
-      return { ok: false, code: "browser_view_unavailable", message: "Open the shared browser view before using browser tools." };
+      return {
+        ok: false,
+        code: "browser_view_unavailable",
+        message: "Open the shared browser view before using browser tools.",
+      };
     }
     if (isMutation(operation) && !refreshed.agentControl) {
       return {
@@ -387,14 +430,16 @@ export class SharedBrowserBroker {
       return {
         ok: false,
         code: "browser_human_control",
-        message: "The operator currently controls the shared browser. Enable agent control again before continuing.",
+        message:
+          "The operator currently controls the shared browser. Enable agent control again before continuing.",
       };
     }
     const result = await this.host.execute(session.snapshot.id, operation, hostState.controlEpoch);
     if (result.ok) {
-      session.snapshot.controller = operation.kind === "status" || operation.kind === "snapshot"
-        ? hostState.controller
-        : "agent";
+      session.snapshot.controller =
+        operation.kind === "status" || operation.kind === "snapshot"
+          ? hostState.controller
+          : "agent";
       session.snapshot.updatedAt = new Date().toISOString();
     }
     return result;
@@ -409,12 +454,13 @@ export class SharedBrowserBroker {
     return session;
   }
 
-  async #refresh(session: { snapshot: BrowserSessionSnapshot; token: string }): Promise<BrowserSessionSnapshot> {
+  async #refresh(session: {
+    snapshot: BrowserSessionSnapshot;
+    token: string;
+  }): Promise<BrowserSessionSnapshot> {
     if (!this.host) return { ...session.snapshot };
     const state = await this.host.getState(session.snapshot.id);
-    session.snapshot.state = state.error
-      ? "failed"
-      : state.connected ? "ready" : "awaiting_view";
+    session.snapshot.state = state.error ? "failed" : state.connected ? "ready" : "awaiting_view";
     session.snapshot.url = state.url;
     session.snapshot.title = state.title;
     session.snapshot.controller = state.controller;
@@ -428,10 +474,13 @@ export class SharedBrowserBroker {
     context: { conversationId: string; origin: string },
   ): void {
     if (
-      snapshot.conversationId !== context.conversationId
-      || snapshot.origin !== assertBrowserUrl(context.origin)
+      snapshot.conversationId !== context.conversationId ||
+      snapshot.origin !== assertBrowserUrl(context.origin)
     ) {
-      throw new BrowserError("The browser session is bound to a different conversation or origin.", 403);
+      throw new BrowserError(
+        "The browser session is bound to a different conversation or origin.",
+        403,
+      );
     }
   }
 }

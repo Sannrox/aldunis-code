@@ -25,7 +25,11 @@ class FakeBrowserHost implements BrowserHost {
     return { ...this.state };
   }
 
-  execute(_sessionId: string, operation: BrowserOperation, expectedControlEpoch: number): BrowserHostResult {
+  execute(
+    _sessionId: string,
+    operation: BrowserOperation,
+    expectedControlEpoch: number,
+  ): BrowserHostResult {
     if (expectedControlEpoch !== this.state.controlEpoch) {
       return { ok: false, code: "browser_human_control", message: "Human took control." };
     }
@@ -33,20 +37,20 @@ class FakeBrowserHost implements BrowserHost {
     return operation.kind === "status"
       ? { ok: true, kind: "status", state: this.getState() }
       : operation.kind === "snapshot"
-      ? {
-          ok: true,
-          kind: "snapshot",
-          snapshot: {
-            url: this.state.url,
-            title: this.state.title,
-            loading: false,
-            visibleText: "fixture",
-            interactiveElements: [],
-            screenshot: null,
-            actionTimeline: [],
-          },
-        }
-      : { ok: true, kind: "action", message: "done", state: this.getState() };
+        ? {
+            ok: true,
+            kind: "snapshot",
+            snapshot: {
+              url: this.state.url,
+              title: this.state.title,
+              loading: false,
+              visibleText: "fixture",
+              interactiveElements: [],
+              screenshot: null,
+              actionTimeline: [],
+            },
+          }
+        : { ok: true, kind: "action", message: "done", state: this.getState() };
   }
 
   setAgentControl(_sessionId: string, enabled: boolean): void {
@@ -126,11 +130,11 @@ test("shared browser broker reuses the provider token and fails closed on contro
   assert.equal(action.ok, true);
   assert.equal(host.operations.at(-1)?.kind, "click");
   await assert.rejects(
-    () => broker.executeProvider(
-      "conversation-1",
-      configuration.environment.ALDUNIS_BROWSER_TOKEN,
-      { kind: "navigate", url: "http://127.0.0.1:9000/admin" },
-    ),
+    () =>
+      broker.executeProvider("conversation-1", configuration.environment.ALDUNIS_BROWSER_TOKEN, {
+        kind: "navigate",
+        url: "http://127.0.0.1:9000/admin",
+      }),
     /approved preview origin/,
   );
 
@@ -145,9 +149,34 @@ test("shared browser broker reuses the provider token and fails closed on contro
   if (!takeover.ok) assert.equal(takeover.code, "browser_human_control");
   await broker.close(session.id, { conversationId: "conversation-1", origin: session.origin });
   await assert.rejects(
-    () => broker.executeProvider("conversation-1", configuration.environment.ALDUNIS_BROWSER_TOKEN, { kind: "status" }),
+    () =>
+      broker.executeProvider("conversation-1", configuration.environment.ALDUNIS_BROWSER_TOKEN, {
+        kind: "status",
+      }),
     /authorization is invalid/,
   );
+});
+
+test("shared browser MCP env forces Electron Node mode so desktop turns do not dock a second app", () => {
+  const broker = new SharedBrowserBroker(new FakeBrowserHost());
+  const desktop = broker.providerMcpConfiguration({
+    conversationId: "conversation-electron",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/Applications/Aldunis Code.app/Contents/MacOS/Aldunis Code",
+    script: "/app/browser-mcp.mjs",
+    electronVersion: "43.2.0",
+  });
+  assert.equal(desktop.environment.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(desktop.environment.ALDUNIS_BROWSER_CONVERSATION_ID, "conversation-electron");
+
+  const loopbackHost = broker.providerMcpConfiguration({
+    conversationId: "conversation-node",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/usr/bin/node",
+    script: "/app/browser-mcp.mjs",
+    electronVersion: "",
+  });
+  assert.equal(loopbackHost.environment.ELECTRON_RUN_AS_NODE, undefined);
 });
 
 test("shared browser preserves a pre-opened session token across close and reopen", async () => {
@@ -159,7 +188,10 @@ test("shared browser preserves a pre-opened session token across close and reope
     command: "/usr/bin/node",
     script: "/app/browser-mcp.mjs",
   });
-  await broker.close(firstSession.id, { conversationId: "conversation-2", origin: firstSession.origin });
+  await broker.close(firstSession.id, {
+    conversationId: "conversation-2",
+    origin: firstSession.origin,
+  });
   broker.open("conversation-2", firstSession.origin);
   const secondConfiguration = broker.providerMcpConfiguration({
     conversationId: "conversation-2",
