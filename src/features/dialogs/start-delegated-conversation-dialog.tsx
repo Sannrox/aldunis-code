@@ -5,10 +5,10 @@ import type {
   InteractionMode,
   RepositoryMetadata,
   WorktreeCreationPlan,
-  WorktreeRemovalPlan,
 } from "../../types";
 import { Button } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
+import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
 
 type WorktreePolicy = "isolated" | "parent";
@@ -49,35 +49,42 @@ export function StartDelegatedConversationDialog({
   const modeId = `delegated-mode-${parent.id}`;
   const worktreeId = `delegated-worktree-${parent.id}`;
   const base = repository?.defaultBranch ?? "";
-  const claudeProfileId = parent.profileId
-    ?? profiles.find((profile) => profile.id === "default:claude-code")?.id
-    ?? profiles.find((profile) => profile.provider === "claude-code" || !profile.provider)?.id
-    ?? "";
-  const shikigamiProfileId = parent.profileId
-    ?? profiles.find((profile) => profile.id === "default:shikigami")?.id
-    ?? profiles.find((profile) => profile.provider === "shikigami")?.id
-    ?? "";
-  const claudeProfileMissing = parent.provider === "claude-code"
-    && (!claudeProfileId || !profiles.some((profile) => (
-      profile.id === claudeProfileId
-      && (profile.provider === "claude-code" || !profile.provider)
-    )));
-  const shikigamiProfileMissing = parent.provider === "shikigami"
-    && (!shikigamiProfileId || !profiles.some((profile) => (
-      profile.id === shikigamiProfileId && profile.provider === "shikigami"
-    )));
+  const claudeProfileId =
+    parent.profileId ??
+    profiles.find((profile) => profile.id === "default:claude-code")?.id ??
+    profiles.find((profile) => profile.provider === "claude-code" || !profile.provider)?.id ??
+    "";
+  const shikigamiProfileId =
+    parent.profileId ??
+    profiles.find((profile) => profile.id === "default:shikigami")?.id ??
+    profiles.find((profile) => profile.provider === "shikigami")?.id ??
+    "";
+  const claudeProfileMissing =
+    parent.provider === "claude-code" &&
+    (!claudeProfileId ||
+      !profiles.some(
+        (profile) =>
+          profile.id === claudeProfileId &&
+          (profile.provider === "claude-code" || !profile.provider),
+      ));
+  const shikigamiProfileMissing =
+    parent.provider === "shikigami" &&
+    (!shikigamiProfileId ||
+      !profiles.some(
+        (profile) => profile.id === shikigamiProfileId && profile.provider === "shikigami",
+      ));
   const providerLabel = providerListLabel(parent.provider);
   const isolated = worktreePolicy === "isolated";
 
   const refreshRepository = async () => {
     if (!repository) return;
     try {
-      const response = await fetch("/api/repositories/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: repository.root }),
-      });
-      if (response.ok) onRepositoryChanged?.(await response.json() as RepositoryMetadata);
+      onRepositoryChanged?.(
+        await worktreeLifecycle.refreshRepository(
+          { path: repository.root },
+          "The parent repository could not be refreshed.",
+        ),
+      );
     } catch {
       // The original child-start error remains the actionable message.
     }
@@ -86,19 +93,15 @@ export function StartDelegatedConversationDialog({
   const cleanupCreatedWorktree = async (worktree: string) => {
     if (!repository) return;
     try {
-      const previewResponse = await fetch("/api/worktrees/remove/preview", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, path: worktree }),
-      });
-      const preview = await previewResponse.json() as WorktreeRemovalPlan | { error?: string };
-      if (!previewResponse.ok || !("action" in preview) || preview.action !== "remove") return;
-      const removeResponse = await fetch("/api/worktrees/remove", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ planId: preview.id, confirm: true }),
-      });
-      if (removeResponse.ok) await refreshRepository();
+      const preview = await worktreeLifecycle.previewRemoval(
+        { root: repository.root, path: worktree },
+        "The isolated child worktree could not be inspected for cleanup.",
+      );
+      await worktreeLifecycle.approveRemoval(
+        preview.id,
+        "The isolated child worktree could not be cleaned up.",
+      );
+      await refreshRepository();
     } catch {
       // Cleanup is best-effort; the host refuses removal if a child was persisted.
     }
@@ -112,22 +115,22 @@ export function StartDelegatedConversationDialog({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/worktrees/create/preview", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          base,
-          branch,
-        }),
-      });
-      const body = await response.json() as WorktreeCreationPlan | { error?: string };
-      if (!response.ok || !("action" in body) || body.action !== "create") {
-        throw new Error(responseError(body, "The isolated child worktree could not be prepared."));
-      }
-      setPlan(body);
+      setPlan(
+        await worktreeLifecycle.previewCreation(
+          {
+            root: repository.root,
+            base,
+            branch,
+          },
+          "The isolated child worktree could not be prepared.",
+        ),
+      );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The isolated child worktree could not be prepared.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "The isolated child worktree could not be prepared.",
+      );
     } finally {
       setBusy(false);
     }
@@ -173,11 +176,12 @@ export function StartDelegatedConversationDialog({
           provider: parent.provider,
           workspaceMode: isolated ? "aldunis-managed" : "shared",
           model: parent.model ?? "default",
-          profileId: parent.provider === "claude-code"
-            ? claudeProfileId
-            : parent.provider === "shikigami"
-            ? shikigamiProfileId
-            : null,
+          profileId:
+            parent.provider === "claude-code"
+              ? claudeProfileId
+              : parent.provider === "shikigami"
+                ? shikigamiProfileId
+                : null,
           reasoningEffort: parent.reasoningEffort,
           contextPins: [],
         }),
@@ -200,7 +204,9 @@ export function StartDelegatedConversationDialog({
       }
     } catch (cause) {
       if (createdWorktree && !childThreadId) await cleanupCreatedWorktree(worktree);
-      setError(cause instanceof Error ? cause.message : "The child conversation could not be started.");
+      setError(
+        cause instanceof Error ? cause.message : "The child conversation could not be started.",
+      );
     } finally {
       setBusy(false);
     }
@@ -211,19 +217,19 @@ export function StartDelegatedConversationDialog({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/worktrees/create", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ planId: plan.id, confirm: true }),
-      });
-      const body = await response.json() as RepositoryMetadata | { error?: string };
-      if (!response.ok || !("selectedWorktree" in body) || typeof body.selectedWorktree !== "string") {
-        throw new Error(responseError(body, "The isolated child worktree could not be created."));
-      }
+      const body = await worktreeLifecycle.approveCreation(
+        plan.id,
+        repository.projectId,
+        "The isolated child worktree could not be created.",
+      );
       onRepositoryChanged?.(body);
       await startChild(body.selectedWorktree, true);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The isolated child worktree could not be created.");
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "The isolated child worktree could not be created.",
+      );
       setBusy(false);
     }
   };
@@ -242,7 +248,8 @@ export function StartDelegatedConversationDialog({
     >
       <form className="delegated-start-dialog" onSubmit={(event) => void submit(event)}>
         <p className="delegated-start-help">
-          The child gets its own conversation and provider session. The parent receives status and outcome projections only.
+          The child gets its own conversation and provider session. The parent receives status and
+          outcome projections only.
         </p>
         {!plan && (
           <>
@@ -289,17 +296,25 @@ export function StartDelegatedConversationDialog({
                   ? `The parent’s ${providerLabel} profile is unavailable; restore it before starting a child.`
                   : `Configure a ${providerLabel} profile before starting a child.`
                 : isolated
-                ? base
-                  ? `The child will branch from ${base} and use a new managed checkout.`
-                  : "The repository default branch could not be determined; configure one remote HEAD or a conventional local default branch before creating a worktree."
-                : "Shared worktrees are limited to read-only and planning children."}
+                  ? base
+                    ? `The child will branch from ${base} and use a new managed checkout.`
+                    : "The repository default branch could not be determined; configure one remote HEAD or a conventional local default branch before creating a worktree."
+                  : "Shared worktrees are limited to read-only and planning children."}
             </p>
             <footer>
-              <Button type="button" onClick={onClose} disabled={busy}>Cancel</Button>
+              <Button type="button" onClick={onClose} disabled={busy}>
+                Cancel
+              </Button>
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !prompt.trim() || claudeProfileMissing || shikigamiProfileMissing || (isolated && !base)}
+                disabled={
+                  busy ||
+                  !prompt.trim() ||
+                  claudeProfileMissing ||
+                  shikigamiProfileMissing ||
+                  (isolated && !base)
+                }
               >
                 {busy ? "Starting…" : isolated ? "Preview isolated child" : "Start child"}
               </Button>
@@ -310,21 +325,46 @@ export function StartDelegatedConversationDialog({
           <section className="worktree-approval" aria-label="Approve child worktree creation">
             <strong>Create an isolated child worktree once?</strong>
             <dl>
-              <div><dt>Repository</dt><dd title={plan.repository}>{plan.repository}</dd></div>
-              <div><dt>Base</dt><dd title={`${plan.base} · ${plan.baseRevision}`}>{plan.base} · {plan.baseRevision}</dd></div>
-              <div><dt>Branch</dt><dd title={plan.branch}>{plan.branch}</dd></div>
-              <div><dt>Path</dt><dd title={plan.path}>{plan.path}</dd></div>
+              <div>
+                <dt>Repository</dt>
+                <dd title={plan.repository}>{plan.repository}</dd>
+              </div>
+              <div>
+                <dt>Base</dt>
+                <dd title={`${plan.base} · ${plan.baseRevision}`}>
+                  {plan.base} · {plan.baseRevision}
+                </dd>
+              </div>
+              <div>
+                <dt>Branch</dt>
+                <dd title={plan.branch}>{plan.branch}</dd>
+              </div>
+              <div>
+                <dt>Path</dt>
+                <dd title={plan.path}>{plan.path}</dd>
+              </div>
             </dl>
             <p>Approval is single-use. The child conversation will bind to the created checkout.</p>
             <footer>
-              <Button type="button" onClick={() => setPlan(null)} disabled={busy}>Back</Button>
-              <Button type="button" variant="primary" onClick={() => void confirmIsolatedStart()} disabled={busy}>
+              <Button type="button" onClick={() => setPlan(null)} disabled={busy}>
+                Back
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => void confirmIsolatedStart()}
+                disabled={busy}
+              >
                 {busy ? "Starting…" : "Approve and start child"}
               </Button>
             </footer>
           </section>
         )}
-        {error && <p className="context-error" role="alert">{error}</p>}
+        {error && (
+          <p className="context-error" role="alert">
+            {error}
+          </p>
+        )}
       </form>
     </OverlayDialog>
   );
