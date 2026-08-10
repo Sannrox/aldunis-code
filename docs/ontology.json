@@ -1330,7 +1330,7 @@
     {
       "subject": "CapabilityLinkedDeliverySession",
       "source": "GitHub Issue Sannrox/aldunis-code#332",
-      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
       "confidence": 1.0
     },
     {
@@ -1348,7 +1348,7 @@
     {
       "subject": "TenkaiDeliveryReference",
       "source": "Tenkai command-result and inspection contracts",
-      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
       "confidence": 1.0
     },
     {
@@ -1378,19 +1378,19 @@
     {
       "subject": "binds_local_delivery_candidate",
       "source": "Aldunis Code local release-delivery contract",
-      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
       "confidence": 1.0
     },
     {
       "subject": "references_chisei_evaluation",
       "source": "Aldunis Code local release-delivery contract",
-      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
       "confidence": 1.0
     },
     {
       "subject": "references_tenkai_delivery",
       "source": "Aldunis Code local release-delivery contract",
-      "locator": "server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
       "confidence": 1.0
     },
     {
