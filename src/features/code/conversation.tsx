@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type {
   RepositoryMetadata,
   ConversationSummary,
@@ -50,7 +58,7 @@ import {
   providerTextReportsAuthenticationFailure,
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
-import { contextWindowFromUsage, type ContextWindowSnapshot } from "../../lib/context-window";
+import { initialConversationRunState, reduceConversationRun } from "../../lib/conversation-run";
 import { ContextWindowMeter } from "./context-window-meter";
 import {
   clearComposerDraft,
@@ -291,47 +299,7 @@ export function formatHostLabel(hostname: string | undefined): string {
 
 type VoiceInputState = "idle" | "listening" | "unsupported" | "error";
 
-export function appendProviderEvent(
-  current: ProviderEvent[],
-  next: ProviderEvent,
-): ProviderEvent[] {
-  if (next.kind !== "browser_observation") return [...current, next];
-  let replaced = false;
-  const result: ProviderEvent[] = [];
-  for (const event of current) {
-    if (event.kind !== "browser_observation") {
-      result.push(event);
-    } else if (!replaced) {
-      result.push(next);
-      replaced = true;
-    }
-  }
-  if (!replaced) result.push(next);
-  return result;
-}
-
-export function preserveInputResolution(
-  current: ProviderEvent[],
-  resolution: Extract<ProviderEvent, { kind: "input_resolved" }>,
-): ProviderEvent[] {
-  let inserted = false;
-  const result: ProviderEvent[] = [];
-  for (const event of current) {
-    if (
-      (event.kind === "input_requested" || event.kind === "input_resolved") &&
-      event.id === resolution.id
-    ) {
-      if (!inserted) {
-        result.push(resolution);
-        inserted = true;
-      }
-      continue;
-    }
-    result.push(event);
-  }
-  if (!inserted) result.push(resolution);
-  return result;
-}
+export { appendProviderEvent, preserveInputResolution } from "../../lib/conversation-run";
 
 export { restoredTurnTerminalEvent } from "../../lib/persisted-conversation-restoration";
 
@@ -731,13 +699,22 @@ export function Conversation({
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] =
     useState<RepositoryMetadata | null>(null);
   const [workspaceApprovalPending, setWorkspaceApprovalPending] = useState(false);
-  const [providerEvents, setProviderEvents] = useState<ProviderEvent[]>([]);
+  const [conversationRun, dispatchConversationRun] = useReducer(
+    reduceConversationRun,
+    undefined,
+    initialConversationRunState,
+  );
+  const runEpochReference = useRef(0);
+  const {
+    events: providerEvents,
+    contextUsage,
+    providerState,
+    sessionId,
+    assistantTurnAt,
+  } = conversationRun;
   /** Live context pressure from the provider stream — not durable history. */
-  const [contextUsage, setContextUsage] = useState<ContextWindowSnapshot | null>(null);
   const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
-  const [providerState, setProviderState] = useState<ProviderState>("idle");
   const [runId, setRunId] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [historyRestored, setHistoryRestored] = useState(() => conversation === null);
   const [historyRestoreError, setHistoryRestoreError] = useState<string | null>(null);
   const [conversationId] = useState(() => conversation?.id ?? crypto.randomUUID());
@@ -1191,7 +1168,7 @@ export function Conversation({
     if (next !== provider) {
       setProvider(next);
       applyProviderDefaults(next);
-      setContextUsage(null);
+      dispatchConversationRun({ type: "clear_context" });
     }
     setProviderMenuOpen(false);
     setModelMenuOpen(false);
@@ -1203,7 +1180,7 @@ export function Conversation({
     }
     if (nextModel !== model) {
       setModel(nextModel);
-      setContextUsage(null);
+      dispatchConversationRun({ type: "clear_context" });
       if (
         (provider === "codex-cli" ||
           (typeof provider === "string" && provider.startsWith("adapter:"))) &&
@@ -1769,7 +1746,6 @@ export function Conversation({
    * Timestamp for the assistant turn chrome. Must not use conversation.updatedAt —
    * pin/archive/settle bump that and would flash "now" on an old failed turn.
    */
-  const [assistantTurnAt, setAssistantTurnAt] = useState<string | null>(null);
   // Escape cancels a workspace rewind preview without requiring the Cancel button.
   useEffect(() => {
     if (!rewindPreview) return;
@@ -1797,7 +1773,6 @@ export function Conversation({
     setVoiceInputInterim("");
     setVoiceInputError(null);
     setVoiceInputState(getVoiceRecognitionConstructor() ? "idle" : "unsupported");
-    setSessionId(null);
     setHistoryRestored(boundConversationId === null);
     setHistoryRestoreError(null);
     setThreadId(boundConversationId);
@@ -1832,18 +1807,15 @@ export function Conversation({
     setCheckpoint(null);
     setTurnChangesReview(null);
     setCompletionDismissed(false);
-    setAssistantTurnAt(null);
     setRewindPreview(null);
     setMessages([]);
     setArchivedTurns([]);
-    setProviderEvents([]);
-    setContextUsage(null);
     setAttachments([]);
     setFolderPins([]);
     setCurrentContextReceipt(null);
     setDraftContextReceipt(null);
     setContextOpen(false);
-    setProviderState("idle");
+    dispatchConversationRun({ type: "reset", epoch: ++runEpochReference.current });
     setRunId(null);
     followingRef.current = true;
     setFollowing(true);
@@ -1964,15 +1936,18 @@ export function Conversation({
         return;
       }
       setThreadId(binding.threadId);
-      setSessionId(binding.sessionId);
       setRunId(restoration.pendingRunId);
       setArchivedTurns(restoration.archivedTurns);
       setMessages(restoration.messages);
-      setProviderEvents(restoration.currentTurn.events);
       setCurrentContextReceipt(restoration.currentTurn.contextReceipt ?? null);
       setCheckpoint(restoration.currentTurn.checkpoint ?? null);
-      setAssistantTurnAt(restoration.assistantTurnAt);
-      setProviderState(restoration.providerState);
+      dispatchConversationRun({
+        type: "restore",
+        events: restoration.currentTurn.events,
+        providerState: restoration.providerState,
+        sessionId: binding.sessionId,
+        assistantTurnAt: restoration.assistantTurnAt,
+      });
       const restoredStatus = restoration.latestStatus;
       const latest = {
         id: restoration.latestStatus.turnId,
@@ -1994,13 +1969,7 @@ export function Conversation({
           const body = (await approvalsResponse.json()) as {
             approvals: Array<Extract<ProviderEvent, { kind: "approval_pending" }>>;
           };
-          setProviderEvents((current) => [
-            ...current.filter((event) => event.kind !== "approval_pending"),
-            ...body.approvals.map(({ kind: _kind, ...approval }) => ({
-              kind: "approval_pending" as const,
-              ...approval,
-            })),
-          ]);
+          dispatchConversationRun({ type: "approvals_restored", approvals: body.approvals });
         }
       }
       if (
@@ -2366,11 +2335,9 @@ export function Conversation({
     if (promptOverride === undefined) setDraft("");
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
-    setProviderEvents([]);
-    setContextUsage(null);
+    const runEpoch = ++runEpochReference.current;
+    dispatchConversationRun({ type: "start", epoch: runEpoch });
     setCurrentContextReceipt(draftContextReceipt);
-    setProviderState("starting");
-    setAssistantTurnAt(null);
     setRunId(null);
     setCheckpoint(null);
     setRewindPreview(null);
@@ -2445,7 +2412,7 @@ export function Conversation({
           })
           .catch(() => undefined);
       }
-      setProviderState("streaming");
+      dispatchConversationRun({ type: "stream_opened", epoch: runEpoch });
       if (!response.body) throw new Error(`${providerName} returned no event stream.`);
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -2459,58 +2426,12 @@ export function Conversation({
           buffer = buffer.slice(newline + 1);
           if (line) {
             const event = JSON.parse(line) as ProviderEvent;
-            if (event.kind === "approval_resolved") {
-              setProviderEvents((current) =>
-                current.map((candidate) =>
-                  candidate.kind === "approval_pending" && candidate.id === event.id
-                    ? { ...candidate, state: event.state }
-                    : candidate,
-                ),
-              );
-              newline = buffer.indexOf("\n");
-              continue;
-            }
-            if (event.kind === "input_resolved") {
-              setProviderEvents((current) => preserveInputResolution(current, event));
-              setProviderState("streaming");
-              newline = buffer.indexOf("\n");
-              continue;
-            }
-            if (event.kind === "context_usage") {
-              setContextUsage(contextWindowFromUsage(event));
-              newline = buffer.indexOf("\n");
-              continue;
-            }
-            setProviderEvents((current) => appendProviderEvent(current, event));
-            if (event.kind === "input_requested") setProviderState("waiting_for_input");
-            if (event.kind === "session_started" || event.kind === "turn_completed")
-              setSessionId(event.sessionId);
-            if (event.kind === "turn_completed") {
-              setProviderState("completed");
-              setAssistantTurnAt(new Date().toISOString());
-            }
-            if (event.kind === "cancelled") {
-              setProviderEvents((current) =>
-                current.map((candidate) =>
-                  candidate.kind === "approval_pending" && candidate.state === "pending"
-                    ? { ...candidate, state: "cancelled" }
-                    : candidate,
-                ),
-              );
-              setProviderState("cancelled");
-              setAssistantTurnAt(new Date().toISOString());
-            }
-            if (event.kind === "failed") {
-              setProviderEvents((current) =>
-                current.map((candidate) =>
-                  candidate.kind === "approval_pending" && candidate.state === "pending"
-                    ? { ...candidate, state: "provider_failed" }
-                    : candidate,
-                ),
-              );
-              setProviderState("failed");
-              setAssistantTurnAt(new Date().toISOString());
-            }
+            dispatchConversationRun({
+              type: "provider_event",
+              epoch: runEpoch,
+              event,
+              occurredAt: new Date().toISOString(),
+            });
           }
           newline = buffer.indexOf("\n");
         }
@@ -2529,7 +2450,6 @@ export function Conversation({
         }
       }
     } catch (error) {
-      setAssistantTurnAt(new Date().toISOString());
       if (promptOverride === undefined) {
         setElementReferences(sentElementReferences);
       }
@@ -2541,14 +2461,12 @@ export function Conversation({
           saveComposerDraft(safeLocalStorage(), draftKeyAtSend, value);
         }
       }
-      setProviderEvents((current) => [
-        ...current,
-        {
-          kind: "failed",
-          message: error instanceof Error ? error.message : `${providerName} failed.`,
-        },
-      ]);
-      setProviderState("failed");
+      dispatchConversationRun({
+        type: "transport_failed",
+        epoch: runEpoch,
+        message: error instanceof Error ? error.message : `${providerName} failed.`,
+        occurredAt: new Date().toISOString(),
+      });
     } finally {
       setRunId(null);
       const availableThreadId = createdThreadId ?? conversation?.id;
@@ -2624,19 +2542,17 @@ export function Conversation({
   };
   const cancel = async () => {
     if (!runId) return;
-    setProviderState("cancelling");
+    dispatchConversationRun({ type: "cancel_requested" });
     try {
       const response = await fetch(`/api/provider/runs/${runId}/cancel`, { method: "POST" });
       if (!response.ok) throw new Error("The provider run could not be cancelled.");
     } catch (error) {
-      setProviderEvents((current) => [
-        ...current,
-        {
-          kind: "failed",
-          message: error instanceof Error ? error.message : "Cancellation failed.",
-        },
-      ]);
-      setProviderState("failed");
+      dispatchConversationRun({
+        type: "transport_failed",
+        epoch: conversationRun.epoch,
+        message: error instanceof Error ? error.message : "Cancellation failed.",
+        occurredAt: new Date().toISOString(),
+      });
     }
   };
   const decideApproval = async (
@@ -2658,21 +2574,16 @@ export function Conversation({
       });
       const body = (await response.json()) as typeof approval | { error?: string };
       if (!response.ok) throw new Error("error" in body ? body.error : "Approval decision failed.");
-      setProviderEvents((current) =>
-        current.map((event) =>
-          event.kind === "approval_pending" && event.id === approval.id
-            ? { ...event, state: (body as typeof approval).state }
-            : event,
-        ),
-      );
+      dispatchConversationRun({
+        type: "approval_decided",
+        id: approval.id,
+        state: (body as typeof approval).state,
+      });
     } catch (error) {
-      setProviderEvents((current) => [
-        ...current,
-        {
-          kind: "failed",
-          message: error instanceof Error ? error.message : "Approval decision failed.",
-        },
-      ]);
+      dispatchConversationRun({
+        type: "interaction_failed",
+        message: error instanceof Error ? error.message : "Approval decision failed.",
+      });
     }
   };
   const answerInput = async (input: Extract<ProviderEvent, { kind: "input_requested" }>) => {
@@ -2687,29 +2598,14 @@ export function Conversation({
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error ?? "Input response failed.");
-      setProviderEvents((current) =>
-        preserveInputResolution(current, {
-          kind: "input_resolved",
-          id: input.id,
-          state: "answered",
-        }),
-      );
-      if (input.responseMode === "native_resume") {
-        setProviderState("streaming");
-        setHistoryRefreshSignal((current) => current + 1);
-      } else {
-        setProviderState("streaming");
-        setHistoryRefreshSignal((current) => current + 1);
-      }
+      dispatchConversationRun({ type: "input_answered", id: input.id });
+      setHistoryRefreshSignal((current) => current + 1);
       conversationAvailableCallback.current?.(threadId);
     } catch (error) {
-      setProviderEvents((current) => [
-        ...current,
-        {
-          kind: "failed",
-          message: error instanceof Error ? error.message : "Input response failed.",
-        },
-      ]);
+      dispatchConversationRun({
+        type: "interaction_failed",
+        message: error instanceof Error ? error.message : "Input response failed.",
+      });
     } finally {
       setInputBusyId(null);
     }
