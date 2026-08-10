@@ -49,6 +49,11 @@ GitHub Issues are the backlog. Use exactly one status label:
 with one PR and one observable outcome. Cross-repository dependencies use
 fully qualified references.
 
+Keep commits narrow and use short imperative subjects, preferably in
+Conventional Commit form, such as `feat(ui): add local usage dashboard`,
+`fix(provider): preserve approval state`, or `docs: explain the worktree
+lifecycle`. Use a scope when it helps identify the affected subsystem.
+
 ### Verified commits on GitHub
 
 Prefer publishing PR branch tips with GitHub-signed commits so GitHub shows
