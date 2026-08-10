@@ -40,3 +40,30 @@ test("local host options keep state and static content behind one named interfac
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("missing static assets return 404 without crashing the host", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-host-static-missing-"));
+  const dist = join(directory, "dist");
+  const state = new LocalStateStore(join(directory, "state"));
+  await mkdir(dist);
+
+  const server = createLocalHost({ dist, state });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const missing = await fetch(origin);
+    assert.equal(missing.status, 404);
+    assert.equal(await missing.text(), "Not found");
+
+    const api = await fetch(`${origin}/api/state/load`, { method: "POST" });
+    assert.equal(api.status, 200);
+    assert.deepEqual(((await api.json()) as { projects: unknown[] }).projects, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await rm(directory, { recursive: true, force: true });
+  }
+});

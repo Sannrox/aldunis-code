@@ -5054,7 +5054,11 @@ export function Conversation({
                       : planTriggerRef
                     ).current?.focus();
                   }}
-                  aria-label="Close plan panel"
+                  aria-label={
+                    planPanelMode === "graph"
+                      ? `Close work graph, ${pane} pane`
+                      : `Close plan panel, ${pane} pane`
+                  }
                 >
                   ×
                 </button>
