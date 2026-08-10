@@ -192,6 +192,10 @@
       "description": "A local, metadata-only association from one parent conversation to one independently created child conversation. Each child has at most one parent and the relationship set forms an acyclic forest. It never transfers messages, provider context, tool state, or approvals."
     },
     {
+      "name": "RendererWorktreeLifecycle",
+      "description": "The Aldunis Code renderer module that hides worktree creation and removal preview routes, single-use approval requests, repository refresh, server-error extraction, and response validation behind one interface used by worktree management, conversation workspace, and delegated child flows. It grants no filesystem or approval authority beyond the host contracts it invokes."
+    },
+    {
       "name": "ManagedWorktreeRemovalApproval",
       "description": "A short-lived, single-use approval bound to the exact managed checkout inspected during preview. Branch, HEAD, Git administrative directory, filesystem identity, and nanosecond change times must still match before removal."
     },
@@ -528,6 +532,16 @@
       "description": "The managed hosted workbench projects the current gateway-verified account into a bounded browser capability response without creating account or tenant authority in Code.",
       "domain": "ManagedHostedWorkbench",
       "range": "ManagedAccountProjection",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "previews_managed_worktree_removal",
+      "description": "The renderer worktree lifecycle obtains and approves only a host-issued single-use managed worktree removal plan without acquiring filesystem authority itself.",
+      "domain": "RendererWorktreeLifecycle",
+      "range": "ManagedWorktreeRemovalApproval",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -1231,6 +1245,18 @@
       "subject": "ManagedWorktreeRemovalApproval",
       "source": "Aldunis Code managed worktree contract",
       "locator": "server/worktrees.ts#WorktreeRemovalPlan",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RendererWorktreeLifecycle",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#581",
+      "locator": "src/lib/worktree-lifecycle.ts#createWorktreeLifecycle",
+      "confidence": 1.0
+    },
+    {
+      "subject": "previews_managed_worktree_removal",
+      "source": "Aldunis Code renderer worktree lifecycle interface",
+      "locator": "src/lib/worktree-lifecycle.ts#previewRemoval; src/lib/worktree-lifecycle.ts#approveRemoval",
       "confidence": 1.0
     },
     {

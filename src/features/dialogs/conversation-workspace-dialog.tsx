@@ -1,22 +1,17 @@
 import React, { useEffect, useState } from "react";
 import type { RepositoryMetadata, WorktreeCreationPlan } from "../../types";
 import { Button } from "../../components/ui";
+import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
-
-function responseError(body: unknown, fallback: string): string {
-  if (typeof body === "object" && body !== null && "error" in body) {
-    const error = (body as { error?: unknown }).error;
-    if (typeof error === "string" && error.trim()) return error;
-  }
-  return fallback;
-}
 
 export const CURRENT_WORKSPACE_RECOVERY_COPY = {
   label: "Use current workspace",
-  detail: "Managed worktrees require a clean index; use the current workspace below to keep staged local changes.",
+  detail:
+    "Managed worktrees require a clean index; use the current workspace below to keep staged local changes.",
 } as const;
 
-export const CLEAN_REPOSITORY_ERROR = "Stage or discard indexed changes before creating an isolated worktree.";
+export const CLEAN_REPOSITORY_ERROR =
+  "Stage or discard indexed changes before creating an isolated worktree.";
 
 export function isDirtyRepositoryError(message: string): boolean {
   return message === CLEAN_REPOSITORY_ERROR;
@@ -28,9 +23,7 @@ export function canUseCurrentWorkspace(
   dirtyRepository = false,
 ): boolean {
   return Boolean(
-    dirtyRepository
-      && onUseCurrentWorkspace
-      && selectedWorktree?.ownership === "user",
+    dirtyRepository && onUseCurrentWorkspace && selectedWorktree?.ownership === "user",
   );
 }
 
@@ -47,7 +40,9 @@ export function ConversationWorkspaceDialog({
   onCreated: (repository: RepositoryMetadata) => void;
   onUseCurrentWorkspace?: () => void;
 }) {
-  const selectedWorktree = repository.worktrees.find((worktree) => worktree.path === repository.selectedWorktree);
+  const selectedWorktree = repository.worktrees.find(
+    (worktree) => worktree.path === repository.selectedWorktree,
+  );
   const [dirtyRepository, setDirtyRepository] = useState(false);
   const canUseCurrentWorkspaceOption = canUseCurrentWorkspace(
     selectedWorktree,
@@ -74,18 +69,15 @@ export function ConversationWorkspaceDialog({
     setError(null);
     setDirtyRepository(false);
     try {
-      const response = await fetch("/api/worktrees/create/preview", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, base, branch }),
-      });
-      const body = await response.json() as WorktreeCreationPlan | { error?: string };
-      if (!response.ok || !("action" in body) || body.action !== "create") {
-        throw new Error(responseError(body, "The conversation worktree could not be prepared."));
-      }
-      setPlan(body);
+      setPlan(
+        await worktreeLifecycle.previewCreation(
+          { root: repository.root, base, branch },
+          "The conversation worktree could not be prepared.",
+        ),
+      );
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "The conversation worktree could not be prepared.";
+      const message =
+        cause instanceof Error ? cause.message : "The conversation worktree could not be prepared.";
       setError(message);
       setDirtyRepository(isDirtyRepositoryError(message));
     } finally {
@@ -99,22 +91,16 @@ export function ConversationWorkspaceDialog({
     setError(null);
     setDirtyRepository(false);
     try {
-      const response = await fetch("/api/worktrees/create", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ planId: plan.id, confirm: true }),
-      });
-      const body = await response.json() as RepositoryMetadata | { error?: string };
-      if (
-        !response.ok
-        || !("worktrees" in body)
-        || typeof body.selectedWorktree !== "string"
-      ) {
-        throw new Error(responseError(body, "The conversation worktree could not be created."));
-      }
-      onCreated(body);
+      onCreated(
+        await worktreeLifecycle.approveCreation(
+          plan.id,
+          repository.projectId,
+          "The conversation worktree could not be created.",
+        ),
+      );
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "The conversation worktree could not be created.";
+      const message =
+        cause instanceof Error ? cause.message : "The conversation worktree could not be created.";
       setError(message);
       setDirtyRepository(isDirtyRepositoryError(message));
     } finally {
@@ -123,17 +109,12 @@ export function ConversationWorkspaceDialog({
   };
 
   return (
-    <OverlayDialog
-      title="Create Aldunis worktree"
-      onClose={busy ? () => undefined : onClose}
-    >
+    <OverlayDialog title="Create Aldunis worktree" onClose={busy ? () => undefined : onClose}>
       <div className="conversation-workspace-dialog">
         <p>
-          This conversation will get its own Git worktree and branch. The
-          conversation will be bound to the approved canonical path.
-          {canUseCurrentWorkspaceOption && (
-            <> {CURRENT_WORKSPACE_RECOVERY_COPY.detail}</>
-          )}
+          This conversation will get its own Git worktree and branch. The conversation will be bound
+          to the approved canonical path.
+          {canUseCurrentWorkspaceOption && <> {CURRENT_WORKSPACE_RECOVERY_COPY.detail}</>}
         </p>
         {!plan ? (
           <form onSubmit={(event) => void preview(event)}>
@@ -146,7 +127,10 @@ export function ConversationWorkspaceDialog({
               disabled={busy}
             />
             {!repository.defaultBranch && (
-              <p role="alert">The default branch could not be determined. Configure one remote HEAD or a conventional local default branch before creating a worktree.</p>
+              <p role="alert">
+                The default branch could not be determined. Configure one remote HEAD or a
+                conventional local default branch before creating a worktree.
+              </p>
             )}
             <label htmlFor="conversation-workspace-branch">New branch</label>
             <input
@@ -161,7 +145,9 @@ export function ConversationWorkspaceDialog({
               data-dialog-initial-focus
             />
             <footer>
-              <Button type="button" onClick={onClose} disabled={busy}>Use another workspace</Button>
+              <Button type="button" onClick={onClose} disabled={busy}>
+                Use another workspace
+              </Button>
               {canUseCurrentWorkspaceOption && (
                 <Button type="button" onClick={onUseCurrentWorkspace} disabled={busy}>
                   {CURRENT_WORKSPACE_RECOVERY_COPY.label}
@@ -177,29 +163,59 @@ export function ConversationWorkspaceDialog({
             </footer>
           </form>
         ) : (
-          <section className="conversation-workspace-approval" aria-label="Approve conversation worktree">
+          <section
+            className="conversation-workspace-approval"
+            aria-label="Approve conversation worktree"
+          >
             <strong>Create this dedicated worktree once?</strong>
             <dl>
-              <div><dt>Repository</dt><dd title={plan.repository}>{plan.repository}</dd></div>
-              <div><dt>Base</dt><dd title={`${plan.base} · ${plan.baseRevision}`}>{plan.base} · {plan.baseRevision}</dd></div>
-              <div><dt>Branch</dt><dd title={plan.branch}>{plan.branch}</dd></div>
-              <div><dt>Path</dt><dd title={plan.path}>{plan.path}</dd></div>
+              <div>
+                <dt>Repository</dt>
+                <dd title={plan.repository}>{plan.repository}</dd>
+              </div>
+              <div>
+                <dt>Base</dt>
+                <dd title={`${plan.base} · ${plan.baseRevision}`}>
+                  {plan.base} · {plan.baseRevision}
+                </dd>
+              </div>
+              <div>
+                <dt>Branch</dt>
+                <dd title={plan.branch}>{plan.branch}</dd>
+              </div>
+              <div>
+                <dt>Path</dt>
+                <dd title={plan.path}>{plan.path}</dd>
+              </div>
             </dl>
-            <p>Approval is single-use. No provider process runs until this exact plan is approved.</p>
+            <p>
+              Approval is single-use. No provider process runs until this exact plan is approved.
+            </p>
             <footer>
-              <Button type="button" onClick={() => setPlan(null)} disabled={busy}>Back</Button>
+              <Button type="button" onClick={() => setPlan(null)} disabled={busy}>
+                Back
+              </Button>
               {canUseCurrentWorkspaceOption && (
                 <Button type="button" onClick={onUseCurrentWorkspace} disabled={busy}>
                   {CURRENT_WORKSPACE_RECOVERY_COPY.label}
                 </Button>
               )}
-              <Button type="button" variant="primary" onClick={() => void approve()} disabled={busy}>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => void approve()}
+                disabled={busy}
+              >
                 {busy ? "Revalidating…" : "Approve and start"}
               </Button>
             </footer>
           </section>
         )}
-        {error && <div className="context-error" role="alert">{error}</div>}
+        {error && (
+          <div className="context-error" role="alert">
+            {error}
+          </div>
+        )}
       </div>
     </OverlayDialog>
   );
