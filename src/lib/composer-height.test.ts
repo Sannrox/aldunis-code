@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   COMPOSER_MAX_HEIGHT,
+  resetComposerFieldSizingSupportForTests,
+  supportsComposerFieldSizing,
   syncComposerHeight,
   type ComposerHeightTarget,
 } from "./composer-height";
@@ -11,6 +13,13 @@ function target(scrollHeight: number, height = "45px"): ComposerHeightTarget {
 }
 
 test("syncComposerHeight grows with content up to the desktop composer cap", () => {
+  resetComposerFieldSizingSupportForTests();
+  // Force the JS polyfill path in unit tests (Node has no CSS.supports).
+  assert.equal(
+    supportsComposerFieldSizing(() => false),
+    false,
+  );
+
   const short = target(92);
   syncComposerHeight(short);
   assert.equal(short.style.height, "92px");
@@ -21,6 +30,12 @@ test("syncComposerHeight grows with content up to the desktop composer cap", () 
 });
 
 test("syncComposerHeight resets height before measuring so cleared drafts shrink", () => {
+  resetComposerFieldSizingSupportForTests();
+  assert.equal(
+    supportsComposerFieldSizing(() => false),
+    false,
+  );
+
   const composer = target(44, "160px");
   const assignments: string[] = [];
   Object.defineProperty(composer.style, "height", {
@@ -31,5 +46,17 @@ test("syncComposerHeight resets height before measuring so cleared drafts shrink
   });
 
   syncComposerHeight(composer);
-  assert.deepEqual(assignments, ["auto", "44px"]);
+  assert.deepEqual(assignments, ["0px", "44px"]);
+});
+
+test("syncComposerHeight no-ops when field-sizing is available", () => {
+  resetComposerFieldSizingSupportForTests();
+  assert.equal(
+    supportsComposerFieldSizing(() => true),
+    true,
+  );
+
+  const composer = target(92, "45px");
+  syncComposerHeight(composer);
+  assert.equal(composer.style.height, "45px");
 });

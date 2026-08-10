@@ -85,7 +85,7 @@ import {
   stepPromptHistoryUp,
   type PromptHistoryBrowse,
 } from "../../lib/composer-prompt-history";
-import { syncComposerHeight } from "../../lib/composer-height";
+import { supportsComposerFieldSizing, syncComposerHeight } from "../../lib/composer-height";
 import {
   appendVoiceTranscript,
   collectVoiceTranscript,
@@ -733,9 +733,12 @@ export function Conversation({
   const [workspaceSetupOpen, setWorkspaceSetupOpen] = useState(false);
   const [draftContextReceipt, setDraftContextReceipt] = useState<ContextReceipt | null>(null);
   useLayoutEffect(() => {
+    // Native field-sizing grows the textarea without reading layout geometry.
+    if (supportsComposerFieldSizing()) return;
     if (composerRef.current) syncComposerHeight(composerRef.current);
   }, [draft]);
   useLayoutEffect(() => {
+    if (supportsComposerFieldSizing()) return;
     const composer = composerRef.current;
     if (!composer) return;
     let width = composer.clientWidth;

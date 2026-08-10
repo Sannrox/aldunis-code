@@ -632,6 +632,8 @@ test("composer grows within its established desktop height bounds", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   assert.match(shell, /\.composer-input\s*\{[^}]*min-height:\s*44px[^}]*max-height:\s*160px/s);
+  // Native field-sizing avoids forced reflow on Chromium/Electron for auto-grow.
+  assert.match(shell, /\.composer-input\s*\{[^}]*field-sizing:\s*content/s);
 });
 
 test("voice input keeps a secondary control hierarchy and touch hit target", () => {
