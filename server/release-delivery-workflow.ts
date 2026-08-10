@@ -12,7 +12,6 @@ import type {
   ReleaseCompleteness,
   ReleaseDeliveryPlan,
   ReleaseDeliverySession as PublicReleaseDeliverySession,
-  ReleaseEvaluationReference,
   ReleaseWorkflowAction,
   ReleaseWorkflowState,
   TenkaiTerminalOutcomeDeliveryState,
@@ -38,16 +37,6 @@ const MAX_SESSIONS = 50;
 const MAX_OUTPUT = 256 * 1024;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$/;
-const ACTIONS = [
-  "prepare",
-  "evaluate",
-  "publish",
-  "promote",
-  "plan",
-  "apply",
-  "reconcile",
-  "rollback",
-] as const;
 const WORKFLOW_STATES: ReleaseWorkflowState[] = [
   "candidate_ready",
   "governance_allowed",
@@ -220,22 +209,32 @@ function parseMachineResult(output: string, expectedCommand: string): MachineRes
   } catch {
     throw new RepositoryError("Tenkai returned an unknown machine result.", 502);
   }
-  if (!isRecord(value)) throw new RepositoryError("Tenkai returned an incompatible machine result.", 502);
-  exactKeys(value, ["schema", "command", "outcome", "retry", "resources", "counts", "error"], "The Tenkai result");
+  if (!isRecord(value))
+    throw new RepositoryError("Tenkai returned an incompatible machine result.", 502);
+  exactKeys(
+    value,
+    ["schema", "command", "outcome", "retry", "resources", "counts", "error"],
+    "The Tenkai result",
+  );
   if (value.schema !== "tenkai.command-result/v1" || value.command !== expectedCommand) {
     throw new RepositoryError("Tenkai returned an incompatible command result.", 502);
   }
   if (!["succeeded", "failed", "awaiting_approval", "unknown"].includes(String(value.outcome))) {
     throw new RepositoryError("Tenkai returned an incompatible outcome.", 502);
   }
-  if (!["not_needed", "correct_request", "reconcile_before_retry", "not_safe"].includes(String(value.retry))) {
+  if (
+    !["not_needed", "correct_request", "reconcile_before_retry", "not_safe"].includes(
+      String(value.retry),
+    )
+  ) {
     throw new RepositoryError("Tenkai returned incompatible retry guidance.", 502);
   }
   if (!Array.isArray(value.resources) || value.resources.length > 8) {
     throw new RepositoryError("Tenkai returned incompatible resource references.", 502);
   }
   const resources = value.resources.map((resource) => {
-    if (!isRecord(resource)) throw new RepositoryError("Tenkai returned an incompatible resource.", 502);
+    if (!isRecord(resource))
+      throw new RepositoryError("Tenkai returned an incompatible resource.", 502);
     exactKeys(resource, ["kind", "id"], "A Tenkai resource");
     const kind = boundedString(resource.kind, "A Tenkai resource kind", 64);
     const id = boundedString(resource.id, "A Tenkai resource identity", 512);
@@ -268,7 +267,8 @@ function parseEpochMillis(value: unknown, label: string, nullable = false): stri
 }
 
 function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
-  if (!isRecord(value)) throw new RepositoryError("Tenkai returned an incompatible terminal outcome.", 502);
+  if (!isRecord(value))
+    throw new RepositoryError("Tenkai returned an incompatible terminal outcome.", 502);
   exactKeys(
     value,
     [
@@ -296,7 +296,8 @@ function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
     "A Tenkai terminal outcome",
   );
   const eventId = boundedString(value.event_id, "A Tenkai terminal outcome event identity");
-  if (!OPAQUE_ID.test(eventId)) throw new RepositoryError("Tenkai returned an invalid terminal outcome identity.", 502);
+  if (!OPAQUE_ID.test(eventId))
+    throw new RepositoryError("Tenkai returned an invalid terminal outcome identity.", 502);
   if (value.schema !== "tenkai.terminal_outcome.v1") {
     throw new RepositoryError("Tenkai returned an incompatible terminal outcome schema.", 502);
   }
@@ -305,8 +306,13 @@ function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
     throw new RepositoryError("Tenkai returned an incompatible terminal outcome state.", 502);
   }
   const deliveryState = value.delivery_state;
-  if (!TERMINAL_OUTCOME_DELIVERY_STATES.includes(deliveryState as TenkaiTerminalOutcomeDeliveryState)) {
-    throw new RepositoryError("Tenkai returned an incompatible terminal outcome delivery state.", 502);
+  if (
+    !TERMINAL_OUTCOME_DELIVERY_STATES.includes(deliveryState as TenkaiTerminalOutcomeDeliveryState)
+  ) {
+    throw new RepositoryError(
+      "Tenkai returned an incompatible terminal outcome delivery state.",
+      502,
+    );
   }
   const attempts = value.attempts;
   if (!Number.isSafeInteger(attempts) || Number(attempts) < 0 || Number(attempts) > 1_000_000) {
@@ -327,8 +333,12 @@ function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
   if (identities.some((item) => !OPAQUE_ID.test(item))) {
     throw new RepositoryError("Tenkai returned an invalid terminal outcome reference.", 502);
   }
-  const digests = [value.binding_digest, value.release_digest, value.plan_digest, value.configuration_digest]
-    .map((item, index) => boundedString(item, `A Tenkai terminal outcome digest ${index + 1}`, 71));
+  const digests = [
+    value.binding_digest,
+    value.release_digest,
+    value.plan_digest,
+    value.configuration_digest,
+  ].map((item, index) => boundedString(item, `A Tenkai terminal outcome digest ${index + 1}`, 71));
   if (digests.some((item) => !SHA256.test(item))) {
     throw new RepositoryError("Tenkai returned invalid terminal outcome digests.", 502);
   }
@@ -353,7 +363,11 @@ function parseTerminalOutcome(value: unknown): TenkaiTerminalOutcomeProjection {
     // a required i64 even after delivery; only delivered_at and claim_until
     // are nullable.
     nextAttemptAt: parseEpochMillis(value.next_attempt_at, "A Tenkai next-attempt time")!,
-    deliveredAt: parseEpochMillis(value.delivered_at, "A Tenkai delivery acknowledgement time", true),
+    deliveredAt: parseEpochMillis(
+      value.delivered_at,
+      "A Tenkai delivery acknowledgement time",
+      true,
+    ),
     claimUntil: parseEpochMillis(value.claim_until, "A Tenkai delivery claim time", true),
     deliveryLagMs: Number(deliveryLagMs),
   };
@@ -388,21 +402,29 @@ function parseEnvironmentInspection(output: string): EnvironmentInspection {
     throw new RepositoryError("Tenkai returned incompatible environment subscriptions.", 502);
   }
   const subscriptions = value.subscriptions.map((item) => {
-    if (!isRecord(item)) throw new RepositoryError("Tenkai returned an incompatible subscription.", 502);
-    exactKeys(item, ["product", "channel", "head", "deployed", "health", "error", "state"], "A Tenkai subscription");
+    if (!isRecord(item))
+      throw new RepositoryError("Tenkai returned an incompatible subscription.", 502);
+    exactKeys(
+      item,
+      ["product", "channel", "head", "deployed", "health", "error", "state"],
+      "A Tenkai subscription",
+    );
     return {
       product: boundedString(item.product, "A Tenkai product", 128),
       channel: boundedString(item.channel, "A Tenkai channel", 128),
       head: boundedString(item.head, "A Tenkai channel head", 128),
-      deployed: item.deployed === null ? null : boundedString(item.deployed, "A deployed version", 128),
+      deployed:
+        item.deployed === null ? null : boundedString(item.deployed, "A deployed version", 128),
       health: item.health === null ? null : boundedString(item.health, "Tenkai health", 128),
-      error: item.error === null ? null : boundedString(item.error, "A Tenkai error reference", 500),
+      error:
+        item.error === null ? null : boundedString(item.error, "A Tenkai error reference", 500),
       state: boundedString(item.state, "A Tenkai subscription state", 64),
     };
   });
   let latestPlan: EnvironmentInspection["latest_plan"] = null;
   if (value.latest_plan !== null) {
-    if (!isRecord(value.latest_plan)) throw new RepositoryError("Tenkai returned an incompatible latest plan.", 502);
+    if (!isRecord(value.latest_plan))
+      throw new RepositoryError("Tenkai returned an incompatible latest plan.", 502);
     exactKeys(
       value.latest_plan,
       ["id", "state", "created_at", "step_count", "status_detail", "steps", "steps_truncated"],
@@ -412,13 +434,11 @@ function parseEnvironmentInspection(output: string): EnvironmentInspection {
       throw new RepositoryError("Tenkai returned incompatible plan steps.", 502);
     }
     if (
-      !Number.isSafeInteger(value.latest_plan.step_count)
-      || Number(value.latest_plan.step_count) < 0
-      || typeof value.latest_plan.steps_truncated !== "boolean"
-      || (
-        value.latest_plan.steps_truncated === false
-        && value.latest_plan.step_count !== value.latest_plan.steps.length
-      )
+      !Number.isSafeInteger(value.latest_plan.step_count) ||
+      Number(value.latest_plan.step_count) < 0 ||
+      typeof value.latest_plan.steps_truncated !== "boolean" ||
+      (value.latest_plan.steps_truncated === false &&
+        value.latest_plan.step_count !== value.latest_plan.steps.length)
     ) {
       throw new RepositoryError("Tenkai returned inconsistent plan step metadata.", 502);
     }
@@ -428,8 +448,13 @@ function parseEnvironmentInspection(output: string): EnvironmentInspection {
       step_count: value.latest_plan.step_count,
       steps_truncated: value.latest_plan.steps_truncated,
       steps: value.latest_plan.steps.map((step) => {
-        if (!isRecord(step)) throw new RepositoryError("Tenkai returned an incompatible plan step.", 502);
-        exactKeys(step, ["id", "order", "product", "action", "from", "to", "release_id"], "A Tenkai plan step");
+        if (!isRecord(step))
+          throw new RepositoryError("Tenkai returned an incompatible plan step.", 502);
+        exactKeys(
+          step,
+          ["id", "order", "product", "action", "from", "to", "release_id"],
+          "A Tenkai plan step",
+        );
         return {
           product: boundedString(step.product, "A planned product", 128),
           to: step.to === null ? null : boundedString(step.to, "A planned version", 128),
@@ -505,7 +530,11 @@ function parseReleaseInspection(output: string): ReleaseInspection {
         ],
         "Tenkai governance provenance",
       );
-      const envelopeDigest = boundedString(item.envelope_digest, "A provenance envelope digest", 71);
+      const envelopeDigest = boundedString(
+        item.envelope_digest,
+        "A provenance envelope digest",
+        71,
+      );
       const receiptDigest = boundedString(item.receipt_digest, "A provenance receipt digest", 71);
       if (!SHA256.test(envelopeDigest) || !SHA256.test(receiptDigest)) {
         throw new RepositoryError("Tenkai returned invalid governance provenance digests.", 502);
@@ -513,10 +542,10 @@ function parseReleaseInspection(output: string): ReleaseInspection {
       const observedAt = Number(item.observed_at_unix_ms);
       const expiresAt = Number(item.expires_at_unix_ms);
       if (
-        !Number.isSafeInteger(observedAt)
-        || !Number.isSafeInteger(expiresAt)
-        || observedAt <= 0
-        || expiresAt <= observedAt
+        !Number.isSafeInteger(observedAt) ||
+        !Number.isSafeInteger(expiresAt) ||
+        observedAt <= 0 ||
+        expiresAt <= observedAt
       ) {
         throw new RepositoryError("Tenkai returned an invalid governance provenance window.", 502);
       }
@@ -541,35 +570,44 @@ async function defaultRunner(
   options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number; signal?: AbortSignal },
 ): Promise<CommandResult> {
   return new Promise((resolveResult) => {
-    execFile(executable, args, {
-      cwd: options.cwd,
-      env: options.env,
-      timeout: options.timeout,
-      maxBuffer: MAX_OUTPUT,
-      encoding: "utf8",
-      windowsHide: true,
-      signal: options.signal,
-    }, (error, stdout, stderr) => {
-      const failure = error as (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null;
-      resolveResult({
-        stdout,
-        stderr,
-        exitCode: failure ? (typeof failure.code === "number" ? failure.code : null) : 0,
-        timedOut: Boolean(failure?.killed && failure.signal === "SIGTERM"),
-        aborted: options.signal?.aborted ?? false,
-      });
-    });
+    execFile(
+      executable,
+      args,
+      {
+        cwd: options.cwd,
+        env: options.env,
+        timeout: options.timeout,
+        maxBuffer: MAX_OUTPUT,
+        encoding: "utf8",
+        windowsHide: true,
+        signal: options.signal,
+      },
+      (error, stdout, stderr) => {
+        const failure = error as
+          (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null;
+        resolveResult({
+          stdout,
+          stderr,
+          exitCode: failure ? (typeof failure.code === "number" ? failure.code : null) : 0,
+          timedOut: Boolean(failure?.killed && failure.signal === "SIGTERM"),
+          aborted: options.signal?.aborted ?? false,
+        });
+      },
+    );
   });
 }
 
 function baseEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(
-    ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL"]
-      .flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]),
+    ["PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL"].flatMap((name) =>
+      process.env[name] === undefined ? [] : [[name, process.env[name]]],
+    ),
   );
 }
 
-function publicSession(session: ReleaseDeliverySession): Omit<ReleaseDeliverySession, "repository" | "worktree"> {
+function publicSession(
+  session: ReleaseDeliverySession,
+): Omit<ReleaseDeliverySession, "repository" | "worktree"> {
   const { repository: _repository, worktree: _worktree, ...projection } = session;
   return projection;
 }
@@ -579,22 +617,22 @@ function outcomesForSessions(
   sessions: ReleaseDeliverySession[],
 ): TenkaiTerminalOutcomeProjection[] {
   const references = new Set(
-    sessions.flatMap((session) => [
-      session.tenkai.releaseId,
-      session.tenkai.planId,
-      session.tenkai.rollbackPlanId,
-    ]).filter((value): value is string => value !== null),
+    sessions
+      .flatMap((session) => [
+        session.tenkai.releaseId,
+        session.tenkai.planId,
+        session.tenkai.rollbackPlanId,
+      ])
+      .filter((value): value is string => value !== null),
   );
   const products = new Set(sessions.map((session) => session.candidate.product));
   if (references.size === 0) return [];
   return outcomes
-    .filter((outcome) => (
-      products.has(outcome.product)
-      && (
-        references.has(outcome.releaseId)
-        || references.has(outcome.planId)
-      )
-    ))
+    .filter(
+      (outcome) =>
+        products.has(outcome.product) &&
+        (references.has(outcome.releaseId) || references.has(outcome.planId)),
+    )
     .sort((left, right) => right.observedAt.localeCompare(left.observedAt))
     .slice(0, 32);
 }
@@ -613,11 +651,18 @@ function persistedCandidate(candidate: PreparedReleaseCandidate): PreparedReleas
 }
 
 function exactShape(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  return (
+    Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key))
+  );
 }
 
 function validText(value: unknown, maximum = 512): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= maximum && !value.includes("\0");
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum &&
+    !value.includes("\0")
+  );
 }
 
 function validOptionalText(value: unknown, maximum = 512): value is string | null {
@@ -640,85 +685,110 @@ function validTimestamp(value: unknown): value is string {
 
 function validCandidate(value: unknown): value is PreparedReleaseCandidate {
   if (
-    !isRecord(value)
-    || !exactShape(value, [
-      "identity", "document", "chisei", "product", "version", "release", "manifestPath", "build",
-    ])
-    || !SHA256.test(String(value.identity))
-    || !validText(value.product, 128)
-    || !validText(value.version, 128)
-    || value.release !== `${value.product}@${value.version}`
-    || !validText(value.manifestPath, 1_024)
-    || value.manifestPath.startsWith("/")
-    || value.manifestPath.split("/").some((part) => !part || part === "." || part === "..")
-    || !isRecord(value.document)
-    || !exactShape(value.document, [
-      "schema", "repository", "commit", "source_tree_digest", "manifest", "artifacts",
+    !isRecord(value) ||
+    !exactShape(value, [
+      "identity",
+      "document",
+      "chisei",
+      "product",
+      "version",
+      "release",
+      "manifestPath",
+      "build",
+    ]) ||
+    !SHA256.test(String(value.identity)) ||
+    !validText(value.product, 128) ||
+    !validText(value.version, 128) ||
+    value.release !== `${value.product}@${value.version}` ||
+    !validText(value.manifestPath, 1_024) ||
+    value.manifestPath.startsWith("/") ||
+    value.manifestPath.split("/").some((part) => !part || part === "." || part === "..") ||
+    !isRecord(value.document) ||
+    !exactShape(value.document, [
+      "schema",
+      "repository",
+      "commit",
+      "source_tree_digest",
+      "manifest",
+      "artifacts",
       "build_definition_digest",
-    ])
-    || value.document.schema !== "aldunis.delivery-candidate/v1"
-    || !isRecord(value.document.repository)
-    || !exactShape(value.document.repository, ["authority", "id"])
-    || value.document.repository.authority !== "git"
-    || !validText(value.document.repository.id, 2_048)
-    || !isRecord(value.document.commit)
-    || !exactShape(value.document.commit, ["algorithm", "oid"])
-    || !["sha1", "sha256"].includes(String(value.document.commit.algorithm))
-    || typeof value.document.commit.oid !== "string"
-    || !(
-      (value.document.commit.algorithm === "sha1" && /^[0-9a-f]{40}$/.test(value.document.commit.oid))
-      || (value.document.commit.algorithm === "sha256" && /^[0-9a-f]{64}$/.test(value.document.commit.oid))
-    )
-    || !SHA256.test(String(value.document.source_tree_digest))
-    || !isRecord(value.document.manifest)
-    || !exactShape(value.document.manifest, ["path", "digest"])
-    || value.document.manifest.path !== value.manifestPath
-    || !SHA256.test(String(value.document.manifest.digest))
-    || !Array.isArray(value.document.artifacts)
-    || value.document.artifacts.length < 1
-    || value.document.artifacts.length > 64
-    || value.document.artifacts.some((artifact) => (
-      !isRecord(artifact)
-      || !exactShape(artifact, ["media_type", "size", "digest", "location_class"])
-      || !validText(artifact.media_type, 256)
-      || !Number.isSafeInteger(artifact.size)
-      || Number(artifact.size) < 0
-      || !SHA256.test(String(artifact.digest))
-      || !["local", "oci"].includes(String(artifact.location_class))
-    ))
-    || !SHA256.test(String(value.document.build_definition_digest))
-    || !isRecord(value.chisei)
-    || !exactShape(value.chisei, [
-      "revision", "source_tree_digest", "manifest_digest", "artifact_reference",
-      "artifact_digest", "build_definition_digest",
-    ])
-    || value.chisei.revision !== value.document.commit.oid
-    || value.chisei.source_tree_digest !== value.document.source_tree_digest
-    || value.chisei.manifest_digest !== value.document.manifest.digest
-    || value.chisei.artifact_digest !== value.document.artifacts[0]?.digest
-    || value.chisei.build_definition_digest !== value.document.build_definition_digest
-    || !validText(value.chisei.artifact_reference, 512)
-    || !isRecord(value.build)
-    || !exactShape(value.build, ["adapter", "commands", "definitionDigest"])
-    || value.build.adapter !== "npm"
-    || value.build.definitionDigest !== value.document.build_definition_digest
-    || !Array.isArray(value.build.commands)
-    || value.build.commands.length !== 3
-  ) return false;
+    ]) ||
+    value.document.schema !== "aldunis.delivery-candidate/v1" ||
+    !isRecord(value.document.repository) ||
+    !exactShape(value.document.repository, ["authority", "id"]) ||
+    value.document.repository.authority !== "git" ||
+    !validText(value.document.repository.id, 2_048) ||
+    !isRecord(value.document.commit) ||
+    !exactShape(value.document.commit, ["algorithm", "oid"]) ||
+    !["sha1", "sha256"].includes(String(value.document.commit.algorithm)) ||
+    typeof value.document.commit.oid !== "string" ||
+    !(
+      (value.document.commit.algorithm === "sha1" &&
+        /^[0-9a-f]{40}$/.test(value.document.commit.oid)) ||
+      (value.document.commit.algorithm === "sha256" &&
+        /^[0-9a-f]{64}$/.test(value.document.commit.oid))
+    ) ||
+    !SHA256.test(String(value.document.source_tree_digest)) ||
+    !isRecord(value.document.manifest) ||
+    !exactShape(value.document.manifest, ["path", "digest"]) ||
+    value.document.manifest.path !== value.manifestPath ||
+    !SHA256.test(String(value.document.manifest.digest)) ||
+    !Array.isArray(value.document.artifacts) ||
+    value.document.artifacts.length < 1 ||
+    value.document.artifacts.length > 64 ||
+    value.document.artifacts.some(
+      (artifact) =>
+        !isRecord(artifact) ||
+        !exactShape(artifact, ["media_type", "size", "digest", "location_class"]) ||
+        !validText(artifact.media_type, 256) ||
+        !Number.isSafeInteger(artifact.size) ||
+        Number(artifact.size) < 0 ||
+        !SHA256.test(String(artifact.digest)) ||
+        !["local", "oci"].includes(String(artifact.location_class)),
+    ) ||
+    !SHA256.test(String(value.document.build_definition_digest)) ||
+    !isRecord(value.chisei) ||
+    !exactShape(value.chisei, [
+      "revision",
+      "source_tree_digest",
+      "manifest_digest",
+      "artifact_reference",
+      "artifact_digest",
+      "build_definition_digest",
+    ]) ||
+    value.chisei.revision !== value.document.commit.oid ||
+    value.chisei.source_tree_digest !== value.document.source_tree_digest ||
+    value.chisei.manifest_digest !== value.document.manifest.digest ||
+    value.chisei.artifact_digest !== value.document.artifacts[0]?.digest ||
+    value.chisei.build_definition_digest !== value.document.build_definition_digest ||
+    !validText(value.chisei.artifact_reference, 512) ||
+    !isRecord(value.build) ||
+    !exactShape(value.build, ["adapter", "commands", "definitionDigest"]) ||
+    value.build.adapter !== "npm" ||
+    value.build.definitionDigest !== value.document.build_definition_digest ||
+    !Array.isArray(value.build.commands) ||
+    value.build.commands.length !== 3
+  )
+    return false;
   const commandIds = ["install", "build", "test"];
-  if (value.build.commands.some((command, index) => (
-    !isRecord(command)
-    || !exactShape(command, ["id", "executable", "args", "declared"])
-    || command.id !== commandIds[index]
-    || command.executable !== "npm"
-    || !Array.isArray(command.args)
-    || command.args.length > 8
-    || command.args.some((argument) => !validText(argument, 128))
-    || !validText(command.declared, 512)
-  ))) return false;
+  if (
+    value.build.commands.some(
+      (command, index) =>
+        !isRecord(command) ||
+        !exactShape(command, ["id", "executable", "args", "declared"]) ||
+        command.id !== commandIds[index] ||
+        command.executable !== "npm" ||
+        !Array.isArray(command.args) ||
+        command.args.length > 8 ||
+        command.args.some((argument) => !validText(argument, 128)) ||
+        !validText(command.declared, 512),
+    )
+  )
+    return false;
   try {
-    return value.identity === deliveryCandidateIdentity(
-      value.document as PreparedReleaseCandidate["document"],
+    return (
+      value.identity ===
+      deliveryCandidateIdentity(value.document as PreparedReleaseCandidate["document"])
     );
   } catch {
     return false;
@@ -727,120 +797,175 @@ function validCandidate(value: unknown): value is PreparedReleaseCandidate {
 
 function validSession(value: unknown): value is ReleaseDeliverySession {
   if (
-    !isRecord(value)
-    || !exactShape(value, [
-      "schemaVersion", "id", "projectId", "repository", "worktree", "candidate", "state",
-      "completeness", "buildEvidence", "evaluation", "tenkai", "error", "createdAt", "updatedAt",
-    ])
-    || value.schemaVersion !== 1
-    || !validOpaque(value.id)
-    || !validOpaque(value.projectId)
-    || !validText(value.repository, 4_096)
-    || !validText(value.worktree, 4_096)
-    || resolve(value.repository) !== value.repository
-    || resolve(value.worktree) !== value.worktree
-    || !validCandidate(value.candidate)
-    || !WORKFLOW_STATES.includes(value.state as ReleaseWorkflowState)
-    || !COMPLETENESS_VALUES.includes(value.completeness as ReleaseCompleteness)
-    || !isRecord(value.buildEvidence)
-    || !exactShape(value.buildEvidence, ["digest", "commands", "observedAt"])
-    || !SHA256.test(String(value.buildEvidence.digest))
-    || !Array.isArray(value.buildEvidence.commands)
-    || value.buildEvidence.commands.length !== 3
-    || value.buildEvidence.commands.some((command, index) => (
-      !isRecord(command)
-      || !exactShape(command, ["id", "status"])
-      || command.id !== ["install", "build", "test"][index]
-      || command.status !== "passed"
-    ))
-    || !validTimestamp(value.buildEvidence.observedAt)
-    || value.buildEvidence.digest !== sha256(JSON.stringify({
-      schema: "aldunis.build-evidence/v1",
-      candidate: value.candidate.identity,
-      commands: value.buildEvidence.commands.map((command) => ({
-        id: (command as Record<string, unknown>).id,
-        status: (command as Record<string, unknown>).status,
-      })),
-    }))
-  ) return false;
+    !isRecord(value) ||
+    !exactShape(value, [
+      "schemaVersion",
+      "id",
+      "projectId",
+      "repository",
+      "worktree",
+      "candidate",
+      "state",
+      "completeness",
+      "buildEvidence",
+      "evaluation",
+      "tenkai",
+      "error",
+      "createdAt",
+      "updatedAt",
+    ]) ||
+    value.schemaVersion !== 1 ||
+    !validOpaque(value.id) ||
+    !validOpaque(value.projectId) ||
+    !validText(value.repository, 4_096) ||
+    !validText(value.worktree, 4_096) ||
+    resolve(value.repository) !== value.repository ||
+    resolve(value.worktree) !== value.worktree ||
+    !validCandidate(value.candidate) ||
+    !WORKFLOW_STATES.includes(value.state as ReleaseWorkflowState) ||
+    !COMPLETENESS_VALUES.includes(value.completeness as ReleaseCompleteness) ||
+    !isRecord(value.buildEvidence) ||
+    !exactShape(value.buildEvidence, ["digest", "commands", "observedAt"]) ||
+    !SHA256.test(String(value.buildEvidence.digest)) ||
+    !Array.isArray(value.buildEvidence.commands) ||
+    value.buildEvidence.commands.length !== 3 ||
+    value.buildEvidence.commands.some(
+      (command, index) =>
+        !isRecord(command) ||
+        !exactShape(command, ["id", "status"]) ||
+        command.id !== ["install", "build", "test"][index] ||
+        command.status !== "passed",
+    ) ||
+    !validTimestamp(value.buildEvidence.observedAt) ||
+    value.buildEvidence.digest !==
+      sha256(
+        JSON.stringify({
+          schema: "aldunis.build-evidence/v1",
+          candidate: value.candidate.identity,
+          commands: value.buildEvidence.commands.map((command) => ({
+            id: (command as Record<string, unknown>).id,
+            status: (command as Record<string, unknown>).status,
+          })),
+        }),
+      )
+  )
+    return false;
   if (value.evaluation !== null) {
     if (
-      !isRecord(value.evaluation)
-      || !exactShape(value.evaluation, [
-        "decision", "operationId", "receiptSchema", "receiptDigest", "references",
-        "fresh", "observedAt",
-      ])
-      || !["allow", "deny", "unavailable", "unknown"].includes(String(value.evaluation.decision))
-      || !validOpaque(value.evaluation.operationId)
-      || value.evaluation.receiptSchema !== "chisei.governed-subject-receipt/v1"
-      || !SHA256.test(String(value.evaluation.receiptDigest))
-      || typeof value.evaluation.fresh !== "boolean"
-      || !validTimestamp(value.evaluation.observedAt)
-      || !Array.isArray(value.evaluation.references)
-      || value.evaluation.references.length > 16
-      || value.evaluation.references.some((reference) => (
-        !isRecord(reference)
-        || !exactShape(reference, ["kind", "reference", "contentDigest", "observedAt"])
-        || !validText(reference.kind, 64)
-        || !validText(reference.reference)
-        || !SHA256.test(String(reference.contentDigest))
-        || !validTimestamp(reference.observedAt)
-      ))
-    ) return false;
+      !isRecord(value.evaluation) ||
+      !exactShape(value.evaluation, [
+        "decision",
+        "operationId",
+        "receiptSchema",
+        "receiptDigest",
+        "references",
+        "fresh",
+        "observedAt",
+      ]) ||
+      !["allow", "deny", "unavailable", "unknown"].includes(String(value.evaluation.decision)) ||
+      !validOpaque(value.evaluation.operationId) ||
+      value.evaluation.receiptSchema !== "chisei.governed-subject-receipt/v1" ||
+      !SHA256.test(String(value.evaluation.receiptDigest)) ||
+      typeof value.evaluation.fresh !== "boolean" ||
+      !validTimestamp(value.evaluation.observedAt) ||
+      !Array.isArray(value.evaluation.references) ||
+      value.evaluation.references.length > 16 ||
+      value.evaluation.references.some(
+        (reference) =>
+          !isRecord(reference) ||
+          !exactShape(reference, ["kind", "reference", "contentDigest", "observedAt"]) ||
+          !validText(reference.kind, 64) ||
+          !validText(reference.reference) ||
+          !SHA256.test(String(reference.contentDigest)) ||
+          !validTimestamp(reference.observedAt),
+      )
+    )
+      return false;
     const expectedReferences = new Map([
-      ["source_tree", {
-        reference: value.candidate.chisei.source_tree_digest,
-        digest: value.candidate.chisei.source_tree_digest,
-      }],
-      ["manifest", {
-        reference: value.candidate.chisei.manifest_digest,
-        digest: value.candidate.chisei.manifest_digest,
-      }],
-      ["artifact", {
-        reference: value.candidate.chisei.artifact_reference,
-        digest: value.candidate.chisei.artifact_digest,
-      }],
-      ["build_definition", {
-        reference: value.candidate.chisei.build_definition_digest,
-        digest: value.candidate.chisei.build_definition_digest,
-      }],
+      [
+        "source_tree",
+        {
+          reference: value.candidate.chisei.source_tree_digest,
+          digest: value.candidate.chisei.source_tree_digest,
+        },
+      ],
+      [
+        "manifest",
+        {
+          reference: value.candidate.chisei.manifest_digest,
+          digest: value.candidate.chisei.manifest_digest,
+        },
+      ],
+      [
+        "artifact",
+        {
+          reference: value.candidate.chisei.artifact_reference,
+          digest: value.candidate.chisei.artifact_digest,
+        },
+      ],
+      [
+        "build_definition",
+        {
+          reference: value.candidate.chisei.build_definition_digest,
+          digest: value.candidate.chisei.build_definition_digest,
+        },
+      ],
     ]);
     if (
-      value.evaluation.references.length !== expectedReferences.size
-      || value.evaluation.references.some((reference) => {
+      value.evaluation.references.length !== expectedReferences.size ||
+      value.evaluation.references.some((reference) => {
         if (!isRecord(reference)) return true;
         const expected = expectedReferences.get(String(reference.kind));
-        return !expected
-          || reference.reference !== expected.reference
-          || reference.contentDigest !== expected.digest;
-      })
-      || new Set(value.evaluation.references.map((reference) => (
-        isRecord(reference) ? reference.kind : null
-      ))).size !== expectedReferences.size
-    ) return false;
+        return (
+          !expected ||
+          reference.reference !== expected.reference ||
+          reference.contentDigest !== expected.digest
+        );
+      }) ||
+      new Set(
+        value.evaluation.references.map((reference) =>
+          isRecord(reference) ? reference.kind : null,
+        ),
+      ).size !== expectedReferences.size
+    )
+      return false;
   }
   if (
-    !isRecord(value.tenkai)
-    || !exactShape(value.tenkai, [
-      "releaseId", "provenanceDigest", "channelId", "planId", "environmentId", "planState",
-      "deployedVersion", "health", "rollbackPlanId", "provenanceExpiresAt", "observedAt",
-    ])
-    || !validOptionalOpaque(value.tenkai.releaseId)
-    || !(value.tenkai.provenanceDigest === null || SHA256.test(String(value.tenkai.provenanceDigest)))
-    || !validOptionalOpaque(value.tenkai.channelId)
-    || !validOptionalOpaque(value.tenkai.planId)
-    || !validOptionalOpaque(value.tenkai.environmentId)
-    || !validOptionalText(value.tenkai.planState, 64)
-    || !validOptionalText(value.tenkai.deployedVersion, 128)
-    || !validOptionalText(value.tenkai.health, 64)
-    || !validOptionalOpaque(value.tenkai.rollbackPlanId)
-    || !(value.tenkai.provenanceExpiresAt === null || validTimestamp(value.tenkai.provenanceExpiresAt))
-    || !(value.tenkai.observedAt === null || validTimestamp(value.tenkai.observedAt))
-    || !(value.error === null || validText(value.error, 500))
-    || !validTimestamp(value.createdAt)
-    || !validTimestamp(value.updatedAt)
-    || Date.parse(value.createdAt) > Date.parse(value.updatedAt)
-  ) return false;
+    !isRecord(value.tenkai) ||
+    !exactShape(value.tenkai, [
+      "releaseId",
+      "provenanceDigest",
+      "channelId",
+      "planId",
+      "environmentId",
+      "planState",
+      "deployedVersion",
+      "health",
+      "rollbackPlanId",
+      "provenanceExpiresAt",
+      "observedAt",
+    ]) ||
+    !validOptionalOpaque(value.tenkai.releaseId) ||
+    !(
+      value.tenkai.provenanceDigest === null || SHA256.test(String(value.tenkai.provenanceDigest))
+    ) ||
+    !validOptionalOpaque(value.tenkai.channelId) ||
+    !validOptionalOpaque(value.tenkai.planId) ||
+    !validOptionalOpaque(value.tenkai.environmentId) ||
+    !validOptionalText(value.tenkai.planState, 64) ||
+    !validOptionalText(value.tenkai.deployedVersion, 128) ||
+    !validOptionalText(value.tenkai.health, 64) ||
+    !validOptionalOpaque(value.tenkai.rollbackPlanId) ||
+    !(
+      value.tenkai.provenanceExpiresAt === null || validTimestamp(value.tenkai.provenanceExpiresAt)
+    ) ||
+    !(value.tenkai.observedAt === null || validTimestamp(value.tenkai.observedAt)) ||
+    !(value.error === null || validText(value.error, 500)) ||
+    !validTimestamp(value.createdAt) ||
+    !validTimestamp(value.updatedAt) ||
+    Date.parse(value.createdAt) > Date.parse(value.updatedAt)
+  )
+    return false;
   return true;
 }
 
@@ -863,10 +988,10 @@ export class ReleaseDeliveryStore {
     try {
       const parsed = JSON.parse(bytes) as PersistedReleaseSessions;
       if (
-        parsed.schema !== "aldunis.release-delivery-sessions/v1"
-        || !Array.isArray(parsed.sessions)
-        || parsed.sessions.length > MAX_SESSIONS
-        || parsed.sessions.some((session) => !validSession(session))
+        parsed.schema !== "aldunis.release-delivery-sessions/v1" ||
+        !Array.isArray(parsed.sessions) ||
+        parsed.sessions.length > MAX_SESSIONS ||
+        parsed.sessions.some((session) => !validSession(session))
       ) {
         throw new Error("invalid");
       }
@@ -886,10 +1011,13 @@ export class ReleaseDeliveryStore {
       const temporary = join(this.directory, `.release-deliveries-${randomUUID()}.tmp`);
       const handle = await open(temporary, "wx", 0o600);
       try {
-        await handle.writeFile(JSON.stringify({
-          schema: "aldunis.release-delivery-sessions/v1",
-          sessions: next,
-        } satisfies PersistedReleaseSessions), "utf8");
+        await handle.writeFile(
+          JSON.stringify({
+            schema: "aldunis.release-delivery-sessions/v1",
+            sessions: next,
+          } satisfies PersistedReleaseSessions),
+          "utf8",
+        );
         await handle.sync();
       } finally {
         await handle.close();
@@ -922,13 +1050,23 @@ export class ReleaseDeliveryBroker {
     readonly runner: ReleaseCommandRunner = defaultRunner,
   ) {}
 
-  async inspect(projectId: string, repository: string, worktree: string): Promise<ReleaseDeliveryInspection> {
-    const localSessions = (await this.store.load())
-      .filter((item) => item.projectId === projectId && item.repository === repository && item.worktree === worktree);
+  async inspect(
+    projectId: string,
+    repository: string,
+    worktree: string,
+  ): Promise<ReleaseDeliveryInspection> {
+    const localSessions = (await this.store.load()).filter(
+      (item) =>
+        item.projectId === projectId &&
+        item.repository === repository &&
+        item.worktree === worktree,
+    );
     const sessions = localSessions.map(publicSession);
     return {
       configuration: {
-        chisei: Boolean(this.env.ALDUNIS_CHISEI_ENDPOINT?.trim() && this.env.ALDUNIS_CHISEI_TOKEN?.trim()),
+        chisei: Boolean(
+          this.env.ALDUNIS_CHISEI_ENDPOINT?.trim() && this.env.ALDUNIS_CHISEI_TOKEN?.trim(),
+        ),
         tenkai: Boolean(this.env.ALDUNIS_TENKAI_DATABASE?.trim()),
         localOnly: true,
       },
@@ -971,9 +1109,9 @@ export class ReleaseDeliveryBroker {
     const session = (await this.store.load()).find((item) => item.id === id);
     if (!session) throw new RepositoryError("The release-delivery session is unavailable.", 404);
     if (
-      session.repository !== repository
-      || session.worktree !== worktree
-      || session.projectId !== projectId
+      session.repository !== repository ||
+      session.worktree !== worktree ||
+      session.projectId !== projectId
     ) {
       throw new RepositoryError("The release-delivery session belongs to another workspace.", 403);
     }
@@ -995,7 +1133,10 @@ export class ReleaseDeliveryBroker {
         updatedAt: new Date().toISOString(),
       };
       await this.store.put(stale);
-      throw new RepositoryError("The release candidate changed. Prepare and evaluate a new candidate.", 409);
+      throw new RepositoryError(
+        "The release candidate changed. Prepare and evaluate a new candidate.",
+        409,
+      );
     }
     return current;
   }
@@ -1031,20 +1172,39 @@ export class ReleaseDeliveryBroker {
         "execution: repository-declared npm scripts run from a detached snapshot of the reviewed commit",
       ];
     } else {
-      if (typeof input.sessionId !== "string") throw new RepositoryError("A delivery session is required.");
+      if (typeof input.sessionId !== "string")
+        throw new RepositoryError("A delivery session is required.");
       session = await this.#session(input.sessionId, repository, worktree, projectId);
       candidate = await this.#freshCandidate(session);
       const allowed: Record<Exclude<ReleaseWorkflowAction, "prepare">, ReleaseWorkflowState[]> = {
-        evaluate: ["candidate_ready", "governance_denied", "governance_unavailable", "governance_unknown"],
+        evaluate: [
+          "candidate_ready",
+          "governance_denied",
+          "governance_unavailable",
+          "governance_unknown",
+        ],
         publish: ["governance_allowed"],
         promote: ["published"],
         plan: ["promoted"],
         apply: ["planned"],
-        reconcile: ["published", "publication_unknown", "promoted", "planned", "applying", "completed", "failed", "unknown", "recovered"],
+        reconcile: [
+          "published",
+          "publication_unknown",
+          "promoted",
+          "planned",
+          "applying",
+          "completed",
+          "failed",
+          "unknown",
+          "recovered",
+        ],
         rollback: ["completed", "failed", "unknown"],
       };
       if (!allowed[action].includes(session.state)) {
-        throw new RepositoryError(`The ${action} action is unavailable from state ${session.state}.`, 409);
+        throw new RepositoryError(
+          `The ${action} action is unavailable from state ${session.state}.`,
+          409,
+        );
       }
       if (["promote", "plan", "apply"].includes(action) && !this.#provenanceFresh(session)) {
         throw new RepositoryError(
@@ -1053,7 +1213,11 @@ export class ReleaseDeliveryBroker {
         );
       }
       if (action === "evaluate") {
-        if (!namespace) throw new RepositoryError("Bind this project to a Chisei namespace before evaluation.", 409);
+        if (!namespace)
+          throw new RepositoryError(
+            "Bind this project to a Chisei namespace before evaluation.",
+            409,
+          );
         this.#requireChisei();
         summary = `Request Chisei evaluation for ${candidate.identity}`;
         details = [
@@ -1077,9 +1241,9 @@ export class ReleaseDeliveryBroker {
       } else if (action === "promote") {
         this.#requireTenkai();
         const environment = await this.#inspectEnvironment(worktree);
-        const subscription = environment.subscriptions.find((item) => (
-          item.product === candidate.product && item.channel === "stable"
-        ));
+        const subscription = environment.subscriptions.find(
+          (item) => item.product === candidate.product && item.channel === "stable",
+        );
         if (!subscription) {
           throw new RepositoryError(
             `Tenkai local must already subscribe ${candidate.product}=stable before promotion.`,
@@ -1102,7 +1266,8 @@ export class ReleaseDeliveryBroker {
         ];
       } else if (action === "apply") {
         this.#requireTenkai();
-        if (!session.tenkai.planId) throw new RepositoryError("A reconciled Tenkai plan is required.", 409);
+        if (!session.tenkai.planId)
+          throw new RepositoryError("A reconciled Tenkai plan is required.", 409);
         const environment = await this.#inspectEnvironment(worktree);
         if (!this.#isCandidateOnlyPlan(session, environment.latest_plan, session.tenkai.planId)) {
           throw new RepositoryError(
@@ -1187,9 +1352,9 @@ export class ReleaseDeliveryBroker {
       throw new RepositoryError("The release-delivery preview expired or was already used.", 409);
     }
     if (
-      plan.projectId !== projectId
-      || plan.repository !== repository
-      || plan.worktree !== worktree
+      plan.projectId !== projectId ||
+      plan.repository !== repository ||
+      plan.worktree !== worktree
     ) {
       throw new RepositoryError("The release-delivery preview belongs to another workspace.", 403);
     }
@@ -1205,22 +1370,26 @@ export class ReleaseDeliveryBroker {
     return this.#withSessionExecution(plan.sessionId!, async () => {
       const session = await this.#session(plan.sessionId!, repository, worktree, projectId);
       if (plan.sessionBinding !== session.updatedAt) {
-        throw new RepositoryError("The release-delivery state changed after preview. Inspect the action again.", 409);
+        throw new RepositoryError(
+          "The release-delivery state changed after preview. Inspect the action again.",
+          409,
+        );
       }
       await this.#freshCandidate(session);
-      const next = plan.action === "evaluate"
-        ? await this.#executeEvaluate(session, plan.namespace, signal)
-        : plan.action === "publish"
-          ? await this.#executePublish(session, signal)
-          : plan.action === "promote"
-            ? await this.#executePromote(session, signal)
-            : plan.action === "plan"
-              ? await this.#executePlan(session, signal)
-              : plan.action === "apply"
-                ? await this.#executeApply(session, signal)
-                : plan.action === "rollback"
-                  ? await this.#executeRollback(session, plan.reason!, signal)
-                  : await this.#executeReconcile(session, signal);
+      const next =
+        plan.action === "evaluate"
+          ? await this.#executeEvaluate(session, plan.namespace, signal)
+          : plan.action === "publish"
+            ? await this.#executePublish(session, signal)
+            : plan.action === "promote"
+              ? await this.#executePromote(session, signal)
+              : plan.action === "plan"
+                ? await this.#executePlan(session, signal)
+                : plan.action === "apply"
+                  ? await this.#executeApply(session, signal)
+                  : plan.action === "rollback"
+                    ? await this.#executeRollback(session, plan.reason!, signal)
+                    : await this.#executeReconcile(session, signal);
       return publicSession(next);
     });
   }
@@ -1228,7 +1397,9 @@ export class ReleaseDeliveryBroker {
   async #withSessionExecution<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.#sessionExecutions.get(sessionId) ?? Promise.resolve();
     let release!: () => void;
-    const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
     const queued = previous.catch(() => undefined).then(() => gate);
     this.#sessionExecutions.set(sessionId, queued);
     await previous.catch(() => undefined);
@@ -1251,8 +1422,9 @@ export class ReleaseDeliveryBroker {
     const session = await this.#session(id, repository, worktree, projectId);
     const terminalOutcomes = await this.#inspectTerminalOutcomes(worktree, [session]);
     let completeness = session.completeness;
-    const evaluationFresh = session.evaluation?.fresh === true
-      && (!session.tenkai.releaseId || this.#provenanceFresh(session));
+    const evaluationFresh =
+      session.evaluation?.fresh === true &&
+      (!session.tenkai.releaseId || this.#provenanceFresh(session));
     try {
       await this.#freshCandidate(session);
     } catch {
@@ -1276,15 +1448,17 @@ export class ReleaseDeliveryBroker {
         commands: session.buildEvidence.commands,
         observed_at: session.buildEvidence.observedAt,
       },
-      sekai: session.evaluation ? {
-        authority: "sekai-chisei",
-        operation_id: session.evaluation.operationId,
-        receipt_schema: session.evaluation.receiptSchema,
-        receipt_digest: session.evaluation.receiptDigest,
-        decision: session.evaluation.decision,
-        fresh: evaluationFresh,
-        observed_at: session.evaluation.observedAt,
-      } : null,
+      sekai: session.evaluation
+        ? {
+            authority: "sekai-chisei",
+            operation_id: session.evaluation.operationId,
+            receipt_schema: session.evaluation.receiptSchema,
+            receipt_digest: session.evaluation.receiptDigest,
+            decision: session.evaluation.decision,
+            fresh: evaluationFresh,
+            observed_at: session.evaluation.observedAt,
+          }
+        : null,
       tenkai: {
         authority: "tenkai",
         release_id: session.tenkai.releaseId,
@@ -1384,15 +1558,7 @@ export class ReleaseDeliveryBroker {
     };
     const checkout = await defaultRunner(
       "git",
-      [
-        "-C",
-        worktree,
-        "worktree",
-        "add",
-        "--detach",
-        snapshot,
-        commit,
-      ],
+      ["-C", worktree, "worktree", "add", "--detach", snapshot, commit],
       {
         cwd: worktree,
         env: gitEnvironment,
@@ -1411,23 +1577,16 @@ export class ReleaseDeliveryBroker {
     try {
       return await operation(snapshot);
     } finally {
-      await defaultRunner(
-        "git",
-        ["-C", worktree, "worktree", "remove", "--force", snapshot],
-        {
-          cwd: worktree,
-          env: gitEnvironment,
-          timeout: 60_000,
-        },
-      );
+      await defaultRunner("git", ["-C", worktree, "worktree", "remove", "--force", snapshot], {
+        cwd: worktree,
+        env: gitEnvironment,
+        timeout: 60_000,
+      });
       await rm(directory, { recursive: true, force: true });
     }
   }
 
-  async #runBuildSnapshot(
-    plan: PendingReleasePlan,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  async #runBuildSnapshot(plan: PendingReleasePlan, signal?: AbortSignal): Promise<void> {
     await this.#withCandidateSnapshot(
       plan.worktree,
       plan.candidate.document.commit.oid,
@@ -1454,7 +1613,10 @@ export class ReleaseDeliveryBroker {
               throw new RepositoryError("The local delivery action was cancelled.", 409);
             }
             if (restore.exitCode !== 0) {
-              throw new RepositoryError("The reviewed package definition could not be restored.", 409);
+              throw new RepositoryError(
+                "The reviewed package definition could not be restored.",
+                409,
+              );
             }
           }
           const result = await this.#run(
@@ -1478,28 +1640,46 @@ export class ReleaseDeliveryBroker {
     );
   }
 
-  async #executePrepare(plan: PendingReleasePlan, signal?: AbortSignal): Promise<ReleaseDeliverySession> {
+  async #executePrepare(
+    plan: PendingReleasePlan,
+    signal?: AbortSignal,
+  ): Promise<ReleaseDeliverySession> {
     const approved = await prepareReleaseCandidate(
       plan.repository,
       plan.worktree,
       plan.candidate.manifestPath,
     );
     if (approved.identity !== plan.candidate.identity) {
-      throw new RepositoryError("The repository changed after the delivery preview was created.", 409);
+      throw new RepositoryError(
+        "The repository changed after the delivery preview was created.",
+        409,
+      );
     }
     await this.#runBuildSnapshot(plan, signal);
-    const fresh = await prepareReleaseCandidate(plan.repository, plan.worktree, plan.candidate.manifestPath);
+    const fresh = await prepareReleaseCandidate(
+      plan.repository,
+      plan.worktree,
+      plan.candidate.manifestPath,
+    );
     if (fresh.identity !== plan.candidate.identity) {
-      throw new RepositoryError("The repository changed while build and test evidence was collected.", 409);
+      throw new RepositoryError(
+        "The repository changed while build and test evidence was collected.",
+        409,
+      );
     }
     const observedAt = new Date().toISOString();
     const buildEvidence = {
-      digest: sha256(JSON.stringify({
-        schema: "aldunis.build-evidence/v1",
-        candidate: fresh.identity,
-        commands: fresh.build.commands.map((command) => ({ id: command.id, status: "passed" })),
+      digest: sha256(
+        JSON.stringify({
+          schema: "aldunis.build-evidence/v1",
+          candidate: fresh.identity,
+          commands: fresh.build.commands.map((command) => ({ id: command.id, status: "passed" })),
+        }),
+      ),
+      commands: fresh.build.commands.map((command) => ({
+        id: command.id,
+        status: "passed" as const,
       })),
-      commands: fresh.build.commands.map((command) => ({ id: command.id, status: "passed" as const })),
       observedAt,
     };
     const session: ReleaseDeliverySession = {
@@ -1587,9 +1767,14 @@ export class ReleaseDeliveryBroker {
       try {
         value = JSON.parse(result.stdout);
       } catch {
-        return this.#unknown(session, "governance_unknown", "Chisei evaluation returned an unknown outcome.");
+        return this.#unknown(
+          session,
+          "governance_unknown",
+          "Chisei evaluation returned an unknown outcome.",
+        );
       }
-      if (!isRecord(value)) throw new RepositoryError("Chisei returned an incompatible evaluation.", 502);
+      if (!isRecord(value))
+        throw new RepositoryError("Chisei returned an incompatible evaluation.", 502);
       exactKeys(
         value,
         [
@@ -1606,10 +1791,13 @@ export class ReleaseDeliveryBroker {
         "The Chisei evaluation",
       );
       if (
-        value.version !== "chisei.governed-subject-result/v1"
-        || value.receipt_schema !== "chisei.governed-subject-receipt/v1"
+        value.version !== "chisei.governed-subject-result/v1" ||
+        value.receipt_schema !== "chisei.governed-subject-receipt/v1"
       ) {
-        throw new RepositoryError("Chisei returned an incompatible governed-subject contract.", 502);
+        throw new RepositoryError(
+          "Chisei returned an incompatible governed-subject contract.",
+          502,
+        );
       }
       const decision = boundedString(value.decision, "The Chisei decision", 32);
       if (!["allow", "deny", "unavailable", "unknown"].includes(decision)) {
@@ -1618,13 +1806,19 @@ export class ReleaseDeliveryBroker {
       const operationId = boundedString(value.operation_id, "The Chisei operation identity");
       const receiptSchema = boundedString(value.receipt_schema, "The Chisei receipt schema", 128);
       const receiptDigest = boundedString(value.receipt_digest, "The Chisei receipt digest", 71);
-      if (!SHA256.test(receiptDigest)) throw new RepositoryError("Chisei returned an invalid receipt digest.", 502);
+      if (!SHA256.test(receiptDigest))
+        throw new RepositoryError("Chisei returned an invalid receipt digest.", 502);
       if (!Array.isArray(value.references) || value.references.length > 16) {
         throw new RepositoryError("Chisei returned incompatible governed references.", 502);
       }
       const references = value.references.map((item) => {
-        if (!isRecord(item)) throw new RepositoryError("Chisei returned an incompatible governed reference.", 502);
-        exactKeys(item, ["kind", "reference", "content_digest", "observed_at_ms"], "A Chisei reference");
+        if (!isRecord(item))
+          throw new RepositoryError("Chisei returned an incompatible governed reference.", 502);
+        exactKeys(
+          item,
+          ["kind", "reference", "content_digest", "observed_at_ms"],
+          "A Chisei reference",
+        );
         const observed = Number(item.observed_at_ms);
         if (!Number.isSafeInteger(observed) || observed <= 0) {
           throw new RepositoryError("Chisei returned an invalid evidence observation.", 502);
@@ -1637,46 +1831,64 @@ export class ReleaseDeliveryBroker {
         };
       });
       const expected = new Map([
-        ["source_tree", {
-          reference: session.candidate.chisei.source_tree_digest,
-          digest: session.candidate.chisei.source_tree_digest,
-        }],
-        ["manifest", {
-          reference: session.candidate.chisei.manifest_digest,
-          digest: session.candidate.chisei.manifest_digest,
-        }],
-        ["artifact", {
-          reference: session.candidate.chisei.artifact_reference,
-          digest: session.candidate.chisei.artifact_digest,
-        }],
-        ["build_definition", {
-          reference: session.candidate.chisei.build_definition_digest,
-          digest: session.candidate.chisei.build_definition_digest,
-        }],
+        [
+          "source_tree",
+          {
+            reference: session.candidate.chisei.source_tree_digest,
+            digest: session.candidate.chisei.source_tree_digest,
+          },
+        ],
+        [
+          "manifest",
+          {
+            reference: session.candidate.chisei.manifest_digest,
+            digest: session.candidate.chisei.manifest_digest,
+          },
+        ],
+        [
+          "artifact",
+          {
+            reference: session.candidate.chisei.artifact_reference,
+            digest: session.candidate.chisei.artifact_digest,
+          },
+        ],
+        [
+          "build_definition",
+          {
+            reference: session.candidate.chisei.build_definition_digest,
+            digest: session.candidate.chisei.build_definition_digest,
+          },
+        ],
       ]);
       if (
-        references.length !== expected.size
-        || references.some((item) => {
+        references.length !== expected.size ||
+        references.some((item) => {
           const binding = expected.get(item.kind);
-          return !binding
-            || item.reference !== binding.reference
-            || item.contentDigest !== binding.digest;
-        })
-        || new Set(references.map((item) => item.kind)).size !== expected.size
+          return (
+            !binding ||
+            item.reference !== binding.reference ||
+            item.contentDigest !== binding.digest
+          );
+        }) ||
+        new Set(references.map((item) => item.kind)).size !== expected.size
       ) {
-        throw new RepositoryError("Chisei evaluation evidence does not match the release candidate.", 502);
+        throw new RepositoryError(
+          "Chisei evaluation evidence does not match the release candidate.",
+          502,
+        );
       }
       const fresh = value.fresh === true;
       const observedAt = new Date().toISOString();
       const next: ReleaseDeliverySession = {
         ...session,
-        state: decision === "allow" && fresh
-          ? "governance_allowed"
-          : decision === "deny"
-            ? "governance_denied"
-            : decision === "unavailable"
-              ? "governance_unavailable"
-              : "governance_unknown",
+        state:
+          decision === "allow" && fresh
+            ? "governance_allowed"
+            : decision === "deny"
+              ? "governance_denied"
+              : decision === "unavailable"
+                ? "governance_unavailable"
+                : "governance_unknown",
         completeness: fresh ? "partial" : "stale",
         evaluation: {
           decision: decision as NonNullable<ReleaseDeliverySession["evaluation"]>["decision"],
@@ -1687,9 +1899,10 @@ export class ReleaseDeliveryBroker {
           fresh,
           observedAt,
         },
-        error: decision === "allow" && fresh
-          ? null
-          : safeDiagnostic(String(value.failure_message ?? `Chisei decision: ${decision}`)),
+        error:
+          decision === "allow" && fresh
+            ? null
+            : safeDiagnostic(String(value.failure_message ?? `Chisei decision: ${decision}`)),
         updatedAt: observedAt,
       };
       await this.store.put(next);
@@ -1719,23 +1932,44 @@ export class ReleaseDeliveryBroker {
           const exportId = `aldunis-tenkai-${session.id}`;
           for (const args of [
             [
-              "admin", "governance", "subject", "provenance", "export", candidatePath,
-              "--operation-id", evaluation.operationId,
-              "--receipt-digest", evaluation.receiptDigest,
-              "--export-id", exportId,
-              "--output", provenancePath,
-              "--target", this.env.ALDUNIS_CHISEI_ENDPOINT!,
+              "admin",
+              "governance",
+              "subject",
+              "provenance",
+              "export",
+              candidatePath,
+              "--operation-id",
+              evaluation.operationId,
+              "--receipt-digest",
+              evaluation.receiptDigest,
+              "--export-id",
+              exportId,
+              "--output",
+              provenancePath,
+              "--target",
+              this.env.ALDUNIS_CHISEI_ENDPOINT!,
             ],
             [
-              "admin", "governance", "subject", "provenance", "trust-root",
-              "--export-id", exportId,
-              "--output", rootsPath,
-              "--target", this.env.ALDUNIS_CHISEI_ENDPOINT!,
+              "admin",
+              "governance",
+              "subject",
+              "provenance",
+              "trust-root",
+              "--export-id",
+              exportId,
+              "--output",
+              rootsPath,
+              "--target",
+              this.env.ALDUNIS_CHISEI_ENDPOINT!,
             ],
           ]) {
             const result = await this.#run("chisei", sekaictl, args, snapshot, 60_000, signal);
             if (result.exitCode !== 0) {
-              return this.#unknown(session, "publication_unknown", "Chisei provenance export is unavailable.");
+              return this.#unknown(
+                session,
+                "publication_unknown",
+                "Chisei provenance export is unavailable.",
+              );
             }
           }
           const result = await this.#tenkaiMachine(
@@ -1755,12 +1989,10 @@ export class ReleaseDeliveryBroker {
             snapshot,
           );
           const releaseId = result.resources.find((item) => item.kind === "release")?.id ?? null;
-          const rawProvenanceDigest = result.resources.find(
-            (item) => item.kind === "release_provenance",
-          )?.id ?? null;
-          const provenanceDigest = rawProvenanceDigest && SHA256.test(rawProvenanceDigest)
-            ? rawProvenanceDigest
-            : null;
+          const rawProvenanceDigest =
+            result.resources.find((item) => item.kind === "release_provenance")?.id ?? null;
+          const provenanceDigest =
+            rawProvenanceDigest && SHA256.test(rawProvenanceDigest) ? rawProvenanceDigest : null;
           if (result.outcome !== "succeeded") {
             return this.#unknown(
               session,
@@ -1877,7 +2109,13 @@ export class ReleaseDeliveryBroker {
     signal?: AbortSignal,
   ): Promise<ReleaseDeliverySession> {
     this.#requireFreshProvenance(session);
-    const result = await this.#tenkaiMachine(session, "plan", ["plan", "--env", "local"], 60_000, signal);
+    const result = await this.#tenkaiMachine(
+      session,
+      "plan",
+      ["plan", "--env", "local"],
+      60_000,
+      signal,
+    );
     const planId = result.resources.find((item) => item.kind === "plan")?.id ?? null;
     if (result.outcome !== "succeeded") {
       return this.#unknown(
@@ -1979,7 +2217,10 @@ export class ReleaseDeliveryBroker {
       const release = await this.#inspectRelease(session, signal);
       const provenance = this.#matchingProvenance(session, release, null, false);
       if (!provenance) {
-        throw new RepositoryError("The authoritative Tenkai release lacks matching Chisei provenance.", 502);
+        throw new RepositoryError(
+          "The authoritative Tenkai release lacks matching Chisei provenance.",
+          502,
+        );
       }
       this.#assertRelease(session, release, release.release_id, provenance.envelope_digest, false);
       const observedAt = new Date().toISOString();
@@ -2015,9 +2256,9 @@ export class ReleaseDeliveryBroker {
     const reconciled = await this.#reconciledState(session, environment);
     if (reconciled.state !== "unknown") return reconciled;
     if (
-      session.tenkai.planId
-      && this.#isCandidateOnlyPlan(session, environment.latest_plan, session.tenkai.planId)
-      && environment.latest_plan?.state !== "failed"
+      session.tenkai.planId &&
+      this.#isCandidateOnlyPlan(session, environment.latest_plan, session.tenkai.planId) &&
+      environment.latest_plan?.state !== "failed"
     ) {
       const observedAt = new Date().toISOString();
       const planned: ReleaseDeliverySession = {
@@ -2087,28 +2328,27 @@ export class ReleaseDeliveryBroker {
     const subscription = this.#subscription(session, environment);
     const observedAt = new Date().toISOString();
     const rollbackStep = environment.latest_plan?.steps[0];
-    const succeeded = result.outcome === "succeeded"
-      && rollbackPlanId !== null
-      && environment.latest_plan?.id === rollbackPlanId
-      && environment.latest_plan.state === "succeeded"
-      && environment.latest_plan.steps_truncated === false
-      && environment.latest_plan.step_count === 1
-      && environment.latest_plan.steps.length === 1
-      && rollbackStep?.product === session.candidate.product
-      && rollbackStep?.to === subscription.deployed
-      && rollbackStep.release_id.length > 0
-      && subscription.head === session.candidate.version
-      && subscription.deployed !== null
-      && subscription.deployed !== session.candidate.version
-      && subscription.state === "behind"
-      && subscription.health === "healthy"
-      && subscription.error === null;
+    const succeeded =
+      result.outcome === "succeeded" &&
+      rollbackPlanId !== null &&
+      environment.latest_plan?.id === rollbackPlanId &&
+      environment.latest_plan.state === "succeeded" &&
+      environment.latest_plan.steps_truncated === false &&
+      environment.latest_plan.step_count === 1 &&
+      environment.latest_plan.steps.length === 1 &&
+      rollbackStep?.product === session.candidate.product &&
+      rollbackStep?.to === subscription.deployed &&
+      rollbackStep.release_id.length > 0 &&
+      subscription.head === session.candidate.version &&
+      subscription.deployed !== null &&
+      subscription.deployed !== session.candidate.version &&
+      subscription.state === "behind" &&
+      subscription.health === "healthy" &&
+      subscription.error === null;
     const next: ReleaseDeliverySession = {
       ...session,
       state: succeeded ? "recovered" : result.outcome === "unknown" ? "unknown" : "failed",
-      completeness: succeeded
-        ? this.#provenanceFresh(session) ? "complete" : "stale"
-        : "unknown",
+      completeness: succeeded ? (this.#provenanceFresh(session) ? "complete" : "stale") : "unknown",
       tenkai: {
         ...session.tenkai,
         rollbackPlanId,
@@ -2118,7 +2358,9 @@ export class ReleaseDeliveryBroker {
         health: subscription.health,
         observedAt,
       },
-      error: succeeded ? null : result.error?.message ?? "Tenkai rollback did not reach a reconciled terminal state.",
+      error: succeeded
+        ? null
+        : (result.error?.message ?? "Tenkai rollback did not reach a reconciled terminal state."),
       updatedAt: observedAt,
     };
     await this.store.put(next);
@@ -2136,13 +2378,15 @@ export class ReleaseDeliveryBroker {
       ...session,
       state,
       completeness: "unknown" as const,
-      ...(tenkai ? {
-        tenkai: {
-          ...session.tenkai,
-          ...tenkai,
-          observedAt: tenkai.observedAt ?? updatedAt,
-        },
-      } : {}),
+      ...(tenkai
+        ? {
+            tenkai: {
+              ...session.tenkai,
+              ...tenkai,
+              observedAt: tenkai.observedAt ?? updatedAt,
+            },
+          }
+        : {}),
       error: safeDiagnostic(message),
       updatedAt,
     };
@@ -2151,9 +2395,9 @@ export class ReleaseDeliveryBroker {
   }
 
   #subscription(session: ReleaseDeliverySession, environment: EnvironmentInspection) {
-    const subscription = environment.subscriptions.find((item) => (
-      item.product === session.candidate.product && item.channel === "stable"
-    ));
+    const subscription = environment.subscriptions.find(
+      (item) => item.product === session.candidate.product && item.channel === "stable",
+    );
     if (!subscription) {
       throw new RepositoryError("The authoritative Tenkai local subscription is unavailable.", 409);
     }
@@ -2167,15 +2411,15 @@ export class ReleaseDeliveryBroker {
   ): boolean {
     const step = plan?.steps[0];
     return Boolean(
-      planId
-      && session.tenkai.releaseId
-      && plan?.id === planId
-      && plan.steps_truncated === false
-      && plan.step_count === 1
-      && plan.steps.length === 1
-      && step?.product === session.candidate.product
-      && step.to === session.candidate.version
-      && step.release_id === session.tenkai.releaseId
+      planId &&
+      session.tenkai.releaseId &&
+      plan?.id === planId &&
+      plan.steps_truncated === false &&
+      plan.step_count === 1 &&
+      plan.steps.length === 1 &&
+      step?.product === session.candidate.product &&
+      step.to === session.candidate.version &&
+      step.release_id === session.tenkai.releaseId,
     );
   }
 
@@ -2186,50 +2430,61 @@ export class ReleaseDeliveryBroker {
   ): Promise<ReleaseDeliverySession> {
     const subscription = this.#subscription(session, environment);
     const planMatches = Boolean(
-      session.tenkai.releaseId
-      && session.tenkai.provenanceDigest
-      && session.tenkai.channelId
-      && session.tenkai.planId
-      && this.#isCandidateOnlyPlan(session, environment.latest_plan, session.tenkai.planId),
+      session.tenkai.releaseId &&
+      session.tenkai.provenanceDigest &&
+      session.tenkai.channelId &&
+      session.tenkai.planId &&
+      this.#isCandidateOnlyPlan(session, environment.latest_plan, session.tenkai.planId),
     );
-    const current = subscription.head === session.candidate.version
-      && subscription.deployed === session.candidate.version
-      && subscription.state === "current"
-      && subscription.health === "healthy"
-      && subscription.error === null
-      && planMatches
-      && environment.latest_plan?.state === "succeeded";
+    const current =
+      subscription.head === session.candidate.version &&
+      subscription.deployed === session.candidate.version &&
+      subscription.state === "current" &&
+      subscription.health === "healthy" &&
+      subscription.error === null &&
+      planMatches &&
+      environment.latest_plan?.state === "succeeded";
     const rollbackStep = environment.latest_plan?.steps[0];
     const recovered = Boolean(
-      session.tenkai.rollbackPlanId
-      && environment.latest_plan?.id === session.tenkai.rollbackPlanId
-      && environment.latest_plan.state === "succeeded"
-      && environment.latest_plan.steps_truncated === false
-      && environment.latest_plan.step_count === 1
-      && environment.latest_plan.steps.length === 1
-      && rollbackStep?.product === session.candidate.product
-      && rollbackStep.to === subscription.deployed
-      && rollbackStep.release_id.length > 0
-      && subscription.head === session.candidate.version
-      && subscription.deployed !== null
-      && subscription.deployed !== session.candidate.version
-      && subscription.state === "behind"
-      && subscription.health === "healthy"
-      && subscription.error === null
+      session.tenkai.rollbackPlanId &&
+      environment.latest_plan?.id === session.tenkai.rollbackPlanId &&
+      environment.latest_plan.state === "succeeded" &&
+      environment.latest_plan.steps_truncated === false &&
+      environment.latest_plan.step_count === 1 &&
+      environment.latest_plan.steps.length === 1 &&
+      rollbackStep?.product === session.candidate.product &&
+      rollbackStep.to === subscription.deployed &&
+      rollbackStep.release_id.length > 0 &&
+      subscription.head === session.candidate.version &&
+      subscription.deployed !== null &&
+      subscription.deployed !== session.candidate.version &&
+      subscription.state === "behind" &&
+      subscription.health === "healthy" &&
+      subscription.error === null,
     );
-    const failed = environment.latest_plan?.state === "failed"
-      || subscription.error !== null
-      || (result && result.outcome === "failed");
+    const failed =
+      environment.latest_plan?.state === "failed" ||
+      subscription.error !== null ||
+      (result && result.outcome === "failed");
     const state: ReleaseWorkflowState = recovered
       ? "recovered"
-      : current ? "completed" : failed ? "failed" : "unknown";
+      : current
+        ? "completed"
+        : failed
+          ? "failed"
+          : "unknown";
     const observedAt = new Date().toISOString();
     const next: ReleaseDeliverySession = {
       ...session,
       state,
-      completeness: current || recovered
-        ? this.#provenanceFresh(session) ? "complete" : "stale"
-        : failed ? "partial" : "unknown",
+      completeness:
+        current || recovered
+          ? this.#provenanceFresh(session)
+            ? "complete"
+            : "stale"
+          : failed
+            ? "partial"
+            : "unknown",
       tenkai: {
         ...session.tenkai,
         environmentId: environment.id,
@@ -2238,9 +2493,14 @@ export class ReleaseDeliveryBroker {
         health: subscription.health,
         observedAt,
       },
-      error: current || recovered
-        ? null
-        : safeDiagnostic(subscription.error ?? result?.error?.message ?? "Tenkai state is not terminal and current."),
+      error:
+        current || recovered
+          ? null
+          : safeDiagnostic(
+              subscription.error ??
+                result?.error?.message ??
+                "Tenkai state is not terminal and current.",
+            ),
       updatedAt: observedAt,
     };
     await this.store.put(next);
@@ -2311,7 +2571,10 @@ export class ReleaseDeliveryBroker {
     return parsed;
   }
 
-  async #inspectEnvironment(worktree: string, signal?: AbortSignal): Promise<EnvironmentInspection> {
+  async #inspectEnvironment(
+    worktree: string,
+    signal?: AbortSignal,
+  ): Promise<EnvironmentInspection> {
     this.#requireTenkai();
     const result = await this.#run(
       "tenkai",
@@ -2367,15 +2630,18 @@ export class ReleaseDeliveryBroker {
     requireFresh = true,
   ): void {
     if (
-      release.release_id !== releaseId
-      || release.product !== session.candidate.product
-      || release.version !== session.candidate.version
-      || release.status !== "unsigned-development"
-      || release.manifest_digest !== session.candidate.chisei.manifest_digest.slice(7)
-      || release.artifact_digest !== session.candidate.chisei.artifact_digest.slice(7)
-      || !this.#matchingProvenance(session, release, provenanceDigest, requireFresh)
+      release.release_id !== releaseId ||
+      release.product !== session.candidate.product ||
+      release.version !== session.candidate.version ||
+      release.status !== "unsigned-development" ||
+      release.manifest_digest !== session.candidate.chisei.manifest_digest.slice(7) ||
+      release.artifact_digest !== session.candidate.chisei.artifact_digest.slice(7) ||
+      !this.#matchingProvenance(session, release, provenanceDigest, requireFresh)
     ) {
-      throw new RepositoryError("The authoritative Tenkai release does not match the candidate.", 502);
+      throw new RepositoryError(
+        "The authoritative Tenkai release does not match the candidate.",
+        502,
+      );
     }
   }
 
@@ -2385,17 +2651,18 @@ export class ReleaseDeliveryBroker {
     envelopeDigest?: string | null,
     requireFresh = true,
   ): ReleaseInspection["governance_provenance"][number] | undefined {
-    return release.governance_provenance.find((item) => (
-      (!envelopeDigest || item.envelope_digest === envelopeDigest)
-      && item.profile === "example.governed-subject-receipt/v1"
-      && item.issuer === "sekai-chisei"
-      && item.subject === session.candidate.identity
-      && item.decision === "allow"
-      && item.receipt_schema === "chisei.governed-subject-receipt/v1"
-      && item.receipt_digest === session.evaluation?.receiptDigest
-      && Date.parse(item.observed_at) <= Date.now()
-      && (!requireFresh || Date.parse(item.expires_at) > Date.now())
-    ));
+    return release.governance_provenance.find(
+      (item) =>
+        (!envelopeDigest || item.envelope_digest === envelopeDigest) &&
+        item.profile === "example.governed-subject-receipt/v1" &&
+        item.issuer === "sekai-chisei" &&
+        item.subject === session.candidate.identity &&
+        item.decision === "allow" &&
+        item.receipt_schema === "chisei.governed-subject-receipt/v1" &&
+        item.receipt_digest === session.evaluation?.receiptDigest &&
+        Date.parse(item.observed_at) <= Date.now() &&
+        (!requireFresh || Date.parse(item.expires_at) > Date.now()),
+    );
   }
 
   #requireFreshProvenance(session: ReleaseDeliverySession): void {
@@ -2408,7 +2675,9 @@ export class ReleaseDeliveryBroker {
   }
 
   #provenanceFresh(session: ReleaseDeliverySession): boolean {
-    return typeof session.tenkai.provenanceExpiresAt === "string"
-      && Date.parse(session.tenkai.provenanceExpiresAt) > Date.now();
+    return (
+      typeof session.tenkai.provenanceExpiresAt === "string" &&
+      Date.parse(session.tenkai.provenanceExpiresAt) > Date.now()
+    );
   }
 }
