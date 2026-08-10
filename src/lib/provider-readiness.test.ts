@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assessProviderRunReadiness,
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
   canSwitchNewConversationProvider,
   cycleProviderModel,
@@ -24,6 +25,142 @@ import {
 } from "./provider-readiness";
 import type { ProviderDiscovery } from "../types";
 
+const profiles = [
+  { id: "default:claude-code", provider: "claude-code" },
+  { id: "default:shikigami", provider: "shikigami" },
+] as const;
+
+test("assessProviderRunReadiness owns provider and profile eligibility", () => {
+  assert.deepEqual(
+    assessProviderRunReadiness({
+      provider: "codex-cli",
+      discoveryLoaded: false,
+      discovery: undefined,
+      profiles,
+      providerName: "Codex CLI",
+    }),
+    { state: "checking", canRun: false, message: "Checking provider…" },
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      provider: "claude-code",
+      discoveryLoaded: true,
+      discovery: { id: "claude-code", installed: true },
+      profileId: "default:claude-code",
+      profiles,
+      providerName: "Claude Code",
+    }).canRun,
+    true,
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      provider: "claude-code",
+      discoveryLoaded: true,
+      discovery: { id: "claude-code", installed: true },
+      profileId: "default:shikigami",
+      profiles,
+      providerName: "Claude Code",
+    }).state,
+    "blocked",
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      provider: "codex-cli",
+      discoveryLoaded: true,
+      discovery: { id: "codex-cli", installed: true },
+      profiles,
+      providerName: "Codex CLI",
+    }).canRun,
+    false,
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      provider: "codex-cli",
+      discoveryLoaded: true,
+      discovery: { id: "codex-cli", installed: true, authenticated: true },
+      profiles,
+      providerName: "Codex CLI",
+    }).canRun,
+    true,
+  );
+});
+
+test("assessProviderRunReadiness projects Shikigami profiles and adapters", () => {
+  const shikigami: ProviderDiscovery = {
+    id: "shikigami",
+    installed: true,
+    authenticated: true,
+    profileDiscoveries: [
+      {
+        profileId: "default:shikigami",
+        installed: true,
+        authenticated: false,
+        detail: "Set SHIKIGAMI_API_KEY.",
+      },
+    ],
+  };
+  const blocked = assessProviderRunReadiness({
+    provider: "shikigami",
+    discoveryLoaded: true,
+    discovery: shikigami,
+    profileId: "default:shikigami",
+    profiles,
+    providerName: "Shikigami",
+  });
+  assert.equal(blocked.canRun, false);
+  assert.equal(blocked.message, "Set SHIKIGAMI_API_KEY.");
+  assert.equal(
+    assessProviderRunReadiness({
+      provider: "adapter:dev.kiro.cli@1.0.0",
+      discoveryLoaded: true,
+      discovery: {
+        id: "adapter:dev.kiro.cli@1.0.0",
+        installed: true,
+        enabled: true,
+      },
+      profiles,
+      providerName: "Kiro CLI",
+    }).canRun,
+    true,
+  );
+});
+
+test("assessProviderRunReadiness fails closed for managed constraints", () => {
+  const base = {
+    discoveryLoaded: true,
+    profiles,
+    managed: { requiredProvider: "shikigami" as const, requiredModel: "plane-model" },
+    providerName: "Shikigami",
+  };
+  assert.equal(
+    assessProviderRunReadiness({
+      ...base,
+      provider: "codex-cli",
+      discovery: { id: "codex-cli", installed: true, authenticated: true },
+      model: "plane-model",
+    }).canRun,
+    false,
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      ...base,
+      provider: "shikigami",
+      discovery: { id: "shikigami", installed: true, authenticated: true },
+      model: "other-model",
+    }).canRun,
+    false,
+  );
+  assert.equal(
+    assessProviderRunReadiness({
+      ...base,
+      provider: "shikigami",
+      discovery: { id: "shikigami", installed: true, authenticated: true },
+      model: "plane-model",
+    }).canRun,
+    true,
+  );
+});
+
 test("new conversations prefer Codex before other built-in providers", () => {
   assert.equal(DEFAULT_NEW_CONVERSATION_PROVIDER, "codex-cli");
   assert.deepEqual(BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER, [
@@ -33,10 +170,7 @@ test("new conversations prefer Codex before other built-in providers", () => {
   ]);
   assert.equal(canSwitchNewConversationProvider("codex-cli", ["claude-code"]), true);
   assert.equal(canSwitchNewConversationProvider("codex-cli", ["codex-cli"]), false);
-  assert.equal(
-    canSwitchNewConversationProvider("codex-cli", ["codex-cli", "claude-code"]),
-    true,
-  );
+  assert.equal(canSwitchNewConversationProvider("codex-cli", ["codex-cli", "claude-code"]), true);
 });
 
 test("providerDisplayName and providerChipName cover first-class and adapter ids", () => {
@@ -81,35 +215,14 @@ test("providerDisplayName and providerChipName cover first-class and adapter ids
     "Grok Build",
   );
   // Without discovery, still name known adapters from package id (incl. reverse-DNS).
-  assert.equal(
-    providerDisplayName("adapter:dev.xai.grok-build@1.0.0", undefined),
-    "Grok Build",
-  );
-  assert.equal(
-    providerDisplayName("adapter:kiro-cli@1.0.0", undefined),
-    "Kiro CLI",
-  );
-  assert.equal(
-    providerDisplayName("adapter:dev.kiro.cli@1.0.0", undefined),
-    "Kiro CLI",
-  );
-  assert.equal(
-    providerChipName("adapter:dev.xai.grok-build@1.0.0", undefined),
-    "Grok Build",
-  );
+  assert.equal(providerDisplayName("adapter:dev.xai.grok-build@1.0.0", undefined), "Grok Build");
+  assert.equal(providerDisplayName("adapter:kiro-cli@1.0.0", undefined), "Kiro CLI");
+  assert.equal(providerDisplayName("adapter:dev.kiro.cli@1.0.0", undefined), "Kiro CLI");
+  assert.equal(providerChipName("adapter:dev.xai.grok-build@1.0.0", undefined), "Grok Build");
   assert.equal(providerAvatarInitials("claude-code", "Claude"), "CC");
-  assert.equal(
-    providerAvatarInitials("adapter:dev.xai.grok-build@1.0.0", "Grok Build"),
-    "GB",
-  );
-  assert.equal(
-    providerAvatarInitials("adapter:kiro-cli@1.0.0", "Kiro CLI"),
-    "KR",
-  );
-  assert.equal(
-    providerAvatarInitials("adapter:dev.kiro.cli@1.0.0", "Kiro CLI"),
-    "KR",
-  );
+  assert.equal(providerAvatarInitials("adapter:dev.xai.grok-build@1.0.0", "Grok Build"), "GB");
+  assert.equal(providerAvatarInitials("adapter:kiro-cli@1.0.0", "Kiro CLI"), "KR");
+  assert.equal(providerAvatarInitials("adapter:dev.kiro.cli@1.0.0", "Kiro CLI"), "KR");
 });
 
 test("providerNotReadyMessage prefers host detail", () => {
@@ -154,43 +267,63 @@ test("providerDiscoveryForProfile selects Shikigami readiness and models", () =>
 
 test("providerNotReadyMessage covers Claude, Codex, Shikigami, and adapters", () => {
   assert.match(
-    providerNotReadyMessage("claude-code", { id: "claude-code", installed: true }, {
-      hasClaudeProfile: false,
-      providerName: "Claude Code",
-    }),
+    providerNotReadyMessage(
+      "claude-code",
+      { id: "claude-code", installed: true },
+      {
+        hasClaudeProfile: false,
+        providerName: "Claude Code",
+      },
+    ),
     /Claude profile/,
   );
   assert.match(
-    providerNotReadyMessage("codex-cli", { id: "codex-cli", installed: false, authenticated: false }, {
-      hasClaudeProfile: true,
-      providerName: "Codex CLI",
-    }),
+    providerNotReadyMessage(
+      "codex-cli",
+      { id: "codex-cli", installed: false, authenticated: false },
+      {
+        hasClaudeProfile: true,
+        providerName: "Codex CLI",
+      },
+    ),
     /Install Codex CLI/,
   );
   assert.match(
-    providerNotReadyMessage("codex-cli", { id: "codex-cli", installed: true, authenticated: false }, {
-      hasClaudeProfile: true,
-      providerName: "Codex CLI",
-    }),
+    providerNotReadyMessage(
+      "codex-cli",
+      { id: "codex-cli", installed: true, authenticated: false },
+      {
+        hasClaudeProfile: true,
+        providerName: "Codex CLI",
+      },
+    ),
     /Sign in to Codex/,
   );
   assert.match(
-    providerNotReadyMessage("shikigami", { id: "shikigami", installed: false, authenticated: false }, {
-      hasClaudeProfile: true,
-      providerName: "Shikigami",
-    }),
+    providerNotReadyMessage(
+      "shikigami",
+      { id: "shikigami", installed: false, authenticated: false },
+      {
+        hasClaudeProfile: true,
+        providerName: "Shikigami",
+      },
+    ),
     /Install shikigami/,
   );
   assert.match(
-    providerNotReadyMessage("adapter:kiro-cli@1.0.0", {
-      id: "adapter:kiro-cli@1.0.0",
-      installed: true,
-      authenticated: false,
-      name: "Kiro",
-    }, {
-      hasClaudeProfile: true,
-      providerName: "Kiro",
-    }),
+    providerNotReadyMessage(
+      "adapter:kiro-cli@1.0.0",
+      {
+        id: "adapter:kiro-cli@1.0.0",
+        installed: true,
+        authenticated: false,
+        name: "Kiro",
+      },
+      {
+        hasClaudeProfile: true,
+        providerName: "Kiro",
+      },
+    ),
     /CLI on PATH/,
   );
   assert.equal(
@@ -326,7 +459,11 @@ test("Codex reasoning effort cycles advertised options", () => {
       },
     ],
   };
-  assert.deepEqual(providerReasoningEfforts("codex-cli", "gpt-5", discovery), ["low", "medium", "high"]);
+  assert.deepEqual(providerReasoningEfforts("codex-cli", "gpt-5", discovery), [
+    "low",
+    "medium",
+    "high",
+  ]);
   assert.equal(cycleReasoningEffort("codex-cli", "gpt-5", "medium", discovery), "high");
   assert.equal(cycleReasoningEffort("codex-cli", "gpt-5", "high", discovery), "low");
   assert.deepEqual(providerReasoningEfforts("shikigami", "scripted", undefined), []);
@@ -335,7 +472,9 @@ test("Codex reasoning effort cycles advertised options", () => {
       id: "codex-cli",
       installed: true,
       authenticated: true,
-      models: [{ id: "no-effort", displayName: "No effort", isDefault: false, reasoningEfforts: [] }],
+      models: [
+        { id: "no-effort", displayName: "No effort", isDefault: false, reasoningEfforts: [] },
+      ],
     }),
     [],
   );
@@ -357,7 +496,9 @@ test("parseProviderFailure splits park summary and resume command", () => {
 
 test("provider failures distinguish configuration recovery from retryable failures", () => {
   assert.equal(
-    providerFailureNeedsConfiguration("Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+    providerFailureNeedsConfiguration(
+      "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+    ),
     true,
   );
   assert.equal(providerFailureNeedsConfiguration("Sign in to Codex CLI (codex login)."), true);
@@ -365,25 +506,40 @@ test("provider failures distinguish configuration recovery from retryable failur
   assert.equal(providerFailureNeedsConfiguration("Provider process exited unexpectedly."), false);
   assert.equal(providerFailureNeedsConfiguration("Request timed out."), false);
   assert.equal(providerFailureNeedsConfiguration("API key validation service timed out."), false);
-  assert.equal(providerFailureNeedsConfiguration("Request failed while checking credentials."), false);
+  assert.equal(
+    providerFailureNeedsConfiguration("Request failed while checking credentials."),
+    false,
+  );
 });
 
 test("assistant text only triggers recovery for explicit authentication errors", () => {
   assert.equal(
-    providerTextReportsAuthenticationFailure("Failed to authenticate. API Error: 401 OAuth access token has been revoked."),
+    providerTextReportsAuthenticationFailure(
+      "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
+    ),
     true,
   );
-  assert.equal(providerTextReportsAuthenticationFailure("Authentication failed: credentials expired."), true);
   assert.equal(
-    providerTextReportsAuthenticationFailure("Connecting…\nAuthentication failed: credentials expired."),
+    providerTextReportsAuthenticationFailure("Authentication failed: credentials expired."),
+    true,
+  );
+  assert.equal(
+    providerTextReportsAuthenticationFailure(
+      "Connecting…\nAuthentication failed: credentials expired.",
+    ),
     true,
   );
   assert.equal(providerTextReportsAuthenticationFailure("Not logged in · Please run /login"), true);
   assert.equal(
-    providerTextReportsAuthenticationFailure("I checked the API key configuration before the process exited."),
+    providerTextReportsAuthenticationFailure(
+      "I checked the API key configuration before the process exited.",
+    ),
     false,
   );
-  assert.equal(providerTextReportsAuthenticationFailure("Request timed out after checking authentication."), false);
+  assert.equal(
+    providerTextReportsAuthenticationFailure("Request timed out after checking authentication."),
+    false,
+  );
 });
 
 test("provider failure recovery changes only after configuration is verified", () => {
@@ -404,22 +560,40 @@ test("provider failure recovery changes only after configuration is verified", (
 test("authentication recovery requires a successful probe newer than the failed turn", () => {
   const failureAt = "2026-07-29T12:00:00.000Z";
   assert.equal(providerConfigurationVerifiedAfterFailure(undefined, failureAt), false);
-  assert.equal(providerConfigurationVerifiedAfterFailure({
-    state: "ready",
-    checkedAt: "2026-07-29T11:59:59.000Z",
-    detail: "Authentication is ready.",
-    authenticated: true,
-  }, failureAt), false);
-  assert.equal(providerConfigurationVerifiedAfterFailure({
-    state: "unavailable",
-    checkedAt: "2026-07-29T12:01:00.000Z",
-    detail: "Authentication failed.",
-    authenticated: false,
-  }, failureAt), false);
-  assert.equal(providerConfigurationVerifiedAfterFailure({
-    state: "ready",
-    checkedAt: "2026-07-29T12:01:00.000Z",
-    detail: "Authentication is ready.",
-    authenticated: true,
-  }, failureAt), true);
+  assert.equal(
+    providerConfigurationVerifiedAfterFailure(
+      {
+        state: "ready",
+        checkedAt: "2026-07-29T11:59:59.000Z",
+        detail: "Authentication is ready.",
+        authenticated: true,
+      },
+      failureAt,
+    ),
+    false,
+  );
+  assert.equal(
+    providerConfigurationVerifiedAfterFailure(
+      {
+        state: "unavailable",
+        checkedAt: "2026-07-29T12:01:00.000Z",
+        detail: "Authentication failed.",
+        authenticated: false,
+      },
+      failureAt,
+    ),
+    false,
+  );
+  assert.equal(
+    providerConfigurationVerifiedAfterFailure(
+      {
+        state: "ready",
+        checkedAt: "2026-07-29T12:01:00.000Z",
+        detail: "Authentication is ready.",
+        authenticated: true,
+      },
+      failureAt,
+    ),
+    true,
+  );
 });

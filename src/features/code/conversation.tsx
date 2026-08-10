@@ -32,6 +32,7 @@ import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-d
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
+  assessProviderRunReadiness,
   canSwitchNewConversationProvider,
   DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
@@ -44,7 +45,6 @@ import {
   resolveDefaultProviderModel,
   normalizeClaudeModelSlug,
   providerModelOptions,
-  providerNotReadyMessage,
   providerReasoningEfforts,
   providerConfigurationVerifiedAfterFailure,
   providerFailureRecovery,
@@ -2379,32 +2379,20 @@ export function Conversation({
   useEffect(() => {
     if (!canPickMode) setModeMenuOpen(false);
   }, [canPickMode]);
+  const providerReadiness = assessProviderRunReadiness({
+    provider,
+    discoveryLoaded: providersLoaded,
+    discovery: providers.find((item) => item.id === provider),
+    profileId,
+    profiles,
+    model,
+    managed: managedMode
+      ? { requiredProvider: "shikigami", requiredModel: managedModel }
+      : undefined,
+    providerName,
+  });
   /** Whether the selected provider can start a run right now. */
-  const providerReady = !providersLoaded
-    ? false
-    : managedMode
-      ? Boolean(
-          provider === "shikigami" &&
-          shikigamiProvider?.installed &&
-          shikigamiProvider.authenticated &&
-          (!managedModel || model === managedModel),
-        )
-      : provider === "claude-code"
-        ? Boolean(profileId)
-        : provider === "codex-cli"
-          ? Boolean(codex?.installed && codex.authenticated)
-          : provider === "shikigami"
-            ? Boolean(
-                selectedProvider?.installed &&
-                selectedProvider.authenticated &&
-                shikigamiProfiles.some((profile) => profile.id === profileId),
-              )
-            : Boolean(
-                selectedProvider &&
-                selectedProvider.installed !== false &&
-                selectedProvider.enabled !== false &&
-                selectedProvider.authenticated !== false,
-              );
+  const providerReady = providerReadiness.canRun;
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2425,14 +2413,7 @@ export function Conversation({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active, draft, historyRestored, providerReady, runActive, worktree]);
-  const providerReadinessMessage = !providersLoaded
-    ? "Checking provider…"
-    : providerReady
-      ? ""
-      : providerNotReadyMessage(provider, selectedProvider, {
-          hasClaudeProfile: Boolean(profileId),
-          providerName,
-        });
+  const providerReadinessMessage = providerReadiness.message;
   const effectiveModel = managedMode
     ? (managedModel ?? model)
     : (() => {
@@ -4886,44 +4867,30 @@ export function Conversation({
                           const label = providerDisplayName(id, discovery);
                           const chip = formatProviderChipName(id, discovery);
                           const selected = id === provider;
-                          const shikigamiMenuDiscovery =
+                          const menuProfileId =
                             id === "shikigami"
-                              ? providerDiscoveryForProfile(
-                                  "shikigami",
-                                  shikigamiProvider,
-                                  shikigamiProfiles.some((profile) => profile.id === profileId)
-                                    ? profileId
-                                    : defaultShikigamiProfileId,
-                                )
-                              : undefined;
-                          const ready =
-                            id === "claude-code"
-                              ? Boolean(profileId)
-                              : id === "codex-cli"
-                                ? Boolean(codex?.installed && codex.authenticated)
-                                : id === "shikigami"
-                                  ? Boolean(
-                                      shikigamiMenuDiscovery?.installed &&
-                                      shikigamiMenuDiscovery.authenticated &&
-                                      shikigamiProfiles.length > 0,
-                                    )
-                                  : Boolean(
-                                      discovery &&
-                                      discovery.installed !== false &&
-                                      discovery.enabled !== false &&
-                                      discovery.authenticated !== false,
-                                    );
-                          const statusDiscovery =
-                            id === "shikigami" ? shikigamiMenuDiscovery : discovery;
+                              ? shikigamiProfiles.some((profile) => profile.id === profileId)
+                                ? profileId
+                                : defaultShikigamiProfileId
+                              : id === "claude-code"
+                                ? claudeProfiles.some((profile) => profile.id === profileId)
+                                  ? profileId
+                                  : defaultClaudeProfileId
+                                : null;
+                          const readiness = assessProviderRunReadiness({
+                            provider: id,
+                            discoveryLoaded: providersLoaded,
+                            discovery,
+                            profileId: menuProfileId,
+                            profiles,
+                            providerName: label,
+                          });
+                          const ready = readiness.canRun;
                           const status = ready
                             ? selected
                               ? "selected"
                               : "ready"
-                            : statusDiscovery?.detail?.trim() ||
-                              providerNotReadyMessage(id, statusDiscovery, {
-                                hasClaudeProfile: Boolean(profileId),
-                                providerName: label,
-                              });
+                            : readiness.message;
                           return (
                             <button
                               type="button"
