@@ -21,16 +21,10 @@ import {
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { buildUsageReport, isUsageRangeDays } from "../src/lib/usage.ts";
-import {
-  ShikigamiAdapter,
-  type ShikigamiProfileRuntime,
-  type ShikigamiReadiness,
-} from "./shikigami-provider.ts";
+import { ShikigamiAdapter, type ShikigamiProfileRuntime } from "./shikigami-provider.ts";
 import { beginProviderEventStream } from "./provider-stream.ts";
-import { declarativeAdapterReadiness } from "./provider-discovery.ts";
-import { probeAcpModels } from "./acp-models.ts";
+import { ProviderDiscovery } from "./provider-discovery.ts";
 import {
-  claudeModelCatalog,
   isAdapterProviderId,
   ProviderModelError,
   validateProviderModel,
@@ -211,18 +205,6 @@ function adapterProfileSeed(adapter: {
         sensitive: entry.sensitive,
         value: "",
       })),
-  };
-}
-
-function unavailableShikigamiReadiness(detail: string): ShikigamiReadiness {
-  return {
-    id: "shikigami",
-    installed: false,
-    authenticated: false,
-    version: null,
-    models: [],
-    name: "Shikigami",
-    detail,
   };
 }
 
@@ -568,6 +550,7 @@ async function handleApi(
   worktrees: WorktreeManager,
   directories: DirectoryBrowser,
   adapters: ProviderAdapterStore,
+  providerDiscovery: ProviderDiscovery,
   activeAcp: Map<string, AcpProviderAdapter>,
   wake: WakeBroker,
   withDelegatedControlLock: DelegatedControlLock,
@@ -871,147 +854,7 @@ async function handleApi(
       const discoveryCwd = hasRoot
         ? (await selectedWorktree(body.root as string, body.worktree as string)).worktree
         : process.cwd();
-      if (managedHost) {
-        sendJson(response, 200, {
-          providers: [
-            {
-              id: "shikigami",
-              installed: true,
-              authenticated: true,
-              version: "1.0.5+",
-              name: "Shikigami",
-              detail: null,
-              models: [
-                {
-                  id: managedHost.shikigami.model,
-                  displayName: managedHost.shikigami.model,
-                  isDefault: true,
-                },
-              ],
-            },
-          ],
-        });
-        return true;
-      }
-      const codexReadiness = await codex.readiness().catch(() => ({
-        id: "codex-cli" as const,
-        installed: false,
-        authenticated: false,
-        version: null,
-        models: [],
-        detail: "Install Codex CLI on PATH and sign in (codex login).",
-      }));
-      const declarativeProviders = await Promise.all(
-        (await adapters.list()).map(async (adapter) => {
-          let executablePath: string | null = null;
-          try {
-            executablePath = await adapters.resolveExecutable(adapter);
-          } catch {
-            executablePath = null;
-          }
-          const missingRequiredEnv = adapter.manifest.environment
-            .filter((entry) => entry.required)
-            .filter((entry) => {
-              const value = process.env[entry.name];
-              return value === undefined || value === "";
-            })
-            .map((entry) => entry.name);
-          const readiness = declarativeAdapterReadiness({
-            name: adapter.manifest.presentation.name,
-            enabled: adapter.enabled,
-            executableFound: executablePath !== null,
-            executableNames: adapter.manifest.executable.names,
-            missingRequiredEnv,
-          });
-          let models: Array<{
-            id: string;
-            displayName: string;
-            isDefault: boolean;
-            reasoningEfforts: string[];
-            defaultReasoningEffort: string;
-          }> = [];
-          if (readiness.authenticated && executablePath) {
-            const environment: NodeJS.ProcessEnv = { ...process.env };
-            for (const reference of adapter.manifest.environment) {
-              const value = process.env[reference.name];
-              if (value !== undefined) environment[reference.name] = value;
-            }
-            models = await probeAcpModels({
-              executable: executablePath,
-              arguments: adapter.manifest.executable.arguments,
-              environment,
-              cwd: process.cwd(),
-              timeoutMs: 8_000,
-            }).catch(() => []);
-          }
-          return {
-            id: adapterReference(adapter.manifest),
-            installed: true,
-            // Reuse authenticated as "run-ready" so the composer can filter adapters
-            // that cannot start (missing CLI or required env), like unauthenticated Codex.
-            authenticated: readiness.authenticated,
-            version: adapter.manifest.version,
-            name: adapter.manifest.presentation.name,
-            enabled: adapter.enabled,
-            detail: readiness.detail,
-            models,
-          };
-        }),
-      );
-      const shikigamiProfiles = (await profiles.list().catch(() => [])).filter(
-        (profile) => profile.provider === "shikigami",
-      );
-      const shikigamiProfileDiscoveries = await Promise.all(
-        shikigamiProfiles.map(async (profile) => {
-          let readiness: ShikigamiReadiness;
-          try {
-            const runtime = await profiles.runtime(profile.id);
-            readiness = await shikigami.readiness(runtime.environment, {
-              executable: runtime.executable,
-              configPath: runtime.configPath,
-              cwd: discoveryCwd,
-            });
-          } catch (error) {
-            readiness = unavailableShikigamiReadiness(
-              error instanceof ProviderProtocolError
-                ? error.message
-                : "The selected Shikigami profile could not be checked.",
-            );
-          }
-          return {
-            profileId: profile.id,
-            installed: readiness.installed,
-            authenticated: readiness.authenticated,
-            version: readiness.version,
-            detail: readiness.detail,
-            models: readiness.models,
-          };
-        }),
-      );
-      const defaultShikigamiDiscovery = shikigamiProfileDiscoveries.find(
-        (profile) => profile.profileId === DEFAULT_SHIKIGAMI_PROFILE_ID,
-      );
-      const shikigamiReadiness = defaultShikigamiDiscovery
-        ? {
-            id: "shikigami" as const,
-            installed: defaultShikigamiDiscovery.installed,
-            authenticated: defaultShikigamiDiscovery.authenticated,
-            version: defaultShikigamiDiscovery.version,
-            models: defaultShikigamiDiscovery.models,
-            name: "Shikigami",
-            detail: defaultShikigamiDiscovery.detail,
-          }
-        : unavailableShikigamiReadiness(
-            "Install shikigami 1.0.2+ on PATH (tenkai or GitHub Release).",
-          );
-      sendJson(response, 200, {
-        providers: [
-          { id: "claude-code", installed: true, models: claudeModelCatalog() },
-          codexReadiness,
-          { ...shikigamiReadiness, profileDiscoveries: shikigamiProfileDiscoveries },
-          ...declarativeProviders,
-        ],
-      });
+      sendJson(response, 200, await providerDiscovery.discover({ cwd: discoveryCwd }));
       return true;
     }
     if (route === "/api/provider/adapters/list") {
@@ -5056,6 +4899,13 @@ export function createLocalHost(
   const worktrees = new WorktreeManager(state.directory);
   const directories = new DirectoryBrowser();
   const adapters = new ProviderAdapterStore(state.directory);
+  const providerDiscovery = new ProviderDiscovery({
+    codex,
+    shikigami,
+    profiles,
+    adapters,
+    managedModel: managedHost?.shikigami.model,
+  });
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const wake = new WakeBroker();
@@ -5383,6 +5233,7 @@ export function createLocalHost(
         worktrees,
         directories,
         adapters,
+        providerDiscovery,
         activeAcp,
         wake,
         withDelegatedControlLock,

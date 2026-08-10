@@ -91,7 +91,7 @@
     },
     {
       "name": "ProviderDiscovery",
-      "description": "Aldunis Code host-owned readiness projection for locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery."
+      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery through one authorized-worktree interface; managed mode exposes only its fixed Shikigami model."
     },
     {
       "name": "ProviderProfileDiscovery",
@@ -1006,7 +1006,7 @@
     {
       "subject": "ProviderDiscovery",
       "source": "Sannrox/aldunis-code",
-      "locator": "server/host.ts:/api/providers/discover",
+      "locator": "server/provider-discovery.ts#ProviderDiscovery; server/host.ts:/api/providers/discover; Issue #570",
       "confidence": 1.0
     },
     {
