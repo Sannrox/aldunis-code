@@ -1734,8 +1734,7 @@ export function Conversation({
   const boundConversationId = conversation?.id ?? null;
   const boundConversationProvider = conversation?.provider;
   const boundConversationWorkspaceMode = conversation?.workspaceMode;
-  const conversationScopeKey =
-    boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
+  const conversationScopeKey = boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
   useEffect(() => {
     const recognition = voiceRecognitionRef.current;
     voiceRecognitionRef.current = null;

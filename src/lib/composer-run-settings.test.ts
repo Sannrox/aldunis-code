@@ -92,10 +92,7 @@ test("resolveNewConversationRunSettings prefers stored then handoff provider", (
     workspaceMode: "shared",
     profileId: "default:claude-code",
   });
-  assert.deepEqual(
-    resolveNewConversationRunSettings({ stored }),
-    stored,
-  );
+  assert.deepEqual(resolveNewConversationRunSettings({ stored }), stored);
   assert.deepEqual(
     resolveNewConversationRunSettings({
       stored,

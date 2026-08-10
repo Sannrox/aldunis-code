@@ -7,12 +7,7 @@
  * storage denial or corrupt payloads.
  */
 
-import type {
-  InteractionMode,
-  ProviderId,
-  ReasoningEffort,
-  WorkspaceMode,
-} from "../types";
+import type { InteractionMode, ProviderId, ReasoningEffort, WorkspaceMode } from "../types";
 import { DEFAULT_NEW_CONVERSATION_PROVIDER } from "./provider-readiness";
 
 export const COMPOSER_RUN_SETTINGS_STORAGE_KEY = "aldunis.composerRunSettings.v1";
@@ -31,19 +26,9 @@ export interface ComposerRunSettings {
 
 export type ComposerRunSettingsStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-const REASONING_EFFORTS: readonly ReasoningEffort[] = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
 const INTERACTION_MODES: readonly InteractionMode[] = ["ask", "plan", "build"];
-const WORKSPACE_MODES: readonly WorkspaceMode[] = [
-  "shared",
-  "aldunis-managed",
-  "provider-native",
-];
+const WORKSPACE_MODES: readonly WorkspaceMode[] = ["shared", "aldunis-managed", "provider-native"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -78,7 +63,9 @@ export function defaultComposerRunSettings(
   return settings;
 }
 
-export function parseComposerRunSettings(raw: string | null | undefined): ComposerRunSettings | null {
+export function parseComposerRunSettings(
+  raw: string | null | undefined,
+): ComposerRunSettings | null {
   if (!raw || !raw.trim()) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
