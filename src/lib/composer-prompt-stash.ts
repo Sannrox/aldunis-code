@@ -32,6 +32,26 @@ export interface PromptStashState {
   entries: PromptStashEntry[];
 }
 
+export type PromptStashMutation =
+  | { ok: true; entries: PromptStashEntry[]; message: string }
+  | { ok: false; entries: PromptStashEntry[]; message: string };
+
+export type PromptStashRestore = PromptStashMutation & {
+  prompt?: string;
+};
+
+/**
+ * The complete prompt-stash interface used by the composer and its tests.
+ * Storage selection, validation, capacity, and atomic draft swapping stay
+ * behind this seam so callers cannot assemble a partial stash transaction.
+ */
+export interface PromptStash {
+  load(): PromptStashEntry[];
+  stash(prompt: string): PromptStashMutation;
+  restore(entryId: string, currentDraft: string): PromptStashRestore;
+  remove(entryId: string): PromptStashMutation;
+}
+
 export type PromptStashStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -131,21 +151,23 @@ export function promptStashStorageKey(scope: string = "local"): string {
 const managedMemoryBuckets = new Map<string, Map<string, string>>();
 
 function memoryStorageForManagedScope(scope: string): PromptStashStorage {
-  let bucket = managedMemoryBuckets.get(scope);
-  if (!bucket) {
-    bucket = new Map<string, string>();
-    managedMemoryBuckets.set(scope, bucket);
-  }
-  const store = bucket;
+  const store = () => {
+    let bucket = managedMemoryBuckets.get(scope);
+    if (!bucket) {
+      bucket = new Map<string, string>();
+      managedMemoryBuckets.set(scope, bucket);
+    }
+    return bucket;
+  };
   return {
     getItem(key: string) {
-      return store.get(key) ?? null;
+      return store().get(key) ?? null;
     },
     setItem(key: string, value: string) {
-      store.set(key, value);
+      store().set(key, value);
     },
     removeItem(key: string) {
-      store.delete(key);
+      store().delete(key);
     },
   };
 }
@@ -371,6 +393,101 @@ export function writePromptStash(
   } catch {
     return false;
   }
+}
+
+export function createPromptStash(
+  scope: string = "local",
+  windowLike: {
+    localStorage?: PromptStashStorage;
+    sessionStorage?: PromptStashStorage;
+  } | null = typeof window === "undefined" ? null : window,
+): PromptStash {
+  const storage = getPromptStashBackend(scope, windowLike);
+  const load = () => readPromptStash(storage, scope);
+  const persist = (entries: PromptStashEntry[]) => writePromptStash(storage, entries, scope);
+
+  return {
+    load,
+    stash(prompt) {
+      const entries = load();
+      const rejection = stashPromptRejectionReason(prompt);
+      if (rejection) return { ok: false, entries, message: rejection };
+      const entry = createPromptStashEntry(prompt);
+      if (!entry) return { ok: false, entries, message: "Nothing to stash." };
+      const nextEntries = insertStashEntry(entries, entry).entries;
+      if (!persist(nextEntries)) {
+        return {
+          ok: false,
+          entries,
+          message: "Could not stash prompt (storage unavailable).",
+        };
+      }
+      return { ok: true, entries: nextEntries, message: "Prompt stashed." };
+    },
+    restore(entryId, currentDraft) {
+      const entries = load();
+      const hasDraft = Boolean(currentDraft.trim());
+      if (hasDraft) {
+        const rejection = stashPromptRejectionReason(currentDraft);
+        if (rejection) {
+          return {
+            ok: false,
+            entries,
+            message: `Cannot restore while the composer has a draft: ${rejection.replace(/\.$/, "")}.`,
+          };
+        }
+      }
+      const { entries: withoutTarget, removed } = removeStashEntry(entries, entryId);
+      if (!removed) {
+        return {
+          ok: false,
+          entries,
+          message: "That stashed prompt is no longer available.",
+        };
+      }
+      const parked = hasDraft ? createPromptStashEntry(currentDraft) : null;
+      if (hasDraft && !parked) {
+        return {
+          ok: false,
+          entries,
+          message: "Cannot restore while the composer has a draft.",
+        };
+      }
+      const nextEntries = parked ? insertStashEntry(withoutTarget, parked).entries : withoutTarget;
+      if (!persist(nextEntries)) {
+        return {
+          ok: false,
+          entries,
+          message: "Could not update stash (storage unavailable).",
+        };
+      }
+      return {
+        ok: true,
+        entries: nextEntries,
+        prompt: removed.prompt,
+        message: hasDraft ? "Current draft parked; stashed prompt restored." : "Prompt restored.",
+      };
+    },
+    remove(entryId) {
+      const entries = load();
+      const { entries: nextEntries, removed } = removeStashEntry(entries, entryId);
+      if (!removed) {
+        return {
+          ok: false,
+          entries,
+          message: "That stashed prompt is no longer available.",
+        };
+      }
+      if (!persist(nextEntries)) {
+        return {
+          ok: false,
+          entries,
+          message: "Could not update stash (storage unavailable).",
+        };
+      }
+      return { ok: true, entries: nextEntries, message: "Stashed prompt removed." };
+    },
+  };
 }
 
 /** True when Mod+S should act as stash (no shift/alt; key is s). */

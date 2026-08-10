@@ -30,6 +30,10 @@
       "description": "The desktop conversation input surface that accepts typed or transient browser speech transcript text while selecting a provider, model, interaction mode, and explicit tool scope."
     },
     {
+      "name": "PromptStash",
+      "description": "A conversation-composer module that atomically loads, parks, restores or swaps, and removes bounded text-only drafts while hiding storage selection, identity isolation, migration, validation, capacity, and persistence failure handling behind one interface."
+    },
+    {
       "name": "BrowserSpeechRecognition",
       "description": "The browser-owned, optional speech-recognition capability used by Aldunis Code only to return transient transcript text to the conversation composer; microphone audio is not sent to or persisted by the Aldunis host."
     },
@@ -518,6 +522,16 @@
       }
     },
     {
+      "name": "uses_prompt_stash",
+      "description": "The conversation composer delegates complete text-only draft stash transactions to one local prompt-stash interface without gaining server persistence, transcript, provider, or execution authority.",
+      "domain": "ConversationComposer",
+      "range": "PromptStash",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
       "name": "authenticates_managed_host",
       "description": "The managed hosted workbench accepts API authority only from a verified gateway assertion.",
       "domain": "ManagedHostedWorkbench",
@@ -873,6 +887,18 @@
       "subject": "ConversationComposer",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PromptStash",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/composer-prompt-stash.ts#PromptStash; Issue #583",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_prompt_stash",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/features/code/conversation.tsx; src/lib/composer-prompt-stash.ts#PromptStash; Issue #583",
       "confidence": 1.0
     },
     {

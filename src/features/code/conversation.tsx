@@ -62,18 +62,12 @@ import {
 import { resolvePreviousWorktreeSeed } from "../../lib/previous-worktree";
 import {
   clearManagedPromptStashes,
-  createPromptStashEntry,
-  getPromptStashBackend,
+  createPromptStash,
   getPromptStashStorage,
-  insertStashEntry,
   matchesPromptStashShortcut,
   PROMPT_STASH_SHORTCUT_LABEL,
-  readPromptStash,
-  removeStashEntry,
   resolveActivePromptStashScope,
   stashEntrySnippet,
-  stashPromptRejectionReason,
-  writePromptStash,
   type PromptStashEntry,
 } from "../../lib/composer-prompt-stash";
 import {
@@ -513,6 +507,7 @@ export function Conversation({
     () => resolveActivePromptStashScope(getPromptStashStorage(), promptStashOperatorKey),
     [promptStashOperatorKey],
   );
+  const promptStashModule = useMemo(() => createPromptStash(promptStashScope), [promptStashScope]);
   const previousManagedScopeRef = useRef<string | null>(null);
   useEffect(() => {
     if (!promptStashScope.startsWith("managed:")) {
@@ -527,10 +522,11 @@ export function Conversation({
     }
     previousManagedScopeRef.current = promptStashScope;
   }, [promptStashScope]);
-  const [promptStash, setPromptStash] = useState<PromptStashEntry[]>(() => {
-    const scope = resolveActivePromptStashScope(getPromptStashStorage(), promptStashOperatorKey);
-    return readPromptStash(getPromptStashBackend(scope), scope);
-  });
+  const [promptStash, setPromptStash] = useState<PromptStashEntry[]>(() =>
+    createPromptStash(
+      resolveActivePromptStashScope(getPromptStashStorage(), promptStashOperatorKey),
+    ).load(),
+  );
   const [stashMenuOpen, setStashMenuOpen] = useState(false);
   const [stashStatus, setStashStatus] = useState<string | null>(null);
   const [stashPulse, setStashPulse] = useState(false);
@@ -993,116 +989,53 @@ export function Conversation({
     }, 450);
   }, []);
   const loadLatestPromptStash = useCallback(() => {
-    const latest = readPromptStash(getPromptStashBackend(promptStashScope), promptStashScope);
+    const latest = promptStashModule.load();
     setPromptStash(latest);
     return latest;
-  }, [promptStashScope]);
-  const persistPromptStash = useCallback(
-    (entries: PromptStashEntry[]) => {
-      const written = writePromptStash(
-        getPromptStashBackend(promptStashScope),
-        entries,
-        promptStashScope,
-      );
-      if (written) setPromptStash(entries);
-      return written;
-    },
-    [promptStashScope],
-  );
+  }, [promptStashModule]);
   useEffect(() => {
     if (!active) return;
     loadLatestPromptStash();
   }, [active, loadLatestPromptStash, promptStashScope]);
   const stashCurrentDraft = useCallback(() => {
-    const rejection = stashPromptRejectionReason(draft);
-    if (rejection) {
-      setStashStatus(rejection);
-      return false;
-    }
-    const entry = createPromptStashEntry(draft);
-    if (!entry) {
-      setStashStatus("Nothing to stash.");
-      return false;
-    }
-    const { entries } = insertStashEntry(loadLatestPromptStash(), entry);
-    if (!persistPromptStash(entries)) {
-      setStashStatus("Could not stash prompt (storage unavailable).");
-      return false;
-    }
+    const result = promptStashModule.stash(draft);
+    setPromptStash(result.entries);
+    setStashStatus(result.message);
+    if (!result.ok) return false;
     setDraft("");
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
     setStashMenuOpen(false);
-    setStashStatus("Prompt stashed.");
     pulseStashBadge();
     return true;
-  }, [draft, loadLatestPromptStash, persistPromptStash, promptHistory, pulseStashBadge]);
+  }, [draft, promptHistory, promptStashModule, pulseStashBadge]);
   const restoreStashEntry = useCallback(
     (entryId: string) => {
-      const hadDraft = Boolean(draft.trim());
-      if (hadDraft) {
-        const rejection = stashPromptRejectionReason(draft);
-        if (rejection) {
-          setStashStatus(
-            `Cannot restore while the composer has a draft: ${rejection.replace(/\.$/, "")}.`,
-          );
-          return;
-        }
-      }
-      const { entries: withoutTarget, removed } = removeStashEntry(
-        loadLatestPromptStash(),
-        entryId,
-      );
-      if (!removed) {
-        setStashStatus("That stashed prompt is no longer available.");
-        return;
-      }
-      let nextEntries = withoutTarget;
-      if (hadDraft) {
-        const parked = createPromptStashEntry(draft);
-        if (!parked) {
-          setStashStatus("Cannot restore while the composer has a draft.");
-          return;
-        }
-        nextEntries = insertStashEntry(withoutTarget, parked).entries;
-      }
-      if (!persistPromptStash(nextEntries)) {
-        setStashStatus("Could not update stash (storage unavailable).");
-        return;
-      }
-      setDraft(removed.prompt);
+      const result = promptStashModule.restore(entryId, draft);
+      setPromptStash(result.entries);
+      setStashStatus(result.message);
+      if (!result.ok || result.prompt === undefined) return;
+      setDraft(result.prompt);
       setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
       setStashMenuOpen(false);
-      setStashStatus(
-        hadDraft ? "Current draft parked; stashed prompt restored." : "Prompt restored.",
-      );
       pulseStashBadge();
       requestAnimationFrame(() => {
         const composer = composerRef.current;
         if (!composer) return;
         composer.focus();
-        const end = removed.prompt.length;
+        const end = result.prompt?.length ?? 0;
         composer.setSelectionRange(end, end);
       });
     },
-    [draft, loadLatestPromptStash, persistPromptStash, promptHistory, pulseStashBadge],
+    [draft, promptHistory, promptStashModule, pulseStashBadge],
   );
   const deleteStashEntry = useCallback(
     (entryId: string) => {
-      const latest = loadLatestPromptStash();
-      const { entries, removed } = removeStashEntry(latest, entryId);
-      if (!removed) {
-        setStashStatus("That stashed prompt is no longer available.");
-        if (latest.length === 0) setStashMenuOpen(false);
-        return;
-      }
-      if (!persistPromptStash(entries)) {
-        setStashStatus("Could not update stash (storage unavailable).");
-        return;
-      }
-      setStashStatus("Stashed prompt removed.");
-      if (entries.length === 0) setStashMenuOpen(false);
+      const result = promptStashModule.remove(entryId);
+      setPromptStash(result.entries);
+      setStashStatus(result.message);
+      if (result.entries.length === 0) setStashMenuOpen(false);
     },
-    [loadLatestPromptStash, persistPromptStash],
+    [promptStashModule],
   );
   const providerNativeWorkspaceAvailable = capabilities?.workspace?.providerNative ?? false;
   const applyProviderDefaults = (next: ProviderId) => {

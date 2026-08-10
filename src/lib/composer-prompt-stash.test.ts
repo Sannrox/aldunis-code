@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  clearManagedPromptStashes,
   clearRemotePromptStashes,
+  createPromptStash,
   createPromptStashEntry,
   getPromptStashBackend,
   getPromptStashStorage,
@@ -23,6 +25,88 @@ import {
   PROMPT_STASH_STORAGE_KEY,
   type PromptStashStorage,
 } from "./composer-prompt-stash";
+
+function memoryStorage() {
+  const memory = new Map<string, string>();
+  return {
+    memory,
+    storage: {
+      getItem(key: string) {
+        return memory.get(key) ?? null;
+      },
+      setItem(key: string, value: string) {
+        memory.set(key, value);
+      },
+      removeItem(key: string) {
+        memory.delete(key);
+      },
+    },
+  };
+}
+
+test("prompt stash interface owns stash, atomic swap, and remove behavior", () => {
+  const { storage } = memoryStorage();
+  const stash = createPromptStash("remote:session-1", { localStorage: storage });
+
+  const empty = stash.stash("  ");
+  assert.equal(empty.ok, false);
+  assert.equal(empty.message, "Nothing to stash.");
+
+  const parked = stash.stash("first prompt");
+  assert.equal(parked.ok, true);
+  assert.equal(parked.entries.length, 1);
+  const parkedId = parked.entries[0]?.id;
+  assert.ok(parkedId);
+
+  const restored = stash.restore(parkedId, "current draft");
+  assert.equal(restored.ok, true);
+  assert.equal(restored.prompt, "first prompt");
+  assert.equal(restored.message, "Current draft parked; stashed prompt restored.");
+  assert.equal(restored.entries.length, 1);
+  assert.equal(restored.entries[0]?.prompt, "current draft");
+
+  const removed = stash.remove(restored.entries[0]!.id);
+  assert.equal(removed.ok, true);
+  assert.deepEqual(removed.entries, []);
+  assert.equal(stash.remove("missing").message, "That stashed prompt is no longer available.");
+});
+
+test("prompt stash interface leaves stored drafts intact when persistence fails", () => {
+  const stored = serializePromptStashState([createPromptStashEntry("safe draft", { id: "safe" })!]);
+  const storage: PromptStashStorage = {
+    getItem: () => stored,
+    setItem() {
+      throw new Error("quota");
+    },
+    removeItem() {},
+  };
+  const stash = createPromptStash("local", { localStorage: storage });
+
+  const restore = stash.restore("safe", "replacement");
+  assert.equal(restore.ok, false);
+  assert.equal(restore.prompt, undefined);
+  assert.equal(restore.entries[0]?.prompt, "safe draft");
+  assert.equal(restore.message, "Could not update stash (storage unavailable).");
+});
+
+test("prompt stash interface keeps scopes isolated and enforces capacity", () => {
+  const { storage } = memoryStorage();
+  const alice = createPromptStash("remote:alice", { localStorage: storage });
+  const bob = createPromptStash("remote:bob", { localStorage: storage });
+  for (let index = 0; index < MAX_STASH_ENTRIES + 2; index += 1) {
+    assert.equal(alice.stash(`draft ${index}`).ok, true);
+  }
+  assert.equal(alice.load().length, MAX_STASH_ENTRIES);
+  assert.equal(bob.load().length, 0);
+});
+
+test("managed prompt stash interfaces observe account-clear lifecycle", () => {
+  const alice = createPromptStash("managed:tenant:alice");
+  assert.equal(alice.stash("private draft").ok, true);
+  assert.equal(alice.load().length, 1);
+  clearManagedPromptStashes();
+  assert.equal(alice.load().length, 0);
+});
 
 test("normalizeStashPrompt rejects whitespace-only drafts", () => {
   assert.equal(normalizeStashPrompt(""), null);
