@@ -134,10 +134,7 @@ import {
   writeThreadScrollPosition,
   type ConversationOpenScroll,
 } from "../../lib/thread-open-scroll";
-import {
-  loadConversationHistory,
-  loadFreshConversationHistory,
-} from "../../lib/local-state-load";
+import { loadConversationHistory, loadFreshConversationHistory } from "../../lib/local-state-load";
 import {
   loadProviderCapabilities,
   peekProviderCapabilitiesCache,

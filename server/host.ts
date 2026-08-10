@@ -94,10 +94,7 @@ import {
   type ContextPin,
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
-import {
-  projectConversationHistory,
-  projectWorkbenchState,
-} from "./state-projection.ts";
+import { projectConversationHistory, projectWorkbenchState } from "./state-projection.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import {
   AutomationError,

@@ -17,16 +17,13 @@ test("loadLocalStateProjection coalesces concurrent callers without long-cache",
   }) as typeof fetch;
 
   try {
-    const [a, b] = await Promise.all([
-      loadLocalStateProjection(),
-      loadLocalStateProjection(),
-    ]);
+    const [a, b] = await Promise.all([loadLocalStateProjection(), loadLocalStateProjection()]);
     assert.equal(calls, 1);
     assert.deepEqual(a, { sequence: 1 });
     assert.equal(a, b);
 
     // After inflight settles, a later call is a new network request.
-    const c = await loadLocalStateProjection() as { sequence: number };
+    const c = (await loadLocalStateProjection()) as { sequence: number };
     assert.equal(calls, 2);
     assert.equal(c.sequence, 2);
   } finally {

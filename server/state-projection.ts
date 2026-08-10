@@ -50,7 +50,9 @@ export function projectConversationHistory(
     plans: projection.plans.filter((plan) => plan.threadId === threadId),
     contextReceipts: projection.contextReceipts.filter((receipt) => receipt.threadId === threadId),
     inputRequests: projection.inputRequests.filter((request) => request.threadId === threadId),
-    providerSessions: projection.providerSessions.filter((session) => session.threadId === threadId),
+    providerSessions: projection.providerSessions.filter(
+      (session) => session.threadId === threadId,
+    ),
     governanceCorrelations: projection.governanceCorrelations.filter(
       (receipt) => receipt.threadId === threadId,
     ),

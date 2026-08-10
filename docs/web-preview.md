@@ -45,8 +45,8 @@ the same page, cookies, and local page state. The normal workspace view and the
 optional picture-in-picture window are mirrors of that one session.
 
 The host exposes a small brokered MCP surface: status, bounded snapshots,
-  approved-preview-origin navigation, selector/coordinate clicks, focused text input, key
-  presses, scrolling, and short waits. It does not expose arbitrary CDP,
+approved-preview-origin navigation, selector/coordinate clicks, focused text input, key
+presses, scrolling, and short waits. It does not expose arbitrary CDP,
 JavaScript evaluation, downloads, clipboard, browser permissions, credentials,
 external URLs, or general-purpose command execution. The broker keeps page
 text, screenshots, and action results transient rather than adding them to

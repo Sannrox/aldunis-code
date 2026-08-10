@@ -9,19 +9,17 @@ let inflight: Promise<unknown> | null = null;
 const historyInflight = new Map<string, Promise<unknown>>();
 
 function requestLocalStateProjection(): Promise<unknown> {
-  return fetch("/api/state/load", { method: "POST" })
-    .then(async (response) => {
-      if (!response.ok) throw new Error("Local state could not be loaded.");
-      return response.json();
-    });
+  return fetch("/api/state/load", { method: "POST" }).then(async (response) => {
+    if (!response.ok) throw new Error("Local state could not be loaded.");
+    return response.json();
+  });
 }
 
 export async function loadLocalStateProjection(): Promise<unknown> {
   if (inflight) return inflight;
-  inflight = requestLocalStateProjection()
-    .finally(() => {
-      inflight = null;
-    });
+  inflight = requestLocalStateProjection().finally(() => {
+    inflight = null;
+  });
   return inflight;
 }
 
