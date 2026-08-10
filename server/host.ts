@@ -114,6 +114,7 @@ import { handleProviderRun } from "./provider-run.ts";
 import { handleBrowserRoute } from "./browser-routes.ts";
 import { handleAutonomyRoute } from "./autonomy-routes.ts";
 import { handleReviewRoute } from "./review-routes.ts";
+import { handleConversationLifecycleRoute } from "./conversation-lifecycle-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -1569,202 +1570,22 @@ async function handleApi(
       sendJson(response, 200, { threads, bounded: true });
       return true;
     }
-    if (route === "/api/state/conversations/rename") {
-      const body = (await readJson(request)) as { threadId?: unknown; title?: unknown };
-      if (typeof body.threadId !== "string" || typeof body.title !== "string") {
-        throw new LocalStateError("A conversation and title are required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.renameConversation(body.threadId, body.title));
+    if (
+      await handleConversationLifecycleRoute(route, request, response, {
+        state,
+        preferences,
+        worktrees,
+        managed: Boolean(managedHost),
+        assertManagedThread,
+        selectManagedWorktree: managedHost
+          ? (root, worktree) => managedHost.selectWorktree(root, worktree)
+          : async () => undefined,
+        withDelegatedControlLock,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/state/conversations/pin") {
-      const body = (await readJson(request)) as { threadId?: unknown; pinned?: unknown };
-      if (typeof body.threadId !== "string" || typeof body.pinned !== "boolean") {
-        throw new LocalStateError("A conversation and pin state are required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.setConversationPinned(body.threadId, body.pinned));
-      return true;
-    }
-    if (route === "/api/state/conversations/archive") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.archiveConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/restore") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.restoreConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/settle") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.settleConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/unsettle") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.unsettleConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/snooze") {
-      const body = (await readJson(request)) as { threadId?: unknown; snoozedUntil?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (typeof body.snoozedUntil !== "string") {
-        throw new LocalStateError("A snooze wake time is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.snoozeConversation(body.threadId, body.snoozedUntil));
-      return true;
-    }
-    if (route === "/api/state/conversations/unsnooze") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.unsnoozeConversation(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/visit") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, await state.markConversationVisited(body.threadId));
-      return true;
-    }
-    if (route === "/api/state/conversations/release-worktree") {
-      const body = (await readJson(request)) as { threadId?: unknown; confirm?: unknown };
-      if (typeof body.threadId !== "string" || body.confirm !== true) {
-        throw new LocalStateError("A confirmed conversation worktree release is required.", 400);
-      }
-      const projection = await state.inspect();
-      const thread = projection.threads.find((item) => item.id === body.threadId);
-      if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
-      const project = projection.projects.find((item) => item.id === thread.projectId);
-      if (managedHost) {
-        assertManagedThread(projection, thread.id);
-        if (!project) throw new LocalStateError("The selected conversation is not available.", 404);
-        await managedHost.selectWorktree(project.root, thread.worktree);
-      }
-      const blocking = projection.turns.find(
-        (turn) =>
-          turn.threadId === thread.id &&
-          ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
-      );
-      if (blocking) {
-        throw new LocalStateError(
-          "This conversation cannot release its worktree while provider work is active. Stop or resolve it, then retry.",
-          409,
-        );
-      }
-      const result = await worktrees.releaseManagedPath(thread.worktree);
-      const { preferences: currentPreferences } = await preferences.load();
-      sendJson(response, 200, {
-        threadId: thread.id,
-        released: result.released,
-        managedWorktreeCount: result.count,
-        managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
-      });
-      return true;
-    }
-    if (route === "/api/state/conversations/delete/preview") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string") {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      if (managedHost) assertManagedThread(await state.inspect(), body.threadId);
-      sendJson(response, 200, {
-        threadId: body.threadId,
-        affectedRecords: await state.previewConversationDeletion(body.threadId),
-        excluded: ["repository", "worktree", "branch", "provider credentials", "remote content"],
-      });
-      return true;
-    }
-    if (route === "/api/state/conversations/delete") {
-      const body = (await readJson(request)) as { threadId?: unknown; confirm?: unknown };
-      if (typeof body.threadId !== "string" || body.confirm !== true) {
-        throw new LocalStateError("A confirmed conversation deletion is required.", 400);
-      }
-      sendJson(
-        response,
-        200,
-        await withDelegatedControlLock(async () => {
-          if (managedHost) assertManagedThread(await state.inspect(), body.threadId as string);
-          return state.deleteConversation(body.threadId as string);
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/state/delegated-conversations/link") {
-      const body = (await readJson(request)) as {
-        parentThreadId?: unknown;
-        childThreadId?: unknown;
-      };
-      if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
-        throw new LocalStateError("A parent and child conversation are required.", 400);
-      }
-      sendJson(
-        response,
-        200,
-        await withDelegatedControlLock(async () => {
-          const { preferences: currentPreferences } = await preferences.load();
-          if (!currentPreferences.orchestrationThreadsBeta) {
-            throw new LocalStateError("Orchestration threads beta is disabled.", 403);
-          }
-          if (managedHost) {
-            const projection = await state.inspect();
-            assertManagedThread(projection, body.parentThreadId!);
-            assertManagedThread(projection, body.childThreadId!);
-          }
-          return state.linkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/state/delegated-conversations/unlink") {
-      const body = (await readJson(request)) as {
-        parentThreadId?: unknown;
-        childThreadId?: unknown;
-      };
-      if (typeof body.parentThreadId !== "string" || typeof body.childThreadId !== "string") {
-        throw new LocalStateError("A parent and child conversation are required.", 400);
-      }
-      await withDelegatedControlLock(async () => {
-        const { preferences: currentPreferences } = await preferences.load();
-        if (!currentPreferences.orchestrationThreadsBeta) {
-          throw new LocalStateError("Orchestration threads beta is disabled.", 403);
-        }
-        if (managedHost) {
-          const projection = await state.inspect();
-          assertManagedThread(projection, body.parentThreadId!);
-          assertManagedThread(projection, body.childThreadId!);
-        }
-        await state.unlinkDelegatedConversation(body.parentThreadId!, body.childThreadId!);
-      });
-      sendJson(response, 200, { status: "unlinked" });
-      return true;
-    }
     if (route === "/api/preferences/load") {
       sendJson(response, 200, await preferences.load());
       return true;
