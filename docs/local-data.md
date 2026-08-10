@@ -72,6 +72,11 @@ seconds as an explicitly stale fallback.
   Transcript bodies (messages, tool activities, plans, context receipts) load
   per conversation through `POST /api/state/conversations/history` so status
   refreshes do not re-ship multi-megabyte histories over loopback.
+- In-process hot paths (provider event status, wake membership filters, autonomy
+  ticks) read the live projection via `inspect()` instead of `load()`. `load()`
+  still returns a full `structuredClone` for callers that need isolation;
+  cloning multi-megabyte history on every provider event is not required for
+  pure reads.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
 - Provider assistant streams are buffered and flushed as one durable message
