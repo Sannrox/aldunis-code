@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type {
   RepositoryMetadata,
   ConversationSummary,
@@ -9,6 +9,7 @@ import type {
 import type { WorkspacePanel } from "../../lib/workspace-panel";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import type { ChangesPanelMode } from "../changes/changes-panel";
+import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
 import { Conversation } from "./conversation";
 
 export function PaneConversation({
@@ -77,31 +78,38 @@ export function PaneConversation({
   const [changes, setChanges] = useState<ChangedFile[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
   const [changesError, setChangesError] = useState<string | null>(null);
+  const changesRequestSequenceReference = useRef(0);
   const [activePanel, setActivePanel] = useState<WorkspacePanel>("none");
-  const refreshChanges = async () => {
+  const refreshChanges = async (options: { fresh?: boolean } = {}) => {
     if (!repository) {
+      changesRequestSequenceReference.current += 1;
       setChanges([]);
       setChangesError(null);
       setChangesLoading(false);
       return;
     }
+    const sequence = ++changesRequestSequenceReference.current;
     setChangesLoading(true);
     setChangesError(null);
     try {
-      const response = await fetch("/api/changes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
+      // Boot shares inflight with the workbench sidebar badge; signal/manual
+      // refreshes force-fresh so post-mutation panels are not stale.
+      const load = options.fresh ? loadFreshChangedFiles : loadChangedFiles;
+      const files = await load({
+        root: repository.root,
+        worktree: repository.selectedWorktree,
       });
-      const body = (await response.json()) as { files?: ChangedFile[]; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
-      setChanges(body.files ?? []);
+      if (sequence !== changesRequestSequenceReference.current) return;
+      setChanges(files);
     } catch (cause) {
+      if (sequence !== changesRequestSequenceReference.current) return;
       setChangesError(
         cause instanceof Error ? cause.message : "Changed files could not be inspected.",
       );
     } finally {
-      setChangesLoading(false);
+      if (sequence === changesRequestSequenceReference.current) {
+        setChangesLoading(false);
+      }
     }
   };
   useEffect(() => {
@@ -113,7 +121,7 @@ export function PaneConversation({
       (!showChangesThreadId || conversation?.id === showChangesThreadId)
     ) {
       setActivePanel("changes");
-      void refreshChanges();
+      void refreshChanges({ fresh: true });
       onChangesRequestConsumed?.(showChangesSignal);
     }
   }, [conversation?.id, onChangesRequestConsumed, showChangesSignal, showChangesThreadId]);
@@ -147,7 +155,9 @@ export function PaneConversation({
       changesError={changesError}
       activePanel={activePanel}
       onPanelChange={setActivePanel}
-      onRefreshChanges={refreshChanges}
+      onRefreshChanges={() => {
+        void refreshChanges({ fresh: true });
+      }}
       openChangesSignal={showChangesSignal}
       openChangesMode={showChangesMode}
       profiles={profiles}
