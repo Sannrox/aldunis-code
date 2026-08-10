@@ -98,3 +98,37 @@ test("approved previews become available and stop explicitly", async () => {
     (error: unknown) => error instanceof PreviewError && error.status === 404,
   );
 });
+
+test("stopAll terminates active previews so host shutdown cannot retain them", async () => {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  assert.ok(address && typeof address === "object");
+  const port = address.port;
+  await new Promise<void>((resolve, reject) =>
+    probe.close((error) => (error ? reject(error) : resolve())),
+  );
+  const worktree = await mkdtemp(join(tmpdir(), "aldunis-preview-stopall-"));
+  await writeFile(
+    join(worktree, "package.json"),
+    JSON.stringify({
+      scripts: {
+        dev: `node -e "require('http').createServer((q,s)=>s.end('ready')).listen(${port},'127.0.0.1'); setInterval(()=>{}, 60000)"`,
+      },
+    }),
+  );
+  const manager = new PreviewManager();
+  const pending = await manager.requestStart("/repo", worktree, `http://127.0.0.1:${port}`);
+  manager.decide(pending.id, { repository: "/repo", worktree }, "allow_once");
+  let snapshot = manager.snapshot(pending.id);
+  for (let attempt = 0; attempt < 50 && snapshot.state === "starting"; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    snapshot = manager.snapshot(pending.id);
+  }
+  assert.equal(snapshot.state, "running");
+  await manager.stopAll();
+  assert.throws(
+    () => manager.snapshot(pending.id),
+    (error: unknown) => error instanceof PreviewError && error.status === 404,
+  );
+});

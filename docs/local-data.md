@@ -67,6 +67,11 @@ not written to disk; a successful list may remain in memory for at most 30
 seconds as an explicitly stale fallback.
 
 - Active turns remain owned by the host if you navigate away and return.
+- The workbench list projection (`POST /api/state/load`) returns lifecycle
+  metadata only (threads, turns, statuses, sessions, delegated projections).
+  Transcript bodies (messages, tool activities, plans, context receipts) load
+  per conversation through `POST /api/state/conversations/history` so status
+  refreshes do not re-ship multi-megabyte histories over loopback.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
 - Provider assistant streams are buffered and flushed as one durable message

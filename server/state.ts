@@ -1247,6 +1247,15 @@ export class LocalStateStore {
     return structuredClone(this.#projection);
   }
 
+  /**
+   * Read-only live projection for request handlers that project a subset.
+   * Callers must not mutate the returned object.
+   */
+  async inspect(): Promise<Readonly<StateProjection>> {
+    await this.#ensureLoaded();
+    return this.#projection;
+  }
+
   async #append(event: StateEvent): Promise<void> {
     await this.#appendComputed(() => ({ event, value: undefined }));
   }
