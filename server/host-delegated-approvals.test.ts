@@ -13,11 +13,11 @@ import { LocalStateStore } from "./state.ts";
 test("beta-disabled host rejects parent-routed approval decisions", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-delegated-approval-"));
   const state = new LocalStateStore(directory);
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-  );
+    profiles: new ClaudeProfileStore(directory),
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const address = server.address() as AddressInfo;
@@ -43,7 +43,7 @@ test("beta-disabled host rejects parent-routed approval decisions", async () => 
     });
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
@@ -52,14 +52,12 @@ test("parent-routed decisions resolve the original child approval once", async (
   const directory = await mkdtemp(join(tmpdir(), "aldunis-delegated-approval-"));
   const state = new LocalStateStore(directory);
   const permissions = new PermissionBroker();
-  const server = createLocalHost(
-    directory,
+  const server = createLocalHost({
+    dist: directory,
     state,
-    new ClaudeProfileStore(directory),
-    undefined,
-    undefined,
+    profiles: new ClaudeProfileStore(directory),
     permissions,
-  );
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   await fetch(`http://127.0.0.1:${address.port}/api/state/load`, { method: "POST" });
@@ -115,12 +113,11 @@ test("parent-routed decisions resolve the original child approval once", async (
     orchestrationThreadsBeta: true,
   });
   try {
-    const stateResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/state/load`,
-      { method: "POST" },
-    );
+    const stateResponse = await fetch(`http://127.0.0.1:${address.port}/api/state/load`, {
+      method: "POST",
+    });
     assert.equal(stateResponse.status, 200);
-    const loaded = await stateResponse.json() as {
+    const loaded = (await stateResponse.json()) as {
       delegatedApprovals: Array<{
         parentThreadId: string;
         childThreadId: string;
@@ -142,29 +139,31 @@ test("parent-routed decisions resolve the original child approval once", async (
     };
     const route = `http://127.0.0.1:${address.port}/api/provider/approvals/${approval.id}/decide`;
     const eventController = new AbortController();
-    const eventResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/state/events`,
-      { signal: eventController.signal },
-    );
+    const eventResponse = await fetch(`http://127.0.0.1:${address.port}/api/state/events`, {
+      signal: eventController.signal,
+    });
     assert.equal(eventResponse.status, 200);
     const eventReader = eventResponse.body?.getReader();
     assert.ok(eventReader);
     await eventReader.read();
-    const responses = await Promise.all([fetch(route, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }), fetch(route, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    })]);
+    const responses = await Promise.all([
+      fetch(route, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      fetch(route, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    ]);
     assert.deepEqual(responses.map((response) => response.status).sort(), [200, 409]);
     const success = responses.find((response) => response.status === 200);
     const conflict = responses.find((response) => response.status === 409);
     assert.ok(success);
     assert.ok(conflict);
-    assert.equal((await success.json() as { state: string }).state, "denied");
+    assert.equal(((await success.json()) as { state: string }).state, "denied");
     assert.deepEqual(await conflict.json(), {
       error: "The approval request has already been resolved.",
     });
@@ -179,14 +178,15 @@ test("parent-routed decisions resolve the original child approval once", async (
       new RegExp(`event: thread_status[\\s\\S]*${child.thread.id}`),
     );
     eventController.abort();
-    const afterResponse = await fetch(
-      `http://127.0.0.1:${address.port}/api/state/load`,
-      { method: "POST" },
-    );
+    const afterResponse = await fetch(`http://127.0.0.1:${address.port}/api/state/load`, {
+      method: "POST",
+    });
     assert.deepEqual(
-      (await afterResponse.json() as {
-        delegatedApprovals: Array<{ approval: { id: string } }>;
-      }).delegatedApprovals.map((item) => item.approval.id),
+      (
+        (await afterResponse.json()) as {
+          delegatedApprovals: Array<{ approval: { id: string } }>;
+        }
+      ).delegatedApprovals.map((item) => item.approval.id),
       [siblingApproval.id],
     );
     const projection = await state.load();
@@ -196,7 +196,7 @@ test("parent-routed decisions resolve the original child approval once", async (
     );
   } finally {
     await new Promise<void>((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
+      server.close((error) => (error ? reject(error) : resolve()));
     });
   }
 });
