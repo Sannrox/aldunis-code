@@ -40,6 +40,7 @@ import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
+import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
@@ -788,6 +789,7 @@ export function CodeWorkbench({
     }
   });
   const [changes, setChanges] = useState<ChangedFile[]>([]);
+  const changesRequestSequenceReference = useRef(0);
   const [primaryChangesSignal, setPrimaryChangesSignal] = useState(0);
   const [primaryChangesThreadId, setPrimaryChangesThreadId] = useState<string | null>(null);
   const [primaryChangesMode, setPrimaryChangesMode] = useState<"review" | "deliver">("review");
@@ -1117,10 +1119,11 @@ export function CodeWorkbench({
         })
         .catch(() => undefined);
     };
-    // Coalesce with the mount restore projection; only force-fresh after live events.
+    // Mount fills the list ASAP; every successful SSE open force-fresh so the
+    // accepted projection is not a pre-connection inflight snapshot.
     synchronize();
     const events = new EventSource("/api/state/events");
-    events.addEventListener("open", () => synchronize());
+    events.addEventListener("open", () => synchronize({ fresh: true }));
     events.addEventListener("thread_status", (event) => {
       try {
         const update = JSON.parse((event as MessageEvent<string>).data) as unknown;
@@ -1153,17 +1156,16 @@ export function CodeWorkbench({
   const [prStatusByWorktree, setPrStatusByWorktree] = useState<Map<string, BranchPrStatus>>(
     () => new Map(),
   );
-  useEffect(() => {
-    let cancelled = false;
+  // Stabilize the PR lookup set so conversation projection churn (timestamps,
+  // delegated edges) does not re-issue slow /api/delivery/pr-status/batch calls.
+  const prStatusLookupKey = useMemo(() => {
     const projectRootById = new Map(projects.map((project) => [project.id, project.root]));
-    // Prefer memberRoots when a conversation's projectId maps into a collapsed chip.
     for (const project of projects) {
       if (!project.memberRoots) continue;
       for (const [memberId, root] of Object.entries(project.memberRoots)) {
         projectRootById.set(memberId, root);
       }
     }
-    // Cap uniqueness first; refresh still chunks in case limits change.
     const items = uniqueWorktreeRoots(
       listedConversations.flatMap((conversation) => {
         const root = projectRootById.get(conversation.projectId);
@@ -1172,6 +1174,11 @@ export function CodeWorkbench({
       }),
       BRANCH_PR_CLIENT_BATCH_LIMIT * 4,
     );
+    return JSON.stringify(items);
+  }, [listedConversations, projects]);
+  useEffect(() => {
+    let cancelled = false;
+    const items = JSON.parse(prStatusLookupKey) as Array<{ root: string; worktree: string }>;
     if (items.length === 0) {
       setPrStatusByWorktree(new Map());
       return;
@@ -1198,8 +1205,8 @@ export function CodeWorkbench({
         // Soft-fail: missing gh or network issues leave rows without PR chrome.
       }
     };
-    // Debounce: restore and projection sync can churn listedConversations several
-    // times in one frame cascade; one delayed batch is enough for sidebar PR chrome.
+    // Debounce: restore can still settle the lookup key a few times; one delayed
+    // batch is enough for sidebar PR chrome.
     const debounceTimer = window.setTimeout(() => void refresh(), 250);
     const timer = window.setInterval(() => void refresh(), 60_000);
     return () => {
@@ -1207,7 +1214,7 @@ export function CodeWorkbench({
       window.clearTimeout(debounceTimer);
       window.clearInterval(timer);
     };
-  }, [listedConversations, projects]);
+  }, [prStatusLookupKey]);
   const worktreeLimit = 10;
   const managedWorktreeCount =
     repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
@@ -1279,24 +1286,25 @@ export function CodeWorkbench({
       ? candidate
       : repository.selectedWorktree;
   })();
-  const refresh = async () => {
+  const refresh = async (options: { fresh?: boolean } = {}) => {
     if (!repository || !worktreeForActive) {
+      changesRequestSequenceReference.current += 1;
       setChanges([]);
       return;
     }
+    const sequence = ++changesRequestSequenceReference.current;
     try {
-      const response = await fetch("/api/changes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: worktreeForActive,
-        }),
+      // Boot shares inflight with PaneConversation; explicit refreshes force-fresh
+      // so post-mutation snapshots are not reused. Sequence drops stale completions.
+      const load = options.fresh ? loadFreshChangedFiles : loadChangedFiles;
+      const files = await load({
+        root: repository.root,
+        worktree: worktreeForActive,
       });
-      const body = (await response.json()) as { files?: ChangedFile[]; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Changed files could not be inspected.");
-      setChanges(body.files ?? []);
+      if (sequence !== changesRequestSequenceReference.current) return;
+      setChanges(files);
     } catch {
+      if (sequence !== changesRequestSequenceReference.current) return;
       setChanges([]);
     }
   };
@@ -1515,7 +1523,7 @@ export function CodeWorkbench({
         }}
         changes={changes}
         onShowChanges={() => {
-          void refresh();
+          void refresh({ fresh: true });
           if (activePane === "secondary") setSecondaryChangesSignal((value) => value + 1);
           else setPrimaryChangesSignal((value) => value + 1);
           closeSidebarAfterMobileNavigation();

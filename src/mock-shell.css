@@ -1010,6 +1010,9 @@ html, body { height: 100%; }
 /* composer live input */
 .composer-input {
   display: block; width: 100%; min-height: 44px; max-height: 160px; resize: none;
+  /* Prefer native auto-grow so boot/typing avoid forced reflow in Chromium. */
+  field-sizing: content;
+  overflow-y: auto;
   border: 0; outline: 0; background: transparent; color: var(--foreground);
   font: 400 14.5px/1.55 var(--font-sans); margin-bottom: 10px; padding: 0;
 }
