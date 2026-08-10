@@ -779,9 +779,7 @@ export function coalesceConsecutiveAssistantMessages(
   activities: Activity[],
 ): Message[] {
   if (messages.length <= 1) return messages.map((message) => ({ ...message }));
-  type Item =
-    | { kind: "message"; message: Message }
-    | { kind: "activity"; activity: Activity };
+  type Item = { kind: "message"; message: Message } | { kind: "activity"; activity: Activity };
   const items: Item[] = [
     ...messages.map((message) => ({ kind: "message" as const, message })),
     ...activities.map((activity) => ({ kind: "activity" as const, activity })),
