@@ -2,6 +2,10 @@
 
 The preview starts only a selected worktree's declared `npm run dev` script.
 The local host spawns `npm` directly without a shell after one scoped approval.
+On POSIX the process is placed in its own process group so stop and host
+shutdown can terminate npm and its descendants (for example Vite) together;
+Windows uses `taskkill /T`. Terminal preview records are released after a short
+poll window so long-lived hosts do not retain every past session.
 The preview URL must use HTTP or HTTPS on `localhost`, `127.0.0.1`, or `::1`.
 
 The embedded frame has no popup, download, top-navigation, clipboard, camera,

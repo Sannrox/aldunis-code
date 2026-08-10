@@ -135,8 +135,8 @@ import {
   type ConversationOpenScroll,
 } from "../../lib/thread-open-scroll";
 import {
-  loadFreshLocalStateProjection,
-  loadLocalStateProjection,
+  loadConversationHistory,
+  loadFreshConversationHistory,
 } from "../../lib/local-state-load";
 import {
   loadProviderCapabilities,
@@ -1915,10 +1915,16 @@ export function Conversation({
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
-      const projection = (await loadLocalStateProjection()) as PersistedConversationProjection;
+      if (!conversation?.id) {
+        setHistoryRestored(true);
+        return;
+      }
+      const projection = (await loadConversationHistory(
+        conversation.id,
+      )) as PersistedConversationProjection;
       if (!active) return;
       const restoration = restorePersistedConversation(projection, {
-        conversationId: conversation?.id ?? null,
+        conversationId: conversation.id,
         projectId: repository.projectId,
         worktree: repository.selectedWorktree,
         activeProvider: provider,
@@ -2460,8 +2466,8 @@ export function Conversation({
       setRunId(activeRunId);
       setThreadId(createdThreadId);
       activeTurnId = response.headers.get("x-turn-id");
-      if (activeTurnId) {
-        void loadFreshLocalStateProjection()
+      if (activeTurnId && createdThreadId) {
+        void loadFreshConversationHistory(createdThreadId)
           .then((value) => {
             const projection = value as { contextReceipts?: ContextReceipt[] };
             const receipt = projection.contextReceipts?.find(
@@ -2496,9 +2502,9 @@ export function Conversation({
         }
         if (result.done) break;
       }
-      if (activeTurnId) {
+      if (activeTurnId && createdThreadId) {
         try {
-          const projection = (await loadFreshLocalStateProjection()) as {
+          const projection = (await loadFreshConversationHistory(createdThreadId)) as {
             checkpoints?: TurnCheckpoint[];
           };
           setCheckpoint(

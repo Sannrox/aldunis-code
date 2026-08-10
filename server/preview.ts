@@ -26,6 +26,78 @@ const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 /** Keep terminal snapshots long enough for the 1s status poller to observe them. */
 const TERMINAL_RETAIN_MS = 60_000;
+const STOP_GRACE_MS = 3_000;
+const STOP_FORCE_MS = 2_000;
+
+/**
+ * Terminate npm and its descendants. Posix spawns use a new process group so
+ * SIGTERM/SIGKILL can target the whole tree; Windows uses taskkill /T.
+ */
+export function terminatePreviewProcess(child: ChildProcess): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const pid = child.pid;
+  if (process.platform === "win32") {
+    if (typeof pid === "number") {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      }).unref();
+      return;
+    }
+    try {
+      child.kill();
+    } catch {
+      // Already gone.
+    }
+    return;
+  }
+  if (typeof pid === "number") {
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Already gone.
+      }
+    }
+    const force = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    }, STOP_FORCE_MS);
+    force.unref();
+    return;
+  }
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // Already gone.
+  }
+}
+
+function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    timer.unref();
+    child.once("exit", onExit);
+  });
+}
 
 export class PreviewError extends Error {
   constructor(
@@ -173,14 +245,10 @@ export class PreviewManager {
     }
     preview.state = "stopping";
     const child = preview.child;
-    const exited = new Promise<boolean>((resolve) => {
-      child.once("exit", () => resolve(true));
-      setTimeout(() => resolve(false), 3_000).unref();
-    });
-    child.kill("SIGTERM");
-    if (!(await exited)) {
+    terminatePreviewProcess(child);
+    if (!(await waitForExit(child, STOP_GRACE_MS + STOP_FORCE_MS))) {
       preview.state = "failed";
-      preview.message = "The development process did not stop after SIGTERM.";
+      preview.message = "The development process did not stop after SIGTERM/SIGKILL.";
       const failed = this.#snapshot(preview);
       // Keep the record while the child may still be alive so a later stop can
       // still target it; only release when the process handle is cleared.
@@ -194,6 +262,30 @@ export class PreviewManager {
     return stopped;
   }
 
+  /**
+   * Host shutdown: stop every preview process tree and drop in-memory records.
+   * Best-effort; does not throw when a child has already exited.
+   */
+  async stopAll(): Promise<void> {
+    const records = [...this.#previews.values()];
+    await Promise.all(
+      records.map(async (preview) => {
+        if (preview.approvalTimer) {
+          clearTimeout(preview.approvalTimer);
+          preview.approvalTimer = null;
+        }
+        const child = preview.child;
+        if (child && child.exitCode === null && child.signalCode === null) {
+          preview.state = "stopping";
+          terminatePreviewProcess(child);
+          await waitForExit(child, STOP_GRACE_MS + STOP_FORCE_MS);
+        }
+        preview.child = null;
+        this.#release(preview);
+      }),
+    );
+  }
+
   #start(preview: PreviewRecord): void {
     preview.state = "starting";
     const executable = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -201,6 +293,8 @@ export class PreviewManager {
       cwd: preview.worktree,
       env: { ...process.env, BROWSER: "none" },
       shell: false,
+      // New process group on POSIX so stop/kill reaches npm and its vite child.
+      detached: process.platform !== "win32",
       stdio: "ignore",
     });
     preview.child = child;
@@ -242,7 +336,7 @@ export class PreviewManager {
     if (preview.state !== "starting") return;
     preview.state = "failed";
     preview.message = `The development server is unavailable at ${preview.origin}.`;
-    preview.child?.kill("SIGTERM");
+    if (preview.child) terminatePreviewProcess(preview.child);
     preview.child = null;
     this.#scheduleRelease(preview);
   }

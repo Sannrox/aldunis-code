@@ -94,6 +94,10 @@ import {
   type ContextPin,
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
+import {
+  projectConversationHistory,
+  projectWorkbenchState,
+} from "./state-projection.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import {
   AutomationError,
@@ -1449,15 +1453,18 @@ async function handleApi(
       return true;
     }
     if (route === "/api/state/load") {
-      const projection = await state.load();
+      // Inspect avoids cloning multi-MB transcript arrays that this route never
+      // returns; workbench/list consumers only need lifecycle metadata.
+      const projection = await state.inspect();
       const visibleProjection = managedHost
-        ? filterManagedProjection(projection, managedHost)
-        : projection;
+        ? filterManagedProjection(projection as StateProjection, managedHost)
+        : (projection as StateProjection);
+      const workbench = projectWorkbenchState(visibleProjection);
       const { preferences: currentPreferences } = await preferences.load();
       sendJson(response, 200, {
-        ...visibleProjection,
+        ...workbench,
         delegatedRelationships: currentPreferences.orchestrationThreadsBeta
-          ? visibleProjection.delegatedRelationships
+          ? workbench.delegatedRelationships
           : [],
         delegatedOutcomes: currentPreferences.orchestrationThreadsBeta
           ? projectDelegatedConversationOutcomes(visibleProjection)
@@ -1486,6 +1493,18 @@ async function handleApi(
         managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
         managedWorktreePaths: await worktrees.listActiveManagedPaths(),
       });
+      return true;
+    }
+    if (route === "/api/state/conversations/history") {
+      const body = (await readJson(request)) as { threadId?: unknown };
+      if (typeof body.threadId !== "string" || !body.threadId) {
+        throw new LocalStateError("A conversation is required.", 400);
+      }
+      const projection = await state.inspect();
+      if (managedHost) assertManagedThread(projection as StateProjection, body.threadId);
+      const history = projectConversationHistory(projection as StateProjection, body.threadId);
+      if (!history) throw new LocalStateError("The conversation is unavailable.", 404);
+      sendJson(response, 200, history);
       return true;
     }
     if (route === "/api/forks/preview") {
@@ -4491,6 +4510,8 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     autonomyScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();
+    // Best-effort: kill npm/vite process trees so desktop quit does not orphan previews.
+    void previews.stopAll().catch(() => undefined);
     // Best-effort: journal any open stream segments before the process exits.
     void state.flushPendingAssistantHistory().catch(() => undefined);
   });
