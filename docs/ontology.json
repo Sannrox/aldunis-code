@@ -168,6 +168,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates one local conversation run's normalized provider-event transitions, context usage, session identity, approval and input resolution, cancellation, failure, completion, and stale-run isolation behind one reducer interface without acquiring provider-process, persistence, filesystem, or permission authority."
     },
     {
+      "name": "ComposerImageStagingModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates bounded composer image validation, in-worktree path reuse, uploaded payload construction, sequential host staging, pin capacity, batch limits, deduplication, partial success, and failure normalization behind one interface without acquiring filesystem, conversation, provider, or permission authority."
+    },
+    {
       "name": "LocalApplicationHost",
       "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
     },
@@ -890,6 +894,16 @@
       "description": "Concentrates the server-side lifecycle for one local conversation run while provider process variation remains behind existing adapters and permission authority remains with the PermissionBroker.",
       "domain": "ProviderRunExecutionModule",
       "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "stages_composer_images",
+      "description": "Concentrates the bounded composer image staging transaction while the conversation composer retains drag, paste, presentation, and pin-state ownership and the host retains filesystem authority.",
+      "domain": "ComposerImageStagingModule",
+      "range": "ConversationComposer",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -1705,6 +1719,18 @@
       "subject": "coordinates_conversation_run",
       "source": "Aldunis Code conversation run interface",
       "locator": "src/lib/conversation-run.ts#reduceConversationRun; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ComposerImageStagingModule",
+      "source": "Aldunis Code composer image staging interface",
+      "locator": "src/lib/composer-image-staging.ts#stageComposerImages",
+      "confidence": 1.0
+    },
+    {
+      "subject": "stages_composer_images",
+      "source": "Aldunis Code composer image staging interface",
+      "locator": "src/lib/composer-image-staging.ts#stageComposerImages; src/features/code/conversation.tsx",
       "confidence": 1.0
     }
   ]
