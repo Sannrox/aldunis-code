@@ -348,6 +348,10 @@
     {
       "name": "AutonomyRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates Autonomy route recognition, local and managed-host admission, request validation, managed projection filtering, persistence coordination, timestamps, and Autonomy engine invocation behind one internal dispatch interface without granting provider, filesystem, credential, tenant, or approval authority."
+    },
+    {
+      "name": "ChangedFileReviewRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
     }
   ],
   "relations": [
@@ -366,6 +370,16 @@
       "description": "The local API dispatch module delegates the Autonomy route family and request-scoped authority facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "AutonomyRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_changed_file_review_route_dispatch",
+      "description": "The local API dispatch module delegates changed-file review requests and scoped repository facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ChangedFileReviewRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -959,6 +973,18 @@
       "subject": "delegates_autonomy_route_dispatch",
       "source": "Aldunis Code Autonomy route dispatch interface",
       "locator": "server/host.ts#handleApi; server/autonomy-routes.ts#handleAutonomyRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#628",
+      "locator": "server/review-routes.ts#handleReviewRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_changed_file_review_route_dispatch",
+      "source": "Aldunis Code changed-file review route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/review-routes.ts#handleReviewRoute",
       "confidence": 1.0
     },
     {
