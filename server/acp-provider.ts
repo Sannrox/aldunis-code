@@ -147,26 +147,38 @@ export function normalizeAcpNotification(
     throw new ProviderProtocolError("ACP emitted a malformed session update.");
   }
   if (updateType === "agent_message_chunk") {
-    return acpMessageEvents(
-      update.content,
+    return withAcpContextUsage(
+      acpMessageEvents(
+        update.content,
+        provider,
+        "agent-message",
+        browserObservationEnabled,
+        observationSequence,
+      ),
+      params,
       provider,
-      "agent-message",
-      browserObservationEnabled,
-      observationSequence,
     );
   }
   if (updateType === "agent_thought_chunk") {
-    return [{ kind: "thinking", text: textContent(update.content) }];
+    return withAcpContextUsage(
+      [{ kind: "thinking", text: textContent(update.content) }],
+      params,
+      provider,
+    );
   }
   if (updateType === "tool_call") {
-    return [
-      {
-        kind: "tool_started",
-        toolCallId: requiredString(update.toolCallId, "tool call ID"),
-        name:
-          typeof update.title === "string" && update.title.trim() ? update.title.trim() : "Tool",
-      },
-    ];
+    return withAcpContextUsage(
+      [
+        {
+          kind: "tool_started",
+          toolCallId: requiredString(update.toolCallId, "tool call ID"),
+          name:
+            typeof update.title === "string" && update.title.trim() ? update.title.trim() : "Tool",
+        },
+      ],
+      params,
+      provider,
+    );
   }
   if (updateType === "tool_call_update") {
     // Agents (notably Grok Build) emit metadata-only tool_call_update frames with
@@ -183,32 +195,50 @@ export function normalizeAcpNotification(
     const rawStatus = update.status;
     if (observations.length > 0) {
       if (rawStatus === "completed" || rawStatus === "success") {
-        return [...observations, { kind: "tool_finished", toolCallId, failed: false }];
+        return withAcpContextUsage(
+          [...observations, { kind: "tool_finished", toolCallId, failed: false }],
+          params,
+          provider,
+        );
       }
       if (rawStatus === "failed" || rawStatus === "error") {
-        return [...observations, { kind: "tool_finished", toolCallId, failed: true }];
+        return withAcpContextUsage(
+          [...observations, { kind: "tool_finished", toolCallId, failed: true }],
+          params,
+          provider,
+        );
       }
-      return observations;
+      return withAcpContextUsage(observations, params, provider);
     }
-    if (rawStatus === undefined || rawStatus === null || rawStatus === "") return [];
+    if (rawStatus === undefined || rawStatus === null || rawStatus === "") {
+      return withAcpContextUsage([], params, provider);
+    }
     const status = String(rawStatus).toLowerCase();
     if (status === "completed" || status === "success") {
-      return [
-        {
-          kind: "tool_finished",
-          toolCallId,
-          failed: false,
-        },
-      ];
+      return withAcpContextUsage(
+        [
+          {
+            kind: "tool_finished",
+            toolCallId,
+            failed: false,
+          },
+        ],
+        params,
+        provider,
+      );
     }
     if (status === "failed" || status === "error") {
-      return [
-        {
-          kind: "tool_finished",
-          toolCallId,
-          failed: true,
-        },
-      ];
+      return withAcpContextUsage(
+        [
+          {
+            kind: "tool_finished",
+            toolCallId,
+            failed: true,
+          },
+        ],
+        params,
+        provider,
+      );
     }
     // Intermediate / soft statuses — ignore without failing the turn.
     if (
@@ -218,10 +248,10 @@ export function normalizeAcpNotification(
       status === "cancelled" ||
       status === "canceled"
     ) {
-      return [];
+      return withAcpContextUsage([], params, provider);
     }
     // Unknown status strings: tolerate rather than kill the conversation.
-    return [];
+    return withAcpContextUsage([], params, provider);
   }
   if (updateType === "plan") {
     const sessionId = requiredString(params?.sessionId, "session ID");
@@ -244,19 +274,25 @@ export function normalizeAcpNotification(
       }
       return { content: requiredString(entry.content, "plan entry content"), status };
     });
-    return [
-      {
-        kind: "plan_updated",
-        artifact: {
-          id: `session:${sessionId}`,
-          provider,
-          steps,
+    return withAcpContextUsage(
+      [
+        {
+          kind: "plan_updated",
+          artifact: {
+            id: `session:${sessionId}`,
+            provider,
+            steps,
+          },
         },
-      },
-    ];
+      ],
+      params,
+      provider,
+    );
   }
   if (updateType === "usage_update") {
-    return normalizeAcpUsageUpdate(update);
+    // Standard ACP usage_update (used/size). Prefer the update body; fall back to
+    // Grok-only params._meta when that agent stamps token pressure on meta.
+    return withAcpContextUsage(normalizeAcpUsageUpdate(update), params, provider);
   }
   const informational = new Set([
     "user_message_chunk",
@@ -266,7 +302,28 @@ export function normalizeAcpNotification(
     "session_info_update",
     "turn_end",
   ]);
-  if (informational.has(updateType)) return [];
+  // Grok Build extension session updates (xAI-specific). Tolerate only for the
+  // reviewed Grok adapter so other ACP agents still fail closed on unknowns.
+  if (isGrokBuildProvider(provider)) {
+    for (const extensionUpdate of [
+      "turn_completed",
+      "task_backgrounded",
+      "task_completed",
+      "session_recap",
+      "auto_compact_started",
+      "auto_compact_completed",
+      "compaction_checkpoint",
+      "subagent_spawned",
+      "subagent_finished",
+      "retry_state",
+      "image_dropped",
+      "image_compressed",
+      "hook_execution",
+    ]) {
+      informational.add(extensionUpdate);
+    }
+  }
+  if (informational.has(updateType)) return withAcpContextUsage([], params, provider);
   throw new ProviderProtocolError(`Unsupported ACP session update: ${updateType}.`);
 }
 
@@ -275,47 +332,109 @@ function finiteNonNegative(value: unknown): number | null {
   return value;
 }
 
-/**
- * Best-effort ACP usage_update → context_usage. Providers disagree on field
- * names; only emit when a usable used/max pair (or used alone) is present.
- */
-export function normalizeAcpUsageUpdate(update: Record<string, unknown>): ProviderEvent[] {
+function usageFieldsFromRecord(source: Record<string, unknown>): ProviderEvent[] {
   const usedTokens =
-    finiteNonNegative(update.usedTokens) ??
-    finiteNonNegative(update.used) ??
-    finiteNonNegative(update.tokens) ??
-    finiteNonNegative(update.totalTokens) ??
-    finiteNonNegative(update.contextTokens);
+    finiteNonNegative(source.usedTokens) ??
+    finiteNonNegative(source.used) ??
+    finiteNonNegative(source.tokens) ??
+    finiteNonNegative(source.totalTokens) ??
+    finiteNonNegative(source.contextTokens);
   if (usedTokens === null) return [];
   const maxTokens =
-    finiteNonNegative(update.maxTokens) ??
-    finiteNonNegative(update.size) ??
-    finiteNonNegative(update.contextWindow) ??
-    finiteNonNegative(update.contextWindowSize) ??
-    finiteNonNegative(update.limit);
+    finiteNonNegative(source.maxTokens) ??
+    finiteNonNegative(source.size) ??
+    finiteNonNegative(source.contextWindow) ??
+    finiteNonNegative(source.contextWindowSize) ??
+    finiteNonNegative(source.limit);
   const usage: Extract<ProviderEvent, { kind: "context_usage" }> = {
     kind: "context_usage",
     usedTokens,
     maxTokens,
     totalProcessedTokens:
-      finiteNonNegative(update.totalProcessedTokens) ?? finiteNonNegative(update.cumulativeTokens),
-    inputTokens: finiteNonNegative(update.inputTokens),
-    outputTokens: finiteNonNegative(update.outputTokens),
+      finiteNonNegative(source.totalProcessedTokens) ?? finiteNonNegative(source.cumulativeTokens),
+    inputTokens: finiteNonNegative(source.inputTokens),
+    outputTokens: finiteNonNegative(source.outputTokens),
   };
   const cachedInputTokens =
-    finiteNonNegative(update.cachedInputTokens) ??
-    finiteNonNegative(update.cacheReadInputTokens) ??
-    finiteNonNegative(update.cacheReadTokens);
+    finiteNonNegative(source.cachedInputTokens) ??
+    finiteNonNegative(source.cacheReadInputTokens) ??
+    finiteNonNegative(source.cacheReadTokens);
   const cacheWriteInputTokens =
-    finiteNonNegative(update.cacheWriteInputTokens) ??
-    finiteNonNegative(update.cacheCreationInputTokens) ??
-    finiteNonNegative(update.cacheWriteTokens);
+    finiteNonNegative(source.cacheWriteInputTokens) ??
+    finiteNonNegative(source.cacheCreationInputTokens) ??
+    finiteNonNegative(source.cacheWriteTokens);
   const reasoningOutputTokens =
-    finiteNonNegative(update.reasoningOutputTokens) ?? finiteNonNegative(update.reasoningTokens);
+    finiteNonNegative(source.reasoningOutputTokens) ?? finiteNonNegative(source.reasoningTokens);
   if (cachedInputTokens !== null) usage.cachedInputTokens = cachedInputTokens;
   if (cacheWriteInputTokens !== null) usage.cacheWriteInputTokens = cacheWriteInputTokens;
   if (reasoningOutputTokens !== null) usage.reasoningOutputTokens = reasoningOutputTokens;
   return [usage];
+}
+
+/**
+ * Best-effort ACP usage_update → context_usage. Providers disagree on field
+ * names; only emit when a usable used/max pair (or used alone) is present.
+ * Accepts flat fields or a nested `usage` object (stabilized ACP shape and
+ * several agent layouts).
+ */
+export function normalizeAcpUsageUpdate(update: Record<string, unknown>): ProviderEvent[] {
+  const nested = record(update.usage);
+  const fromUpdate = usageFieldsFromRecord(update);
+  if (fromUpdate.length > 0) return fromUpdate;
+  return nested ? usageFieldsFromRecord(nested) : [];
+}
+
+/** True for the shipped Grok Build declarative adapter only. */
+export function isGrokBuildProvider(provider: ProviderId | string | undefined): boolean {
+  if (!provider) return false;
+  // Match the reviewed package id exactly — not substring "grok-build" wrappers.
+  return (
+    provider === "dev.xai.grok-build" ||
+    provider.startsWith("adapter:dev.xai.grok-build@") ||
+    provider.startsWith("dev.xai.grok-build@")
+  );
+}
+
+/**
+ * Grok Build does not emit ACP `usage_update`. Instead it stamps live context
+ * fill on every session/update as `params._meta.totalTokens`. Pull that into
+ * the same ephemeral `context_usage` event the composer meter already consumes.
+ *
+ * Gated to Grok Build: other ACP agents may put differently defined numbers in
+ * `_meta.totalTokens`. Nested `update.usage` on non-usage_update frames is also
+ * ignored — Grok's `turn_completed.usage` is cumulative API accounting, not
+ * context window occupancy.
+ */
+export function contextUsageFromAcpParams(
+  params: JsonRecord | null | undefined,
+  provider?: ProviderId | string,
+): ProviderEvent[] {
+  if (!isGrokBuildProvider(provider)) return [];
+  const meta = record(params?._meta);
+  if (!meta) return [];
+  // Prefer explicit context-window field names when present; Grok Build only
+  // stamps totalTokens as the live context fill.
+  return usageFieldsFromRecord({
+    usedTokens: meta.usedTokens ?? meta.used ?? meta.contextTokens ?? meta.totalTokens,
+    maxTokens:
+      meta.maxTokens ?? meta.size ?? meta.contextWindow ?? meta.contextWindowSize ?? meta.limit,
+    totalProcessedTokens: meta.totalProcessedTokens ?? meta.cumulativeTokens,
+    inputTokens: meta.inputTokens,
+    outputTokens: meta.outputTokens,
+    cachedInputTokens: meta.cachedInputTokens ?? meta.cacheReadInputTokens ?? meta.cacheReadTokens,
+    cacheWriteInputTokens:
+      meta.cacheWriteInputTokens ?? meta.cacheCreationInputTokens ?? meta.cacheWriteTokens,
+    reasoningOutputTokens: meta.reasoningOutputTokens ?? meta.reasoningTokens,
+  });
+}
+
+function withAcpContextUsage(
+  events: ProviderEvent[],
+  params: JsonRecord | null | undefined,
+  provider: ProviderId | string | undefined,
+): ProviderEvent[] {
+  if (events.some((event) => event.kind === "context_usage")) return events;
+  return [...events, ...contextUsageFromAcpParams(params, provider)];
 }
 
 export function acpNotificationEvents(
