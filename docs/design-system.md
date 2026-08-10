@@ -156,10 +156,11 @@ Unsent composer text is stashed in the browser profile only (per conversation
 and per new-chat pane). Switching threads restores the matching draft; a
 successful send clears it. Drafts never leave the local browser.
 
-New conversations in shared-checkout mode may show a **Previous worktree**
-control when another recent conversation in the same project used a different
-path. Choosing it selects that worktree once; it does not create or release
-checkouts.
+New conversations in **shared** mode may show a **Previous worktree** control
+when another recent conversation in the same project used a different path.
+Choosing it selects that worktree once; it does not create or release
+checkouts. The control is hidden while creating an Aldunis-managed worktree so
+reuse and create do not compete on the same surface.
 
 ## Pull request status
 

@@ -24,7 +24,11 @@ test("workspace labels describe the ownership boundary", () => {
   assert.match(WORKSPACE_MODE_COPY["provider-native"].detail, /adapter/);
 });
 
-test("new conversation UI exposes only the two workspace strategies", () => {
-  assert.deepEqual(NEW_CONVERSATION_WORKSPACE_MODES, ["aldunis-managed", "provider-native"]);
-  assert.equal(NEW_CONVERSATION_WORKSPACE_MODES.includes("shared"), false);
+test("new conversation UI exposes create and reuse strategies", () => {
+  assert.deepEqual(NEW_CONVERSATION_WORKSPACE_MODES, [
+    "aldunis-managed",
+    "shared",
+    "provider-native",
+  ]);
+  assert.equal(NEW_CONVERSATION_WORKSPACE_MODES.includes("shared"), true);
 });

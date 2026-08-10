@@ -29,6 +29,8 @@ export interface RepositoryMetadata {
   name: string;
   root: string;
   defaultBranch: string | null;
+  /** Local branch names available as worktree creation bases. */
+  localBranches?: string[];
   managedRepositoryId?: string;
   selectedWorktree: string;
   worktrees: Array<{

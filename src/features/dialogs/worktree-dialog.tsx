@@ -1,6 +1,7 @@
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
 import type { RepositoryMetadata, WorktreeCreationPlan, WorktreeRemovalPlan } from "../../types";
 import { Button, ModalSurface } from "../../components/ui";
+import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktree-base";
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 
 export function WorktreeDialog({
@@ -17,7 +18,11 @@ export function WorktreeDialog({
   onChanged: (repository: RepositoryMetadata) => void;
 }) {
   const selected = repository?.worktrees.find((worktree) => worktree.path === selectedPath) ?? null;
-  const [base, setBase] = useState(() => repository?.defaultBranch ?? "");
+  const baseOptions = useMemo(
+    () => (repository ? worktreeBaseBranchOptions(repository) : []),
+    [repository],
+  );
+  const [base, setBase] = useState(() => (repository ? defaultWorktreeBase(repository) : ""));
   const [branch, setBranch] = useState("");
   const [path, setPath] = useState("");
   const [plan, setPlan] = useState<WorktreeCreationPlan | WorktreeRemovalPlan | null>(null);
@@ -29,9 +34,11 @@ export function WorktreeDialog({
     setError(null);
     setBranch("");
     setPath("");
-    setBase(repository?.defaultBranch ?? "");
-  }, [repository?.defaultBranch, repository?.root, selectedPath]);
+    setBase(repository ? defaultWorktreeBase(repository) : "");
+  }, [repository, selectedPath]);
   if (!repository) return null;
+
+  const canCreate = Boolean(base.trim() && branch.trim());
 
   const previewCreate = async (event: FormEvent) => {
     event.preventDefault();
@@ -166,21 +173,41 @@ export function WorktreeDialog({
         </>
       ) : (
         <form onSubmit={previewCreate}>
-          <label htmlFor="worktree-base">Default branch</label>
-          <input
-            id="worktree-base"
-            name="worktree-base"
-            value={base}
-            readOnly
-            aria-readonly="true"
-            disabled={busy}
-          />
-          {!repository.defaultBranch && (
-            <p role="alert">
-              The default branch could not be determined. Configure one remote HEAD or a
-              conventional local default branch before creating a worktree.
-            </p>
+          <label htmlFor="worktree-base">Start from</label>
+          {baseOptions.length > 0 ? (
+            <select
+              id="worktree-base"
+              name="worktree-base"
+              value={baseOptions.includes(base) ? base : baseOptions[0]}
+              onChange={(event) => {
+                setBase(event.target.value);
+                setPlan(null);
+              }}
+              disabled={busy}
+            >
+              {baseOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                  {option === repository.defaultBranch ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="worktree-base"
+              name="worktree-base"
+              value={base}
+              onChange={(event) => {
+                setBase(event.target.value);
+                setPlan(null);
+              }}
+              placeholder="main"
+              disabled={busy}
+            />
           )}
+          {!canCreate && !branch.trim() ? null : !base.trim() ? (
+            <p role="alert">Choose a starting branch before creating a worktree.</p>
+          ) : null}
           <label htmlFor="worktree-branch">New branch</label>
           <input
             id="worktree-branch"
@@ -223,7 +250,7 @@ export function WorktreeDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={busy || !repository.defaultBranch || !branch.trim()}
+                disabled={busy || !canCreate}
                 aria-label={busy ? "Validating worktree creation" : "Preview worktree creation"}
               >
                 {busy ? "Validating…" : "Preview creation"}
@@ -239,28 +266,48 @@ export function WorktreeDialog({
               ? "Create this isolated worktree once?"
               : "Remove this worktree checkout once?"}
           </strong>
-          <dl>
-            <div>
-              <dt>Repository</dt>
-              <dd title={plan.repository}>{plan.repository}</dd>
-            </div>
-            {plan.action === "create" && (
+          {plan.action === "create" ? (
+            <>
+              <dl>
+                <div>
+                  <dt>Start from</dt>
+                  <dd title={plan.base}>{plan.base}</dd>
+                </div>
+                <div>
+                  <dt>New branch</dt>
+                  <dd title={plan.branch}>{plan.branch}</dd>
+                </div>
+              </dl>
+              <details className="worktree-plan-details">
+                <summary>Details</summary>
+                <dl>
+                  <div>
+                    <dt>Repository</dt>
+                    <dd title={plan.repository}>{plan.repository}</dd>
+                  </div>
+                  <div>
+                    <dt>Base commit</dt>
+                    <dd title={plan.baseRevision}>{plan.baseRevision}</dd>
+                  </div>
+                  <div>
+                    <dt>Path</dt>
+                    <dd title={plan.path}>{plan.path}</dd>
+                  </div>
+                </dl>
+              </details>
+            </>
+          ) : (
+            <dl>
               <div>
-                <dt>Base</dt>
-                <dd title={`${plan.base} · ${plan.baseRevision}`}>
-                  {plan.base} · {plan.baseRevision}
-                </dd>
+                <dt>Branch</dt>
+                <dd title={plan.branch}>{plan.branch}</dd>
               </div>
-            )}
-            <div>
-              <dt>Branch</dt>
-              <dd title={plan.branch}>{plan.branch}</dd>
-            </div>
-            <div>
-              <dt>Path</dt>
-              <dd title={plan.path}>{plan.path}</dd>
-            </div>
-          </dl>
+              <div>
+                <dt>Path</dt>
+                <dd title={plan.path}>{plan.path}</dd>
+              </div>
+            </dl>
+          )}
           <p>
             {plan.action === "create"
               ? "Approval is single-use. The conversation will be bound to the canonical result."
