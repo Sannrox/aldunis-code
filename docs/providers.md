@@ -88,6 +88,11 @@ remains the source for provider plan content.
   provider thread while preserving the Aldunis conversation history.
 - Accepts Codex CLI **0.80+** on the 0.x app-server line (not an exact minor
   pin). Major 1.x is fail-closed until validated.
+- Normalizes the app-server notification surface through 0.145+ housekeeping
+  events (hooks, process/exec deltas, compaction, realtime, guardian warnings,
+  and related status traffic). Unknown future notifications still fail closed.
+  Terminal tool or protocol failures are not overwritten by stream cleanup when
+  the app-server is intentionally terminated mid-line.
 - Reports install, authentication readiness, version, models, and reasoning
   efforts. Installed-but-not-signed-in Codex stays selectable so the composer
   can show sign-in guidance.

@@ -228,26 +228,43 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
   if (!item) throw new ProviderProtocolError("Codex emitted a malformed item.");
   const id = string(item.id, "item id");
   if (item.type === "agentMessage") {
-    return completed ? [{ kind: "assistant_text", text: string(item.text, "agent text") }] : [];
+    // Streaming starts with empty text; only completed non-empty text is shown.
+    // Absent/non-string text remains a protocol error so malformed completions
+    // do not look like successful blank turns.
+    if (!completed) return [];
+    if (typeof item.text !== "string") {
+      throw new ProviderProtocolError("Codex event is missing agent text.");
+    }
+    if (!item.text) return [];
+    return [{ kind: "assistant_text", text: item.text }];
   }
   if (item.type === "reasoning") {
-    return completed && typeof item.text === "string" && item.text
-      ? [{ kind: "thinking", text: item.text }]
-      : [];
+    // Current app-server reasoning items expose summary/content arrays; older
+    // builds used a single text field. Prefer text, then join summary parts.
+    const text =
+      typeof item.text === "string" && item.text
+        ? item.text
+        : Array.isArray(item.summary)
+          ? item.summary.filter((part): part is string => typeof part === "string" && !!part).join("\n")
+          : "";
+    return completed && text ? [{ kind: "thinking", text }] : [];
   }
   if (item.type === "plan") {
-    return completed
-      ? [
-          {
-            kind: "plan_updated",
-            artifact: {
-              id: `item:${id}`,
-              provider: "codex-cli",
-              body: string(item.text, "plan text"),
-            },
-          },
-        ]
-      : [];
+    if (!completed) return [];
+    if (typeof item.text !== "string") {
+      throw new ProviderProtocolError("Codex event is missing plan text.");
+    }
+    if (!item.text) return [];
+    return [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: `item:${id}`,
+          provider: "codex-cli",
+          body: item.text,
+        },
+      },
+    ];
   }
   if (item.type === "commandExecution") {
     return completed
@@ -303,6 +320,8 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
       ? [{ kind: "tool_finished", toolCallId: id, failed }]
       : [{ kind: "tool_started", toolCallId: id, name: `MCP ${tool.slice(0, 160)}` }];
   }
+  // Informational ThreadItem variants from the app-server schema. Keep this
+  // list aligned with `codex app-server generate-ts` ThreadItem exports.
   const informationalItemTypes = new Set([
     "userMessage",
     "hookPrompt",
@@ -313,6 +332,7 @@ function itemEvents(itemValue: unknown, completed: boolean): ProviderEvent[] {
     "exitedReviewMode",
     "contextCompaction",
     "subAgentActivity",
+    "webSearch",
   ]);
   if (informationalItemTypes.has(String(item.type))) return [];
   throw new ProviderProtocolError(`Unsupported Codex item type: ${String(item.type)}.`);
@@ -467,7 +487,9 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
       ];
     }
     if (turn.status === "interrupted") return [{ kind: "cancelled" }];
-    if (turn.status === "completed") return [];
+    // "completed" is terminal success (handled by the event loop). "inProgress"
+    // appears in the schema and must not kill the turn if emitted early.
+    if (turn.status === "completed" || turn.status === "inProgress") return [];
     throw new ProviderProtocolError(`Unsupported Codex turn status: ${String(turn.status)}.`);
   }
   if (method === "error") {
@@ -483,14 +505,36 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
   if (method === "thread/tokenUsage/updated") {
     return normalizeCodexTokenUsage(params);
   }
+  // Housekeeping notifications from the app-server ServerNotification surface.
+  // Keep aligned with `codex app-server generate-ts` (0.145+). Unknown future
+  // methods still fail closed so protocol drift stays visible.
   const informational = new Set([
     "turn/started",
     "turn/diff/updated",
     "turn/moderationMetadata",
+    "hook/started",
+    "hook/completed",
     "thread/started",
     "thread/status/changed",
+    "thread/archived",
+    "thread/deleted",
+    "thread/unarchived",
+    "thread/closed",
+    "thread/name/updated",
     "thread/goal/updated",
     "thread/goal/cleared",
+    "thread/environment/connected",
+    "thread/environment/disconnected",
+    "thread/settings/updated",
+    "thread/compacted",
+    "thread/realtime/started",
+    "thread/realtime/itemAdded",
+    "thread/realtime/transcript/delta",
+    "thread/realtime/transcript/done",
+    "thread/realtime/outputAudio/delta",
+    "thread/realtime/sdp",
+    "thread/realtime/error",
+    "thread/realtime/closed",
     "skills/changed",
     "item/agentMessage/delta",
     "item/commandExecution/outputDelta",
@@ -500,18 +544,33 @@ export function normalizeCodexNotification(value: unknown): ProviderEvent[] {
     "item/mcpToolCall/progress",
     "item/autoApprovalReview/started",
     "item/autoApprovalReview/completed",
+    "rawResponseItem/completed",
+    "rawResponse/completed",
+    "command/exec/outputDelta",
+    "process/outputDelta",
+    "process/exited",
     "serverRequest/resolved",
     "model/rerouted",
     "model/verification",
     "model/safetyBuffering/updated",
     "warning",
+    "guardianWarning",
     "deprecationNotice",
     "configWarning",
     "remoteControl/status/changed",
     "mcpServer/startupStatus/updated",
+    "mcpServer/oauthLogin/completed",
     "account/updated",
     "account/rateLimits/updated",
+    "account/login/completed",
     "app/list/updated",
+    "externalAgentConfig/import/progress",
+    "externalAgentConfig/import/completed",
+    "fs/changed",
+    "fuzzyFileSearch/sessionUpdated",
+    "fuzzyFileSearch/sessionCompleted",
+    "windows/worldWritableWarning",
+    "windowsSandbox/setupCompleted",
   ]);
   if (informational.has(method)) return [];
   throw new ProviderProtocolError(`Unsupported Codex notification: ${method}.`);
@@ -921,7 +980,10 @@ export class CodexCliAdapter {
     force.unref();
   }
 
-  async *#lines(child: ChildProcessWithoutNullStreams): AsyncIterable<JsonRecord> {
+  async *#lines(
+    child: ChildProcessWithoutNullStreams,
+    options?: { allowIncompleteTrailer?: () => boolean },
+  ): AsyncIterable<JsonRecord> {
     const decoder = new StringDecoder("utf8");
     let buffer = "";
     for await (const chunk of child.stdout.iterator({ destroyOnReturn: false })) {
@@ -948,7 +1010,12 @@ export class CodexCliAdapter {
       }
     }
     buffer += decoder.end();
-    if (buffer.trim()) throw new ProviderProtocolError("Codex emitted an incomplete message.");
+    // After we intentionally terminate the app-server (terminal failure,
+    // cancel), stdout may end mid-line. Do not overwrite a more specific
+    // terminal event with a generic incomplete-message protocol error.
+    if (buffer.trim() && !options?.allowIncompleteTrailer?.()) {
+      throw new ProviderProtocolError("Codex emitted an incomplete message.");
+    }
   }
 
   async *#events(
@@ -989,7 +1056,9 @@ export class CodexCliAdapter {
     let resumeFallbackAttempted = false;
     const approvalTasks = new Set<Promise<void>>();
     try {
-      for await (const message of this.#lines(active.child)) {
+      for await (const message of this.#lines(active.child, {
+        allowIncompleteTrailer: () => terminalEmitted || active.cancelled,
+      })) {
         if (message.id === 0) {
           if (message.error)
             throw new ProviderProtocolError("Codex app-server initialization failed.");
@@ -1059,9 +1128,8 @@ export class CodexCliAdapter {
           continue;
         }
         if (message.id !== undefined && typeof message.method === "string") {
-          const params = record(message.params);
-          if (!params)
-            throw new ProviderProtocolError("Codex emitted malformed approval parameters.");
+          // Some unit-like server requests may omit params; treat as empty object.
+          const params = record(message.params) ?? {};
           if (message.method === "item/tool/call") {
             this.#send(active.child, {
               id: message.id as RpcId,
@@ -1267,6 +1335,7 @@ export class CodexCliAdapter {
               );
             }
           }
+          let terminalFromNotification = false;
           for (const event of normalizeCodexNotification(message)) {
             if (event.kind === "tool_started") active.activeToolCalls.add(event.toolCallId);
             if (event.kind === "tool_finished") active.activeToolCalls.delete(event.toolCallId);
@@ -1280,9 +1349,11 @@ export class CodexCliAdapter {
             yield event;
             if (event.kind === "cancelled" || event.kind === "failed") {
               terminalEmitted = true;
+              terminalFromNotification = true;
               this.#terminate(active.child);
             }
           }
+          if (terminalFromNotification) return;
           if (message.method === "turn/completed") {
             const params = record(message.params);
             const turn = record(params?.turn);
@@ -1296,24 +1367,31 @@ export class CodexCliAdapter {
         }
       }
     } catch (error) {
-      protocolFailed = true;
-      if (this.#sessions.get(active.conversationId) === active) {
-        this.#sessions.delete(active.conversationId);
+      // A terminal event may already have been yielded before stream cleanup
+      // threw (for example, a partial line after intentional terminate). Keep
+      // the specific terminal outcome and do not emit a second failure.
+      if (terminalEmitted) {
+        this.#terminate(active.child);
+      } else {
+        protocolFailed = true;
+        if (this.#sessions.get(active.conversationId) === active) {
+          this.#sessions.delete(active.conversationId);
+        }
+        this.#terminate(active.child);
+        terminalEmitted = true;
+        for (const settled of settleActiveToolCalls(active)) yield settled;
+        yield error instanceof ProviderProtocolError
+          ? {
+              kind: "failed",
+              code: "provider_protocol_error",
+              message: safeCodexProtocolFailureMessage(error),
+            }
+          : {
+              kind: "failed",
+              code: "provider_protocol_error",
+              message: "Codex stream processing failed.",
+            };
       }
-      this.#terminate(active.child);
-      terminalEmitted = true;
-      for (const settled of settleActiveToolCalls(active)) yield settled;
-      yield error instanceof ProviderProtocolError
-        ? {
-            kind: "failed",
-            code: "provider_protocol_error",
-            message: safeCodexProtocolFailureMessage(error),
-          }
-        : {
-            kind: "failed",
-            code: "provider_protocol_error",
-            message: "Codex stream processing failed.",
-          };
     } finally {
       this.#active.delete(id);
       if (active.currentRunId === id) active.currentRunId = null;

@@ -239,6 +239,98 @@ test("Codex version and native lifecycle events normalize without provider paylo
     }),
     [],
   );
+  // Codex 0.145+ housekeeping and ThreadItem variants must not kill the turn.
+  for (const method of [
+    "thread/compacted",
+    "hook/started",
+    "hook/completed",
+    "process/exited",
+    "process/outputDelta",
+    "command/exec/outputDelta",
+    "rawResponse/completed",
+    "rawResponseItem/completed",
+    "guardianWarning",
+    "fs/changed",
+    "fuzzyFileSearch/sessionUpdated",
+    "mcpServer/oauthLogin/completed",
+    "account/login/completed",
+  ]) {
+    assert.deepEqual(normalizeCodexNotification({ method, params: { threadId: "thread-1" } }), []);
+  }
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "search-1",
+          type: "webSearch",
+          query: "aldunis protocol",
+          action: null,
+          results: null,
+        },
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/started",
+      params: {
+        item: {
+          id: "msg-empty",
+          type: "agentMessage",
+          text: "",
+          phase: "final_answer",
+          memoryCitation: null,
+        },
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          id: "msg-empty",
+          type: "agentMessage",
+          text: "",
+          phase: "final_answer",
+          memoryCitation: null,
+        },
+      },
+    }),
+    [],
+  );
+  assert.throws(
+    () =>
+      normalizeCodexNotification({
+        method: "item/completed",
+        params: {
+          item: {
+            id: "msg-missing-text",
+            type: "agentMessage",
+            phase: "final_answer",
+            memoryCitation: null,
+          },
+        },
+      }),
+    /missing agent text/,
+  );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "item/completed",
+      params: {
+        item: {
+          id: "rs-1",
+          type: "reasoning",
+          summary: ["Considered the protocol surface."],
+          content: [],
+        },
+      },
+    }),
+    [{ kind: "thinking", text: "Considered the protocol surface." }],
+  );
 });
 
 test("Codex plan notifications normalize as stable artifacts and reject malformed steps", () => {
@@ -832,6 +924,13 @@ test("interrupted and failed Codex turns normalize to terminal events", () => {
     }),
     [{ kind: "failed", message: "Provider unavailable." }],
   );
+  assert.deepEqual(
+    normalizeCodexNotification({
+      method: "turn/completed",
+      params: { turn: { status: "inProgress", error: null } },
+    }),
+    [],
+  );
   assert.throws(
     () =>
       normalizeCodexNotification({
@@ -840,4 +939,64 @@ test("interrupted and failed Codex turns normalize to terminal events", () => {
       }),
     /Unsupported Codex turn status/,
   );
+});
+
+test("Codex terminal tool failures are not overwritten by stream cleanup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-terminal-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({ input: process.stdin }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (message.id === 1) console.log(JSON.stringify({
+      id:1,result:{thread:{id:"thread-1"},model:"fixture"}
+    }));
+    if (message.id === 2) {
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-1"}}}));
+      console.log(JSON.stringify({
+        method:"item/started",
+        params:{item:{
+          id:"mcp-1",
+          type:"mcpToolCall",
+          server:"private-server",
+          tool:"private-tool",
+          status:"inProgress",
+          arguments:{}
+        }}
+      }));
+      // Partial trailing line after the terminal failure should not replace
+      // the unsupported-external-tool outcome with a protocol fallback.
+      process.stdout.write('{"method":"process/exited","params":{');
+    }
+  });
+}
+`,
+  );
+  await chmod(executable, 0o700);
+  const adapter = new CodexCliAdapter(executable);
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "conversation-terminal",
+    prompt: "Trigger an external tool failure",
+    approvalUrl: "http://127.0.0.1:1/unused",
+    mode: "build",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  assert.deepEqual(events, [
+    { kind: "session_started", sessionId: "thread-1", model: "fixture" },
+    {
+      kind: "failed",
+      code: "unsupported_external_tool",
+      message:
+        "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
+    },
+  ]);
 });
