@@ -160,6 +160,10 @@
       ]
     },
     {
+      "name": "ConversationRunModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates one local conversation run's normalized provider-event transitions, context usage, session identity, approval and input resolution, cancellation, failure, completion, and stale-run isolation behind one reducer interface without acquiring provider-process, persistence, filesystem, or permission authority."
+    },
+    {
       "name": "LocalApplicationHost",
       "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
     },
@@ -851,6 +855,16 @@
       "name": "restores_local_conversation",
       "description": "Deterministically reconstructs the renderer-facing history and provider state for one identity-matched local conversation without changing persisted state or conversation authority.",
       "domain": "PersistedConversationRestoration",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "coordinates_conversation_run",
+      "description": "Concentrates renderer-side normalized run transitions for one local conversation while provider adapters, persistence, worktree ownership, and permission authority remain outside the module.",
+      "domain": "ConversationRunModule",
       "range": "LocalConversation",
       "cardinality": {
         "min": 0,
@@ -1637,6 +1651,18 @@
       "subject": "restores_local_conversation",
       "source": "Aldunis Code persisted conversation restoration interface",
       "locator": "src/lib/persisted-conversation-restoration.ts#restorePersistedConversation; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationRunModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#609",
+      "locator": "src/lib/conversation-run.ts#reduceConversationRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_conversation_run",
+      "source": "Aldunis Code conversation run interface",
+      "locator": "src/lib/conversation-run.ts#reduceConversationRun; src/features/code/conversation.tsx",
       "confidence": 1.0
     }
   ]
