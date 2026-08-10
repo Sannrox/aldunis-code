@@ -344,6 +344,10 @@
     {
       "name": "PersistedConversationRestoration",
       "description": "A pure Aldunis Code projection module that deterministically reconstructs one provider-independent local conversation from persisted thread, turn, message, activity, plan, input, correlation, context, session, and checkpoint records. It preserves exact sequenced-record order, inserts unsequenced projection records deterministically, and carries no fetch, timer, notification, provider-process, or mutation authority."
+    },
+    {
+      "name": "AutonomyRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates Autonomy route recognition, local and managed-host admission, request validation, managed projection filtering, persistence coordination, timestamps, and Autonomy engine invocation behind one internal dispatch interface without granting provider, filesystem, credential, tenant, or approval authority."
     }
   ],
   "relations": [
@@ -352,6 +356,16 @@
       "description": "The local host delegates accepted HTTP requests and request-scoped authority facts to one internal dispatch module without creating a new network, product, or trust seam.",
       "domain": "AldunisLocalHost",
       "range": "LocalApiDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_autonomy_route_dispatch",
+      "description": "The local API dispatch module delegates the Autonomy route family and request-scoped authority facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "AutonomyRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -933,6 +947,18 @@
       "subject": "AldunisLocalHost",
       "source": "Aldunis Code local host composition",
       "locator": "server/host.ts#createLocalHost; docs/architecture.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#624",
+      "locator": "server/autonomy-routes.ts#handleAutonomyRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_autonomy_route_dispatch",
+      "source": "Aldunis Code Autonomy route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/autonomy-routes.ts#handleAutonomyRoute",
       "confidence": 1.0
     },
     {
