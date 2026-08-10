@@ -68,3 +68,24 @@ export async function closeServer(server: Server): Promise<void> {
     server.close((error) => (error ? reject(error) : resolve()));
   });
 }
+
+export async function prepareForUpdateShutdown(options: {
+  disposeUpdater: () => void;
+  destroyWindow: () => void;
+  closeServices: () => Promise<void>;
+  onCloseError?: () => void;
+}): Promise<void> {
+  options.disposeUpdater();
+  // Disconnect the renderer before awaiting server.close(). Its loopback
+  // keep-alive connection can otherwise keep the local HTTP server open and
+  // prevent the updater from reaching quitAndInstall().
+  options.destroyWindow();
+  try {
+    await options.closeServices();
+  } catch {
+    // Installation has already taken ownership of application shutdown. Do
+    // not strand a headless single-instance process when best-effort cleanup
+    // fails; Electron will terminate remaining resources during installation.
+    options.onCloseError?.();
+  }
+}
