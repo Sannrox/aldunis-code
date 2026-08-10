@@ -172,6 +172,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates bounded composer image validation, in-worktree path reuse, uploaded payload construction, sequential host staging, pin capacity, batch limits, deduplication, partial success, and failure normalization behind one interface without acquiring filesystem, conversation, provider, or permission authority."
     },
     {
+      "name": "WorkbenchProjectionSynchronizationModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates local workbench projection refresh coalescing, stale-response suppression, event-stream lifetime, malformed-event rejection, optimistic visit reconciliation, and recovery-field normalization behind one refresh and snapshot interface without acquiring persistence, provider, filesystem, permission, or remote-product authority."
+    },
+    {
       "name": "LocalApplicationHost",
       "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
     },

@@ -18,11 +18,7 @@ import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { UsagePage } from "./usage-page";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
-import {
-  branchFromWorktree,
-  conversationListFromProjection,
-  type ConversationListProjection,
-} from "./conversation-list";
+import { branchFromWorktree, conversationListFromProjection } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
 import { Button, CloseButton } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
@@ -40,6 +36,13 @@ import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
+import {
+  createWorkbenchProjectionSynchronization,
+  isThreadStatusEvent,
+  reconcileWorkbenchConversations,
+  type WorkbenchProjectionSnapshot,
+  type WorkbenchStateProjection,
+} from "./workbench-projection-sync";
 import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
@@ -58,18 +61,6 @@ import {
   indexBranchPrResults,
   uniqueWorktreeRoots,
 } from "../../lib/branch-pr-status";
-
-type WorkbenchStateProjection = ConversationListProjection & {
-  conversationDeletions?: Array<{ threadId: string; status: string }>;
-  delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
-  delegatedApprovals?: DelegatedApprovalProjection[];
-  delegatedInputs?: DelegatedInputProjection[];
-  delegatedRelationships?: DelegatedConversationRelationship[];
-  managedWorktreeCount?: number;
-  managedWorktreeLimit?: number | null;
-  managedWorktreePaths?: string[];
-  error?: string;
-};
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -129,19 +120,7 @@ function isSidebarShortcutCaptured(target: EventTarget | null): boolean {
   );
 }
 
-export function isThreadStatusEvent(value: unknown): value is {
-  threadId: string;
-  status: string;
-  at: string;
-} {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const event = value as Record<string, unknown>;
-  return (
-    typeof event.threadId === "string" &&
-    typeof event.status === "string" &&
-    typeof event.at === "string"
-  );
-}
+export { isThreadStatusEvent };
 
 export function DelegatedChildrenPanel({
   parent,
@@ -853,7 +832,6 @@ export function CodeWorkbench({
   const secondaryIdReference = useRef<string | null>(null);
   const primaryPaneReference = useRef<HTMLDivElement>(null);
   const secondaryPaneReference = useRef<HTMLDivElement>(null);
-  const stateProjectionRequestReference = useRef(0);
   useEffect(() => {
     const startRepair = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId?: unknown; prompt?: unknown }>).detail;
@@ -903,35 +881,9 @@ export function CodeWorkbench({
     let active = true;
     setRestoreState("loading");
     const restore = async () => {
-      const requestSequence = ++stateProjectionRequestReference.current;
       const projection = (await loadLocalStateProjection()) as WorkbenchStateProjection;
       if (!active) return;
       const available = conversationListFromProjection(projection, null);
-      // A force-fresh SSE projection may have completed while this coalesced boot
-      // request was in flight — never overwrite that newer snapshot.
-      const isCurrent = requestSequence === stateProjectionRequestReference.current;
-      if (isCurrent) {
-        setConversations(available);
-        setDelegatedRelationships(projection.delegatedRelationships ?? []);
-        setDelegatedOutcomes(projection.delegatedOutcomes ?? []);
-        setDelegatedApprovals(projection.delegatedApprovals ?? []);
-        setDelegatedInputs(projection.delegatedInputs ?? []);
-        setIncompleteDeletionIds(
-          (projection.conversationDeletions ?? [])
-            .filter((deletion) => deletion.status !== "completed")
-            .map((deletion) => deletion.threadId),
-        );
-        if (typeof projection.managedWorktreeCount === "number") {
-          setManagedWorktreeCount(projection.managedWorktreeCount);
-        }
-        if (Array.isArray(projection.managedWorktreePaths)) {
-          setManagedWorktreePaths(
-            projection.managedWorktreePaths.filter(
-              (path): path is string => typeof path === "string",
-            ),
-          );
-        }
-      }
       // Only apply stored selection on the first successful load.
       if (restoredProjectReference.current === null) {
         const parameters = new URLSearchParams(window.location.search);
@@ -1089,85 +1041,45 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const loadStateProjection = async (options: { fresh?: boolean } = {}) => {
-    // Prefer the shared loader so dual-pane restore, EventSource sync, and
-    // conversation history share one inflight projection under boot pressure.
-    const body = (await (options.fresh
-      ? loadFreshLocalStateProjection()
-      : loadLocalStateProjection())) as WorkbenchStateProjection;
-    if (body.error) throw new Error(body.error);
-    return body;
-  };
-  const applyStateProjection = (body: WorkbenchStateProjection) => {
-    const projected = conversationListFromProjection(body);
-    setConversations((current) => {
-      const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
-      return projected.map((conversation) => {
-        const optimisticVisit = currentById.get(conversation.id)?.lastVisitedAt;
-        return optimisticVisit &&
-          (!conversation.lastVisitedAt || optimisticVisit > conversation.lastVisitedAt)
-          ? { ...conversation, lastVisitedAt: optimisticVisit }
-          : conversation;
-      });
-    });
-    setDelegatedRelationships(body.delegatedRelationships ?? []);
-    setDelegatedOutcomes(body.delegatedOutcomes ?? []);
-    setDelegatedApprovals(body.delegatedApprovals ?? []);
-    setDelegatedInputs(body.delegatedInputs ?? []);
-    // Keep incomplete-deletion recovery on the same path as restore so a
-    // coalesced boot projection still surfaces retry chrome when the sync
-    // effect wins the sequence counter.
-    setIncompleteDeletionIds(
-      (body.conversationDeletions ?? [])
-        .filter((deletion) => deletion.status !== "completed")
-        .map((deletion) => deletion.threadId),
-    );
-    if (typeof body.managedWorktreeCount === "number") {
-      setManagedWorktreeCount(body.managedWorktreeCount);
+  const acceptStateProjection = (snapshot: WorkbenchProjectionSnapshot) => {
+    setConversations((current) => reconcileWorkbenchConversations(snapshot.conversations, current));
+    setDelegatedRelationships(snapshot.delegatedRelationships);
+    setDelegatedOutcomes(snapshot.delegatedOutcomes);
+    setDelegatedApprovals(snapshot.delegatedApprovals);
+    setDelegatedInputs(snapshot.delegatedInputs);
+    setIncompleteDeletionIds(snapshot.incompleteDeletionIds);
+    if (snapshot.managedWorktreeCount !== undefined) {
+      setManagedWorktreeCount(snapshot.managedWorktreeCount);
     }
-    if (Array.isArray(body.managedWorktreePaths)) {
-      setManagedWorktreePaths(
-        body.managedWorktreePaths.filter((path): path is string => typeof path === "string"),
-      );
+    if (snapshot.managedWorktreePaths !== undefined) {
+      setManagedWorktreePaths(snapshot.managedWorktreePaths);
     }
   };
-  const refreshStateProjection = async () => {
-    const requestSequence = ++stateProjectionRequestReference.current;
-    const body = await loadStateProjection({ fresh: true });
-    if (requestSequence !== stateProjectionRequestReference.current) return;
-    applyStateProjection(body);
-  };
+  const stateProjectionSynchronizationReference = useRef<ReturnType<
+    typeof createWorkbenchProjectionSynchronization
+  > | null>(null);
+  const refreshStateProjection = () =>
+    stateProjectionSynchronizationReference.current?.refresh() ?? Promise.resolve();
   useEffect(() => {
-    let active = true;
-    const synchronize = (options: { fresh?: boolean } = {}) => {
-      const requestSequence = ++stateProjectionRequestReference.current;
-      void loadStateProjection(options)
-        .then((projection) => {
-          if (!active || requestSequence !== stateProjectionRequestReference.current) return;
-          applyStateProjection(projection);
-        })
-        .catch(() => undefined);
-    };
-    // Mount fills the list ASAP; every successful SSE open force-fresh so the
-    // accepted projection is not a pre-connection inflight snapshot.
-    synchronize();
-    const events = new EventSource("/api/state/events");
-    events.addEventListener("open", () => synchronize({ fresh: true }));
-    events.addEventListener("thread_status", (event) => {
-      try {
-        const update = JSON.parse((event as MessageEvent<string>).data) as unknown;
-        if (!isThreadStatusEvent(update)) return;
-        synchronize({ fresh: true });
-      } catch {
-        /* malformed status events do not replace the last valid projection */
-      }
+    const synchronization = createWorkbenchProjectionSynchronization({
+      load: (fresh) =>
+        (fresh
+          ? loadFreshLocalStateProjection()
+          : loadLocalStateProjection()) as Promise<WorkbenchStateProjection>,
+      createEventSource: () => new EventSource("/api/state/events"),
+      accept: acceptStateProjection,
     });
+    stateProjectionSynchronizationReference.current = synchronization;
+    synchronization.start();
     return () => {
-      active = false;
-      events.close();
+      synchronization.dispose();
+      if (stateProjectionSynchronizationReference.current === synchronization) {
+        stateProjectionSynchronizationReference.current = null;
+      }
     };
-    // The host hides delegated relationships while disabled, so enable performs a fresh load.
-  }, [orchestrationThreadsBeta]);
+    // The host hides delegated relationships while disabled, and restore retry
+    // must republish a projection after a transient startup failure.
+  }, [orchestrationThreadsBeta, restoreAttempt]);
   const listedConversations = useMemo(() => {
     const selectedProject =
       projectFilter === "all"
