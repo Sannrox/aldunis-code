@@ -14,6 +14,10 @@
       "description": "An internal deep module that hides local host route selection, authorization-sensitive request handling, dependency coordination, response normalization, and failure mapping behind one request-dispatch interface."
     },
     {
+      "name": "ProviderRunExecutionModule",
+      "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one internal interface while provider-specific behavior remains in adapters."
+    },
+    {
       "name": "HostCommand",
       "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
     },
@@ -870,6 +874,26 @@
         "min": 0,
         "max": 1
       }
+    },
+    {
+      "name": "delegates_provider_run_execution",
+      "description": "The local host dispatch module passes parsed run input, request-scoped authority facts, and an output adapter to one internal provider-run execution module without creating a new network or trust seam.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ProviderRunExecutionModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "executes_local_conversation_run",
+      "description": "Concentrates the server-side lifecycle for one local conversation run while provider process variation remains behind existing adapters and permission authority remains with the PermissionBroker.",
+      "domain": "ProviderRunExecutionModule",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
     }
   ],
   "provenance": [
@@ -1657,6 +1681,24 @@
       "subject": "ConversationRunModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#609",
       "locator": "src/lib/conversation-run.ts#reduceConversationRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderRunExecutionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#614",
+      "locator": "server/provider-run.ts#handleProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_provider_run_execution",
+      "source": "Aldunis Code provider run execution interface",
+      "locator": "server/host.ts#handleApi; server/provider-run.ts#handleProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "executes_local_conversation_run",
+      "source": "Aldunis Code provider run execution interface",
+      "locator": "server/provider-run.ts#handleProviderRun; server/provider-run.test.ts",
       "confidence": 1.0
     },
     {
