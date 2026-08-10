@@ -13,6 +13,7 @@ import {
 import {
   closeServer,
   DESKTOP_PROTOCOL,
+  isLiveDesktopWindow,
   isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
@@ -63,10 +64,11 @@ let desktopUpdater: DesktopUpdater | null = null;
 let shuttingDown = false;
 
 function showWindow(): void {
-  if (!window) return;
-  if (window.isMinimized()) window.restore();
-  window.show();
-  window.focus();
+  const activeWindow = window;
+  if (!isLiveDesktopWindow(activeWindow)) return;
+  if (activeWindow.isMinimized()) activeWindow.restore();
+  activeWindow.show();
+  activeWindow.focus();
 }
 
 function handleDeepLink(value: string): void {
