@@ -1469,6 +1469,9 @@ async function handleApi(
           ? projectDelegatedInputs(visibleProjection)
           : [],
         threadStatuses: projectThreadStatuses(visibleProjection),
+        managedWorktreeCount: await worktrees.countActiveManaged(),
+        managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
+        managedWorktreePaths: await worktrees.listActiveManagedPaths(),
       });
       return true;
     }

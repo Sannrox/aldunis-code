@@ -115,8 +115,13 @@ composer. It stays close to the next lifecycle decision without taking over
 the conversation transcript; the worktree path is truncated visually but
 remains available as the control's title text.
 
-- A worktree meter in the shelf, `n / limit`.
+- A worktree meter in the shelf, `n / limit` (installation-wide count and the
+  configured preference limit; unlimited renders as `∞`).
 - A marker on each settled row still holding a worktree.
+- `Release all (n)` on the settled shelf when any listed settled conversation
+  still holds an Aldunis-managed checkout. One confirmation reuses the
+  per-conversation release path; dirty or busy trees fail closed and are
+  reported without rolling back successful releases.
 - A line in the completion card stating that settling keeps the worktree and
   how many remain, so the choice is made before settling rather than
   discovered at the limit.

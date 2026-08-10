@@ -455,6 +455,7 @@ function App() {
         orchestrationThreadsBeta={preferences.orchestrationThreadsBeta}
         showThinking={preferences.showThinking}
         conversationOpenScroll={preferences.conversationOpenScroll}
+        managedWorktreeLimit={preferences.managedWorktreeLimit}
         managedMode={hostCapabilities.managed}
         managedModel={hostCapabilities.provider?.model}
         managedAccount={hostCapabilities.account}

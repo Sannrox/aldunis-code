@@ -642,6 +642,14 @@ export class WorktreeManager {
     return countActiveManaged(registry);
   }
 
+  /** Canonical paths of active managed worktrees (installation-wide). */
+  async listActiveManagedPaths(): Promise<string[]> {
+    const registry = await this.store.load();
+    return registry.records
+      .filter((record) => !record.removedAt && !record.removalPendingAt)
+      .map((record) => record.path);
+  }
+
   /**
    * Release a managed worktree without deleting conversation history.
    * Uses the same recoverable pending-removal path as approved removal so the

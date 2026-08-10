@@ -158,3 +158,24 @@ export function branchFromWorktree(worktree: string): string {
   const parts = normalized.split("/").filter(Boolean);
   return parts.at(-1) ?? worktree;
 }
+
+/** True when the conversation still binds an active Aldunis-managed checkout. */
+export function conversationHoldsManagedWorktree(
+  conversation: Pick<ConversationSummary, "worktree">,
+  managedPaths: ReadonlySet<string> | ReadonlyArray<string>,
+): boolean {
+  const path = conversation.worktree?.trim();
+  if (!path) return false;
+  if (managedPaths instanceof Set) return managedPaths.has(path);
+  return (managedPaths as ReadonlyArray<string>).includes(path);
+}
+
+/** Settled conversations that still consume a managed-worktree slot. */
+export function settledHoldingManagedWorktrees(
+  settled: ReadonlyArray<ConversationSummary>,
+  managedPaths: ReadonlySet<string> | ReadonlyArray<string>,
+): ConversationSummary[] {
+  return settled.filter((conversation) =>
+    conversationHoldsManagedWorktree(conversation, managedPaths),
+  );
+}

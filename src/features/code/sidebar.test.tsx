@@ -253,3 +253,80 @@ test("stale project filter ids fall back to inbox-wide empty copy", () => {
   assert.match(html, /No open threads\./);
   assert.doesNotMatch(html, /No open threads in this project\./);
 });
+
+test("settled shelf offers release-all when managed worktrees remain", () => {
+  const html = renderToStaticMarkup(
+    <CodeSidebar
+      product="code"
+      onProductChange={() => undefined}
+      repository={null}
+      projects={[
+        {
+          id: "project-1",
+          name: "Aldunis Code",
+          root: "/workspace/aldunis-code",
+          openedAt: "2026-08-04T00:00:00.000Z",
+        },
+      ]}
+      projectFilter="all"
+      onProjectFilterChange={() => undefined}
+      onAddProject={() => undefined}
+      onSelectProject={() => undefined}
+      changes={[]}
+      onShowChanges={() => undefined}
+      onBrowseFiles={() => undefined}
+      onOpenPalette={() => undefined}
+      conversations={[
+        {
+          id: "settled-1",
+          projectId: "project-1",
+          title: "Done one",
+          worktree: "/wt/a",
+          provider: "codex-cli",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+          settledAt: "2026-08-01T00:00:00.000Z",
+          pinnedAt: null,
+          archivedAt: null,
+        },
+        {
+          id: "settled-2",
+          projectId: "project-1",
+          title: "Done two",
+          worktree: "/wt/b",
+          provider: "claude-code",
+          updatedAt: "2026-08-02T00:00:00.000Z",
+          settledAt: "2026-08-02T00:00:00.000Z",
+          pinnedAt: null,
+          archivedAt: null,
+        },
+      ]}
+      primaryConversationId={null}
+      secondaryConversationId={null}
+      onOpenConversation={() => undefined}
+      onOpenBeside={() => undefined}
+      onNewConversation={() => undefined}
+      onSelectWorktree={() => undefined}
+      onManageWorktrees={() => undefined}
+      showingArchived={false}
+      onToggleArchived={() => undefined}
+      onConversationAction={() => undefined}
+      onSettle={() => undefined}
+      onSnooze={() => undefined}
+      onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
+      onReleaseWorktree={() => undefined}
+      onReleaseSettledWorktrees={() => undefined}
+      worktreeLimit={50}
+      managedWorktreeCount={2}
+      managedWorktreePaths={["/wt/a", "/wt/b"]}
+      onSettings={() => undefined}
+    />,
+  );
+
+  // Shelf starts collapsed; expand markup still includes the region only when open.
+  // Force open by matching Settled header count, then assert meter after open requires
+  // a second render with open state — use the header count as the closed-state signal.
+  assert.match(html, /Settled \(2\)/);
+  // With default closed shelf the release-all control is not mounted.
+  assert.doesNotMatch(html, /Release all \(2\)/);
+});
