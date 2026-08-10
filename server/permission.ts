@@ -1,12 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 export type ApprovalState =
-  | "pending"
-  | "allowed_once"
-  | "denied"
-  | "cancelled"
-  | "expired"
-  | "provider_failed";
+  "pending" | "allowed_once" | "denied" | "cancelled" | "expired" | "provider_failed";
 
 export interface ApprovalScope {
   summary: string;
@@ -65,7 +60,7 @@ export const MAX_APPROVAL_PATHS = 50;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 
@@ -81,7 +76,9 @@ function digest(value: unknown): string {
     }
     return item;
   };
-  return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(value)))
+    .digest("hex");
 }
 
 function displayValue(key: string, value: unknown): string | null {
@@ -93,9 +90,7 @@ function displayValue(key: string, value: unknown): string | null {
       .replace(/\b((?:password|secret|token|api[_-]?key)\s*=\s*)[^\s]+/gi, "$1[redacted]")
       .replace(/\s+/g, " ")
       .trim();
-    return compact.length > MAX_DETAIL_LENGTH
-      ? `${compact.slice(0, MAX_DETAIL_LENGTH)}…`
-      : compact;
+    return compact.length > MAX_DETAIL_LENGTH ? `${compact.slice(0, MAX_DETAIL_LENGTH)}…` : compact;
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return `[${value.length} items]`;
@@ -115,12 +110,13 @@ export function describeMutation(toolName: string, inputValue: unknown): Approva
     .find(([, value]) => value);
   const paths = Array.isArray(input.paths)
     ? [
-      ...input.paths.slice(0, MAX_APPROVAL_PATHS)
-        .map((path) => `path: ${displayValue("path", path) ?? "[hidden]"}`),
-      ...(input.paths.length > MAX_APPROVAL_PATHS
-        ? [`paths omitted: ${input.paths.length - MAX_APPROVAL_PATHS}`]
-        : []),
-    ]
+        ...input.paths
+          .slice(0, MAX_APPROVAL_PATHS)
+          .map((path) => `path: ${displayValue("path", path) ?? "[hidden]"}`),
+        ...(input.paths.length > MAX_APPROVAL_PATHS
+          ? [`paths omitted: ${input.paths.length - MAX_APPROVAL_PATHS}`]
+          : []),
+      ]
     : [];
   const details = [
     ...paths,
@@ -145,25 +141,30 @@ export function describeMutation(toolName: string, inputValue: unknown): Approva
     bash: "Run a command",
     bash_background: "Start a background command",
   };
-  const defaultTarget = toolName === "write_file"
-    || toolName === "edit"
-    || toolName === "multi_edit"
-    || toolName === "apply_patch"
-    || toolName === "bash"
-    || toolName === "bash_background"
-    ? "Target provided by Shikigami"
-    : "Target provided by Claude Code";
+  const defaultTarget =
+    toolName === "write_file" ||
+    toolName === "edit" ||
+    toolName === "multi_edit" ||
+    toolName === "apply_patch" ||
+    toolName === "bash" ||
+    toolName === "bash_background"
+      ? "Target provided by Shikigami"
+      : "Target provided by Claude Code";
   return {
-    summary: (toolName === "Bash" || toolName === "bash") && typeof input.host === "string"
-      ? "Allow network access"
-      : summaries[toolName] ?? `Run ${toolName}`,
+    summary:
+      (toolName === "Bash" || toolName === "bash") && typeof input.host === "string"
+        ? "Allow network access"
+        : (summaries[toolName] ?? `Run ${toolName}`),
     target: targetEntry ? `${targetEntry[0]}: ${targetEntry[1]}` : defaultTarget,
     details,
   };
 }
 
 export class PermissionError extends Error {
-  constructor(message: string, readonly status = 400) {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
     super(message);
   }
 }
@@ -237,17 +238,21 @@ export class PermissionBroker {
     const inputDigest = digest(toolInput);
     let approval: PendingApproval | undefined;
     for (let attempt = 0; attempt < 200 && !approval; attempt += 1) {
-      approval = [...this.#approvals.values()].find((candidate) => (
-        candidate.runId === runId
-        && candidate.toolName === toolName
-        && candidate.inputDigest === inputDigest
-        && candidate.state === "pending"
-        && !this.#claimed.has(candidate.id)
-      ));
+      approval = [...this.#approvals.values()].find(
+        (candidate) =>
+          candidate.runId === runId &&
+          candidate.toolName === toolName &&
+          candidate.inputDigest === inputDigest &&
+          candidate.state === "pending" &&
+          !this.#claimed.has(candidate.id),
+      );
       if (!approval) await new Promise((resolve) => setTimeout(resolve, 10));
     }
     if (!approval) {
-      return { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
+      return {
+        behavior: "deny",
+        message: "Aldunis Code rejected an unmatched permission request.",
+      };
     }
     // Claude's permission-prompt callback currently supplies tool name and input
     // but no tool-use identity. Claim one registered approval synchronously before
@@ -264,7 +269,10 @@ export class PermissionBroker {
     this.#assertToken(runId, token);
     const approval = this.#approvals.get(approvalId);
     if (!approval || approval.runId !== runId || this.#claimed.has(approvalId)) {
-      return { behavior: "deny", message: "Aldunis Code rejected an unmatched permission request." };
+      return {
+        behavior: "deny",
+        message: "Aldunis Code rejected an unmatched permission request.",
+      };
     }
     this.#claimed.add(approvalId);
     return approval.decision;
@@ -284,18 +292,15 @@ export class PermissionBroker {
     const approval = this.#approvals.get(id);
     if (!approval) throw new PermissionError("The approval request does not exist.", 404);
     if (
-      approval.runId !== context.runId
-      || approval.conversationId !== context.conversationId
-      || approval.repository !== context.repository
-      || approval.worktree !== context.worktree
-      || approval.toolCallId !== context.toolCallId
+      approval.runId !== context.runId ||
+      approval.conversationId !== context.conversationId ||
+      approval.repository !== context.repository ||
+      approval.worktree !== context.worktree ||
+      approval.toolCallId !== context.toolCallId
     ) {
       throw new PermissionError("The approval request is bound to a different context.", 403);
     }
-    if (
-      approval.state === "pending"
-      && Date.parse(approval.expiresAt) <= Date.now()
-    ) {
+    if (approval.state === "pending" && Date.parse(approval.expiresAt) <= Date.now()) {
       this.#finish(approval, "expired");
     }
     if (approval.state !== "pending") {
@@ -320,18 +325,15 @@ export class PermissionBroker {
     const approval = this.#approvals.get(id);
     if (!approval) throw new PermissionError("The approval request does not exist.", 404);
     if (
-      approval.runId !== context.runId
-      || approval.conversationId !== context.conversationId
-      || approval.repository !== context.repository
-      || approval.worktree !== context.worktree
-      || approval.toolCallId !== context.toolCallId
+      approval.runId !== context.runId ||
+      approval.conversationId !== context.conversationId ||
+      approval.repository !== context.repository ||
+      approval.worktree !== context.worktree ||
+      approval.toolCallId !== context.toolCallId
     ) {
       throw new PermissionError("The approval request is bound to a different context.", 403);
     }
-    if (
-      approval.state === "pending"
-      && Date.parse(approval.expiresAt) <= Date.now()
-    ) {
+    if (approval.state === "pending" && Date.parse(approval.expiresAt) <= Date.now()) {
       this.#finish(approval, "expired");
     }
     if (approval.state !== "pending" || this.#resolving.has(id)) {
@@ -367,7 +369,9 @@ export class PermissionBroker {
   }
 
   closeRun(runId: string, state: Extract<ApprovalState, "cancelled" | "provider_failed">): void {
-    for (const approval of this.#approvals.values()) {
+    // Terminal run closure releases retained approvals so long-lived hosts do not
+    // accumulate originalInput, claim markers, and resolved snapshots forever.
+    for (const approval of [...this.#approvals.values()]) {
       if (approval.runId !== runId) continue;
       if (this.#resolving.has(approval.id)) {
         approval.state = state;
@@ -379,14 +383,16 @@ export class PermissionBroker {
       } else if (approval.state === "pending") {
         this.#finish(approval, state);
       }
+      this.#approvals.delete(approval.id);
+      this.#claimed.delete(approval.id);
     }
     this.#tokens.delete(runId);
   }
 
   approvalFor(runId: string, toolCallId: string): ApprovalSnapshot | null {
-    const approval = [...this.#approvals.values()].find((candidate) => (
-      candidate.runId === runId && candidate.toolCallId === toolCallId
-    ));
+    const approval = [...this.#approvals.values()].find(
+      (candidate) => candidate.runId === runId && candidate.toolCallId === toolCallId,
+    );
     return approval ? this.#snapshot(approval) : null;
   }
 
@@ -411,9 +417,10 @@ export class PermissionBroker {
     } else {
       approval.resolve({
         behavior: "deny",
-        message: state === "denied"
-          ? "The user denied this action."
-          : `Aldunis Code closed the approval request (${state.replace("_", " ")}).`,
+        message:
+          state === "denied"
+            ? "The user denied this action."
+            : `Aldunis Code closed the approval request (${state.replace("_", " ")}).`,
       });
     }
   }
@@ -422,9 +429,9 @@ export class PermissionBroker {
     const expected = this.#tokens.get(runId);
     const supplied = Buffer.from(token);
     if (
-      !expected
-      || Buffer.byteLength(expected) !== supplied.length
-      || !timingSafeEqual(Buffer.from(expected), supplied)
+      !expected ||
+      Buffer.byteLength(expected) !== supplied.length ||
+      !timingSafeEqual(Buffer.from(expected), supplied)
     ) {
       throw new PermissionError("Invalid provider permission token.", 403);
     }
