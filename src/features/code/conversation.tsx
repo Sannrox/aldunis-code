@@ -2992,10 +2992,10 @@ export function Conversation({
   );
   const worktreeFilterHasNoMatches =
     worktreeFilter.trim().length > 0 && filteredSelectableWorktrees.length === 0;
-  // Offer previous worktree whenever a new chat can pick a checkout — not only
-  // when already in shared mode. Selecting it switches to shared reuse.
+  // Previous worktree is a reuse accelerator for shared checkout only.
+  // Managed create uses a separate base-branch dialog and must not compete.
   const previousWorktreeSeed = useMemo(() => {
-    if (!canPickWorkspace) return null;
+    if (!canPickWorkspace || workspaceMode !== "shared") return null;
     const seed = resolvePreviousWorktreeSeed({
       conversations: projectConversations,
       projectId: repository?.projectId ?? null,
@@ -3011,6 +3011,7 @@ export function Conversation({
     repository?.projectId,
     repository?.selectedWorktree,
     selectableWorktrees,
+    workspaceMode,
   ]);
   const previousWorktreeOption = previousWorktreeSeed
     ? (selectableWorktrees.find((item) => item.path === previousWorktreeSeed.worktreePath) ?? null)
@@ -3021,6 +3022,8 @@ export function Conversation({
     setWorkspaceMenuOpen(false);
     onSelectWorktree(previousWorktreeSeed.worktreePath);
   };
+  const showSharedWorktreePicker = canPickWorkspace && workspaceMode === "shared";
+  const showManagedCreateHint = canPickWorkspace && workspaceMode === "aldunis-managed";
   const selectedWorktreePath = repository?.selectedWorktree ?? "";
   const worktreeSelectValue = filteredSelectableWorktrees.some(
     (item) => item.path === selectedWorktreePath,
@@ -4082,99 +4085,122 @@ export function Conversation({
                           </div>
                         )}
                       </div>
-                      <div
-                        className="new-chat-context-worktree-picker"
-                        role="group"
-                        aria-label="Choose the conversation worktree"
-                      >
-                        {selectableWorktrees.length > 1 && (
-                          <div className="new-chat-worktree-tools">
-                            <label
-                              htmlFor={`${pane}-worktree-filter`}
-                              className="new-chat-worktree-filter-label"
-                            >
-                              Filter branches
-                            </label>
-                            <input
-                              id={`${pane}-worktree-filter`}
-                              type="search"
-                              value={worktreeFilter}
-                              onChange={(event) => setWorktreeFilter(event.target.value)}
-                              placeholder="Filter branches…"
-                              aria-controls={`${pane}-worktree-select`}
-                            />
-                            <span className="new-chat-worktree-count" aria-live="polite">
-                              {worktreeFilterHasNoMatches
-                                ? "No matches"
-                                : `${filteredSelectableWorktrees.length} available`}
+                      {showManagedCreateHint && (
+                        <div
+                          className="new-chat-context-worktree-picker new-chat-context-worktree-picker--create"
+                          role="note"
+                          aria-label="Dedicated worktree will be created"
+                        >
+                          <div className="new-chat-context-row new-chat-context-row--static">
+                            <Icon name="branch" />
+                            <span className="new-chat-context-copy">
+                              <strong>New worktree on start</strong>
+                              <small>
+                                Choose the starting branch when you approve creation.
+                                {repository?.defaultBranch
+                                  ? ` Default base: ${repository.defaultBranch}.`
+                                  : ""}
+                              </small>
                             </span>
                           </div>
-                        )}
-                        {previousWorktreeSeed && previousWorktreeOption && (
-                          <button
-                            type="button"
-                            className="previous-worktree-seed"
-                            onClick={selectPreviousWorktree}
-                            title={previousWorktreeSeed.worktreePath}
-                            aria-label={`Use previous worktree ${formatWorktreeOptionLabel(previousWorktreeOption)}. Switches to shared checkout.`}
-                          >
-                            <span className="previous-worktree-seed__label">Previous worktree</span>
-                            <span className="previous-worktree-seed__value">
-                              {formatWorktreeOptionLabel(previousWorktreeOption)}
-                              {workspaceMode !== "shared" ? " · shared" : ""}
+                        </div>
+                      )}
+                      {showSharedWorktreePicker && (
+                        <div
+                          className="new-chat-context-worktree-picker"
+                          role="group"
+                          aria-label="Choose the conversation worktree"
+                        >
+                          {selectableWorktrees.length > 1 && (
+                            <div className="new-chat-worktree-tools">
+                              <label
+                                htmlFor={`${pane}-worktree-filter`}
+                                className="new-chat-worktree-filter-label"
+                              >
+                                Filter branches
+                              </label>
+                              <input
+                                id={`${pane}-worktree-filter`}
+                                type="search"
+                                value={worktreeFilter}
+                                onChange={(event) => setWorktreeFilter(event.target.value)}
+                                placeholder="Filter branches…"
+                                aria-controls={`${pane}-worktree-select`}
+                              />
+                              <span className="new-chat-worktree-count" aria-live="polite">
+                                {worktreeFilterHasNoMatches
+                                  ? "No matches"
+                                  : `${filteredSelectableWorktrees.length} available`}
+                              </span>
+                            </div>
+                          )}
+                          {previousWorktreeSeed && previousWorktreeOption && (
+                            <button
+                              type="button"
+                              className="previous-worktree-seed"
+                              onClick={selectPreviousWorktree}
+                              title={previousWorktreeSeed.worktreePath}
+                              aria-label={`Use previous worktree ${formatWorktreeOptionLabel(previousWorktreeOption)}`}
+                            >
+                              <span className="previous-worktree-seed__label">
+                                Previous worktree
+                              </span>
+                              <span className="previous-worktree-seed__value">
+                                {formatWorktreeOptionLabel(previousWorktreeOption)}
+                              </span>
+                            </button>
+                          )}
+                          <label className="new-chat-context-row new-chat-context-row--select">
+                            <Icon name="branch" />
+                            <span className="new-chat-context-copy">
+                              <strong>
+                                {worktree?.branch ??
+                                  (worktree ? "Detached HEAD" : "Choose a worktree")}
+                              </strong>
+                              <small title={worktree?.path}>
+                                {worktree?.path ?? "Select an available branch"}
+                              </small>
                             </span>
-                          </button>
-                        )}
-                        <label className="new-chat-context-row new-chat-context-row--select">
-                          <Icon name="branch" />
-                          <span className="new-chat-context-copy">
-                            <strong>
-                              {worktree?.branch ??
-                                (worktree ? "Detached HEAD" : "Choose a worktree")}
-                            </strong>
-                            <small title={worktree?.path}>
-                              {worktree?.path ?? "Select an available branch"}
-                            </small>
-                          </span>
-                          <Icon name="chevron" />
-                          <select
-                            id={`${pane}-worktree-select`}
-                            aria-label="Choose the conversation worktree"
-                            value={worktreeSelectValue}
-                            disabled={
-                              selectableWorktrees.length === 0 || worktreeFilterHasNoMatches
-                            }
-                            onChange={(event) => {
-                              if (event.target.value) onSelectWorktree(event.target.value);
-                            }}
-                          >
-                            {selectableWorktrees.length === 0 && (
-                              <option value="">No available worktree</option>
-                            )}
-                            {worktreeFilterHasNoMatches && (
-                              <option value="">No matching worktree</option>
-                            )}
-                            {managedSelectableWorktrees.length > 0 && (
-                              <optgroup label="Aldunis worktrees">
-                                {managedSelectableWorktrees.map((item) => (
-                                  <option value={item.path} key={item.path}>
-                                    {formatWorktreeOptionLabel(item)}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                            {userSelectableWorktrees.length > 0 && (
-                              <optgroup label="Existing worktrees">
-                                {userSelectableWorktrees.map((item) => (
-                                  <option value={item.path} key={item.path}>
-                                    {formatWorktreeOptionLabel(item)}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                          </select>
-                        </label>
-                      </div>
+                            <Icon name="chevron" />
+                            <select
+                              id={`${pane}-worktree-select`}
+                              aria-label="Choose the conversation worktree"
+                              value={worktreeSelectValue}
+                              disabled={
+                                selectableWorktrees.length === 0 || worktreeFilterHasNoMatches
+                              }
+                              onChange={(event) => {
+                                if (event.target.value) onSelectWorktree(event.target.value);
+                              }}
+                            >
+                              {selectableWorktrees.length === 0 && (
+                                <option value="">No available worktree</option>
+                              )}
+                              {worktreeFilterHasNoMatches && (
+                                <option value="">No matching worktree</option>
+                              )}
+                              {managedSelectableWorktrees.length > 0 && (
+                                <optgroup label="Aldunis worktrees">
+                                  {managedSelectableWorktrees.map((item) => (
+                                    <option value={item.path} key={item.path}>
+                                      {formatWorktreeOptionLabel(item)}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              {userSelectableWorktrees.length > 0 && (
+                                <optgroup label="Existing worktrees">
+                                  {userSelectableWorktrees.map((item) => (
+                                    <option value={item.path} key={item.path}>
+                                      {formatWorktreeOptionLabel(item)}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                            </select>
+                          </label>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

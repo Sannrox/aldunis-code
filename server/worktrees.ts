@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  access,
-  mkdir,
-  readFile,
-  realpath,
-  rename,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -105,32 +97,34 @@ async function findManagedByPath(
 }
 
 function parseRegistry(value: unknown): ManagedWorktreeRegistry {
-  if (!isRecord(value) || value.schemaVersion !== REGISTRY_SCHEMA_VERSION || !Array.isArray(value.records)) {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== REGISTRY_SCHEMA_VERSION ||
+    !Array.isArray(value.records)
+  ) {
     throw new RepositoryError("Managed worktree history uses an incompatible schema.", 409);
   }
   const records = value.records.map((candidate) => {
     if (
-      !isRecord(candidate)
-      || candidate.schemaVersion !== REGISTRY_SCHEMA_VERSION
-      || typeof candidate.id !== "string"
-      || typeof candidate.repository !== "string"
-      || typeof candidate.path !== "string"
-      || typeof candidate.branch !== "string"
-      || typeof candidate.baseRevision !== "string"
-      || typeof candidate.createdAt !== "string"
-      || typeof candidate.lastUsedAt !== "string"
-      || (
-        candidate.removalPendingAt !== undefined
-        && candidate.removalPendingAt !== null
-        && typeof candidate.removalPendingAt !== "string"
-      )
-      || (candidate.removedAt !== null && typeof candidate.removedAt !== "string")
+      !isRecord(candidate) ||
+      candidate.schemaVersion !== REGISTRY_SCHEMA_VERSION ||
+      typeof candidate.id !== "string" ||
+      typeof candidate.repository !== "string" ||
+      typeof candidate.path !== "string" ||
+      typeof candidate.branch !== "string" ||
+      typeof candidate.baseRevision !== "string" ||
+      typeof candidate.createdAt !== "string" ||
+      typeof candidate.lastUsedAt !== "string" ||
+      (candidate.removalPendingAt !== undefined &&
+        candidate.removalPendingAt !== null &&
+        typeof candidate.removalPendingAt !== "string") ||
+      (candidate.removedAt !== null && typeof candidate.removedAt !== "string")
     ) {
       throw new RepositoryError("Managed worktree history is corrupt.", 409);
     }
     return {
       ...(candidate as unknown as Omit<ManagedWorktreeRecord, "removalPendingAt">),
-      removalPendingAt: candidate.removalPendingAt as string | null | undefined ?? null,
+      removalPendingAt: (candidate.removalPendingAt as string | null | undefined) ?? null,
     };
   });
   return { schemaVersion: REGISTRY_SCHEMA_VERSION, records };
@@ -179,7 +173,9 @@ async function canonicalFuturePath(input: string): Promise<string> {
 }
 
 async function assertNoGitLocks(root: string): Promise<void> {
-  const raw = (await git(root, ["rev-parse", "--git-common-dir"], "The Git directory is unavailable.")).trim();
+  const raw = (
+    await git(root, ["rev-parse", "--git-common-dir"], "The Git directory is unavailable.")
+  ).trim();
   const common = await realpath(resolve(root, raw));
   const lockPaths = [
     join(common, "index.lock"),
@@ -189,7 +185,10 @@ async function assertNoGitLocks(root: string): Promise<void> {
     join(common, "config.lock"),
   ];
   if ((await Promise.all(lockPaths.map(pathExists))).some(Boolean)) {
-    throw new RepositoryError("Another Git operation is in progress. Wait for it to finish and preview again.", 409);
+    throw new RepositoryError(
+      "Another Git operation is in progress. Wait for it to finish and preview again.",
+      409,
+    );
   }
 }
 
@@ -205,26 +204,46 @@ export function hasStagedChanges(status: string): boolean {
   return false;
 }
 
-async function validateRepositoryForCreation(root: string, base: string, branch: string): Promise<string> {
+async function validateRepositoryForCreation(
+  root: string,
+  base: string,
+  branch: string,
+): Promise<string> {
   await assertNoGitLocks(root);
-  const currentBranch = (await git(
-    root,
-    ["symbolic-ref", "--quiet", "--short", "HEAD"],
-    "Worktree creation is unavailable while the selected repository has a detached HEAD.",
-  )).trim();
+  const currentBranch = (
+    await git(
+      root,
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      "Worktree creation is unavailable while the selected repository has a detached HEAD.",
+    )
+  ).trim();
   if (!currentBranch) {
     throw new RepositoryError(
       "Worktree creation is unavailable while the selected repository has a detached HEAD.",
       409,
     );
   }
-  const status = await git(root, ["status", "--porcelain=v1", "-z"], "The repository state could not be inspected.");
+  const status = await git(
+    root,
+    ["status", "--porcelain=v1", "-z"],
+    "The repository state could not be inspected.",
+  );
   if (hasStagedChanges(status)) {
-    throw new RepositoryError("Stage or discard indexed changes before creating an isolated worktree.", 409);
+    throw new RepositoryError(
+      "Stage or discard indexed changes before creating an isolated worktree.",
+      409,
+    );
   }
-  const modes = await git(root, ["ls-files", "--stage"], "Repository files could not be inspected.");
+  const modes = await git(
+    root,
+    ["ls-files", "--stage"],
+    "Repository files could not be inspected.",
+  );
   if (modes.split("\n").some((line) => line.startsWith("160000 "))) {
-    throw new RepositoryError("Worktree creation is unavailable for repositories containing submodules.", 409);
+    throw new RepositoryError(
+      "Worktree creation is unavailable for repositories containing submodules.",
+      409,
+    );
   }
   await git(
     root,
@@ -232,10 +251,17 @@ async function validateRepositoryForCreation(root: string, base: string, branch:
     "The branch name is invalid. Choose a normal local branch name.",
   );
   try {
-    await execFileAsync("git", ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
-      timeout: 5_000,
-    });
-    throw new RepositoryError("That branch already exists. Select its worktree or choose another name.", 409);
+    await execFileAsync(
+      "git",
+      ["-C", root, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+      {
+        timeout: 5_000,
+      },
+    );
+    throw new RepositoryError(
+      "That branch already exists. Select its worktree or choose another name.",
+      409,
+    );
   } catch (error) {
     if (error instanceof RepositoryError) throw error;
     const code = (error as { code?: string | number }).code;
@@ -243,11 +269,13 @@ async function validateRepositoryForCreation(root: string, base: string, branch:
       throw new RepositoryError("Existing branches could not be inspected.", 409);
     }
   }
-  return (await git(
-    root,
-    ["rev-parse", "--verify", `${base}^{commit}`],
-    "The selected base revision does not exist.",
-  )).trim();
+  return (
+    await git(
+      root,
+      ["rev-parse", "--verify", `${base}^{commit}`],
+      "The selected base revision does not exist.",
+    )
+  ).trim();
 }
 
 export class ManagedWorktreeStore {
@@ -272,10 +300,18 @@ export class ManagedWorktreeStore {
   async save(records: ManagedWorktreeRecord[]): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify({
-      schemaVersion: REGISTRY_SCHEMA_VERSION,
-      records,
-    }, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        {
+          schemaVersion: REGISTRY_SCHEMA_VERSION,
+          records,
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: "utf8", mode: 0o600, flag: "wx" },
+    );
     await rename(temporary, this.#path);
   }
 }
@@ -295,27 +331,32 @@ export class WorktreeManager {
       discoverWorktrees(repository),
       this.store.load(),
     ]);
-    const owned = registry.records.filter((record) => record.repository === repository && !record.removedAt);
+    const owned = registry.records.filter(
+      (record) => record.repository === repository && !record.removedAt,
+    );
     const byPath = new Map(owned.map((record) => [record.path, record]));
     const byBranch = new Map(owned.map((record) => [record.branch, record]));
     const views: WorktreeView[] = discovered.map((worktree) => {
-      const record = byPath.get(worktree.path) ?? (worktree.branch ? byBranch.get(worktree.branch) : undefined);
+      const record =
+        byPath.get(worktree.path) ?? (worktree.branch ? byBranch.get(worktree.branch) : undefined);
       return {
         ...worktree,
         ownership: record ? "aldunis" : "user",
-        recovery: record && record.path !== worktree.path
-          ? "moved"
-          : worktree.state === "inaccessible"
-            ? "inaccessible"
-            : worktree.state === "missing"
-              ? "missing"
-              : "available",
+        recovery:
+          record && record.path !== worktree.path
+            ? "moved"
+            : worktree.state === "inaccessible"
+              ? "inaccessible"
+              : worktree.state === "missing"
+                ? "missing"
+                : "available",
         originalPath: record && record.path !== worktree.path ? record.path : null,
       };
     });
     const discoveredOwnedIds = new Set(
       views.flatMap((view) => {
-        const record = byPath.get(view.path) ?? (view.branch ? byBranch.get(view.branch) : undefined);
+        const record =
+          byPath.get(view.path) ?? (view.branch ? byBranch.get(view.branch) : undefined);
         return record ? [record.id] : [];
       }),
     );
@@ -345,15 +386,44 @@ export class WorktreeManager {
     const repository = await canonicalizeRepositoryRoot(input.repository);
     const branch = input.branch.trim();
     if (!branch) throw new RepositoryError("A new branch is required.");
-    const base = await repositoryDefaultBranch(repository);
+    const requestedBase = input.base.trim();
+    const defaultBase = await repositoryDefaultBranch(repository);
+    // Honor an explicit operator-selected local base branch. Empty base falls
+    // back to the repository default (local or remote-tracking HEAD). Arbitrary
+    // revisions (tags, HEAD~N) are rejected so plans match the create UI.
+    let base = requestedBase || defaultBase || "";
     if (!base) {
       throw new RepositoryError(
-        "The repository default branch could not be determined. Configure a single remote HEAD or use a conventional default branch.",
+        "Choose a starting branch, or configure a single remote HEAD / conventional local default branch.",
         409,
       );
     }
+    if (requestedBase) {
+      let isLocalBranch = false;
+      try {
+        await execFileAsync(
+          "git",
+          ["-C", repository, "show-ref", "--verify", "--quiet", `refs/heads/${requestedBase}`],
+          { timeout: 5_000 },
+        );
+        isLocalBranch = true;
+      } catch (error) {
+        const code = (error as { code?: string | number }).code;
+        if (code !== 1) {
+          throw new RepositoryError("Existing branches could not be inspected.", 409);
+        }
+      }
+      // Explicit non-local bases are allowed only when they are the resolved
+      // repository default (for example origin/main without a local main).
+      if (!isLocalBranch && requestedBase !== defaultBase) {
+        throw new RepositoryError("Choose a local branch as the starting base.", 409);
+      }
+      base = requestedBase;
+    }
     const registry = await this.store.load();
-    const managed = registry.records.filter((record) => !record.removedAt && !record.removalPendingAt);
+    const managed = registry.records.filter(
+      (record) => !record.removedAt && !record.removalPendingAt,
+    );
     if (input.limit !== null && managed.length >= input.limit) {
       throw new RepositoryError(
         `This installation has reached its ${input.limit}-worktree managed limit. Remove an eligible Aldunis worktree or raise the limit.`,
@@ -361,7 +431,12 @@ export class WorktreeManager {
       );
     }
     const baseRevision = await validateRepositoryForCreation(repository, base, branch);
-    const suggested = join(this.directory, "worktrees", basename(repository), branch.replaceAll("/", "-"));
+    const suggested = join(
+      this.directory,
+      "worktrees",
+      basename(repository),
+      branch.replaceAll("/", "-"),
+    );
     await mkdir(dirname(suggested), { recursive: true, mode: 0o700 });
     const path = await canonicalFuturePath(input.path?.trim() || suggested);
     const discovered = await discoverWorktrees(repository);
@@ -369,20 +444,31 @@ export class WorktreeManager {
       try {
         const existing = await realpath(worktree.path);
         if (isPathInside(existing, path)) {
-          throw new RepositoryError("The new worktree path cannot be inside an existing repository worktree.", 409);
+          throw new RepositoryError(
+            "The new worktree path cannot be inside an existing repository worktree.",
+            409,
+          );
         }
       } catch (error) {
         if (error instanceof RepositoryError) throw error;
       }
     }
     if (await pathExists(path)) {
-      throw new RepositoryError("The worktree path already exists. Select it or choose another path.", 409);
+      throw new RepositoryError(
+        "The worktree path already exists. Select it or choose another path.",
+        409,
+      );
     }
-    if (managed.some((record) => (
-      record.path === path
-      || (record.repository === repository && record.branch === branch)
-    ))) {
-      throw new RepositoryError("That branch or path is already registered as an Aldunis worktree.", 409);
+    if (
+      managed.some(
+        (record) =>
+          record.path === path || (record.repository === repository && record.branch === branch),
+      )
+    ) {
+      throw new RepositoryError(
+        "That branch or path is already registered as an Aldunis worktree.",
+        409,
+      );
     }
     const plan: WorktreeCreationPlan = {
       id: randomUUID(),
@@ -402,12 +488,21 @@ export class WorktreeManager {
     const plan = this.#consumePlan(planId, "create");
     return this.#exclusive(plan.repository, async () => {
       const registry = await this.store.load();
-      const managed = registry.records.filter((record) => !record.removedAt && !record.removalPendingAt);
+      const managed = registry.records.filter(
+        (record) => !record.removedAt && !record.removalPendingAt,
+      );
       if (limit !== null && managed.length >= limit) {
-        throw new RepositoryError("The managed worktree limit changed. Preview creation again.", 409);
+        throw new RepositoryError(
+          "The managed worktree limit changed. Preview creation again.",
+          409,
+        );
       }
-      const baseRevision = await validateRepositoryForCreation(plan.repository, plan.baseRevision, plan.branch);
-      if (baseRevision !== plan.baseRevision || await pathExists(plan.path)) {
+      const baseRevision = await validateRepositoryForCreation(
+        plan.repository,
+        plan.baseRevision,
+        plan.branch,
+      );
+      if (baseRevision !== plan.baseRevision || (await pathExists(plan.path))) {
         throw new RepositoryError("The approved worktree creation changed. Preview it again.", 409);
       }
       await git(
@@ -459,16 +554,19 @@ export class WorktreeManager {
     });
     const registry = await this.store.load();
     const record = registry.records.find(
-      (candidate) => candidate.repository === repository
-        && candidate.path === path
-        && !candidate.removedAt,
+      (candidate) =>
+        candidate.repository === repository && candidate.path === path && !candidate.removedAt,
     );
-    if (!record) throw new RepositoryError("Only Aldunis-owned worktrees can be removed here.", 403);
+    if (!record)
+      throw new RepositoryError("Only Aldunis-owned worktrees can be removed here.", 403);
     await assertNoGitLocks(repository);
     await assertRemovableWorktree(path);
     const identity = await inspectWorktreeIdentity(path);
     if (identity.branch !== record.branch) {
-      throw new RepositoryError("The managed worktree branch no longer matches its ownership record.", 409);
+      throw new RepositoryError(
+        "The managed worktree branch no longer matches its ownership record.",
+        409,
+      );
     }
     const plan: WorktreeRemovalPlan = {
       id: randomUUID(),
@@ -505,30 +603,35 @@ export class WorktreeManager {
     await this.#exclusive(plan.repository, async () => {
       const registry = await this.store.load();
       const record = registry.records.find(
-        (candidate) => candidate.id === plan.recordId
-          && candidate.repository === plan.repository
-          && candidate.path === plan.path
-          && candidate.branch === plan.branch
-          && !candidate.removedAt,
+        (candidate) =>
+          candidate.id === plan.recordId &&
+          candidate.repository === plan.repository &&
+          candidate.path === plan.path &&
+          candidate.branch === plan.branch &&
+          !candidate.removedAt,
       );
-      if (!record) throw new RepositoryError("The approved managed worktree is no longer available.", 409);
+      if (!record)
+        throw new RepositoryError("The approved managed worktree is no longer available.", 409);
       await assertNoGitLocks(plan.repository);
       const identity = await inspectWorktreeIdentity(plan.path);
       if (
-        identity.branch !== plan.branch
-        || identity.head !== plan.head
-        || identity.gitDirectory !== plan.gitDirectory
-        || identity.device !== plan.device
-        || identity.inode !== plan.inode
-        || identity.directoryChangeTimeNs !== plan.directoryChangeTimeNs
-        || identity.gitMarkerChangeTimeNs !== plan.gitMarkerChangeTimeNs
+        identity.branch !== plan.branch ||
+        identity.head !== plan.head ||
+        identity.gitDirectory !== plan.gitDirectory ||
+        identity.device !== plan.device ||
+        identity.inode !== plan.inode ||
+        identity.directoryChangeTimeNs !== plan.directoryChangeTimeNs ||
+        identity.gitMarkerChangeTimeNs !== plan.gitMarkerChangeTimeNs
       ) {
         throw new RepositoryError(
           "The approved worktree checkout was replaced or changed. Removal was cancelled.",
           409,
         );
       }
-      await assertRemovableWorktree(plan.path, "The worktree changed after approval. Removal was cancelled.");
+      await assertRemovableWorktree(
+        plan.path,
+        "The worktree changed after approval. Removal was cancelled.",
+      );
       await this.#finalizeRemoval(registry, record);
     });
   }
@@ -578,7 +681,10 @@ export class WorktreeManager {
       await assertNoGitLocks(record.repository);
       const identity = await inspectWorktreeIdentity(record.path);
       if (identity.branch !== record.branch) {
-        throw new RepositoryError("The managed worktree branch no longer matches its ownership record.", 409);
+        throw new RepositoryError(
+          "The managed worktree branch no longer matches its ownership record.",
+          409,
+        );
       }
       await assertRemovableWorktree(record.path);
       await this.#finalizeRemoval(registry, record);
@@ -594,13 +700,12 @@ export class WorktreeManager {
     registry: ManagedWorktreeRegistry,
     record: ManagedWorktreeRecord,
   ): Promise<void> {
-    const ownershipMatches = registry.records.filter((candidate) => (
-      !candidate.removedAt
-      && (
-        candidate.path === record.path
-        || (candidate.repository === record.repository && candidate.branch === record.branch)
-      )
-    ));
+    const ownershipMatches = registry.records.filter(
+      (candidate) =>
+        !candidate.removedAt &&
+        (candidate.path === record.path ||
+          (candidate.repository === record.repository && candidate.branch === record.branch)),
+    );
     if (ownershipMatches.length !== 1 || ownershipMatches[0]?.id !== record.id) {
       throw new RepositoryError(
         "Managed worktree ownership is ambiguous. Recovery did not change the registry.",
@@ -608,9 +713,9 @@ export class WorktreeManager {
       );
     }
     const discovered = await discoverWorktrees(record.repository);
-    const relocated = discovered.find((worktree) => (
-      worktree.path === record.path || worktree.branch === record.branch
-    ));
+    const relocated = discovered.find(
+      (worktree) => worktree.path === record.path || worktree.branch === record.branch,
+    );
     if (relocated) {
       throw new RepositoryError(
         relocated.path === record.path
@@ -624,68 +729,69 @@ export class WorktreeManager {
     const current = await this.store.load();
     const currentRecord = current.records.find((candidate) => candidate.id === record.id);
     if (
-      !currentRecord
-      || currentRecord.removedAt
-      || currentRecord.repository !== record.repository
-      || currentRecord.path !== record.path
-      || currentRecord.branch !== record.branch
-      || await pathExists(record.path)
+      !currentRecord ||
+      currentRecord.removedAt ||
+      currentRecord.repository !== record.repository ||
+      currentRecord.path !== record.path ||
+      currentRecord.branch !== record.branch ||
+      (await pathExists(record.path))
     ) {
       throw new RepositoryError(
         "Managed worktree recovery state changed during inspection. Retry Release.",
         409,
       );
     }
-    const currentMatches = current.records.filter((candidate) => (
-      !candidate.removedAt
-      && (
-        candidate.path === record.path
-        || (candidate.repository === record.repository && candidate.branch === record.branch)
-      )
-    ));
+    const currentMatches = current.records.filter(
+      (candidate) =>
+        !candidate.removedAt &&
+        (candidate.path === record.path ||
+          (candidate.repository === record.repository && candidate.branch === record.branch)),
+    );
     const currentDiscovered = await discoverWorktrees(record.repository);
     if (
-      currentMatches.length !== 1
-      || currentMatches[0]?.id !== record.id
-      || currentDiscovered.some((worktree) => (
-        worktree.path === record.path || worktree.branch === record.branch
-      ))
+      currentMatches.length !== 1 ||
+      currentMatches[0]?.id !== record.id ||
+      currentDiscovered.some(
+        (worktree) => worktree.path === record.path || worktree.branch === record.branch,
+      )
     ) {
       throw new RepositoryError(
         "Managed worktree recovery state changed during inspection. Retry Release.",
         409,
       );
     }
-    const next = current.records.map((candidate) => (
+    const next = current.records.map((candidate) =>
       candidate.id === record.id
         ? {
             ...candidate,
             removalPendingAt: null,
             removedAt: candidate.removedAt ?? new Date().toISOString(),
           }
-        : candidate
-    ));
+        : candidate,
+    );
     await this.store.save(next);
     const [pathReturned, discoveredAfterCommit] = await Promise.all([
       pathExists(record.path),
       discoverWorktrees(record.repository),
     ]);
     if (
-      pathReturned
-      || discoveredAfterCommit.some((worktree) => (
-        worktree.path === record.path || worktree.branch === record.branch
-      ))
+      pathReturned ||
+      discoveredAfterCommit.some(
+        (worktree) => worktree.path === record.path || worktree.branch === record.branch,
+      )
     ) {
       const afterCommit = await this.store.load();
-      await this.store.save(afterCommit.records.map((candidate) => (
-        candidate.id === record.id
-          ? {
-              ...candidate,
-              removalPendingAt: record.removalPendingAt ?? new Date().toISOString(),
-              removedAt: null,
-            }
-          : candidate
-      )));
+      await this.store.save(
+        afterCommit.records.map((candidate) =>
+          candidate.id === record.id
+            ? {
+                ...candidate,
+                removalPendingAt: record.removalPendingAt ?? new Date().toISOString(),
+                removedAt: null,
+              }
+            : candidate,
+        ),
+      );
       throw new RepositoryError(
         "The managed worktree reappeared during recovery. Its pending ownership record was preserved.",
         409,
@@ -698,9 +804,9 @@ export class WorktreeManager {
     record: ManagedWorktreeRecord,
   ): Promise<void> {
     const removalPendingAt = new Date().toISOString();
-    const pendingRecords = registry.records.map((candidate) => (
-      candidate.id === record.id ? { ...candidate, removalPendingAt } : candidate
-    ));
+    const pendingRecords = registry.records.map((candidate) =>
+      candidate.id === record.id ? { ...candidate, removalPendingAt } : candidate,
+    );
     await this.store.save(pendingRecords);
     try {
       await git(
@@ -713,11 +819,13 @@ export class WorktreeManager {
       throw error;
     }
     try {
-      await this.store.save(pendingRecords.map((candidate) => (
-        candidate.id === record.id
-          ? { ...candidate, removalPendingAt: null, removedAt: new Date().toISOString() }
-          : candidate
-      )));
+      await this.store.save(
+        pendingRecords.map((candidate) =>
+          candidate.id === record.id
+            ? { ...candidate, removalPendingAt: null, removedAt: new Date().toISOString() }
+            : candidate,
+        ),
+      );
     } catch {
       throw new RepositoryError(
         "The checkout was removed, but its ownership record remains in recoverable pending-removal state and no longer counts toward the managed limit.",
@@ -732,14 +840,19 @@ export class WorktreeManager {
   ): Extract<WorktreePlan, { action: T }> {
     const plan = this.#plans.get(id);
     this.#plans.delete(id);
-    if (!plan || plan.action !== action) throw new RepositoryError("The worktree approval is missing or already used.", 409);
-    if (Date.parse(plan.expiresAt) <= Date.now()) throw new RepositoryError("The worktree approval expired. Preview it again.", 409);
+    if (!plan || plan.action !== action)
+      throw new RepositoryError("The worktree approval is missing or already used.", 409);
+    if (Date.parse(plan.expiresAt) <= Date.now())
+      throw new RepositoryError("The worktree approval expired. Preview it again.", 409);
     return plan as Extract<WorktreePlan, { action: T }>;
   }
 
   async #exclusive<T>(_repository: string, operation: () => Promise<T>): Promise<T> {
     if (this.#operationActive) {
-      throw new RepositoryError("Another Aldunis Git operation is already active for this installation.", 409);
+      throw new RepositoryError(
+        "Another Aldunis Git operation is already active for this installation.",
+        409,
+      );
     }
     this.#operationActive = true;
     let release: (() => Promise<void>) | undefined;
@@ -777,7 +890,11 @@ async function assertRemovableWorktree(
   changedMessage = "Dirty worktrees cannot be removed.",
 ): Promise<void> {
   const [changes, ignored] = await Promise.all([
-    git(path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"], "The worktree state could not be inspected."),
+    git(
+      path,
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      "The worktree state could not be inspected.",
+    ),
     git(
       path,
       ["status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=all"],

@@ -31,6 +31,8 @@ export interface RepositoryMetadata {
   name: string;
   root: string;
   defaultBranch: string | null;
+  /** Local branch names available as worktree creation bases. */
+  localBranches: string[];
   selectedWorktree: string;
   worktrees: WorktreeMetadata[];
 }
@@ -122,13 +124,21 @@ export async function checkpointGitDirectory(worktree: string): Promise<string> 
 async function assertCheckpointable(worktree: string, allowChanges: boolean): Promise<void> {
   const submodules = await git(worktree, ["ls-files", "--stage"]);
   if (submodules.split("\n").some((line) => line.startsWith("160000 "))) {
-    throw new RepositoryError("Checkpoints are unavailable while the worktree contains submodules.", 409);
+    throw new RepositoryError(
+      "Checkpoints are unavailable while the worktree contains submodules.",
+      409,
+    );
   }
   // Gitignored paths (node_modules, build output, .env, .DS_Store, …) are outside
   // checkpoint scope: `git add -A` never stages them, so they are not snapshotted
   // or rewritten on rewind. Refusing capture whenever any ignored path exists on
   // disk made checkpoints unusable on ordinary projects. Leave them alone.
-  const porcelain = await git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const porcelain = await git(worktree, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+  ]);
   const entries = porcelain.split("\0").filter(Boolean);
   if (!allowChanges && entries.length > 0) {
     throw new RepositoryError(
@@ -142,8 +152,10 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     changedPaths.push(entry.slice(3));
-    if ((entry[0] === "R" || entry[0] === "C" || entry[1] === "R" || entry[1] === "C")
-      && entries[index + 1]) {
+    if (
+      (entry[0] === "R" || entry[0] === "C" || entry[1] === "R" || entry[1] === "C") &&
+      entries[index + 1]
+    ) {
       changedPaths.push(entries[++index]);
     }
   }
@@ -162,9 +174,11 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
     for (let field = 0; field < fields.length; field += 3) {
       const attribute = fields[field + 1];
       const value = fields[field + 2];
-      if ((attribute === "filter" || attribute === "working-tree-encoding")
-        && value !== "unspecified"
-        && value !== "unset") {
+      if (
+        (attribute === "filter" || attribute === "working-tree-encoding") &&
+        value !== "unspecified" &&
+        value !== "unset"
+      ) {
         throw new RepositoryError(
           "Checkpoints are unavailable for files transformed by Git filters or working-tree encodings.",
           409,
@@ -175,14 +189,20 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
   if (changedPaths.length > 0) {
     const trackedModes = await git(worktree, ["ls-files", "--stage", "--", ...changedPaths]);
     if (trackedModes.split("\n").some((line) => line.startsWith("120000 "))) {
-      throw new RepositoryError("Checkpoints are unavailable when a changed path is a symlink.", 409);
+      throw new RepositoryError(
+        "Checkpoints are unavailable when a changed path is a symlink.",
+        409,
+      );
     }
   }
   for (const path of changedPaths) {
     try {
       const details = await lstat(join(worktree, path));
       if (details.isSymbolicLink()) {
-        throw new RepositoryError("Checkpoints are unavailable when a changed path is a symlink.", 409);
+        throw new RepositoryError(
+          "Checkpoints are unavailable when a changed path is a symlink.",
+          409,
+        );
       }
       if (details.isDirectory()) {
         try {
@@ -249,13 +269,8 @@ function parseNameStatus(output: string): CheckpointFile[] {
     files.push({
       path,
       previousPath: renamed ? firstPath : null,
-      state: status === "A"
-        ? "added"
-        : status === "D"
-          ? "deleted"
-          : renamed
-            ? "renamed"
-            : "modified",
+      state:
+        status === "A" ? "added" : status === "D" ? "deleted" : renamed ? "renamed" : "modified",
       additions: null,
       deletions: null,
     });
@@ -263,7 +278,9 @@ function parseNameStatus(output: string): CheckpointFile[] {
   return files;
 }
 
-function parseNumstat(output: string): Map<string, { additions: number | null; deletions: number | null }> {
+function parseNumstat(
+  output: string,
+): Map<string, { additions: number | null; deletions: number | null }> {
   const stats = new Map<string, { additions: number | null; deletions: number | null }>();
   for (const field of output.split("\0").filter(Boolean)) {
     const firstTab = field.indexOf("\t");
@@ -299,14 +316,25 @@ export async function checkpointDiff(
   // Do not ask Git to detect renames for numstat: the NUL-delimited output
   // for a rename has two path fields, while the name-status result above has
   // already normalized the old and new paths for us.
-  const stats = parseNumstat(await git(worktree, ["diff", "--numstat", "-z", "--no-renames", fromIdentity, toIdentity, "--"]));
+  const stats = parseNumstat(
+    await git(worktree, [
+      "diff",
+      "--numstat",
+      "-z",
+      "--no-renames",
+      fromIdentity,
+      toIdentity,
+      "--",
+    ]),
+  );
   return files.map((file) => {
-    const stat = stats.get(file.path) ?? (file.previousPath ? stats.get(file.previousPath) : undefined);
+    const stat =
+      stats.get(file.path) ?? (file.previousPath ? stats.get(file.previousPath) : undefined);
     const binary = stat?.additions === null && stat.deletions === null;
     return {
       ...file,
-      additions: binary ? null : stat?.additions ?? 0,
-      deletions: binary ? null : stat?.deletions ?? 0,
+      additions: binary ? null : (stat?.additions ?? 0),
+      deletions: binary ? null : (stat?.deletions ?? 0),
       state: binary ? "binary" : file.state,
     };
   });
@@ -352,10 +380,14 @@ export async function rewindCheckpoint(
     const targetEnvironment = { ...process.env, GIT_INDEX_FILE: targetIndexPath };
     await git(worktree, ["read-tree", targetIndexIdentity], { env: targetEnvironment });
     if (files.length > 0) {
-      const patch = await gitBuffer(
-        worktree,
-        ["diff", "--binary", "--full-index", currentIdentity, targetIdentity, "--"],
-      );
+      const patch = await gitBuffer(worktree, [
+        "diff",
+        "--binary",
+        "--full-index",
+        currentIdentity,
+        targetIdentity,
+        "--",
+      ]);
       await writeFile(patchPath, patch, { mode: 0o600, flag: "wx" });
       await git(worktree, ["apply", "--check", "--whitespace=nowarn", patchPath], {
         maxBuffer: 32 * 1024 * 1024,
@@ -370,10 +402,7 @@ export async function rewindCheckpoint(
       await indexLock.close();
     }
     const lockedCurrent = await captureWorkspaceIdentity(worktree, true);
-    if (
-      lockedCurrent.identity !== currentIdentity
-      || lockedCurrent.head !== currentHead
-    ) {
+    if (lockedCurrent.identity !== currentIdentity || lockedCurrent.head !== currentHead) {
       throw new RepositoryError(
         "The workspace changed while acquiring the rewind lock. Preview it again before confirming.",
         409,
@@ -424,13 +453,17 @@ export async function deleteCheckpointReferences(
   }
   for (const phase of ["baseline", "baseline-index", "completed", "completed-index"]) {
     try {
-      await execFileAsync("git", [
-        "--git-dir",
-        commonDirectory,
-        "update-ref",
-        "-d",
-        `refs/aldunis-code/checkpoints/${checkpointId}/${phase}`,
-      ], { encoding: "utf8", timeout: 15_000 });
+      await execFileAsync(
+        "git",
+        [
+          "--git-dir",
+          commonDirectory,
+          "update-ref",
+          "-d",
+          `refs/aldunis-code/checkpoints/${checkpointId}/${phase}`,
+        ],
+        { encoding: "utf8", timeout: 15_000 },
+      );
     } catch {
       throw new RepositoryError("Checkpoint references could not be deleted.", 409);
     }
@@ -465,11 +498,10 @@ export async function canonicalizeRepositoryRoot(input: string): Promise<string>
 
   let gitRoot: string;
   try {
-    const result = await execFileAsync(
-      "git",
-      ["-C", canonical, "rev-parse", "--show-toplevel"],
-      { encoding: "utf8", timeout: 5_000 },
-    );
+    const result = await execFileAsync("git", ["-C", canonical, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
     gitRoot = await realpath(result.stdout.trim());
   } catch {
     throw new RepositoryError("The selected path is not inside a Git repository.");
@@ -509,11 +541,11 @@ export async function classifyWorktree(path: string, detached: boolean): Promise
 }
 
 export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[]> {
-  const result = await execFileAsync(
-    "git",
-    ["-C", root, "worktree", "list", "--porcelain", "-z"],
-    { encoding: "utf8", timeout: 5_000, maxBuffer: 1024 * 1024 },
-  );
+  const result = await execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain", "-z"], {
+    encoding: "utf8",
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024,
+  });
   const fields = result.stdout.split("\0").filter(Boolean);
   const records: Array<Record<string, string | true>> = [];
   let current: Record<string, string | true> | undefined;
@@ -530,18 +562,19 @@ export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[
     }
   }
 
-  return Promise.all(records.map(async (record) => {
-    const path = String(record.worktree);
-    const detached = record.detached === true;
-    return {
-      path,
-      head: typeof record.HEAD === "string" ? record.HEAD : null,
-      branch: typeof record.branch === "string"
-        ? record.branch.replace(/^refs\/heads\//, "")
-        : null,
-      state: await classifyWorktree(path, detached),
-    };
-  }));
+  return Promise.all(
+    records.map(async (record) => {
+      const path = String(record.worktree);
+      const detached = record.detached === true;
+      return {
+        path,
+        head: typeof record.HEAD === "string" ? record.HEAD : null,
+        branch:
+          typeof record.branch === "string" ? record.branch.replace(/^refs\/heads\//, "") : null,
+        state: await classifyWorktree(path, detached),
+      };
+    }),
+  );
 }
 
 export async function repositoryCommonDir(worktreePath: string): Promise<string> {
@@ -563,7 +596,22 @@ export async function repositoryMainRoot(worktreePath: string): Promise<string> 
 }
 
 /**
- * Resolve the branch a new Aldunis worktree should start from.
+ * List local branch names that can be offered as worktree creation bases.
+ * Sorted for stable UI presentation. Remote-only refs are excluded.
+ */
+export async function repositoryLocalBranches(worktreePath: string): Promise<string[]> {
+  const root = await canonicalizeRepositoryRoot(worktreePath);
+  const localBranches =
+    (await optionalGit(root, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))
+      ?.split(/\r?\n/)
+      .map((branch) => branch.trim())
+      .filter(Boolean) ?? [];
+  return [...new Set(localBranches)].sort((left, right) => left.localeCompare(right));
+}
+
+/**
+ * Resolve the repository default branch used when the operator does not pick
+ * an explicit worktree base.
  *
  * Configured remote HEADs are the strongest local signal for a repository's
  * default branch. They must agree when more than one is present. Without one,
@@ -571,8 +619,8 @@ export async function repositoryMainRoot(worktreePath: string): Promise<string> 
  * checked-out branch.
  *
  * A null result is intentional: opening a repository remains available when
- * its default branch cannot be determined, while managed worktree creation
- * fails closed until the ambiguity is resolved.
+ * its default branch cannot be determined. Managed worktree creation still
+ * succeeds when the operator selects an explicit local base branch.
  */
 export async function repositoryDefaultBranch(worktreePath: string): Promise<string | null> {
   const root = await canonicalizeRepositoryRoot(worktreePath);
@@ -598,15 +646,15 @@ export async function repositoryDefaultBranch(worktreePath: string): Promise<str
   }
   if (remoteHeads.length > 0) {
     const { branch, ref } = remoteHeads[0]!;
-    const localBranch = await optionalGit(root, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`]);
+    const localBranch = await optionalGit(root, [
+      "rev-parse",
+      "--verify",
+      `refs/heads/${branch}^{commit}`,
+    ]);
     return localBranch === null ? ref : branch;
   }
 
-  const localBranches = (await optionalGit(root, [
-    "for-each-ref",
-    "--format=%(refname:short)",
-    "refs/heads",
-  ]))?.split(/\r?\n/).filter(Boolean) ?? [];
+  const localBranches = await repositoryLocalBranches(root);
   for (const candidate of ["main", "master", "trunk"]) {
     if (candidate && localBranches.includes(candidate)) return candidate;
   }
@@ -642,13 +690,17 @@ export async function collapseProjectsByRepository(
   }>,
 ): Promise<CollapsedProject[]> {
   const sorted = [...projects].sort(
-    (left, right) => right.openedAt.localeCompare(left.openedAt) || left.root.localeCompare(right.root),
+    (left, right) =>
+      right.openedAt.localeCompare(left.openedAt) || left.root.localeCompare(right.root),
   );
-  const groups = new Map<string, {
-    winner: (typeof sorted)[number];
-    memberIds: string[];
-    commonDir: string;
-  }>();
+  const groups = new Map<
+    string,
+    {
+      winner: (typeof sorted)[number];
+      memberIds: string[];
+      commonDir: string;
+    }
+  >();
 
   for (const project of sorted) {
     let key: string;
@@ -722,20 +774,28 @@ export async function collapseProjectsByRepository(
 function isEphemeralWorktreePath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
   return (
-    normalized.includes("/.codex/worktrees/")
-    || normalized.includes("/.aldunis/wt/")
-    || normalized.includes("/.git/worktrees/")
+    normalized.includes("/.codex/worktrees/") ||
+    normalized.includes("/.aldunis/wt/") ||
+    normalized.includes("/.git/worktrees/")
   );
 }
 
 export async function openRepository(input: string): Promise<RepositoryMetadata> {
   const selected = await canonicalizeRepositoryRoot(input);
   const mainRoot = await repositoryMainRoot(selected);
-  const worktrees = await discoverWorktrees(mainRoot);
+  const [worktrees, defaultBranch, localBranches] = await Promise.all([
+    discoverWorktrees(mainRoot),
+    repositoryDefaultBranch(mainRoot),
+    repositoryLocalBranches(mainRoot),
+  ]);
   return {
-    name: mainRoot.split(sep).filter(Boolean).at(-1) ?? selected.split(sep).filter(Boolean).at(-1) ?? mainRoot,
+    name:
+      mainRoot.split(sep).filter(Boolean).at(-1) ??
+      selected.split(sep).filter(Boolean).at(-1) ??
+      mainRoot,
     root: mainRoot,
-    defaultBranch: await repositoryDefaultBranch(mainRoot),
+    defaultBranch,
+    localBranches,
     selectedWorktree: selected,
     worktrees,
   };
