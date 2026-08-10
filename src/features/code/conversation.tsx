@@ -113,6 +113,14 @@ import {
   shouldPinThreadToBottom,
 } from "../../lib/thread-auto-follow";
 import {
+  readThreadScrollPosition,
+  restoreThreadScrollTop,
+  shouldRestoreThreadScrollOnOpen,
+  snapshotThreadScroll,
+  writeThreadScrollPosition,
+  type ConversationOpenScroll,
+} from "../../lib/thread-open-scroll";
+import {
   loadFreshLocalStateProjection,
   loadLocalStateProjection,
 } from "../../lib/local-state-load";
@@ -459,6 +467,7 @@ export function Conversation({
   managedModel,
   quietDelegatedChild = false,
   showThinking = false,
+  conversationOpenScroll = "latest",
   initialPrompt,
   initialProvider,
   projectConversations = [],
@@ -493,6 +502,8 @@ export function Conversation({
   managedMode?: boolean;
   managedModel?: string;
   showThinking?: boolean;
+  /** Jump to latest message, or restore the last scroll place for this thread. */
+  conversationOpenScroll?: ConversationOpenScroll;
   /** Suppress ordinary child completion notifications while its linked parent is focused. */
   quietDelegatedChild?: boolean;
   /** One-shot bounded brief for a new conversation opened by a domain handoff. */
@@ -671,6 +682,10 @@ export function Conversation({
   const threadRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const ignoreThreadScrollRef = useRef(false);
+  /** One-shot open placement after history is ready for this mount. */
+  const openScrollAppliedRef = useRef(false);
+  const conversationOpenScrollRef = useRef(conversationOpenScroll);
+  conversationOpenScrollRef.current = conversationOpenScroll;
   const [following, setFollowing] = useState(true);
   const [messages, setMessages] = useState<
     Array<{ text: string; mode: InteractionMode; createdAt?: string }>
@@ -772,16 +787,37 @@ export function Conversation({
       ignoreThreadScrollRef.current = false;
     });
   }, []);
+  const persistThreadScrollPosition = useCallback(() => {
+    if (conversationOpenScrollRef.current !== "remember") return;
+    const thread = threadRef.current;
+    const id = conversation?.id ?? threadId;
+    if (!thread || !id) return;
+    const metrics = readThreadScrollMetrics(thread);
+    writeThreadScrollPosition(
+      id,
+      snapshotThreadScroll({
+        ...metrics,
+        following: followingRef.current,
+      }),
+      typeof window === "undefined" ? null : window.localStorage,
+    );
+  }, [conversation?.id, threadId]);
   const onThreadScroll = useCallback(() => {
     if (ignoreThreadScrollRef.current) return;
     const thread = threadRef.current;
     if (!thread) return;
     setThreadFollowing(nextThreadFollowEnabled(readThreadScrollMetrics(thread)));
-  }, [setThreadFollowing]);
+    persistThreadScrollPosition();
+  }, [persistThreadScrollPosition, setThreadFollowing]);
   const resumeThreadFollow = useCallback(() => {
     setThreadFollowing(true);
     pinThreadToBottom();
   }, [pinThreadToBottom, setThreadFollowing]);
+  useEffect(() => {
+    return () => {
+      persistThreadScrollPosition();
+    };
+  }, [persistThreadScrollPosition]);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
   const contextPins = useMemo<ContextPin[]>(
@@ -2799,13 +2835,56 @@ export function Conversation({
     failure ? "failed" : "ok",
   ].join(":");
   useLayoutEffect(() => {
+    // History is still loading — never commit the one-shot open placement yet.
+    if (!historyRestored) {
+      if (conversationEmpty) resetThreadToTop();
+      return;
+    }
     if (conversationEmpty) {
+      openScrollAppliedRef.current = true;
       resetThreadToTop();
       return;
     }
+
+    // First ready layout for this mount: honor open-scroll preference once.
+    if (!openScrollAppliedRef.current) {
+      openScrollAppliedRef.current = true;
+      const id = conversation?.id ?? threadId;
+      const saved =
+        conversationOpenScroll === "remember"
+          ? readThreadScrollPosition(id, typeof window === "undefined" ? null : window.localStorage)
+          : null;
+      if (shouldRestoreThreadScrollOnOpen(conversationOpenScroll, saved) && saved) {
+        const thread = threadRef.current;
+        if (thread) {
+          setThreadFollowing(false);
+          ignoreThreadScrollRef.current = true;
+          restoreThreadScrollTop(thread, saved);
+          queueMicrotask(() => {
+            ignoreThreadScrollRef.current = false;
+          });
+        }
+        return;
+      }
+      setThreadFollowing(true);
+      pinThreadToBottom();
+      return;
+    }
+
     if (!shouldPinThreadToBottom(followingRef.current, !conversationEmpty)) return;
     pinThreadToBottom();
-  }, [activePanel, conversationEmpty, pinThreadToBottom, resetThreadToTop, threadFollowContentKey]);
+  }, [
+    activePanel,
+    conversation?.id,
+    conversationEmpty,
+    conversationOpenScroll,
+    historyRestored,
+    pinThreadToBottom,
+    resetThreadToTop,
+    setThreadFollowing,
+    threadFollowContentKey,
+    threadId,
+  ]);
   useEffect(() => {
     const thread = threadRef.current;
     if (!thread) return;

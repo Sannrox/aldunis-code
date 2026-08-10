@@ -13,9 +13,7 @@ import { DEFAULT_PREFERENCES } from "../../preferences";
 
 test("preferences dialog wires provider recovery destinations", () => {
   const html = renderToStaticMarkup(
-    <ProviderSettingsLinks
-      onOpenProviderManagement={() => undefined}
-    />,
+    <ProviderSettingsLinks onOpenProviderManagement={() => undefined} />,
   );
 
   assert.match(html, /Open provider management/);
@@ -36,19 +34,14 @@ test("preferences dialog keeps its exit separate from scrollable sections", () =
     />,
   );
 
-  assert.match(
-    html,
-    /class="sback"[^>]*>← Back to threads<\/button><div class="snav-sections">/,
-  );
+  assert.match(html, /class="sback"[^>]*>← Back to threads<\/button><div class="snav-sections">/);
   assert.match(html, /class="snav-i on" aria-current="true">General/);
   assert.match(html, /type="submit"[^>]*disabled=""[^>]*aria-label="Save settings"/);
 });
 
 test("archived settings provide a direct path to archived conversations", () => {
   const html = renderToStaticMarkup(
-    <ArchivedSettingsLinks
-      onOpenArchivedThreads={() => undefined}
-    />,
+    <ArchivedSettingsLinks onOpenArchivedThreads={() => undefined} />,
   );
 
   assert.match(html, /Open archived threads/);
@@ -57,10 +50,7 @@ test("archived settings provide a direct path to archived conversations", () => 
 
 test("archived navigation can be guarded while preference changes are unsaved", () => {
   const html = renderToStaticMarkup(
-    <ArchivedSettingsLinks
-      onOpenArchivedThreads={() => undefined}
-      disabled
-    />,
+    <ArchivedSettingsLinks onOpenArchivedThreads={() => undefined} disabled />,
   );
 
   assert.match(html, /disabled=""/);
@@ -104,12 +94,20 @@ test("preference drafts expose unsaved changes before cross-dialog navigation", 
     ),
     true,
   );
+  assert.equal(
+    preferencesHaveUnsavedChanges(
+      {
+        ...DEFAULT_PREFERENCES,
+        conversationOpenScroll:
+          DEFAULT_PREFERENCES.conversationOpenScroll === "latest" ? "remember" : "latest",
+      },
+      DEFAULT_PREFERENCES,
+    ),
+    true,
+  );
 
   const html = renderToStaticMarkup(
-    <ProviderSettingsLinks
-      disabled
-      onOpenProviderManagement={() => undefined}
-    />,
+    <ProviderSettingsLinks disabled onOpenProviderManagement={() => undefined} />,
   );
   assert.match(html, /disabled/);
   assert.match(html, /Save or cancel your preference changes/);

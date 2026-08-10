@@ -13,29 +13,41 @@ test("resolveTheme honors an explicit theme regardless of the system preference"
 });
 
 test("preferences response accepts the current validated contract", () => {
-  assert.deepEqual(readPreferencesResponse({
-    preferences: DEFAULT_PREFERENCES,
-    recovered: false,
-  }), {
-    preferences: DEFAULT_PREFERENCES,
-    recovered: false,
-  });
+  assert.deepEqual(
+    readPreferencesResponse({
+      preferences: DEFAULT_PREFERENCES,
+      recovered: false,
+    }),
+    {
+      preferences: DEFAULT_PREFERENCES,
+      recovered: false,
+    },
+  );
 });
 
 test("preferences response rejects missing and incompatible payloads", () => {
   assert.equal(readPreferencesResponse({ error: "API route not found." }), null);
-  assert.equal(readPreferencesResponse({
-    preferences: { ...DEFAULT_PREFERENCES, schemaVersion: 2 },
-    recovered: false,
-  }), null);
-  assert.equal(readPreferencesResponse({
-    preferences: { ...DEFAULT_PREFERENCES, conversationSearchShortcut: undefined },
-    recovered: false,
-  })?.preferences.conversationSearchShortcut, DEFAULT_PREFERENCES.conversationSearchShortcut);
-  assert.equal(readPreferencesResponse({
-    preferences: { ...DEFAULT_PREFERENCES, commandPaletteShortcut: undefined },
-    recovered: false,
-  }), null);
+  assert.equal(
+    readPreferencesResponse({
+      preferences: { ...DEFAULT_PREFERENCES, schemaVersion: 2 },
+      recovered: false,
+    }),
+    null,
+  );
+  assert.equal(
+    readPreferencesResponse({
+      preferences: { ...DEFAULT_PREFERENCES, conversationSearchShortcut: undefined },
+      recovered: false,
+    })?.preferences.conversationSearchShortcut,
+    DEFAULT_PREFERENCES.conversationSearchShortcut,
+  );
+  assert.equal(
+    readPreferencesResponse({
+      preferences: { ...DEFAULT_PREFERENCES, commandPaletteShortcut: undefined },
+      recovered: false,
+    }),
+    null,
+  );
 });
 
 test("preferences response migrates version-one beta and worktree defaults", () => {
@@ -43,6 +55,7 @@ test("preferences response migrates version-one beta and worktree defaults", () 
     managedWorktreeLimit: _managedWorktreeLimit,
     orchestrationThreadsBeta: _orchestrationThreadsBeta,
     showThinking: _showThinking,
+    conversationOpenScroll: _conversationOpenScroll,
     ...legacy
   } = DEFAULT_PREFERENCES;
   const migrated = readPreferencesResponse({
@@ -52,5 +65,6 @@ test("preferences response migrates version-one beta and worktree defaults", () 
   assert.equal(migrated?.managedWorktreeLimit, 10);
   assert.equal(migrated?.orchestrationThreadsBeta, false);
   assert.equal(migrated?.showThinking, false);
+  assert.equal(migrated?.conversationOpenScroll, "latest");
   assert.equal(migrated?.conversationSearchShortcut, "mod+shift+f");
 });

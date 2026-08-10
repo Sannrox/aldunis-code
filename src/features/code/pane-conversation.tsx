@@ -39,6 +39,7 @@ export function PaneConversation({
   managedModel,
   quietDelegatedChild = false,
   showThinking = false,
+  conversationOpenScroll = "latest",
   initialPrompt,
   initialProvider,
   projectConversations = [],
@@ -70,6 +71,7 @@ export function PaneConversation({
   managedModel?: string;
   quietDelegatedChild?: boolean;
   showThinking?: boolean;
+  conversationOpenScroll?: "latest" | "remember";
   initialPrompt?: string;
   initialProvider?: ProviderId;
   projectConversations?: ConversationSummary[];
@@ -139,6 +141,7 @@ export function PaneConversation({
       active={active}
       quietDelegatedChild={quietDelegatedChild}
       showThinking={showThinking}
+      conversationOpenScroll={conversationOpenScroll}
       onOpenBeside={onOpenBeside}
       showOpenBeside={showOpenBeside}
       onClosePane={onClosePane}
