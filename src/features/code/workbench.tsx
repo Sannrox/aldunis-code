@@ -21,7 +21,6 @@ import { MissingConversation } from "./missing-conversation";
 import {
   branchFromWorktree,
   conversationListFromProjection,
-  loadConversationList,
   type ConversationListProjection,
 } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
@@ -37,6 +36,10 @@ import {
   SIDEBAR_TOGGLE_SHORTCUT_LABEL,
   writeSidebarOpenPreference,
 } from "../../lib/sidebar-state";
+import {
+  loadFreshLocalStateProjection,
+  loadLocalStateProjection,
+} from "../../lib/local-state-load";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
@@ -54,6 +57,15 @@ import {
   indexBranchPrResults,
   uniqueWorktreeRoots,
 } from "../../lib/branch-pr-status";
+
+type WorkbenchStateProjection = ConversationListProjection & {
+  conversationDeletions?: Array<{ threadId: string; status: string }>;
+  delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
+  delegatedApprovals?: DelegatedApprovalProjection[];
+  delegatedInputs?: DelegatedInputProjection[];
+  delegatedRelationships?: DelegatedConversationRelationship[];
+  error?: string;
+};
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -872,33 +884,31 @@ export function CodeWorkbench({
 
   // Load the inbox once (and on explicit retry). Do not re-run when the active
   // repository changes — selecting a chat must not reshuffle or reselect.
+  // One coalesced /api/state/load covers both the conversation list and lifecycle
+  // fields so restore does not pay for a second sequential projection round-trip.
   useEffect(() => {
     let active = true;
     setRestoreState("loading");
     const restore = async () => {
-      const available = await loadConversationList(null);
-      if (!active) return;
-      setConversations(available);
       const requestSequence = ++stateProjectionRequestReference.current;
-      const lifecycleResponse = await fetch("/api/state/load", { method: "POST" });
-      const lifecycleProjection = (await lifecycleResponse.json()) as {
-        conversationDeletions?: Array<{ threadId: string; status: string }>;
-        delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
-        delegatedApprovals?: DelegatedApprovalProjection[];
-        delegatedInputs?: DelegatedInputProjection[];
-        delegatedRelationships?: DelegatedConversationRelationship[];
-      };
-      if (requestSequence === stateProjectionRequestReference.current) {
-        setDelegatedRelationships(lifecycleProjection.delegatedRelationships ?? []);
-        setDelegatedOutcomes(lifecycleProjection.delegatedOutcomes ?? []);
-        setDelegatedApprovals(lifecycleProjection.delegatedApprovals ?? []);
-        setDelegatedInputs(lifecycleProjection.delegatedInputs ?? []);
+      const projection = (await loadLocalStateProjection()) as WorkbenchStateProjection;
+      if (!active) return;
+      const available = conversationListFromProjection(projection, null);
+      // A force-fresh SSE projection may have completed while this coalesced boot
+      // request was in flight — never overwrite that newer snapshot.
+      const isCurrent = requestSequence === stateProjectionRequestReference.current;
+      if (isCurrent) {
+        setConversations(available);
+        setDelegatedRelationships(projection.delegatedRelationships ?? []);
+        setDelegatedOutcomes(projection.delegatedOutcomes ?? []);
+        setDelegatedApprovals(projection.delegatedApprovals ?? []);
+        setDelegatedInputs(projection.delegatedInputs ?? []);
+        setIncompleteDeletionIds(
+          (projection.conversationDeletions ?? [])
+            .filter((deletion) => deletion.status !== "completed")
+            .map((deletion) => deletion.threadId),
+        );
       }
-      setIncompleteDeletionIds(
-        (lifecycleProjection.conversationDeletions ?? [])
-          .filter((deletion) => deletion.status !== "completed")
-          .map((deletion) => deletion.threadId),
-      );
       // Only apply stored selection on the first successful load.
       if (restoredProjectReference.current === null) {
         const parameters = new URLSearchParams(window.location.search);
@@ -1056,20 +1066,16 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const loadStateProjection = async () => {
-    const response = await fetch("/api/state/load", { method: "POST" });
-    const body = (await response.json()) as ConversationListProjection & {
-      delegatedOutcomes?: DelegatedConversationOutcomeProjection[];
-      delegatedApprovals?: DelegatedApprovalProjection[];
-      delegatedInputs?: DelegatedInputProjection[];
-      delegatedRelationships?: DelegatedConversationRelationship[];
-      error?: string;
-    };
-    if (!response.ok)
-      throw new Error(body.error ?? "Local conversation state could not be loaded.");
+  const loadStateProjection = async (options: { fresh?: boolean } = {}) => {
+    // Prefer the shared loader so dual-pane restore, EventSource sync, and
+    // conversation history share one inflight projection under boot pressure.
+    const body = (await (options.fresh
+      ? loadFreshLocalStateProjection()
+      : loadLocalStateProjection())) as WorkbenchStateProjection;
+    if (body.error) throw new Error(body.error);
     return body;
   };
-  const applyStateProjection = (body: Awaited<ReturnType<typeof loadStateProjection>>) => {
+  const applyStateProjection = (body: WorkbenchStateProjection) => {
     const projected = conversationListFromProjection(body);
     setConversations((current) => {
       const currentById = new Map(current.map((conversation) => [conversation.id, conversation]));
@@ -1085,32 +1091,41 @@ export function CodeWorkbench({
     setDelegatedOutcomes(body.delegatedOutcomes ?? []);
     setDelegatedApprovals(body.delegatedApprovals ?? []);
     setDelegatedInputs(body.delegatedInputs ?? []);
+    // Keep incomplete-deletion recovery on the same path as restore so a
+    // coalesced boot projection still surfaces retry chrome when the sync
+    // effect wins the sequence counter.
+    setIncompleteDeletionIds(
+      (body.conversationDeletions ?? [])
+        .filter((deletion) => deletion.status !== "completed")
+        .map((deletion) => deletion.threadId),
+    );
   };
   const refreshStateProjection = async () => {
     const requestSequence = ++stateProjectionRequestReference.current;
-    const body = await loadStateProjection();
+    const body = await loadStateProjection({ fresh: true });
     if (requestSequence !== stateProjectionRequestReference.current) return;
     applyStateProjection(body);
   };
   useEffect(() => {
     let active = true;
-    const synchronize = () => {
+    const synchronize = (options: { fresh?: boolean } = {}) => {
       const requestSequence = ++stateProjectionRequestReference.current;
-      void loadStateProjection()
+      void loadStateProjection(options)
         .then((projection) => {
           if (!active || requestSequence !== stateProjectionRequestReference.current) return;
           applyStateProjection(projection);
         })
         .catch(() => undefined);
     };
+    // Coalesce with the mount restore projection; only force-fresh after live events.
     synchronize();
     const events = new EventSource("/api/state/events");
-    events.addEventListener("open", synchronize);
+    events.addEventListener("open", () => synchronize());
     events.addEventListener("thread_status", (event) => {
       try {
         const update = JSON.parse((event as MessageEvent<string>).data) as unknown;
         if (!isThreadStatusEvent(update)) return;
-        synchronize();
+        synchronize({ fresh: true });
       } catch {
         /* malformed status events do not replace the last valid projection */
       }
@@ -1183,10 +1198,13 @@ export function CodeWorkbench({
         // Soft-fail: missing gh or network issues leave rows without PR chrome.
       }
     };
-    void refresh();
+    // Debounce: restore and projection sync can churn listedConversations several
+    // times in one frame cascade; one delayed batch is enough for sidebar PR chrome.
+    const debounceTimer = window.setTimeout(() => void refresh(), 250);
     const timer = window.setInterval(() => void refresh(), 60_000);
     return () => {
       cancelled = true;
+      window.clearTimeout(debounceTimer);
       window.clearInterval(timer);
     };
   }, [listedConversations, projects]);

@@ -904,17 +904,31 @@ export function Conversation({
     },
     [providerDiscoveryContext],
   );
+  // When a URL project is restoring, wait for repository/worktree context so we
+  // do not pay for a global discover and then immediately a worktree-scoped one.
+  const waitingForRepositoryRestore =
+    !repository?.root &&
+    typeof window !== "undefined" &&
+    Boolean(new URLSearchParams(window.location.search).get("project"));
   useEffect(() => {
-    loadProviders(false, true);
+    // Soft re-check keeps an existing cache visible while probing again. Force
+    // (invalidate) is reserved for explicit retries and adapter package changes.
+    let delayed: ReturnType<typeof setTimeout> | undefined;
+    if (waitingForRepositoryRestore) {
+      delayed = setTimeout(() => loadProviders(false, true), 2_000);
+    } else {
+      loadProviders(false, true);
+    }
     const onAdaptersChanged = () => loadProviders(true);
     const onProviderRetry = () => loadProviders(true, true);
     window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
     window.addEventListener("aldunis:providers-retry", onProviderRetry);
     return () => {
+      if (delayed) clearTimeout(delayed);
       window.removeEventListener("aldunis:adapters-changed", onAdaptersChanged);
       window.removeEventListener("aldunis:providers-retry", onProviderRetry);
     };
-  }, [loadProviders]);
+  }, [loadProviders, waitingForRepositoryRestore]);
   const codex = providers.find((item) => item.id === "codex-cli");
   const shikigamiProvider = providers.find((item) => item.id === "shikigami");
   const selectedProvider = providerDiscoveryForProfile(

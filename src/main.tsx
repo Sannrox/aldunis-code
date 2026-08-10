@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   DEFAULT_PREFERENCES,
@@ -133,27 +133,55 @@ function App() {
     const response = await fetch("/api/provider/profiles/list", { method: "POST" });
     const body = (await response.json()) as { profiles?: ClaudeProfile[] };
     if (response.ok) {
+      // Profile list updates flow through React props. Do not force-invalidate
+      // provider discovery here — that restarts multi-second CLI probes on every
+      // cold boot after profiles/list settles, often while discovery is already inflight.
       setProfiles(body.profiles ?? []);
-      window.dispatchEvent(new Event("aldunis:providers-retry"));
     }
   };
   useEffect(() => {
     void loadProfiles();
   }, []);
-  const loadSavedProjects = async () => {
-    try {
-      // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
-      const response = await fetch("/api/projects/list", { method: "POST" });
-      if (!response.ok) return;
-      const body = (await response.json()) as {
-        projects?: SavedProject[];
-        chiseiBindingAdministrationAvailable?: boolean;
-      };
-      setSavedProjects(body.projects ?? []);
-      setChiseiBindingAdministrationAvailable(body.chiseiBindingAdministrationAvailable !== false);
-    } catch {
-      /* leave existing list */
+  // Coalesce concurrent project-list callers (boot effect + repository restore).
+  // Post-mutation refreshes pass { fresh: true } so they never adopt a pre-mutation inflight.
+  // Sequence numbers prevent an older in-flight response from overwriting a fresher one.
+  const projectsListInflightReference = useRef<Promise<SavedProject[]> | null>(null);
+  const projectsListSequenceReference = useRef(0);
+  const loadSavedProjects = async (options: { fresh?: boolean } = {}): Promise<SavedProject[]> => {
+    if (!options.fresh && projectsListInflightReference.current) {
+      return projectsListInflightReference.current;
     }
+    const sequence = ++projectsListSequenceReference.current;
+    const fetchProjects = async (): Promise<SavedProject[]> => {
+      try {
+        // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
+        const response = await fetch("/api/projects/list", { method: "POST" });
+        if (!response.ok) return [] as SavedProject[];
+        const body = (await response.json()) as {
+          projects?: SavedProject[];
+          chiseiBindingAdministrationAvailable?: boolean;
+        };
+        const projects = body.projects ?? [];
+        if (sequence === projectsListSequenceReference.current) {
+          setSavedProjects(projects);
+          setChiseiBindingAdministrationAvailable(
+            body.chiseiBindingAdministrationAvailable !== false,
+          );
+        }
+        return projects;
+      } catch {
+        /* leave existing list */
+        return [] as SavedProject[];
+      }
+    };
+    if (options.fresh) return fetchProjects();
+    const request = fetchProjects().finally(() => {
+      if (projectsListInflightReference.current === request) {
+        projectsListInflightReference.current = null;
+      }
+    });
+    projectsListInflightReference.current = request;
+    return request;
   };
   const loadThreads = async () => {
     const response = await fetch("/api/state/search", {
@@ -265,7 +293,8 @@ function App() {
       if (options?.quiet) {
         await loadThreads();
       } else {
-        await Promise.all([loadThreads(), loadSavedProjects()]);
+        // Opening can register a project — force-fresh after the mutation.
+        await Promise.all([loadThreads(), loadSavedProjects({ fresh: true })]);
         setRepositoryDialog(false);
       }
       return next;
@@ -287,17 +316,8 @@ function App() {
         const params = new URLSearchParams(window.location.search);
         const urlProjectId = params.get("project");
         const lastRoot = hostCapabilities.managed ? null : readLastRepositoryRoot();
-        let projects: SavedProject[] = [];
-        try {
-          const response = await fetch("/api/projects/list", { method: "POST" });
-          if (response.ok) {
-            const body = (await response.json()) as { projects?: SavedProject[] };
-            projects = body.projects ?? [];
-            if (active) setSavedProjects(projects);
-          }
-        } catch {
-          /* still try lastRoot below */
-        }
+        // Share the boot projects/list request instead of issuing a second POST.
+        const projects = await loadSavedProjects();
         if (!active) return;
 
         // Prefer URL project, then last root, then newest collapsed project (main checkout).
@@ -328,7 +348,7 @@ function App() {
             // Quiet restore registers the repository on the host without
             // refreshing the sidebar project registry. Keep the restored
             // project visible before handing control back to the shell.
-            await loadSavedProjects();
+            await loadSavedProjects({ fresh: true });
             return;
           }
         }
@@ -424,7 +444,9 @@ function App() {
           setWorktreeDialog(true);
         }}
         onSettings={() => setPreferencesOpen(true)}
-        onProjectsChanged={loadSavedProjects}
+        onProjectsChanged={async () => {
+          await loadSavedProjects({ fresh: true });
+        }}
         onRepositoryChanged={(next) => {
           setRepository(next);
           void loadThreads();
