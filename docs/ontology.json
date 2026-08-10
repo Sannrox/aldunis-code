@@ -300,6 +300,10 @@
     {
       "name": "DesktopWindowLifecycle",
       "description": "The Electron desktop window lifecycle that keeps the local host and active provider sessions alive when a macOS window is closed, restores a live hidden window on activation or second launch, ignores activation races after the retained window is destroyed, and preserves explicit application shutdown through Cmd+Q; Windows and Linux retain close-to-exit behavior."
+    },
+    {
+      "name": "PersistedConversationRestoration",
+      "description": "A pure Aldunis Code projection module that deterministically reconstructs one provider-independent local conversation from persisted thread, turn, message, activity, plan, input, correlation, context, session, and checkpoint records. It preserves exact sequenced-record order, inserts unsequenced projection records deterministically, and carries no fetch, timer, notification, provider-process, or mutation authority."
     }
   ],
   "relations": [
@@ -770,6 +774,16 @@
       "range": "ProviderDiscovery",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "restores_local_conversation",
+      "description": "Deterministically reconstructs the renderer-facing history and provider state for one identity-matched local conversation without changing persisted state or conversation authority.",
+      "domain": "PersistedConversationRestoration",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     }
@@ -1481,6 +1495,18 @@
       "subject": "projects_work_graph",
       "source": "Aldunis Code Work Graph beta presentation contract",
       "locator": "src/features/code/conversation.tsx; src/lib/work-graph.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PersistedConversationRestoration",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#579",
+      "locator": "src/lib/persisted-conversation-restoration.ts#restorePersistedConversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "restores_local_conversation",
+      "source": "Aldunis Code persisted conversation restoration interface",
+      "locator": "src/lib/persisted-conversation-restoration.ts#restorePersistedConversation; src/features/code/conversation.tsx",
       "confidence": 1.0
     }
   ]

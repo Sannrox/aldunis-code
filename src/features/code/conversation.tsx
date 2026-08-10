@@ -16,7 +16,6 @@ import type {
   TurnCheckpoint,
   CheckpointFile,
   ElementReference,
-  ProviderPlanArtifact,
   ContextPin,
   ContextReceipt,
   WorkspaceMode,
@@ -148,6 +147,10 @@ import {
   shouldRefreshAfterRestoredTurn,
   type RestoredTurnStatus,
 } from "../../lib/thread-status-transition";
+import {
+  restorePersistedConversation,
+  type PersistedConversationProjection,
+} from "../../lib/persisted-conversation-restoration";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
@@ -323,22 +326,7 @@ export function preserveInputResolution(
   return result;
 }
 
-export function restoredTurnTerminalEvent(
-  status: RestoredTurnStatus,
-  sessionId: string | null,
-): ProviderEvent | null {
-  switch (status) {
-    case "completed":
-      return { kind: "turn_completed", sessionId: sessionId ?? "restored", costUsd: null };
-    case "failed":
-      return { kind: "failed", message: "Provider failed." };
-    case "interrupted":
-    case "cancelled":
-      return { kind: "cancelled" };
-    default:
-      return null;
-  }
-}
+export { restoredTurnTerminalEvent } from "../../lib/persisted-conversation-restoration";
 
 export function GovernanceCorrelationSummary({
   correlation,
@@ -1864,339 +1852,51 @@ export function Conversation({
     let active = true;
     let timer: number | undefined;
     const restore = async () => {
-      const projection = (await loadLocalStateProjection()) as {
-        threads: Array<{
-          id: string;
-          projectId: string;
-          worktree: string;
-          provider?: ProviderId;
-          profileId?: string | null;
-          model?: string | null;
-          reasoningEffort?: ReasoningEffort;
-          updatedAt: string;
-          contextPins?: ContextPin[];
-        }>;
-        turns: Array<{
-          id: string;
-          threadId: string;
-          status: RestoredTurnStatus;
-          mode?: InteractionMode;
-          providerRunId?: string;
-          createdAt: string;
-          completedAt?: string | null;
-        }>;
-        messages: Array<{
-          turnId: string;
-          role: "user" | "assistant";
-          text: string;
-          createdAt: string;
-          eventSequence?: number;
-        }>;
-        activities?: Array<{
-          turnId: string;
-          kind: "tool_started" | "tool_finished" | "provider_failed";
-          toolCallId: string | null;
-          name: string | null;
-          failed: boolean | null;
-          message: string | null;
-          createdAt: string;
-          eventSequence?: number;
-        }>;
-        plans?: Array<{
-          artifactId: string;
-          threadId: string;
-          turnId: string;
-          provider: ProviderId;
-          title?: string;
-          body?: string;
-          steps?: ProviderPlanArtifact["steps"];
-          updatedAt: string;
-          createdAt: string;
-          eventSequence?: number;
-        }>;
-        contextReceipts?: ContextReceipt[];
-        inputRequests?: Array<
-          Extract<ProviderEvent, { kind: "input_requested" }> & {
-            turnId: string;
-          }
-        >;
-        providerSessions: Array<{
-          threadId: string;
-          provider?: ProviderId;
-          sessionId: string;
-          model?: string | null;
-          profileId?: string;
-        }>;
-        governanceCorrelations?: Array<{
-          id: string;
-          turnId: string;
-          runId: string;
-          operationId: string;
-          governance: "sekai-chisei";
-          createdAt: string;
-        }>;
-        checkpoints?: TurnCheckpoint[];
-      };
+      const projection = (await loadLocalStateProjection()) as PersistedConversationProjection;
       if (!active) return;
-      const thread = conversation
-        ? projection.threads.find(
-            (item) =>
-              item.id === conversation.id &&
-              item.projectId === repository.projectId &&
-              item.worktree === repository.selectedWorktree,
-          )
-        : null;
-      if (!thread) {
-        setHistoryRestored(true);
-        return;
-      }
-      const threadProvider = managedMode ? "shikigami" : (thread.provider ?? "claude-code");
-      if (threadProvider !== provider) {
-        setProvider(threadProvider);
-        return;
-      }
-      // Threads often omit model/profileId; providerSessions carries the last run binding.
-      const session = projection.providerSessions.find(
-        (item) =>
-          item.threadId === thread.id && (item.provider ?? "claude-code") === threadProvider,
-      );
-      if (thread.profileId) setProfileId(thread.profileId);
-      else if (session?.profileId) setProfileId(session.profileId);
-      if (thread.model) setModel(thread.model);
-      else if (session?.model?.trim()) setModel(session.model.trim());
-      if (thread.reasoningEffort) setReasoningEffort(thread.reasoningEffort);
-      if (thread.contextPins) {
-        setAttachments(
-          thread.contextPins.filter((pin) => pin.kind === "file").map((pin) => pin.path),
-        );
-        setFolderPins(
-          thread.contextPins.filter((pin) => pin.kind === "folder").map((pin) => pin.path),
-        );
-      }
-      const turns = projection.turns
-        .filter((item) => item.threadId === thread.id)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      const latest = turns.at(-1);
-      if (!latest) {
-        setHistoryRestored(true);
-        return;
-      }
-      setThreadId(thread.id);
-      setSessionId(
-        projection.providerSessions.find(
-          (item) => item.threadId === thread.id && (item.provider ?? "claude-code") === provider,
-        )?.sessionId ?? null,
-      );
-      setRunId(
-        latest.providerRunId &&
-          (latest.status === "active" ||
-            latest.status === "running" ||
-            latest.status === "waiting_for_approval")
-          ? latest.providerRunId
-          : null,
-      );
-      const turnIds = new Set(turns.map((turn) => turn.id));
-      const history = projection.messages
-        .filter((message) => turnIds.has(message.turnId))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-      const userMessages = history
-        .filter((message) => message.role === "user")
-        .map((message) => ({
-          text: message.text,
-          mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
-          createdAt: message.createdAt,
-        }));
-      const eventsForTurn = (
-        turnId: string,
-      ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
-        const turn = turns.find((item) => item.id === turnId);
-        const orderedEvents = [
-          ...history
-            .filter(
-              (message) =>
-                message.turnId === turnId &&
-                message.role === "assistant" &&
-                message.text.length > 0,
-            )
-            .map((message) => ({
-              event: { kind: "assistant_text" as const, text: message.text },
-              createdAt: message.createdAt,
-              eventSequence: message.eventSequence,
-            })),
-          ...(projection.activities ?? [])
-            .filter((activity) => activity.turnId === turnId)
-            .flatMap(
-              (
-                activity,
-              ): Array<{ event: ProviderEvent; createdAt: string; eventSequence?: number }> => {
-                if (activity.kind === "provider_failed") {
-                  const fallback = `${providerDisplayName(provider, selectedProvider)} failed.`;
-                  return [
-                    {
-                      event: { kind: "failed", message: activity.message?.trim() || fallback },
-                      createdAt: activity.createdAt,
-                      eventSequence: activity.eventSequence,
-                    },
-                  ];
-                }
-                if (activity.kind === "tool_started" && activity.toolCallId) {
-                  return [
-                    {
-                      event: {
-                        kind: "tool_started",
-                        toolCallId: activity.toolCallId,
-                        name: activity.name?.trim() || "Tool",
-                      },
-                      createdAt: activity.createdAt,
-                      eventSequence: activity.eventSequence,
-                    },
-                  ];
-                }
-                if (activity.kind === "tool_finished" && activity.toolCallId) {
-                  return [
-                    {
-                      event: {
-                        kind: "tool_finished",
-                        toolCallId: activity.toolCallId,
-                        failed: activity.failed === true,
-                      },
-                      createdAt: activity.createdAt,
-                      eventSequence: activity.eventSequence,
-                    },
-                  ];
-                }
-                return [];
-              },
-            ),
-          ...(projection.plans ?? [])
-            .filter((plan) => plan.turnId === turnId)
-            .map((plan) => ({
-              event: {
-                kind: "plan_updated" as const,
-                artifact: {
-                  id: plan.artifactId,
-                  provider: plan.provider,
-                  ...(plan.title !== undefined ? { title: plan.title } : {}),
-                  ...(plan.body !== undefined ? { body: plan.body } : {}),
-                  ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
-                  updatedAt: plan.updatedAt,
-                },
-              },
-              createdAt: plan.createdAt,
-              eventSequence: plan.eventSequence,
-            })),
-          ...(projection.inputRequests ?? [])
-            .filter((request) => request.turnId === turnId)
-            .map((request) => ({
-              event:
-                request.state === "pending"
-                  ? { ...request, kind: "input_requested" as const }
-                  : {
-                      kind: "input_resolved" as const,
-                      id: request.id,
-                      state: request.state,
-                    },
-              createdAt: request.createdAt,
-              eventSequence: undefined,
-            })),
-          ...(projection.governanceCorrelations ?? [])
-            .filter((receipt) => receipt.turnId === turnId)
-            .map((receipt) => ({
-              event: {
-                kind: "governance_correlation" as const,
-                governance: receipt.governance,
-                runId: receipt.runId,
-                operationId: receipt.operationId,
-                correlationId: receipt.id,
-              },
-              createdAt: receipt.createdAt,
-              eventSequence: undefined,
-            })),
-        ].sort((left, right) =>
-          left.eventSequence !== undefined && right.eventSequence !== undefined
-            ? left.eventSequence - right.eventSequence
-            : left.createdAt.localeCompare(right.createdAt),
-        );
-        const terminalEvent = turn
-          ? restoredTurnTerminalEvent(
-              turn.status,
-              projection.providerSessions.find(
-                (item) =>
-                  item.threadId === thread.id &&
-                  (item.provider ?? "claude-code") === threadProvider,
-              )?.sessionId ?? null,
-            )
-          : null;
-        if (
-          !terminalEvent ||
-          orderedEvents.some(
-            ({ event }) =>
-              event.kind === "turn_completed" ||
-              event.kind === "failed" ||
-              event.kind === "cancelled",
-          )
-        ) {
-          return orderedEvents;
-        }
-        return [
-          ...orderedEvents,
-          {
-            event: terminalEvent,
-            createdAt:
-              turn?.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn?.createdAt ?? "",
-            eventSequence: undefined,
-          },
-        ];
-      };
-      const restoredTurns = turns.flatMap((turn) => {
-        const user = history.find(
-          (message) => message.turnId === turn.id && message.role === "user",
-        );
-        if (!user) return [];
-        const orderedEvents = eventsForTurn(turn.id);
-        return [
-          {
-            message: {
-              text: user.text,
-              mode: turn.mode ?? "ask",
-              createdAt: user.createdAt,
-            },
-            events: orderedEvents.map(({ event }) => event),
-            assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
-            state: turn.status,
-            contextReceipt: projection.contextReceipts?.find(
-              (receipt) => receipt.turnId === turn.id,
-            ),
-            checkpoint: projection.checkpoints?.find((checkpoint) => checkpoint.turnId === turn.id),
-          },
-        ];
+      const restoration = restorePersistedConversation(projection, {
+        conversationId: conversation?.id ?? null,
+        projectId: repository.projectId,
+        worktree: repository.selectedWorktree,
+        activeProvider: provider,
+        ...(managedMode ? { forcedProvider: "shikigami" as const } : {}),
+        providerName: providerDisplayName(provider, selectedProvider),
       });
-      const currentTurn = restoredTurns.at(-1);
-      setArchivedTurns(restoredTurns.slice(0, -1));
-      setMessages(userMessages);
-      setProviderEvents(currentTurn?.events ?? []);
-      setCurrentContextReceipt(currentTurn?.contextReceipt ?? null);
-      setCheckpoint(currentTurn?.checkpoint ?? null);
-      const lastAssistantAt = history
-        .filter((message) => message.role === "assistant" && message.createdAt)
-        .at(-1)?.createdAt;
-      setAssistantTurnAt(latest.completedAt ?? lastAssistantAt ?? latest.createdAt);
-      const nextState: ProviderState =
-        latest.status === "active" || latest.status === "running"
-          ? "streaming"
-          : latest.status === "waiting_for_approval"
-            ? "waiting_for_approval"
-            : latest.status === "waiting_for_user"
-              ? "waiting_for_input"
-              : latest.status === "interrupted" || latest.status === "cancelled"
-                ? "cancelled"
-                : latest.status === "failed"
-                  ? "failed"
-                  : latest.status === "completed"
-                    ? "completed"
-                    : "idle";
-      setProviderState(nextState);
-      const restoredStatus = { turnId: latest.id, status: latest.status };
+      if (restoration.kind === "thread_missing") {
+        setHistoryRestored(true);
+        return;
+      }
+      if (restoration.kind === "provider_changed") {
+        setProvider(restoration.provider);
+        return;
+      }
+      const binding = restoration.thread;
+      if (binding.profileId) setProfileId(binding.profileId);
+      if (binding.model) setModel(binding.model);
+      if (binding.reasoningEffort) setReasoningEffort(binding.reasoningEffort);
+      setAttachments(binding.attachments);
+      setFolderPins(binding.folderPins);
+      if (restoration.kind === "empty_thread") {
+        setHistoryRestored(true);
+        return;
+      }
+      setThreadId(binding.threadId);
+      setSessionId(binding.sessionId);
+      setRunId(restoration.pendingRunId);
+      setArchivedTurns(restoration.archivedTurns);
+      setMessages(restoration.messages);
+      setProviderEvents(restoration.currentTurn.events);
+      setCurrentContextReceipt(restoration.currentTurn.contextReceipt ?? null);
+      setCheckpoint(restoration.currentTurn.checkpoint ?? null);
+      setAssistantTurnAt(restoration.assistantTurnAt);
+      setProviderState(restoration.providerState);
+      const restoredStatus = restoration.latestStatus;
+      const latest = {
+        id: restoration.latestStatus.turnId,
+        status: restoration.latestStatus.status,
+        providerRunId: restoration.pendingRunId,
+      };
+      const thread = { id: restoration.thread.threadId };
       if (shouldRefreshAfterRestoredTurn(restoredTurnStatus.current, restoredStatus)) {
         conversationAvailableCallback.current?.(thread.id);
       }
