@@ -471,7 +471,7 @@ export function CodeSidebar({
               aria-haspopup="listbox"
               aria-expanded={projectMenuOpen}
               aria-label={`Project filter: ${projectFilterLabel}${
-                projectFilter === "all" && repository ? `, current project ${repository.name}` : ""
+                !selectedProject && repository ? `, current project ${repository.name}` : ""
               }${
                 attention.length > 0
                   ? `, ${attention.length} conversation${attention.length === 1 ? "" : "s"} need attention`
@@ -495,9 +495,9 @@ export function CodeSidebar({
                 <button
                   type="button"
                   role="option"
-                  aria-selected={projectFilter === "all"}
+                  aria-selected={!selectedProject}
                   aria-label="All projects: Inbox across every registered project"
-                  className={`project-filter-option ${projectFilter === "all" ? "active" : ""}`}
+                  className={`project-filter-option ${!selectedProject ? "active" : ""}`}
                   onClick={() => {
                     onProjectFilterChange("all");
                     setProjectMenuOpen(false);
@@ -619,7 +619,9 @@ export function CodeSidebar({
                 <span>
                   {showingArchived
                     ? "No archived conversations."
-                    : "No open threads in this project."}
+                    : selectedProject
+                      ? "No open threads in this project."
+                      : "No open threads."}
                 </span>
                 {!showingArchived && (
                   <button

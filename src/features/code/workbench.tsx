@@ -708,7 +708,27 @@ export function CodeWorkbench({
     previousSidebarOpenReference.current = sidebarOpen;
     const focusSource = sidebarFocusSourceReference.current;
     sidebarFocusSourceReference.current = "user";
-    if (wasOpen === sidebarOpen || focusSource === "responsive" || focusSource === "dialog") return;
+    if (wasOpen === sidebarOpen || focusSource === "dialog") return;
+    /*
+     * Responsive breakpoint changes must not yank focus out of the active
+     * editor. When the sidebar auto-collapses while focus is still inside it,
+     * though, leave the hidden region so aria-hidden/inert stay honest.
+     */
+    if (focusSource === "responsive") {
+      if (sidebarOpen) return;
+      const active = document.activeElement;
+      const sidebar = document.getElementById("code-sidebar");
+      if (!(active instanceof HTMLElement) || !sidebar?.contains(active)) return;
+      const frame = window.requestAnimationFrame(() => {
+        const expandToggle = document.querySelector<HTMLElement>("[data-sidebar-open-toggle]");
+        if (expandToggle) {
+          expandToggle.focus({ preventScroll: true });
+          return;
+        }
+        mainReference.current?.focus({ preventScroll: true });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
     const frame = window.requestAnimationFrame(() => {
       if (focusSource === "navigation") {
         mainReference.current?.focus({ preventScroll: true });
@@ -840,6 +860,15 @@ export function CodeWorkbench({
       /* ignore */
     }
   }, [projectFilter]);
+
+  // Drop stale project ids left in localStorage after projects were removed or
+  // the host state was rebuilt, so the inbox does not look empty while labeled
+  // "All projects".
+  useEffect(() => {
+    if (projectFilter === "all" || projects.length === 0) return;
+    if (projects.some((project) => project.id === projectFilter)) return;
+    setProjectFilter("all");
+  }, [projectFilter, projects]);
 
   // Load the inbox once (and on explicit retry). Do not re-run when the active
   // repository changes — selecting a chat must not reshuffle or reselect.
@@ -1093,12 +1122,14 @@ export function CodeWorkbench({
     // The host hides delegated relationships while disabled, so enable performs a fresh load.
   }, [orchestrationThreadsBeta]);
   const listedConversations = useMemo(() => {
-    const memberIds =
+    const selectedProject =
       projectFilter === "all"
         ? null
-        : new Set(
-            projects.find((project) => project.id === projectFilter)?.memberIds ?? [projectFilter],
-          );
+        : (projects.find((project) => project.id === projectFilter) ?? null);
+    // Unknown filter ids are treated as the full inbox until they are cleared.
+    const memberIds = selectedProject
+      ? new Set(selectedProject.memberIds ?? [selectedProject.id])
+      : null;
     return conversations.filter((conversation) => {
       if (memberIds && !memberIds.has(conversation.projectId)) return false;
       return showingArchived ? Boolean(conversation.archivedAt) : !conversation.archivedAt;

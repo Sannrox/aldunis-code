@@ -153,4 +153,103 @@ test("empty project inbox offers a discoverable new conversation action", () => 
 
   assert.match(html, /class="empty-list-action"/);
   assert.match(html, />New conversation<\/button>/);
+  // Inbox-wide filter must not claim the empty state is project-scoped.
+  assert.match(html, /No open threads\./);
+  assert.doesNotMatch(html, /No open threads in this project\./);
+});
+
+test("empty project filter names the selected project scope", () => {
+  const html = renderToStaticMarkup(
+    <CodeSidebar
+      product="code"
+      onProductChange={() => undefined}
+      repository={null}
+      projects={[
+        {
+          id: "project-1",
+          name: "Aldunis Code",
+          root: "/workspace/aldunis-code",
+          openedAt: "2026-08-04T00:00:00.000Z",
+        },
+      ]}
+      projectFilter="project-1"
+      onProjectFilterChange={() => undefined}
+      onAddProject={() => undefined}
+      onSelectProject={() => undefined}
+      changes={[]}
+      onShowChanges={() => undefined}
+      onBrowseFiles={() => undefined}
+      onOpenPalette={() => undefined}
+      conversations={[]}
+      primaryConversationId={null}
+      secondaryConversationId={null}
+      onOpenConversation={() => undefined}
+      onOpenBeside={() => undefined}
+      onNewConversation={() => undefined}
+      onSelectWorktree={() => undefined}
+      onManageWorktrees={() => undefined}
+      showingArchived={false}
+      onToggleArchived={() => undefined}
+      onConversationAction={() => undefined}
+      onSettle={() => undefined}
+      onSnooze={() => undefined}
+      onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
+      onReleaseWorktree={() => undefined}
+      worktreeLimit={4}
+      managedWorktreeCount={0}
+      onSettings={() => undefined}
+    />,
+  );
+
+  assert.match(html, /No open threads in this project\./);
+});
+
+test("stale project filter ids fall back to inbox-wide empty copy", () => {
+  const html = renderToStaticMarkup(
+    <CodeSidebar
+      product="code"
+      onProductChange={() => undefined}
+      repository={null}
+      projects={[
+        {
+          id: "project-1",
+          name: "Aldunis Code",
+          root: "/workspace/aldunis-code",
+          openedAt: "2026-08-04T00:00:00.000Z",
+        },
+      ]}
+      projectFilter="missing-project-id"
+      onProjectFilterChange={() => undefined}
+      onAddProject={() => undefined}
+      onSelectProject={() => undefined}
+      changes={[]}
+      onShowChanges={() => undefined}
+      onBrowseFiles={() => undefined}
+      onOpenPalette={() => undefined}
+      conversations={[]}
+      primaryConversationId={null}
+      secondaryConversationId={null}
+      onOpenConversation={() => undefined}
+      onOpenBeside={() => undefined}
+      onNewConversation={() => undefined}
+      onSelectWorktree={() => undefined}
+      onManageWorktrees={() => undefined}
+      showingArchived={false}
+      onToggleArchived={() => undefined}
+      onConversationAction={() => undefined}
+      onSettle={() => undefined}
+      onSnooze={() => undefined}
+      onUnsettle={() => undefined}
+      onUnsnooze={() => undefined}
+      onReleaseWorktree={() => undefined}
+      worktreeLimit={4}
+      managedWorktreeCount={0}
+      onSettings={() => undefined}
+    />,
+  );
+
+  assert.match(html, /Project filter: All projects/);
+  assert.match(html, /No open threads\./);
+  assert.doesNotMatch(html, /No open threads in this project\./);
 });
