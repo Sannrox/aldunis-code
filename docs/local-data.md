@@ -15,7 +15,13 @@ Default:
 Repository file browsing and context attachment use Git's tracked/non-ignored
 view and additionally exclude hidden and credential-shaped secret-like paths,
 including exact `secret`/`secrets`/`token`/`tokens` components and credential
-filenames such as `clientSecret.json` or `apiToken.txt`.
+filenames such as `clientSecret.json` or `apiToken.txt`. Composer drag/drop and
+paste may stage supported images under `aldunis-code-composer-images/` inside the
+active worktree. That directory is gitignored (so screenshots stay out of
+`git add -A`), remains attachable as local context, and is filtered out of
+Changes review and file browse results. Staging is capped at 32 images or 32 MB
+per worktree (reject when full). Operators may remove
+`aldunis-code-composer-images/` manually when reclaiming disk space.
 
 Typical contents (names may evolve; do not commit these files):
 

@@ -92,7 +92,10 @@ import {
   browseRepositoryFiles,
   composePrompt,
   previewRepositoryFile,
+  resolveWorktreeImagePath,
   searchRepositoryFiles,
+  stageComposerImage,
+  stageWorktreeImageCopy,
   type ContextPin,
 } from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
@@ -209,6 +212,8 @@ function adapterProfileSeed(adapter: {
 }
 
 const MAX_BODY_BYTES = 128 * 1024;
+/** Base64 image staging: 2 MiB raw ≈ 2.7 MiB encoded, plus JSON envelope. */
+const MAX_STAGE_IMAGE_BODY_BYTES = 3 * 1024 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
 const requestBodies = new WeakMap<IncomingMessage, Buffer>();
@@ -337,9 +342,13 @@ async function publishThreadStatusTransition(
 
 type DelegatedControlLock = <T>(action: () => Promise<T>) => Promise<T>;
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(
+  request: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<unknown> {
   const cached = requestBodies.get(request);
   if (cached) {
+    if (cached.byteLength > maxBytes) throw new RepositoryError("Request body is too large.", 413);
     try {
       return JSON.parse(cached.toString("utf8"));
     } catch {
@@ -350,7 +359,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new RepositoryError("Request body is too large.", 413);
+    if (size > maxBytes) throw new RepositoryError("Request body is too large.", 413);
     chunks.push(chunk);
   }
   try {
@@ -368,12 +377,19 @@ async function readOptionalJson(request: IncomingMessage): Promise<unknown> {
   return request.headers["transfer-encoding"] ? readJson(request) : {};
 }
 
-async function bufferRequest(request: IncomingMessage): Promise<Buffer> {
+function maxBodyBytesForRoute(route: string): number {
+  return route === "/api/context/stage-image" ? MAX_STAGE_IMAGE_BODY_BYTES : MAX_BODY_BYTES;
+}
+
+async function bufferRequest(
+  request: IncomingMessage,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new RepositoryError("Request body is too large.", 413);
+    if (size > maxBytes) throw new RepositoryError("Request body is too large.", 413);
     chunks.push(chunk);
   }
   const body = Buffer.concat(chunks);
@@ -2799,6 +2815,58 @@ async function handleApi(
       sendJson(response, 200, {
         preview: await previewRepositoryFile(context.worktree, body.path),
       });
+      return true;
+    }
+    if (route === "/api/context/stage-image") {
+      const body = (await readJson(request, MAX_STAGE_IMAGE_BODY_BYTES)) as {
+        root?: unknown;
+        worktree?: unknown;
+        mediaType?: unknown;
+        data?: unknown;
+        name?: unknown;
+        conversationId?: unknown;
+        absolutePath?: unknown;
+      };
+      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
+        throw new RepositoryError("A repository and worktree are required.");
+      }
+      const context = await selectedWorktree(body.root, body.worktree);
+      if (typeof body.absolutePath === "string" && body.absolutePath) {
+        if (remoteRequest || managedHost) {
+          throw new RepositoryError(
+            "Remote and managed hosts cannot pin absolute desktop paths; drop or paste the image bytes instead.",
+            403,
+          );
+        }
+        const resolved = await resolveWorktreeImagePath(context.worktree, body.absolutePath);
+        if (resolved) {
+          sendJson(response, 200, { attachment: resolved, staged: false });
+          return true;
+        }
+        const stagedCopy = await stageWorktreeImageCopy(context.worktree, body.absolutePath, {
+          ...(typeof body.conversationId === "string"
+            ? { conversationId: body.conversationId }
+            : {}),
+        });
+        if (!stagedCopy) {
+          throw new RepositoryError(
+            "The dropped file is outside the selected worktree or is not a supported image.",
+            400,
+          );
+        }
+        sendJson(response, 200, { attachment: stagedCopy, staged: true });
+        return true;
+      }
+      if (typeof body.mediaType !== "string" || typeof body.data !== "string") {
+        throw new RepositoryError("Image media type and base64 data are required.");
+      }
+      const staged = await stageComposerImage(context.worktree, {
+        mediaType: body.mediaType,
+        data: body.data,
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
+      });
+      sendJson(response, 200, { attachment: staged, staged: true });
       return true;
     }
     if (route === "/api/context/package/preview") {
@@ -5282,7 +5350,10 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       route !== "/api/remote/descriptor"
     ) {
       try {
-        managedIdentity = await managedHost.verify(request, await bufferRequest(request));
+        managedIdentity = await managedHost.verify(
+          request,
+          await bufferRequest(request, maxBodyBytesForRoute(route)),
+        );
       } catch (error) {
         const status = error instanceof ManagedHostError ? error.status : 500;
         const message =
@@ -5299,7 +5370,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       !(localControlRequest && route.startsWith("/api/remote/admin/"))
     ) {
       try {
-        await remoteAuth.verify(request, await bufferRequest(request));
+        await remoteAuth.verify(request, await bufferRequest(request, maxBodyBytesForRoute(route)));
       } catch (error) {
         const status = error instanceof RemoteAuthError ? error.status : 500;
         const message =
