@@ -33,7 +33,6 @@ import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
   assessProviderRunReadiness,
   canSwitchNewConversationProvider,
-  DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
   providerAvatarInitials,
   providerChipName as formatProviderChipName,
@@ -59,6 +58,12 @@ import {
   loadComposerDraft,
   saveComposerDraft,
 } from "../../lib/composer-draft-stash";
+import {
+  getComposerRunSettingsStorage,
+  readComposerRunSettings,
+  resolveNewConversationRunSettings,
+  writeComposerRunSettings,
+} from "../../lib/composer-run-settings";
 import { resolvePreviousWorktreeSeed } from "../../lib/previous-worktree";
 import {
   clearManagedPromptStashes,
@@ -688,10 +693,25 @@ export function Conversation({
   useEffect(() => {
     setPromptHistoryBrowse(resetPromptHistoryBrowse(promptHistory));
   }, [promptHistory]);
-  const [mode, setMode] = useState<InteractionMode>(managedMode ? "build" : "ask");
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() =>
-    managedMode ? "shared" : defaultWorkspaceMode("ask", conversation?.workspaceMode),
-  );
+  const [mode, setMode] = useState<InteractionMode>(() => {
+    if (managedMode) return "build";
+    if (conversation) return "ask";
+    return resolveNewConversationRunSettings({
+      stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+      initialProvider,
+    }).mode;
+  });
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => {
+    if (managedMode) return "shared";
+    if (conversation?.workspaceMode) {
+      return defaultWorkspaceMode("ask", conversation.workspaceMode);
+    }
+    if (conversation) return defaultWorkspaceMode("ask", null);
+    return resolveNewConversationRunSettings({
+      stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+      initialProvider,
+    }).workspaceMode;
+  });
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] =
     useState<RepositoryMetadata | null>(null);
@@ -776,7 +796,15 @@ export function Conversation({
     peekProviderCapabilitiesCache(),
   );
   const [providerSkills, setProviderSkills] = useState<ProviderSkill[]>([]);
-  const [profileId, setProfileId] = useState("");
+  const [profileId, setProfileId] = useState(() => {
+    if (managedMode || conversation) return "";
+    return (
+      resolveNewConversationRunSettings({
+        stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+        initialProvider,
+      }).profileId ?? ""
+    );
+  });
   const claudeProfiles = useMemo(
     () => profiles.filter((profile) => profile.provider === "claude-code" || !profile.provider),
     [profiles],
@@ -793,7 +821,15 @@ export function Conversation({
     shikigamiProfiles.find((profile) => profile.id === "default:shikigami")?.id ??
     shikigamiProfiles[0]?.id ??
     "";
-  const [model, setModel] = useState(managedMode ? (managedModel ?? "default") : "default");
+  const [model, setModel] = useState(() => {
+    if (managedMode) return managedModel ?? "default";
+    if (conversation) return "default";
+    return resolveNewConversationRunSettings({
+      stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+      managedModel,
+      initialProvider,
+    }).model;
+  });
   const [notificationsEnabled] = useState(
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
@@ -805,9 +841,15 @@ export function Conversation({
   const conversationAvailableCallback = useRef(onConversationAvailable);
   conversationAvailableCallback.current = onConversationAvailable;
   // Seed from the bound thread so reopen never flashes Claude readiness for Codex/Grok.
-  const [provider, setProvider] = useState<ProviderId>(() =>
-    managedMode ? "shikigami" : (conversation?.provider ?? DEFAULT_NEW_CONVERSATION_PROVIDER),
-  );
+  // New chats reuse last-selected run settings from browser storage.
+  const [provider, setProvider] = useState<ProviderId>(() => {
+    if (managedMode) return "shikigami";
+    if (conversation?.provider) return conversation.provider;
+    return resolveNewConversationRunSettings({
+      stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+      initialProvider,
+    }).provider;
+  });
   const initialPromptAppliedReference = useRef(false);
   useEffect(() => {
     if (conversation !== null || !initialPrompt || initialPromptAppliedReference.current) return;
@@ -839,9 +881,14 @@ export function Conversation({
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
   const planTriggerRef = useRef<HTMLButtonElement>(null);
   const workGraphTriggerRef = useRef<HTMLButtonElement>(null);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
-    () => conversation?.reasoningEffort ?? "medium",
-  );
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(() => {
+    if (conversation?.reasoningEffort) return conversation.reasoningEffort;
+    if (conversation || managedMode) return "medium";
+    return resolveNewConversationRunSettings({
+      stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+      initialProvider,
+    }).reasoningEffort;
+  });
   const legacyReasoningDefaultRef = useRef<string | null>(null);
   const loadProviders = useCallback(
     (force = false, showPending = force) => {
@@ -1684,6 +1731,10 @@ export function Conversation({
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [rewindPreview, checkpointBusy]);
+  const boundConversationId = conversation?.id ?? null;
+  const boundConversationProvider = conversation?.provider;
+  const boundConversationWorkspaceMode = conversation?.workspaceMode;
+  const conversationScopeKey = boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
   useEffect(() => {
     const recognition = voiceRecognitionRef.current;
     voiceRecognitionRef.current = null;
@@ -1694,20 +1745,36 @@ export function Conversation({
     setVoiceInputError(null);
     setVoiceInputState(getVoiceRecognitionConstructor() ? "idle" : "unsupported");
     setSessionId(null);
-    setHistoryRestored(conversation === null);
+    setHistoryRestored(boundConversationId === null);
     setHistoryRestoreError(null);
-    setThreadId(conversation?.id ?? null);
-    setWorkspaceMode(
-      managedMode ? "shared" : defaultWorkspaceMode("ask", conversation?.workspaceMode),
-    );
+    setThreadId(boundConversationId);
     setPreparedWorkspaceRepository(null);
     setWorkspaceApprovalPending(false);
     setWorkspaceDialogOpen(false);
-    // Prefer the summary provider immediately so crumb/empty state match the thread
-    // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
-    if (!managedMode && conversation?.provider && conversation.provider !== provider) {
-      setProvider(conversation.provider);
-      return;
+    // New chat: reseed run settings from last selection so they survive thread switches.
+    if (!boundConversationId) {
+      const seeded = resolveNewConversationRunSettings({
+        stored: readComposerRunSettings(getComposerRunSettingsStorage()),
+        managedMode,
+        managedModel,
+        initialProvider,
+      });
+      setWorkspaceMode(seeded.workspaceMode);
+      // Domain handoffs still force Build; do not let last-used Ask/Plan win here.
+      setMode(initialPrompt ? "build" : seeded.mode);
+      setProvider(seeded.provider);
+      setModel(seeded.model);
+      setReasoningEffort(seeded.reasoningEffort);
+      setProfileId(seeded.profileId ?? "");
+    } else {
+      setWorkspaceMode(
+        managedMode ? "shared" : defaultWorkspaceMode("ask", boundConversationWorkspaceMode),
+      );
+      // Prefer the summary provider immediately so crumb/empty state match the thread
+      // while /api/state/load is in flight (avoids Claude-not-ready flash on reopen).
+      if (!managedMode && boundConversationProvider) {
+        setProvider(boundConversationProvider);
+      }
     }
     setCheckpoint(null);
     setTurnChangesReview(null);
@@ -1727,13 +1794,43 @@ export function Conversation({
     setRunId(null);
     followingRef.current = true;
     setFollowing(true);
+    // Only rebind when the pane's conversation scope changes — not on every
+    // composer chip edit (those would fight last-used persistence).
   }, [
-    conversation?.id,
-    conversation?.provider,
-    conversation?.workspaceMode,
+    conversationScopeKey,
+    boundConversationId,
+    boundConversationProvider,
+    boundConversationWorkspaceMode,
     managedMode,
-    repository?.projectId,
+    managedModel,
+    initialProvider,
+    initialPrompt,
+  ]);
+  // Remember new-chat run settings so the next empty composer opens with the same chips.
+  // Domain handoffs force provider/mode; do not overwrite the operator's last-used defaults.
+  useEffect(() => {
+    if (managedMode || conversation !== null) return;
+    if (initialPrompt || initialProvider) return;
+    writeComposerRunSettings(getComposerRunSettingsStorage(), {
+      version: 1,
+      provider,
+      model,
+      reasoningEffort,
+      mode,
+      workspaceMode,
+      profileId: profileId || undefined,
+    });
+  }, [
+    conversation,
+    initialPrompt,
+    initialProvider,
+    managedMode,
+    model,
+    mode,
+    profileId,
     provider,
+    reasoningEffort,
+    workspaceMode,
   ]);
   const activeDraftKey = composerDraftKey({
     conversationId: conversation?.id ?? null,
