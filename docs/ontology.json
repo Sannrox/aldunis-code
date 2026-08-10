@@ -94,6 +94,10 @@
       "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery through one authorized-worktree interface; managed mode exposes only its fixed Shikigami model."
     },
     {
+      "name": "ProviderRunReadiness",
+      "description": "The pure Aldunis Code UI eligibility module that interprets provider discovery, selected profiles, and managed constraints through one checking, blocked, or ready interface while leaving launch and model authorization to the host."
+    },
+    {
       "name": "ProviderProfileDiscovery",
       "description": "A profile-keyed provider readiness projection that keeps executable, configuration, authentication, and model discovery aligned with the selected Shikigami profile."
     },
@@ -473,12 +477,22 @@
     },
     {
       "name": "gates",
-      "description": "Provider discovery gates provider-dependent composer controls until readiness is known or a bounded fallback is selected.",
-      "domain": "ProviderDiscovery",
+      "description": "Provider run readiness gates provider-dependent composer controls until eligibility is known or a bounded recovery action is presented.",
+      "domain": "ProviderRunReadiness",
       "range": "ConversationComposer",
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "interprets_provider_discovery",
+      "description": "Provider run readiness interprets the host-owned discovery projection with selected profile and managed-mode constraints without becoming provider launch authority.",
+      "domain": "ProviderRunReadiness",
+      "range": "ProviderDiscovery",
+      "cardinality": {
+        "min": 0,
+        "max": 1
       }
     },
     {
@@ -1010,6 +1024,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "ProviderRunReadiness",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/provider-readiness.ts#assessProviderRunReadiness; Issue #572",
+      "confidence": 1.0
+    },
+    {
       "subject": "ProviderProfileDiscovery",
       "source": "Sannrox/aldunis-code",
       "locator": "src/types.ts:ProviderProfileDiscovery",
@@ -1036,7 +1056,13 @@
     {
       "subject": "gates",
       "source": "Sannrox/aldunis-code",
-      "locator": "src/lib/provider-discovery-cache.ts",
+      "locator": "src/lib/provider-readiness.ts#assessProviderRunReadiness; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "interprets_provider_discovery",
+      "source": "Sannrox/aldunis-code",
+      "locator": "src/lib/provider-readiness.ts#assessProviderRunReadiness",
       "confidence": 1.0
     },
     {

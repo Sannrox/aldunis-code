@@ -1,4 +1,10 @@
-import type { ProfileProbe, ProviderDiscovery, ProviderId, ReasoningEffort } from "../types";
+import type {
+  ClaudeProfile,
+  ProfileProbe,
+  ProviderDiscovery,
+  ProviderId,
+  ReasoningEffort,
+} from "../types";
 
 export interface ProviderModelOption {
   id: string;
@@ -12,16 +18,49 @@ export interface ProviderFailureView {
   resumeCommand: string | null;
 }
 
+export type ProviderRunReadinessReason =
+  | "managed_provider_mismatch"
+  | "managed_model_mismatch"
+  | "profile_required"
+  | "profile_unknown"
+  | "not_installed"
+  | "disabled"
+  | "not_authenticated"
+  | "not_ready";
+
+export type ProviderRunReadiness =
+  | { state: "checking"; canRun: false; message: "Checking provider…" }
+  | {
+      state: "blocked";
+      canRun: false;
+      reason: ProviderRunReadinessReason;
+      message: string;
+    }
+  | { state: "ready"; canRun: true; message: "" };
+
+export interface ProviderRunReadinessInput {
+  provider: ProviderId;
+  discoveryLoaded: boolean;
+  discovery: ProviderDiscovery | undefined;
+  profileId?: string | null;
+  profiles: readonly Pick<ClaudeProfile, "id" | "provider">[];
+  model?: string;
+  managed?: { requiredProvider: "shikigami"; requiredModel?: string | null };
+  providerName: string;
+}
+
 /** Authentication failures need configuration before another prompt can succeed. */
 export function providerFailureNeedsConfiguration(message: string): boolean {
-  return /(?:\b401\b|\bunauthenticated\b|\bunauthorized\b|\bfailed to authenticate\b|\bauthentication failed\b|\bnot authenticated\b|\bnot logged in\b|(?:access token|credentials?|api key)\b[^\n.!?]{0,80}\b(?:invalid|expired|revoked|missing|required)\b|(?:sign[ -]?in|log[ -]?in)(?:(?:\s+is)?\s+required\b|\s+to\b))/i
-    .test(message);
+  return /(?:\b401\b|\bunauthenticated\b|\bunauthorized\b|\bfailed to authenticate\b|\bauthentication failed\b|\bnot authenticated\b|\bnot logged in\b|(?:access token|credentials?|api key)\b[^\n.!?]{0,80}\b(?:invalid|expired|revoked|missing|required)\b|(?:sign[ -]?in|log[ -]?in)(?:(?:\s+is)?\s+required\b|\s+to\b))/i.test(
+    message,
+  );
 }
 
 /** Some CLIs emit a provider error as text before a generic terminal failure. */
 export function providerTextReportsAuthenticationFailure(text: string): boolean {
-  return /^(?:failed to authenticate\b|authentication failed\b|api error:\s*401\b|unauthorized\b|unauthenticated\b|not authenticated\b|not logged in\b)/im
-    .test(text);
+  return /^(?:failed to authenticate\b|authentication failed\b|api error:\s*401\b|unauthorized\b|unauthenticated\b|not authenticated\b|not logged in\b)/im.test(
+    text,
+  );
 }
 
 /** Require a successful authentication probe newer than the failed turn. */
@@ -30,11 +69,11 @@ export function providerConfigurationVerifiedAfterFailure(
   failureAt: string | null,
 ): boolean {
   return Boolean(
-    probe?.state === "ready"
-    && probe.authenticated === true
-    && probe.checkedAt
-    && failureAt
-    && probe.checkedAt > failureAt,
+    probe?.state === "ready" &&
+    probe.authenticated === true &&
+    probe.checkedAt &&
+    failureAt &&
+    probe.checkedAt > failureAt,
   );
 }
 
@@ -62,13 +101,7 @@ export function providerFailureRecovery(
   };
 }
 
-const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-];
+const DEFAULT_REASONING_EFFORTS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
 
 /**
  * Claude models offered in the composer — T3-style full slugs + versioned labels
@@ -211,10 +244,7 @@ export function providerListLabel(provider: string): string {
  * Two-letter avatar glyph for transcript role chips.
  * Prefer known first-class codes; otherwise initials from the display label.
  */
-export function providerAvatarInitials(
-  provider: ProviderId,
-  label: string,
-): string {
+export function providerAvatarInitials(provider: ProviderId, label: string): string {
   if (provider === "claude-code") return "CC";
   if (provider === "codex-cli") return "CX";
   if (provider === "shikigami") return "SK";
@@ -318,6 +348,87 @@ export function providerNotReadyMessage(
 }
 
 /**
+ * Assess whether the selected provider can start a run from the current UI
+ * snapshot. This is an eligibility projection; the host remains authoritative
+ * for provider launch and model validation.
+ */
+export function assessProviderRunReadiness(input: ProviderRunReadinessInput): ProviderRunReadiness {
+  if (!input.discoveryLoaded) {
+    return { state: "checking", canRun: false, message: "Checking provider…" };
+  }
+
+  const blocked = (
+    reason: ProviderRunReadinessReason,
+    discovery: ProviderDiscovery | undefined = input.discovery,
+  ): ProviderRunReadiness => ({
+    state: "blocked",
+    canRun: false,
+    reason,
+    message: providerNotReadyMessage(input.provider, discovery, {
+      hasClaudeProfile: hasProviderProfile(input.profiles, "claude-code", input.profileId),
+      providerName: input.providerName,
+    }),
+  });
+
+  if (input.managed) {
+    if (input.provider !== input.managed.requiredProvider) {
+      return blocked("managed_provider_mismatch");
+    }
+    if (input.managed.requiredModel && input.model !== input.managed.requiredModel) {
+      return blocked("managed_model_mismatch");
+    }
+    if (!input.discovery?.installed) return blocked("not_installed");
+    if (input.discovery.authenticated !== true) return blocked("not_authenticated");
+    return { state: "ready", canRun: true, message: "" };
+  }
+
+  if (input.provider === "claude-code") {
+    if (!input.profileId) return blocked("profile_required");
+    if (!hasProviderProfile(input.profiles, "claude-code", input.profileId)) {
+      return blocked("profile_unknown");
+    }
+    return { state: "ready", canRun: true, message: "" };
+  }
+
+  if (input.provider === "shikigami") {
+    if (!input.profileId) return blocked("profile_required");
+    if (!hasProviderProfile(input.profiles, "shikigami", input.profileId)) {
+      return blocked("profile_unknown");
+    }
+    const discovery = providerDiscoveryForProfile(input.provider, input.discovery, input.profileId);
+    if (!discovery?.installed) return blocked("not_installed", discovery);
+    if (discovery.enabled === false) return blocked("disabled", discovery);
+    if (discovery.authenticated !== true) return blocked("not_authenticated", discovery);
+    return { state: "ready", canRun: true, message: "" };
+  }
+
+  if (!input.discovery || input.discovery.installed === false) {
+    return blocked("not_installed");
+  }
+  if (input.discovery.enabled === false) return blocked("disabled");
+  if (input.provider === "codex-cli" && input.discovery.authenticated !== true) {
+    return blocked("not_authenticated");
+  }
+  if (input.discovery.authenticated === false) return blocked("not_authenticated");
+  return { state: "ready", canRun: true, message: "" };
+}
+
+function hasProviderProfile(
+  profiles: ProviderRunReadinessInput["profiles"],
+  provider: "claude-code" | "shikigami",
+  profileId: string | null | undefined,
+): boolean {
+  if (!profileId) return false;
+  return profiles.some(
+    (profile) =>
+      profile.id === profileId &&
+      (provider === "claude-code"
+        ? profile.provider === "claude-code" || !profile.provider
+        : profile.provider === provider),
+  );
+}
+
+/**
  * Resolve the concrete model to use when the UI/state still has the
  * unpinned sentinel `"default"` (or an empty selection). Matches T3:
  * discovery `isDefault` → first discovered model → provider preferred slug.
@@ -361,11 +472,7 @@ export function prettifyModelId(id: string): string {
     if (/^[a-z]+\d/i.test(trimmed) && trimmed === trimmed.toLowerCase()) return trimmed;
     return titleModelPart(trimmed);
   }
-  return trimmed
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map(titleModelPart)
-    .join(" ");
+  return trimmed.split(/[-_]/).filter(Boolean).map(titleModelPart).join(" ");
 }
 
 /** Models the composer chip can cycle for the selected provider. */
@@ -391,9 +498,10 @@ export function providerModelOptions(
   return real.map((model) => ({
     id: model.id,
     // Discovery sometimes echoes the machine id as displayName (e.g. gpt-5.2-codex).
-    displayName: model.displayName && model.displayName !== model.id
-      ? model.displayName
-      : prettifyModelId(model.id),
+    displayName:
+      model.displayName && model.displayName !== model.id
+        ? model.displayName
+        : prettifyModelId(model.id),
   }));
 }
 
@@ -404,9 +512,8 @@ export function cycleProviderModel(
 ): string {
   const options = providerModelOptions(provider, discovery);
   if (options.length <= 1) return options[0]?.id ?? currentModel;
-  let effective = currentModel === "default"
-    ? resolveDefaultProviderModel(provider, discovery)
-    : currentModel;
+  let effective =
+    currentModel === "default" ? resolveDefaultProviderModel(provider, discovery) : currentModel;
   if (provider === "claude-code") effective = normalizeClaudeModelSlug(effective);
   const index = options.findIndex((entry) => entry.id === effective);
   const next = options[(index + 1) % options.length] ?? options[0]!;
@@ -418,18 +525,16 @@ export function providerModelLabel(
   model: string,
   discovery: ProviderDiscovery | undefined,
 ): string {
-  let effective = model === "default"
-    ? resolveDefaultProviderModel(provider, discovery)
-    : model;
+  let effective = model === "default" ? resolveDefaultProviderModel(provider, discovery) : model;
   if (provider === "claude-code") effective = normalizeClaudeModelSlug(effective);
   const match = providerModelOptions(provider, discovery).find((entry) => entry.id === effective);
   if (match) return match.displayName;
   // Discovery may mark a default that was filtered from options (id "default").
   const discovered = discovery?.models?.find((entry) => entry.id === effective);
   if (
-    discovered?.displayName
-    && discovered.displayName !== "default"
-    && discovered.displayName !== discovered.id
+    discovered?.displayName &&
+    discovered.displayName !== "default" &&
+    discovered.displayName !== discovered.id
   ) {
     return discovered.displayName;
   }
@@ -449,9 +554,7 @@ export function providerReasoningEfforts(
 ): ReasoningEffort[] {
   const isAdapter = typeof provider === "string" && provider.startsWith("adapter:");
   if (provider !== "codex-cli" && !isAdapter) return [];
-  const effective = model === "default"
-    ? resolveDefaultProviderModel(provider, discovery)
-    : model;
+  const effective = model === "default" ? resolveDefaultProviderModel(provider, discovery) : model;
   if (effective === "default") {
     return provider === "codex-cli" ? DEFAULT_REASONING_EFFORTS : [];
   }
@@ -501,11 +604,17 @@ export function parseProviderFailure(message: string): ProviderFailureView {
   }
   let summary = trimmed;
   if (resumeMatch) {
-    summary = trimmed.slice(0, resumeMatch.index).trim().replace(/[.\s]+$/, "") || "Shikigami parked.";
+    summary =
+      trimmed
+        .slice(0, resumeMatch.index)
+        .trim()
+        .replace(/[.\s]+$/, "") || "Shikigami parked.";
   }
   const question = questionMatch?.[1]?.trim() ?? null;
   if (question) {
-    summary = summary.replace(new RegExp(`\\s*Question:\\s*${escapeRegExp(question)}\\.?`, "i"), "").trim();
+    summary = summary
+      .replace(new RegExp(`\\s*Question:\\s*${escapeRegExp(question)}\\.?`, "i"), "")
+      .trim();
   }
   return {
     kind: "park",
