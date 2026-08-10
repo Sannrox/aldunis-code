@@ -65,6 +65,9 @@ type WorkbenchStateProjection = ConversationListProjection & {
   delegatedApprovals?: DelegatedApprovalProjection[];
   delegatedInputs?: DelegatedInputProjection[];
   delegatedRelationships?: DelegatedConversationRelationship[];
+  managedWorktreeCount?: number;
+  managedWorktreeLimit?: number | null;
+  managedWorktreePaths?: string[];
   error?: string;
 };
 
@@ -617,6 +620,7 @@ export function CodeWorkbench({
   orchestrationThreadsBeta = false,
   showThinking = false,
   conversationOpenScroll = "latest",
+  managedWorktreeLimit: managedWorktreeLimitPreference = 10,
   managedMode = false,
   managedModel,
   managedAccount,
@@ -644,6 +648,8 @@ export function CodeWorkbench({
   orchestrationThreadsBeta?: boolean;
   showThinking?: boolean;
   conversationOpenScroll?: "latest" | "remember";
+  /** Preferences soft limit for managed worktrees; null means unlimited. */
+  managedWorktreeLimit?: number | null;
   managedMode?: boolean;
   managedModel?: string;
   managedAccount?: ManagedAccount | null;
@@ -819,6 +825,9 @@ export function CodeWorkbench({
     preview: ConversationDeletionPreview;
   } | null>(null);
   const [releaseTarget, setReleaseTarget] = useState<ConversationSummary | null>(null);
+  const [bulkReleaseTargets, setBulkReleaseTargets] = useState<ConversationSummary[] | null>(null);
+  const [managedWorktreeCount, setManagedWorktreeCount] = useState(0);
+  const [managedWorktreePaths, setManagedWorktreePaths] = useState<string[]>([]);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
@@ -912,6 +921,16 @@ export function CodeWorkbench({
             .filter((deletion) => deletion.status !== "completed")
             .map((deletion) => deletion.threadId),
         );
+        if (typeof projection.managedWorktreeCount === "number") {
+          setManagedWorktreeCount(projection.managedWorktreeCount);
+        }
+        if (Array.isArray(projection.managedWorktreePaths)) {
+          setManagedWorktreePaths(
+            projection.managedWorktreePaths.filter(
+              (path): path is string => typeof path === "string",
+            ),
+          );
+        }
       }
       // Only apply stored selection on the first successful load.
       if (restoredProjectReference.current === null) {
@@ -1103,6 +1122,14 @@ export function CodeWorkbench({
         .filter((deletion) => deletion.status !== "completed")
         .map((deletion) => deletion.threadId),
     );
+    if (typeof body.managedWorktreeCount === "number") {
+      setManagedWorktreeCount(body.managedWorktreeCount);
+    }
+    if (Array.isArray(body.managedWorktreePaths)) {
+      setManagedWorktreePaths(
+        body.managedWorktreePaths.filter((path): path is string => typeof path === "string"),
+      );
+    }
   };
   const refreshStateProjection = async () => {
     const requestSequence = ++stateProjectionRequestReference.current;
@@ -1217,9 +1244,7 @@ export function CodeWorkbench({
       window.clearInterval(timer);
     };
   }, [prStatusLookupKey]);
-  const worktreeLimit = 10;
-  const managedWorktreeCount =
-    repository?.worktrees.filter((wt) => wt.ownership === "aldunis").length ?? 0;
+  const worktreeLimit = managedWorktreeLimitPreference;
   const postLifecycle = async (route: string, body: Record<string, unknown>) => {
     const response = await fetch(route, {
       method: "POST",
@@ -1629,10 +1654,19 @@ export function CodeWorkbench({
         onReleaseWorktree={(conversation) => {
           const active = document.activeElement;
           releaseReturnFocusReference.current = active instanceof HTMLElement ? active : null;
+          setBulkReleaseTargets(null);
           setReleaseTarget(conversation);
+        }}
+        onReleaseSettledWorktrees={(conversations) => {
+          if (conversations.length === 0) return;
+          const active = document.activeElement;
+          releaseReturnFocusReference.current = active instanceof HTMLElement ? active : null;
+          setReleaseTarget(null);
+          setBulkReleaseTargets(conversations);
         }}
         worktreeLimit={worktreeLimit}
         managedWorktreeCount={managedWorktreeCount}
+        managedWorktreePaths={managedWorktreePaths}
         managedAccount={managedAccount}
         onSettings={() => {
           onSettings();
@@ -2046,6 +2080,61 @@ export function CodeWorkbench({
               threadId: releaseTarget.id,
               confirm: true,
             });
+          }}
+        />
+      )}
+      {bulkReleaseTargets && bulkReleaseTargets.length > 0 && (
+        <ReleaseWorktreeDialog
+          title={`${bulkReleaseTargets.length} settled conversations`}
+          provider="Aldunis-managed worktrees"
+          bulkCount={bulkReleaseTargets.length}
+          onClose={() => {
+            setBulkReleaseTargets(null);
+            const returnFocus = releaseReturnFocusReference.current;
+            releaseReturnFocusReference.current = null;
+            window.requestAnimationFrame(() =>
+              window.requestAnimationFrame(() => returnFocus?.focus()),
+            );
+          }}
+          onConfirm={async () => {
+            const targets = bulkReleaseTargets;
+            const failures: string[] = [];
+            let released = 0;
+            for (const conversation of targets) {
+              try {
+                const response = await fetch("/api/state/conversations/release-worktree", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ threadId: conversation.id, confirm: true }),
+                });
+                const result = (await response.json()) as {
+                  error?: string;
+                  released?: boolean;
+                  managedWorktreeCount?: number;
+                };
+                if (!response.ok) {
+                  throw new Error(result.error ?? "Managed worktree release failed.");
+                }
+                if (result.released) released += 1;
+                if (typeof result.managedWorktreeCount === "number") {
+                  setManagedWorktreeCount(result.managedWorktreeCount);
+                }
+              } catch (reason: unknown) {
+                const message =
+                  reason instanceof Error ? reason.message : "Managed worktree release failed.";
+                failures.push(`${conversation.title}: ${message}`);
+              }
+            }
+            try {
+              await refreshStateProjection();
+            } catch {
+              /* meter already updated from release responses when available */
+            }
+            if (failures.length > 0) {
+              const preview = failures.slice(0, 3).join("; ");
+              const more = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
+              throw new Error(`Released ${released} of ${targets.length}. ${preview}${more}`);
+            }
           }}
         />
       )}

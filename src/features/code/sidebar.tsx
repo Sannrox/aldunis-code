@@ -9,7 +9,12 @@ import type {
 } from "../../types";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { ThreadRow } from "./thread-row";
-import { branchFromWorktree, groupSidebarConversations } from "./conversation-list";
+import {
+  branchFromWorktree,
+  conversationHoldsManagedWorktree,
+  groupSidebarConversations,
+  settledHoldingManagedWorktrees,
+} from "./conversation-list";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
@@ -68,9 +73,11 @@ export function CodeSidebar({
   onUnsettle,
   onUnsnooze,
   onReleaseWorktree,
+  onReleaseSettledWorktrees,
   prStatusByWorktree = null,
   worktreeLimit,
   managedWorktreeCount,
+  managedWorktreePaths = null,
   managedAccount,
   onSettings,
 }: {
@@ -116,10 +123,15 @@ export function CodeSidebar({
   onUnsettle: (conversation: ConversationSummary) => void;
   onUnsnooze: (conversation: ConversationSummary) => void;
   onReleaseWorktree: (conversation: ConversationSummary) => void;
+  /** Confirm and release every settled conversation still holding a managed worktree. */
+  onReleaseSettledWorktrees?: (conversations: ConversationSummary[]) => void;
   /** Live GitHub PR projection keyed by worktree path. */
   prStatusByWorktree?: Map<string, BranchPrStatus> | null;
-  worktreeLimit: number;
+  /** Installation managed-worktree soft limit; null means unlimited. */
+  worktreeLimit: number | null;
   managedWorktreeCount: number;
+  /** Active managed checkout paths from the host registry (installation-wide). */
+  managedWorktreePaths?: ReadonlyArray<string> | null;
   managedAccount?: ManagedAccount | null;
   onSettings: () => void;
 }) {
@@ -163,8 +175,27 @@ export function CodeSidebar({
   }, [conversations, nowMs]);
 
   const meterPct =
-    worktreeLimit > 0 ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100)) : 0;
-  const meterHot = worktreeLimit > 0 && managedWorktreeCount / worktreeLimit >= 0.75;
+    worktreeLimit !== null && worktreeLimit > 0
+      ? Math.min(100, Math.round((managedWorktreeCount / worktreeLimit) * 100))
+      : 0;
+  const meterHot =
+    worktreeLimit !== null && worktreeLimit > 0 && managedWorktreeCount / worktreeLimit >= 0.75;
+  const managedPathSet = useMemo(() => {
+    if (managedWorktreePaths) {
+      return new Set(managedWorktreePaths);
+    }
+    // Fall back to the open repository's Aldunis-owned rows when the registry
+    // projection has not arrived yet.
+    return new Set(
+      (repository?.worktrees ?? [])
+        .filter((worktree) => worktree.ownership === "aldunis")
+        .map((worktree) => worktree.path),
+    );
+  }, [managedWorktreePaths, repository?.worktrees]);
+  const settledHolding = useMemo(
+    () => settledHoldingManagedWorktrees(settled, managedPathSet),
+    [settled, managedPathSet],
+  );
 
   useEffect(() => {
     if (!productOpen) return;
@@ -728,13 +759,21 @@ export function CodeSidebar({
                       <i className={meterHot ? "hot" : ""} style={{ width: `${meterPct}%` }} />
                     </span>
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                      {managedWorktreeCount} / {worktreeLimit}
+                      {managedWorktreeCount} / {worktreeLimit === null ? "∞" : worktreeLimit}
                     </span>
+                    {settledHolding.length > 0 && onReleaseSettledWorktrees && (
+                      <button
+                        type="button"
+                        className="sbtn rel meter-release-all"
+                        aria-label={`Release ${settledHolding.length} settled managed worktrees`}
+                        onClick={() => onReleaseSettledWorktrees(settledHolding)}
+                      >
+                        Release all ({settledHolding.length})
+                      </button>
+                    )}
                   </div>
                   {settled.map((conversation) => {
-                    const holds = repository?.worktrees.some(
-                      (wt) => wt.path === conversation.worktree && wt.ownership === "aldunis",
-                    );
+                    const holds = conversationHoldsManagedWorktree(conversation, managedPathSet);
                     const provider = conversation.provider
                       ? providerListLabel(conversation.provider)
                       : null;

@@ -3,12 +3,14 @@ import { test } from "node:test";
 import type { ConversationSummary } from "../../types";
 import {
   branchFromWorktree,
+  conversationHoldsManagedWorktree,
   conversationListFromProjection,
   formatElapsed,
   groupSidebarConversations,
   isBlockingStatus,
   isUnread,
   providerLabel,
+  settledHoldingManagedWorktrees,
 } from "./conversation-list";
 
 test("one state projection supplies conversation metadata and status atomically", () => {
@@ -218,4 +220,31 @@ test("provider and branch labels are display helpers only", () => {
   assert.equal(providerLabel("adapter:dev.xai.grok-build@1.0.0"), "Grok Build");
   assert.equal(providerLabel("adapter:dev.kiro.cli@1.0.0"), "Kiro CLI");
   assert.equal(branchFromWorktree("/tmp/repo/.aldunis/feature-x"), "feature-x");
+});
+
+test("settled holding helpers use the active managed path set", () => {
+  const holding: ConversationSummary = {
+    id: "hold",
+    projectId: "project",
+    title: "Holding",
+    worktree: "/wt/a",
+    provider: "codex-cli",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+    settledAt: "2026-01-02T00:00:00.000Z",
+    pinnedAt: null,
+    archivedAt: null,
+  };
+  const released: ConversationSummary = {
+    ...holding,
+    id: "released",
+    title: "Released",
+    worktree: "/wt/gone",
+  };
+  const paths = new Set(["/wt/a"]);
+  assert.equal(conversationHoldsManagedWorktree(holding, paths), true);
+  assert.equal(conversationHoldsManagedWorktree(released, paths), false);
+  assert.deepEqual(
+    settledHoldingManagedWorktrees([holding, released], paths).map((item) => item.id),
+    ["hold"],
+  );
 });
