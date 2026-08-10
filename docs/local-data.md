@@ -69,6 +69,12 @@ seconds as an explicitly stale fallback.
 - Active turns remain owned by the host if you navigate away and return.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
+- Provider assistant streams are buffered and flushed as one durable message
+  per segment (between tools, approvals, input prompts, or turn end). Segments
+  also soft-checkpoint about every 4 KiB of growth and on host close so a long
+  text-only reply is not only in RAM. Host recovery collapses older
+  token-per-event assistant rows when rewriting history so long ACP streams do
+  not retain multi-megabyte message tables or one fsync per token.
 - Provider credentials, raw tool inputs/outputs, and environment values are
   **not** part of the history schema.
 - Context receipts retain repository-relative paths, entry types, byte counts,

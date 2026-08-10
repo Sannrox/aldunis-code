@@ -5124,6 +5124,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     .recoverInterruptedTurns()
     .then(() => state.reconcileAutomationFires())
     .then(() => state.recoverAutonomyRuns())
+    .then(() => state.compactAssistantStreamHistory())
     .then(() => autonomy.ensureBuiltInFlows());
 
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
@@ -5438,6 +5439,8 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     autonomyScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();
+    // Best-effort: journal any open stream segments before the process exits.
+    void state.flushPendingAssistantHistory().catch(() => undefined);
   });
   return server;
 }

@@ -729,9 +729,9 @@ function replaceById<T extends { id: string }>(items: T[], value: T): void {
 }
 
 /**
- * ACP streams (Grok, Kiro, …) persist many tiny assistant_text rows. For fork
- * transfer and the exact-messages review list, join consecutive assistant
- * chunks so the operator sees readable replies rather than 100+ token rows.
+ * ACP streams (Grok, Kiro, …) historically persisted many tiny assistant_text
+ * rows. For fork transfer and the exact-messages review list, join consecutive
+ * assistant chunks so the operator sees readable replies rather than token rows.
  */
 export function coalesceForkTransferMessages(
   messages: ForkTransferMessage[],
@@ -742,11 +742,87 @@ export function coalesceForkTransferMessages(
   for (const message of sorted) {
     const previous = coalesced[coalesced.length - 1];
     if (previous && previous.role === "assistant" && message.role === "assistant") {
-      previous.text = `${previous.text}${message.text}`;
+      previous.text = joinAssistantTextChunks([previous.text, message.text]);
       continue;
     }
     coalesced.push({ ...message });
   }
+  return coalesced;
+}
+
+function transcriptOrderKey(item: {
+  eventSequence?: number;
+  createdAt: string;
+  id: string;
+}): [number, string, string] {
+  return [item.eventSequence ?? Number.MAX_SAFE_INTEGER, item.createdAt, item.id];
+}
+
+function compareTranscriptOrder(
+  left: { eventSequence?: number; createdAt: string; id: string },
+  right: { eventSequence?: number; createdAt: string; id: string },
+): number {
+  const leftKey = transcriptOrderKey(left);
+  const rightKey = transcriptOrderKey(right);
+  if (leftKey[0] !== rightKey[0]) return leftKey[0] - rightKey[0];
+  if (leftKey[1] !== rightKey[1]) return leftKey[1].localeCompare(rightKey[1]);
+  return leftKey[2].localeCompare(rightKey[2]);
+}
+
+/**
+ * Collapse consecutive assistant stream chunks that have no activity between
+ * them. Preserves user messages and assistant segments split by tools.
+ * Used when rewriting history so older token-per-event logs shrink.
+ */
+export function coalesceConsecutiveAssistantMessages(
+  messages: Message[],
+  activities: Activity[],
+): Message[] {
+  if (messages.length <= 1) return messages.map((message) => ({ ...message }));
+  type Item =
+    | { kind: "message"; message: Message }
+    | { kind: "activity"; activity: Activity };
+  const items: Item[] = [
+    ...messages.map((message) => ({ kind: "message" as const, message })),
+    ...activities.map((activity) => ({ kind: "activity" as const, activity })),
+  ].sort((left, right) => {
+    const leftItem = left.kind === "message" ? left.message : left.activity;
+    const rightItem = right.kind === "message" ? right.message : right.activity;
+    return compareTranscriptOrder(leftItem, rightItem);
+  });
+  const coalesced: Message[] = [];
+  let open: Message | null = null;
+  const closeOpen = () => {
+    if (open) {
+      coalesced.push(open);
+      open = null;
+    }
+  };
+  for (const item of items) {
+    if (item.kind === "activity") {
+      closeOpen();
+      continue;
+    }
+    const message = item.message;
+    if (message.role !== "assistant") {
+      closeOpen();
+      coalesced.push({ ...message });
+      continue;
+    }
+    if (open && open.turnId === message.turnId) {
+      open = {
+        ...open,
+        text: joinAssistantTextChunks([open.text, message.text]),
+        // Keep the earliest sequence so intervening activities remain after the
+        // segment start when history is rebuilt.
+        eventSequence: open.eventSequence ?? message.eventSequence,
+      };
+      continue;
+    }
+    closeOpen();
+    open = { ...message };
+  }
+  closeOpen();
   return coalesced;
 }
 
@@ -1048,6 +1124,16 @@ export class LocalStateStore {
   #projection = emptyProjection();
   #writeQueue: Promise<void> = Promise.resolve();
   #loaded = false;
+  /**
+   * Open assistant segments that have been applied to the in-memory projection
+   * and may still be growing. Closed on tool/approval/input or terminal turn
+   * events so stream tokens do not each become a durable row.
+   */
+  readonly #openAssistantByTurn = new Map<string, Message>();
+  /** Characters already journaled for each open segment (soft checkpoints). */
+  readonly #openAssistantDurableLength = new Map<string, number>();
+  /** Soft-checkpoint growth threshold so long text-only replies are not only in RAM. */
+  static readonly ASSISTANT_CHECKPOINT_CHARS = 4_096;
 
   constructor(readonly directory = defaultStateDirectory()) {
     this.#eventPath = join(directory, "events.v1.jsonl");
@@ -1149,13 +1235,17 @@ export class LocalStateStore {
     }
   }
 
-  async load(): Promise<StateProjection> {
-    if (this.#loaded) return structuredClone(this.#projection);
+  async #ensureLoaded(): Promise<void> {
+    if (this.#loaded) return;
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const history = await this.#readProjection();
     if (history.repaired) await this.#replaceHistory(history.envelopes);
     this.#projection = history.projection;
     this.#loaded = true;
+  }
+
+  async load(): Promise<StateProjection> {
+    await this.#ensureLoaded();
     return structuredClone(this.#projection);
   }
 
@@ -1166,7 +1256,9 @@ export class LocalStateStore {
   async #appendComputed<T>(
     compute: (projection: StateProjection) => { event: StateEvent | StateEvent[] | null; value: T },
   ): Promise<T> {
-    await this.load();
+    // Internal mutators only need the live projection; avoid cloning multi-MB
+    // history on every append path.
+    await this.#ensureLoaded();
     let result!: T;
     const operation = this.#writeQueue.then(async () => {
       const computed = compute(this.#projection);
@@ -1194,6 +1286,119 @@ export class LocalStateStore {
     this.#writeQueue = operation.catch(() => undefined);
     await operation;
     return result;
+  }
+
+  async #writeMessageEnvelope(message: Message): Promise<void> {
+    const envelope: EventEnvelope = {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      sequence: this.#projection.sequence + 1,
+      id: randomUUID(),
+      recordedAt: new Date().toISOString(),
+      event: { type: "message_saved", message: { ...message } },
+    };
+    const handle = await open(this.#eventPath, "a", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(envelope)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    applyEvent(this.#projection, envelope);
+  }
+
+  async #bufferAssistantText(turnId: string, text: string, createdAt: string): Promise<void> {
+    if (!text) return;
+    await this.#ensureLoaded();
+    const operation = this.#writeQueue.then(async () => {
+      let segment = this.#openAssistantByTurn.get(turnId);
+      if (!segment) {
+        segment = {
+          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+          id: randomUUID(),
+          turnId,
+          role: "assistant",
+          text: "",
+          createdAt,
+        };
+        this.#openAssistantByTurn.set(turnId, segment);
+        this.#openAssistantDurableLength.set(turnId, 0);
+      }
+      segment.text = joinAssistantTextChunks([segment.text, text]);
+      // Keep live projections (sidebar outcomes, mid-turn load) current without
+      // fsyncing every provider token.
+      replaceById(this.#projection.messages, { ...segment });
+      const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
+      // Soft checkpoint so a long text-only reply is not only in RAM if the host
+      // exits before a tool/terminal boundary. Same message id; replace-by-id.
+      if (segment.text.length - durableLength >= LocalStateStore.ASSISTANT_CHECKPOINT_CHARS) {
+        await this.#writeMessageEnvelope(segment);
+        this.#openAssistantDurableLength.set(turnId, segment.text.length);
+      }
+    });
+    this.#writeQueue = operation.catch(() => undefined);
+    await operation;
+  }
+
+  async #flushOpenAssistant(turnId: string): Promise<void> {
+    await this.#ensureLoaded();
+    const operation = this.#writeQueue.then(async () => {
+      const segment = this.#openAssistantByTurn.get(turnId);
+      if (!segment) return;
+      if (!segment.text) {
+        this.#openAssistantByTurn.delete(turnId);
+        this.#openAssistantDurableLength.delete(turnId);
+        this.#projection.messages = this.#projection.messages.filter(
+          (message) => message.id !== segment.id,
+        );
+        return;
+      }
+      const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
+      if (segment.text.length === durableLength) {
+        // Already journaled at this length (soft checkpoint); just close.
+        this.#openAssistantByTurn.delete(turnId);
+        this.#openAssistantDurableLength.delete(turnId);
+        return;
+      }
+      // Keep the map entry until the write succeeds so a failed fsync can retry.
+      await this.#writeMessageEnvelope(segment);
+      this.#openAssistantByTurn.delete(turnId);
+      this.#openAssistantDurableLength.delete(turnId);
+    });
+    this.#writeQueue = operation.catch(() => undefined);
+    await operation;
+  }
+
+  async #flushAllOpenAssistants(): Promise<void> {
+    for (const turnId of [...this.#openAssistantByTurn.keys()]) {
+      await this.#flushOpenAssistant(turnId);
+    }
+  }
+
+  /** Flush open stream segments before host shutdown or intentional teardown. */
+  async flushPendingAssistantHistory(): Promise<void> {
+    await this.#flushAllOpenAssistants();
+  }
+
+  /**
+   * Rewrite local history when older stream-token rows dominate the message
+   * table. No-op when already compact. Safe to call during host recovery.
+   */
+  async compactAssistantStreamHistory(): Promise<{ before: number; after: number } | null> {
+    await this.#flushAllOpenAssistants();
+    await this.#ensureLoaded();
+    const before = this.#projection.messages.length;
+    const after = coalesceConsecutiveAssistantMessages(
+      this.#projection.messages,
+      this.#projection.activities,
+    ).length;
+    if (after >= before) return null;
+    await this.#compact((projection) => {
+      projection.messages = coalesceConsecutiveAssistantMessages(
+        projection.messages,
+        projection.activities,
+      );
+    });
+    return { before, after };
   }
 
   async saveProject(
@@ -2813,6 +3018,33 @@ export class LocalStateStore {
       // state: never append them to local history, activity, or checkpoints.
       return;
     }
+    if (event.kind === "thinking") {
+      // Provider reasoning is a live-only projection. It must not enter the
+      // durable transcript, fork context, delegated outcome, or local journal.
+      return;
+    }
+    if (event.kind === "assistant_text") {
+      // Buffer stream tokens until a tool, approval, input, or terminal event
+      // closes the segment. Avoids one fsync per token on long ACP streams.
+      await this.#bufferAssistantText(turnId, event.text, now);
+      return;
+    }
+    // Close the open reply only on true speech boundaries. Metering, plans,
+    // session, and governance events may interleave without starting a new
+    // assistant segment (and without confusing history coalescing).
+    if (
+      event.kind === "tool_started" ||
+      event.kind === "tool_finished" ||
+      event.kind === "failed" ||
+      event.kind === "input_requested" ||
+      event.kind === "input_resolved" ||
+      event.kind === "approval_pending" ||
+      event.kind === "approval_resolved" ||
+      event.kind === "turn_completed" ||
+      event.kind === "cancelled"
+    ) {
+      await this.#flushOpenAssistant(turnId);
+    }
     if (event.kind === "input_requested") {
       const turn = (await this.load()).turns.find((item) => item.id === turnId);
       if (!turn || !turn.providerRunId) {
@@ -2905,25 +3137,6 @@ export class LocalStateStore {
       if (nextStatus === "waiting_for_approval") {
         await this.#markThreadWoke(threadId, now);
       }
-      return;
-    }
-    if (event.kind === "assistant_text") {
-      await this.#append({
-        type: "message_saved",
-        message: {
-          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-          id: randomUUID(),
-          turnId,
-          role: "assistant",
-          text: event.text,
-          createdAt: now,
-        },
-      });
-      return;
-    }
-    if (event.kind === "thinking") {
-      // Provider reasoning is a live-only projection. It must not enter the
-      // durable transcript, fork context, delegated outcome, or local journal.
       return;
     }
     if (event.kind === "context_usage") {
@@ -3371,10 +3584,14 @@ export class LocalStateStore {
   }
 
   async #compact(change: (projection: StateProjection) => void): Promise<void> {
-    await this.load();
+    await this.#flushAllOpenAssistants();
+    await this.#ensureLoaded();
     const operation = this.#writeQueue.then(async () => {
       const next = structuredClone(this.#projection);
       change(next);
+      // History rewrites always collapse stream-token rows so deletion and
+      // retention reclaim fsync-heavy assistant logs from earlier hosts.
+      next.messages = coalesceConsecutiveAssistantMessages(next.messages, next.activities);
       const transcriptEvents = [
         ...next.messages.map((message) => ({
           eventSequence: message.eventSequence,

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  coalesceConsecutiveAssistantMessages,
   LocalStateError,
   LocalStateStore,
   MAX_THREADS_PER_PROJECT,
@@ -1451,7 +1452,9 @@ test("delegated completion outcomes project only the latest bounded child result
     costUsd: 0,
   });
   outcomes = projectDelegatedConversationOutcomes(await store.load());
-  assert.equal(outcomes[0].summary, "Result\n\nDetails");
+  // Stream tokens buffer into one durable segment with literal concatenation
+  // (plus markdown block-boundary breaks), matching the stored transcript.
+  assert.equal(outcomes[0].summary, "Result\n Details");
 });
 
 test("child input requests and parent coordination receipts persist and resolve once", async () => {
@@ -2386,4 +2389,213 @@ test("fork preview coalesces consecutive assistant stream chunks", async () => {
     ],
   );
   assert.equal(preview.messages.length, 2);
+});
+
+test("assistant stream tokens buffer into one durable message per segment", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Stream carefully",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  for (const text of ["Hel", "lo", " ", "wor", "ld"]) {
+    await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+      kind: "assistant_text",
+      text,
+    });
+  }
+  // Live projection sees the buffered segment before any durable flush.
+  const live = await store.load();
+  const liveAssistants = live.messages.filter(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  assert.equal(liveAssistants.length, 1);
+  assert.equal(liveAssistants[0]?.text, "Hello world");
+  // Short segments stay RAM-only until a boundary (below the soft-checkpoint size).
+  const midLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal([...midLog.matchAll(/"type":"message_saved"/g)].length, 1); // user only
+
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "tool_started",
+    toolCallId: "tool-1",
+    name: "Read",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "After",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: " tool.",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "stream-session",
+    costUsd: 0,
+  });
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  const assistants = rebuilt.messages
+    .filter((message) => message.turnId === turn.id && message.role === "assistant")
+    .sort((left, right) => (left.eventSequence ?? 0) - (right.eventSequence ?? 0));
+  assert.deepEqual(
+    assistants.map((message) => message.text),
+    ["Hello world", "After tool."],
+  );
+  const log = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  // user + two assistant segments (not one row per token)
+  assert.equal([...log.matchAll(/"type":"message_saved"/g)].length, 3);
+});
+
+test("assistant streams soft-checkpoint large growth and flush on demand", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Long reply",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const chunk = "x".repeat(LocalStateStore.ASSISTANT_CHECKPOINT_CHARS);
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: chunk,
+  });
+  const afterCheckpoint = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal([...afterCheckpoint.matchAll(/"type":"message_saved"/g)].length, 2); // user + checkpoint
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: " tail",
+  });
+  await store.flushPendingAssistantHistory();
+  const rebuilt = await new LocalStateStore(directory).load();
+  const assistant = rebuilt.messages.find(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  assert.equal(assistant?.text, `${chunk} tail`);
+});
+
+test("coalesceConsecutiveAssistantMessages merges tokens and keeps tool splits", () => {
+  const turnId = "turn-1";
+  const messages = [
+    {
+      schemaVersion: 2 as const,
+      id: "user-1",
+      turnId,
+      role: "user" as const,
+      text: "Go",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      eventSequence: 1,
+    },
+    {
+      schemaVersion: 2 as const,
+      id: "a1",
+      turnId,
+      role: "assistant" as const,
+      text: "Hel",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      eventSequence: 2,
+    },
+    {
+      schemaVersion: 2 as const,
+      id: "a2",
+      turnId,
+      role: "assistant" as const,
+      text: "lo",
+      createdAt: "2026-01-01T00:00:02.000Z",
+      eventSequence: 3,
+    },
+    {
+      schemaVersion: 2 as const,
+      id: "a3",
+      turnId,
+      role: "assistant" as const,
+      text: "After",
+      createdAt: "2026-01-01T00:00:04.000Z",
+      eventSequence: 5,
+    },
+  ];
+  const activities = [
+    {
+      schemaVersion: 2 as const,
+      id: "act-1",
+      turnId,
+      kind: "tool_started" as const,
+      toolCallId: "tool-1",
+      name: "Read",
+      failed: null,
+      message: null,
+      createdAt: "2026-01-01T00:00:03.000Z",
+      eventSequence: 4,
+    },
+  ];
+  const coalesced = coalesceConsecutiveAssistantMessages(messages, activities);
+  assert.deepEqual(
+    coalesced.map((message) => ({ role: message.role, text: message.text })),
+    [
+      { role: "user", text: "Go" },
+      { role: "assistant", text: "Hello" },
+      { role: "assistant", text: "After" },
+    ],
+  );
+});
+
+test("compactAssistantStreamHistory rewrites legacy token-per-event logs", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Legacy stream",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "legacy-session",
+    costUsd: 0,
+  });
+  // Inject pre-fix token rows into the durable log.
+  const eventPath = join(directory, "events.v1.jsonl");
+  const existing = (await readFile(eventPath, "utf8")).trimEnd();
+  const lastSequence = existing
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line).sequence as number)
+    .at(-1)!;
+  const tokenLines = ["A", "B", "C", "D"].map((text, index) =>
+    JSON.stringify({
+      schemaVersion: 2,
+      sequence: lastSequence + index + 1,
+      id: `legacy-token-${index}`,
+      recordedAt: new Date().toISOString(),
+      event: {
+        type: "message_saved",
+        message: {
+          schemaVersion: 2,
+          id: `token-${index}`,
+          turnId: turn.id,
+          role: "assistant",
+          text,
+          createdAt: new Date().toISOString(),
+        },
+      },
+    }),
+  );
+  await writeFile(eventPath, `${existing}\n${tokenLines.join("\n")}\n`, "utf8");
+
+  const recovered = new LocalStateStore(directory);
+  const result = await recovered.compactAssistantStreamHistory();
+  assert.deepEqual(result, { before: 5, after: 2 }); // user + 4 tokens → user + 1 assistant
+  const final = await recovered.load();
+  const assistants = final.messages.filter(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  assert.equal(assistants.length, 1);
+  assert.equal(assistants[0]?.text, "ABCD");
+  assert.equal(await recovered.compactAssistantStreamHistory(), null);
 });
