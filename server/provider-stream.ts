@@ -1,7 +1,9 @@
 import type { ServerResponse } from "node:http";
 
+export type ProviderEventStreamResponse = Pick<ServerResponse, "writeHead" | "flushHeaders">;
+
 export function beginProviderEventStream(
-  response: ServerResponse,
+  response: ProviderEventStreamResponse,
   ids: { runId: string; threadId: string; turnId: string },
 ): void {
   response.writeHead(200, {
