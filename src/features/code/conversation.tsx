@@ -133,11 +133,12 @@ import {
 } from "../../lib/provider-discovery-cache";
 import {
   WORKSPACE_PANEL_DESTINATIONS,
-  moveWorkspacePanelFocus,
-  toggleWorkspacePanel,
+  initialWorkspacePanelLifecycle,
+  transitionWorkspacePanelLifecycle,
   workspacePanelTabStop,
   type WorkspacePanel,
   type WorkspacePanelDestination,
+  type WorkspacePanelLifecycleEvent,
 } from "../../lib/workspace-panel";
 import { isRepositoryRelativeContextPinPath } from "../../lib/context-pins";
 import {
@@ -578,7 +579,6 @@ export function Conversation({
     assistantTurnAt,
   } = conversationRun;
   /** Live context pressure from the provider stream — not durable history. */
-  const [agentBrowserViewOpen, setAgentBrowserViewOpen] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [historyRestored, setHistoryRestored] = useState(() => conversation === null);
   const [historyRestoreError, setHistoryRestoreError] = useState<string | null>(null);
@@ -1099,37 +1099,34 @@ export function Conversation({
     shikigamiProfiles,
     shikigamiProvider,
   ]);
-  const [previewMounted, setPreviewMounted] = useState(false);
-  const [previewFloating, setPreviewFloating] = useState(false);
+  const [workspacePanelLifecycle, setWorkspacePanelLifecycle] = useState(() =>
+    initialWorkspacePanelLifecycle(activePanel),
+  );
+  const workspacePanelLifecycleRef = useRef(workspacePanelLifecycle);
+  workspacePanelLifecycleRef.current = workspacePanelLifecycle;
+  const {
+    previewMounted,
+    previewFloating,
+    browserObservationOpen: agentBrowserViewOpen,
+    changesMode,
+    turnReview: turnChangesReview,
+  } = workspacePanelLifecycle;
   const [previewStatus, setPreviewStatus] = useState<PreviewPanelStatus>({
     state: "inactive",
     error: null,
   });
-  useEffect(() => {
-    setPreviewFloating(false);
-    setAgentBrowserViewOpen(false);
-  }, [repository?.root, repository?.selectedWorktree]);
   const filesPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const previewPanelTriggerRef = useRef<HTMLButtonElement>(null);
   const changesPanelTriggerRef = useRef<HTMLButtonElement>(null);
-  const [changesMode, setChangesMode] = useState<ChangesPanelMode>("review");
-  const [turnChangesReview, setTurnChangesReview] = useState<{
-    checkpointId: string;
-    files: ChangedFile[];
-  } | null>(null);
   const changesAdded = changes.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const changesRemoved = changes.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const canDeliverChanges = Boolean(
     repository && changes.length > 0 && !changesLoading && !changesError,
   );
-  const [workspacePanelFocus, setWorkspacePanelFocus] = useState<WorkspacePanelDestination | null>(
-    null,
-  );
   const availableWorkspacePanels = repository ? WORKSPACE_PANEL_DESTINATIONS : [];
   const workspacePanelStop = workspacePanelTabStop(
-    activePanel,
+    workspacePanelLifecycle,
     availableWorkspacePanels,
-    workspacePanelFocus,
   );
   const workspacePanelTrigger = (destination: WorkspacePanelDestination) =>
     destination === "files"
@@ -1137,70 +1134,51 @@ export function Conversation({
       : destination === "preview"
         ? previewPanelTriggerRef.current
         : changesPanelTriggerRef.current;
+  const dispatchWorkspacePanel = (event: WorkspacePanelLifecycleEvent) => {
+    const transition = transitionWorkspacePanelLifecycle(workspacePanelLifecycleRef.current, event);
+    workspacePanelLifecycleRef.current = transition.state;
+    setWorkspacePanelLifecycle(transition.state);
+    for (const effect of transition.effects) {
+      if (effect.type === "change_panel") onPanelChange(effect.panel);
+      else if (effect.type === "refresh_changes") onRefreshChanges();
+      else if (effect.defer) {
+        window.requestAnimationFrame(() => workspacePanelTrigger(effect.destination)?.focus());
+      } else workspacePanelTrigger(effect.destination)?.focus();
+    }
+  };
+  useEffect(() => {
+    if (workspacePanelLifecycleRef.current.activePanel === activePanel) return;
+    dispatchWorkspacePanel({ type: "sync_active", panel: activePanel });
+  }, [activePanel]);
+  useEffect(() => {
+    dispatchWorkspacePanel({ type: "workspace_reset" });
+  }, [repository?.root, repository?.selectedWorktree]);
   const updatePreviewStatus = useCallback((next: PreviewPanelStatus) => {
     setPreviewStatus((current) =>
       current.state === next.state && current.error === next.error ? current : next,
     );
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
-    if (destination === "preview") setPreviewFloating(false);
-    setWorkspacePanelFocus(destination);
-    const next = toggleWorkspacePanel(activePanel, destination);
-    if (next === "preview") setPreviewMounted(true);
-    if (next === "changes" && activePanel !== "changes") onRefreshChanges();
-    onPanelChange(next);
+    dispatchWorkspacePanel({ type: "toggle", destination });
   };
   const openChanges = (mode: ChangesPanelMode) => {
-    setTurnChangesReview(null);
-    setChangesMode(mode);
-    if (activePanel === "changes") {
-      setWorkspacePanelFocus("changes");
-      onRefreshChanges();
-      return;
-    }
-    activateWorkspacePanel("changes");
+    dispatchWorkspacePanel({ type: "open_changes", mode });
   };
   const openTurnChanges = (turnCheckpoint: TurnCheckpoint) => {
-    if (turnCheckpoint.state !== "completed" && turnCheckpoint.state !== "superseded") return;
-    if (!turnCheckpoint.files?.length) return;
-    setTurnChangesReview({
-      checkpointId: turnCheckpoint.id,
-      files: turnCheckpoint.files,
-    });
-    setChangesMode("review");
-    if (activePanel === "changes") {
-      setWorkspacePanelFocus("changes");
-      return;
-    }
-    activateWorkspacePanel("changes");
+    dispatchWorkspacePanel({ type: "open_turn_changes", checkpoint: turnCheckpoint });
   };
   useEffect(() => {
     if (openChangesSignal <= 0) return;
-    setTurnChangesReview(null);
-    setChangesMode(openChangesMode);
+    dispatchWorkspacePanel({ type: "signal_changes", mode: openChangesMode });
   }, [openChangesMode, openChangesSignal]);
   const closeWorkspacePanel = (destination: WorkspacePanelDestination, restoreFocus = true) => {
-    if (activePanel !== destination) return;
-    if (destination === "changes") setTurnChangesReview(null);
-    onPanelChange("none");
-    if (restoreFocus) {
-      window.requestAnimationFrame(() => workspacePanelTrigger(destination)?.focus());
-    }
+    dispatchWorkspacePanel({ type: "close", destination, restoreFocus });
   };
   const closePreview = () => {
-    setPreviewFloating(false);
-    setAgentBrowserViewOpen(false);
-    closeWorkspacePanel("preview");
+    dispatchWorkspacePanel({ type: "close_preview" });
   };
   const togglePreviewFloating = () => {
-    if (previewFloating) {
-      setPreviewFloating(false);
-      onPanelChange("preview");
-      return;
-    }
-    setPreviewMounted(true);
-    setPreviewFloating(true);
-    if (activePanel === "preview") onPanelChange("none");
+    dispatchWorkspacePanel({ type: "toggle_preview_floating" });
   };
   const moveWorkspacePanel = (
     event: React.KeyboardEvent<HTMLButtonElement>,
@@ -1218,11 +1196,12 @@ export function Conversation({
               : null;
     if (!direction) return;
     event.preventDefault();
-    const next = moveWorkspacePanelFocus(destination, direction, availableWorkspacePanels);
-    if (next) {
-      setWorkspacePanelFocus(next);
-      workspacePanelTrigger(next)?.focus();
-    }
+    dispatchWorkspacePanel({
+      type: "move_focus",
+      from: destination,
+      direction,
+      available: availableWorkspacePanels,
+    });
   };
   const previewIndicator = previewStatus.error
     ? "error"
@@ -1299,7 +1278,7 @@ export function Conversation({
       }
     }
     setCheckpoint(null);
-    setTurnChangesReview(null);
+    dispatchWorkspacePanel({ type: "conversation_reset" });
     setCompletionDismissed(false);
     setRewindPreview(null);
     setMessages([]);
@@ -2173,15 +2152,13 @@ export function Conversation({
   useEffect(() => {
     if (!latestAgentBrowserObservation) {
       agentBrowserObservationIdRef.current = null;
-      setAgentBrowserViewOpen(false);
+      dispatchWorkspacePanel({ type: "browser_observation", present: false });
       return;
     }
     if (agentBrowserObservationIdRef.current === latestAgentBrowserObservation.observationId)
       return;
     agentBrowserObservationIdRef.current = latestAgentBrowserObservation.observationId;
-    setAgentBrowserViewOpen(true);
-    setPreviewMounted(true);
-    setPreviewFloating(true);
+    dispatchWorkspacePanel({ type: "browser_observation", present: true });
   }, [latestAgentBrowserObservation]);
   const latestPlan = useMemo(
     () => latestPlanFromEvents([...archivedTurns.map((turn) => turn.events), providerEvents]),
@@ -4672,7 +4649,7 @@ export function Conversation({
               onRefresh={onRefreshChanges}
               canSendRevision={historyRestored && !runActive && providerReady}
               mode={changesMode}
-              onModeChange={setChangesMode}
+              onModeChange={(mode) => dispatchWorkspacePanel({ type: "set_changes_mode", mode })}
               checkpointId={turnChangesReview?.checkpointId ?? null}
               readOnly={turnChangesReview !== null}
               panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
