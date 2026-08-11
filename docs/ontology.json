@@ -392,6 +392,10 @@
     {
       "name": "CrossProviderConversationForkRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates reviewed cross-provider conversation fork route recognition, manifest validation, managed-host admission, canonical source and destination worktree selection, managed-worktree ownership and exclusivity, provider profile and model validation, provider readiness, and fork persistence behind one internal dispatch interface without changing provider, filesystem, persistence, or approval authority."
+    },
+    {
+      "name": "WorkbenchProjectionRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates Workbench projection route recognition, coherent snapshot assembly, managed catalogue visibility, delegated outcome, approval, and input projection, bounded conversation history and search, managed-worktree inventory, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, permission, tenant, or product authority."
     }
   ],
   "relations": [
@@ -520,6 +524,16 @@
       "description": "The local API dispatch module delegates reviewed cross-provider conversation fork requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "CrossProviderConversationForkRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_workbench_projection_route_dispatch",
+      "description": "The local API dispatch module delegates Workbench load, conversation history, and bounded search requests plus request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "WorkbenchProjectionRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2105,6 +2119,18 @@
       "subject": "delegates_cross_provider_conversation_fork_route_dispatch",
       "source": "Aldunis Code cross-provider conversation fork route dispatch interface",
       "locator": "server/host.ts#handleApi; server/conversation-fork-routes.ts#handleConversationForkRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorkbenchProjectionRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#661",
+      "locator": "server/workbench-projection-routes.ts#handleWorkbenchProjectionRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_workbench_projection_route_dispatch",
+      "source": "Aldunis Code Workbench projection route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/workbench-projection-routes.ts#handleWorkbenchProjectionRoute",
       "confidence": 1.0
     }
   ]
