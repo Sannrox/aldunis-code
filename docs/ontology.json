@@ -122,6 +122,10 @@
       "description": "A profile-keyed provider readiness projection that keeps executable, configuration, authentication, and model discovery aligned with the selected Shikigami profile."
     },
     {
+      "name": "ProviderProfileRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates provider discovery and ProviderProfile route recognition, host-mode admission, request and environment validation, adapter-profile seeding, canonical worktree selection, and response mapping behind one internal dispatch interface without changing provider, filesystem, credential, persistence, or managed-host authority."
+    },
+    {
       "name": "ShikigamiCheckpointResumeBoundary",
       "description": "The Shikigami provider boundary that accepts a provider-confirmed run UUID, loads the matching checkpoint, and requires the canonical workspace and adapter identity to match before native resume.",
       "properties": [
@@ -454,6 +458,16 @@
       "description": "The local API dispatch module delegates declarative provider adapter administration requests and request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "ProviderAdapterAdministrationRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_provider_profile_route_dispatch",
+      "description": "The local API dispatch module delegates provider discovery and ProviderProfile administration requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ProviderProfileRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1195,6 +1209,18 @@
       "subject": "delegates_provider_adapter_administration_route_dispatch",
       "source": "Aldunis Code provider adapter administration route dispatch interface",
       "locator": "server/host.ts#handleApi; server/provider-adapter-routes.ts#handleProviderAdapterRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderProfileRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#663",
+      "locator": "server/provider-profile-routes.ts#handleProviderProfileRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_provider_profile_route_dispatch",
+      "source": "Aldunis Code provider profile route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/provider-profile-routes.ts#handleProviderProfileRoute",
       "confidence": 1.0
     },
     {
