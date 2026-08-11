@@ -448,6 +448,10 @@
     {
       "name": "ConnectionsSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates Connections mode admission, loading, drafts, save-and-connect, re-pairing, disconnect and removal refresh, local restoration, host pairing and revocation, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while host and desktop adapters retain authority."
+    },
+    {
+      "name": "AutonomyLedgerSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
     }
   ],
   "relations": [
@@ -1309,6 +1313,16 @@
       "cardinality": {
         "min": 0,
         "max": 1
+      }
+    },
+    {
+      "name": "projects_autonomy_runs",
+      "description": "The renderer Autonomy ledger session projects durable run state and submits bounded typed intents without acquiring execution or mutation authority.",
+      "domain": "AutonomyLedgerSessionModule",
+      "range": "AutonomyRun",
+      "cardinality": {
+        "min": 0,
+        "max": null
       }
     }
   ],
@@ -2433,6 +2447,18 @@
       "subject": "coordinates_desktop_remote_environments",
       "source": "Aldunis Code Connections session interface",
       "locator": "src/lib/connections-session.ts#ConnectionsSessionModule; desktop/preload.ts#listRemoteEnvironments",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AutonomyLedgerSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#718",
+      "locator": "src/lib/autonomy-ledger-session.ts#AutonomyLedgerSessionModule; src/features/dialogs/autonomy-dialog.tsx#AutonomyDialog",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_autonomy_runs",
+      "source": "Aldunis Code Autonomy ledger session interface",
+      "locator": "src/lib/autonomy-ledger-session.ts#AutonomyLedgerSessionModule",
       "confidence": 1.0
     }
   ]
