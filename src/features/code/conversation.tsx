@@ -152,7 +152,10 @@ import {
   type RestoredTurnStatus,
 } from "../../lib/thread-status-transition";
 import {
+  persistedConversationRestorationFingerprint,
+  reconcilePersistedRestorationApplication,
   restorePersistedConversation,
+  type PersistedRestorationApplication,
   type PersistedConversationProjection,
 } from "../../lib/persisted-conversation-restoration";
 import { startPersistedConversationPolling } from "../../lib/persisted-conversation-polling";
@@ -666,6 +669,7 @@ export function Conversation({
     () => typeof Notification !== "undefined" && Notification.permission === "granted",
   );
   const lastAttentionState = useRef<string | null>(null);
+  const appliedRestoration = useRef<PersistedRestorationApplication>(null);
   const restoredTurnStatus = useRef<{
     turnId: string;
     status: RestoredTurnStatus;
@@ -1381,6 +1385,10 @@ export function Conversation({
     let active = true;
     const restore = async () => {
       if (!conversation?.id) {
+        appliedRestoration.current = reconcilePersistedRestorationApplication(
+          appliedRestoration.current,
+          null,
+        ).current;
         setHistoryRestored(true);
         return false;
       }
@@ -1397,36 +1405,55 @@ export function Conversation({
         providerName: providerDisplayName(provider, selectedProvider),
       });
       if (restoration.kind === "thread_missing") {
+        appliedRestoration.current = null;
         setHistoryRestored(true);
         return false;
       }
       if (restoration.kind === "provider_changed") {
+        appliedRestoration.current = null;
         setProvider(restoration.provider);
         return false;
       }
+      const restorationTarget = [
+        conversation.id,
+        repository.projectId,
+        repository.selectedWorktree,
+        provider,
+      ].join("\0");
+      const restorationFingerprint = persistedConversationRestorationFingerprint(restoration);
+      const application = reconcilePersistedRestorationApplication(appliedRestoration.current, {
+        target: restorationTarget,
+        fingerprint: restorationFingerprint,
+      });
+      appliedRestoration.current = application.current;
+      const shouldApplyRestoration = application.apply;
       const binding = restoration.thread;
-      if (binding.profileId) setProfileId(binding.profileId);
-      if (binding.model) setModel(binding.model);
-      if (binding.reasoningEffort) setReasoningEffort(binding.reasoningEffort);
-      setAttachments(binding.attachments);
-      setFolderPins(binding.folderPins);
+      if (shouldApplyRestoration) {
+        if (binding.profileId) setProfileId(binding.profileId);
+        if (binding.model) setModel(binding.model);
+        if (binding.reasoningEffort) setReasoningEffort(binding.reasoningEffort);
+        setAttachments(binding.attachments);
+        setFolderPins(binding.folderPins);
+      }
       if (restoration.kind === "empty_thread") {
         setHistoryRestored(true);
         return false;
       }
-      setThreadId(binding.threadId);
-      setRunId(restoration.pendingRunId);
-      setArchivedTurns(restoration.archivedTurns);
-      setMessages(restoration.messages);
-      setCurrentContextReceipt(restoration.currentTurn.contextReceipt ?? null);
-      setCheckpoint(restoration.currentTurn.checkpoint ?? null);
-      dispatchConversationRun({
-        type: "restore",
-        events: restoration.currentTurn.events,
-        providerState: restoration.providerState,
-        sessionId: binding.sessionId,
-        assistantTurnAt: restoration.assistantTurnAt,
-      });
+      if (shouldApplyRestoration) {
+        setThreadId(binding.threadId);
+        setRunId(restoration.pendingRunId);
+        setArchivedTurns(restoration.archivedTurns);
+        setMessages(restoration.messages);
+        setCurrentContextReceipt(restoration.currentTurn.contextReceipt ?? null);
+        setCheckpoint(restoration.currentTurn.checkpoint ?? null);
+        dispatchConversationRun({
+          type: "restore",
+          events: restoration.currentTurn.events,
+          providerState: restoration.providerState,
+          sessionId: binding.sessionId,
+          assistantTurnAt: restoration.assistantTurnAt,
+        });
+      }
       const restoredStatus = restoration.latestStatus;
       const latest = {
         id: restoration.latestStatus.turnId,

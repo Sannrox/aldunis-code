@@ -125,6 +125,27 @@ export type PersistedConversationRestoration =
       pendingRunId: string | null;
     };
 
+/** Complete normalized identity for suppressing redundant renderer application. */
+export function persistedConversationRestorationFingerprint(
+  restoration: PersistedConversationRestoration,
+): string {
+  return JSON.stringify(restoration);
+}
+
+export type PersistedRestorationApplication = { target: string; fingerprint: string } | null;
+
+/** Reset on an unbound composer; otherwise decide whether normalized state must be reapplied. */
+export function reconcilePersistedRestorationApplication(
+  current: PersistedRestorationApplication,
+  next: PersistedRestorationApplication,
+): { current: PersistedRestorationApplication; apply: boolean } {
+  if (!next) return { current: null, apply: false };
+  return {
+    current: next,
+    apply: current?.target !== next.target || current.fingerprint !== next.fingerprint,
+  };
+}
+
 interface OrderedEvent {
   event: ProviderEvent;
   createdAt: string;
