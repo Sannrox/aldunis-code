@@ -20,27 +20,43 @@ async function repositoryFixture() {
   await execFileAsync("git", ["-C", root, "init", "-q", "-b", "main"]);
   await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
   await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
-  await execFileAsync("git", ["-C", root, "remote", "add", "origin", "https://example.invalid/acme/widget.git"]);
+  await execFileAsync("git", [
+    "-C",
+    root,
+    "remote",
+    "add",
+    "origin",
+    "https://example.invalid/acme/widget.git",
+  ]);
   await mkdir(join(root, "artifact"));
   await writeFile(join(root, "artifact", "payload.txt"), "payload\n");
-  await writeFile(join(root, "package.json"), JSON.stringify({
-    name: "widget",
-    scripts: { build: "node build.mjs", test: "node --test" },
-  }));
-  await writeFile(join(root, "package-lock.json"), JSON.stringify({
-    name: "widget",
-    lockfileVersion: 3,
-    packages: {},
-  }));
-  await writeFile(join(root, "tenkai.toml"), [
-    "[product]",
-    'name = "widget"',
-    'version = "1.2.3"',
-    "[deploy]",
-    'install = "true"',
-    'health = "true"',
-    'inputs = ["artifact"]',
-  ].join("\n"));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "widget",
+      scripts: { build: "node build.mjs", test: "node --test" },
+    }),
+  );
+  await writeFile(
+    join(root, "package-lock.json"),
+    JSON.stringify({
+      name: "widget",
+      lockfileVersion: 3,
+      packages: {},
+    }),
+  );
+  await writeFile(
+    join(root, "tenkai.toml"),
+    [
+      "[product]",
+      'name = "widget"',
+      'version = "1.2.3"',
+      "[deploy]",
+      'install = "true"',
+      'health = "true"',
+      'inputs = ["artifact"]',
+    ].join("\n"),
+  );
   await execFileAsync("git", ["-C", root, "add", "."]);
   await execFileAsync("git", ["-C", root, "commit", "-qm", "fixture"]);
   return { root, state };
@@ -124,8 +140,16 @@ function fakeRunner() {
           references: [
             ["source_tree", candidate.source_tree_digest, candidate.source_tree_digest],
             ["manifest", candidate.manifest_digest, candidate.manifest_digest],
-            ["artifact", artifactReferenceOverride ?? candidate.artifact_reference, candidate.artifact_digest],
-            ["build_definition", candidate.build_definition_digest, candidate.build_definition_digest],
+            [
+              "artifact",
+              artifactReferenceOverride ?? candidate.artifact_reference,
+              candidate.artifact_digest,
+            ],
+            [
+              "build_definition",
+              candidate.build_definition_digest,
+              candidate.build_definition_digest,
+            ],
           ].map(([kind, reference, content_digest]) => ({
             kind,
             reference,
@@ -142,9 +166,9 @@ function fakeRunner() {
         aborted: false,
       };
     }
-    const commandIndex = args.findIndex((value) => [
-      "publish", "promote", "plan", "apply", "rollback", "release", "env",
-    ].includes(value));
+    const commandIndex = args.findIndex((value) =>
+      ["publish", "promote", "plan", "apply", "rollback", "release", "env"].includes(value),
+    );
     const command = args[commandIndex];
     if (command === "release") {
       return {
@@ -154,7 +178,9 @@ function fakeRunner() {
           version: "1.2.3",
           status: "unsigned-development",
           algorithm: "none",
-          manifest_digest: (JSON.parse(await readFile(join(args.includes("publish") ? "" : "", "unused"), "utf8")).x),
+          manifest_digest: JSON.parse(
+            await readFile(join(args.includes("publish") ? "" : "", "unused"), "utf8"),
+          ).x,
           artifact_digest: "",
           governance_provenance: [],
         }),
@@ -170,15 +196,22 @@ function fakeRunner() {
           name: "local",
           id: "tenkai:environment:local",
           description: "fixture",
-          subscriptions: [{
-            product: "widget",
-            channel: "stable",
-            head,
-            deployed,
-            health,
-            error: health === "unknown" ? "health failed" : null,
-            state: deployed === head && health !== "unknown" ? "current" : health === "unknown" ? "unknown" : "behind",
-          }],
+          subscriptions: [
+            {
+              product: "widget",
+              channel: "stable",
+              head,
+              deployed,
+              health,
+              error: health === "unknown" ? "health failed" : null,
+              state:
+                deployed === head && health !== "unknown"
+                  ? "current"
+                  : health === "unknown"
+                    ? "unknown"
+                    : "behind",
+            },
+          ],
           facts: {},
           lease: {},
           latest_plan: latestPlan,
@@ -217,15 +250,17 @@ function fakeRunner() {
       };
     }
     if (command === "plan") {
-      const steps = [{
-        id: "step-1",
-        order: 0,
-        product: "widget",
-        action: "install",
-        from: "1.2.2",
-        to: "1.2.3",
-        release_id: "tenkai:release:widget:1.2.3",
-      }];
+      const steps = [
+        {
+          id: "step-1",
+          order: 0,
+          product: "widget",
+          action: "install",
+          from: "1.2.2",
+          to: "1.2.3",
+          release_id: "tenkai:release:widget:1.2.3",
+        },
+      ];
       if (includeUnrelatedPlanStep) {
         steps.push({
           id: "step-2",
@@ -294,15 +329,17 @@ function fakeRunner() {
     if (command === "rollback") {
       deployed = "1.2.2";
       health = rollbackHealthy ? "healthy" : "unknown";
-      const steps = [{
-        id: "step-rollback",
-        order: 0,
-        product: "widget",
-        action: "rollback",
-        from: "1.2.3",
-        to: "1.2.2",
-        release_id: "tenkai:release:widget:1.2.2",
-      }];
+      const steps = [
+        {
+          id: "step-rollback",
+          order: 0,
+          product: "widget",
+          action: "rollback",
+          from: "1.2.3",
+          to: "1.2.2",
+          release_id: "tenkai:release:widget:1.2.2",
+        },
+      ];
       if (includeUnrelatedRollbackStep) {
         steps.push({
           id: "step-unrelated-rollback",
@@ -341,10 +378,18 @@ function fakeRunner() {
   };
   return {
     runner,
-    setDecision(value: typeof decision) { decision = value; },
-    setPublishTimeout(value: boolean) { publishTimeout = value; },
-    setApplyUnknown(value: boolean) { applyUnknown = value; },
-    setRollbackHealthy(value: boolean) { rollbackHealthy = value; },
+    setDecision(value: typeof decision) {
+      decision = value;
+    },
+    setPublishTimeout(value: boolean) {
+      publishTimeout = value;
+    },
+    setApplyUnknown(value: boolean) {
+      applyUnknown = value;
+    },
+    setRollbackHealthy(value: boolean) {
+      rollbackHealthy = value;
+    },
     setResultContract(version: string, schema: string) {
       resultVersion = version;
       receiptSchema = schema;
@@ -359,7 +404,8 @@ function fakeRunner() {
       artifactReferenceOverride = value;
     },
     addUnrelatedStepToLatestPlan() {
-      if (!latestPlan || !Array.isArray(latestPlan.steps)) throw new Error("fixture plan is unavailable");
+      if (!latestPlan || !Array.isArray(latestPlan.steps))
+        throw new Error("fixture plan is unavailable");
       latestPlan.steps.push({
         id: "step-late",
         order: latestPlan.steps.length,
@@ -387,19 +433,21 @@ function fakeRunner() {
               algorithm: "none",
               manifest_digest: manifest,
               artifact_digest: artifact,
-              governance_provenance: [{
-                profile: "example.governed-subject-receipt/v1",
-                issuer: "sekai-chisei",
-                issuer_key_id: "fixture-key",
-                subject,
-                envelope_digest: `sha256:${"8".repeat(64)}`,
-                decision: "allow",
-                receipt_schema: "chisei.governed-subject-receipt/v1",
-                receipt_digest: `sha256:${"9".repeat(64)}`,
-                governed_references: [],
-                observed_at_unix_ms: Date.now(),
-                expires_at_unix_ms: Date.now() + 60_000,
-              }],
+              governance_provenance: [
+                {
+                  profile: "example.governed-subject-receipt/v1",
+                  issuer: "sekai-chisei",
+                  issuer_key_id: "fixture-key",
+                  subject,
+                  envelope_digest: `sha256:${"8".repeat(64)}`,
+                  decision: "allow",
+                  receipt_schema: "chisei.governed-subject-receipt/v1",
+                  receipt_digest: `sha256:${"9".repeat(64)}`,
+                  governed_references: [],
+                  observed_at_unix_ms: Date.now(),
+                  expires_at_unix_ms: Date.now() + 60_000,
+                },
+              ],
             }),
             stderr: "",
             exitCode: 0,
@@ -429,6 +477,26 @@ async function previewExecute(
   const preview = await broker.plan("project-1", root, root, "team/widget", action, input);
   return broker.execute(preview.id, "project-1", root, root, "team/widget");
 }
+
+test("release-delivery broker evicts the oldest abandoned preview at capacity", async () => {
+  const { root, state } = await repositoryFixture();
+  const fake = fakeRunner();
+  const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, fake.runner, 1);
+  const oldest = await broker.plan("project-1", root, root, "team/widget", "prepare", {
+    manifestPath: "tenkai.toml",
+  });
+  const newest = await broker.plan("project-1", root, root, "team/widget", "prepare", {
+    manifestPath: "tenkai.toml",
+  });
+
+  assert.equal(broker.retainedPlanCount, 1);
+  await assert.rejects(
+    () => broker.execute(oldest.id, "project-1", root, root, "team/widget"),
+    /does not exist/,
+  );
+  const prepared = await broker.execute(newest.id, "project-1", root, root, "team/widget");
+  assert.equal(prepared.state, "candidate_ready");
+});
 
 test("the staged workflow resumes after restart and exports a complete correlation receipt", async () => {
   const { root, state } = await repositoryFixture();
@@ -466,7 +534,13 @@ test("the staged workflow resumes after restart and exports a complete correlati
   assert.equal(receipt.schema, "aldunis.delivery-receipt/v1");
   assert.equal(receipt.completeness, "complete");
   const serialized = JSON.stringify(receipt);
-  for (const forbidden of ["fixture-token", "/fixture/tenkai.db", "signature", "private_key", root]) {
+  for (const forbidden of [
+    "fixture-token",
+    "/fixture/tenkai.db",
+    "signature",
+    "private_key",
+    root,
+  ]) {
     assert.doesNotMatch(serialized, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
@@ -510,19 +584,22 @@ test("publication reads the reviewed manifest from an immutable candidate snapsh
     }
     const result = await releaseRunner(executable, args, options);
     if (
-      !liveManifestChanged
-      && executable === "sekaictl"
-      && args.includes("provenance")
-      && args.includes("export")
+      !liveManifestChanged &&
+      executable === "sekaictl" &&
+      args.includes("provenance") &&
+      args.includes("export")
     ) {
       liveManifestChanged = true;
-      await writeFile(join(root, "tenkai.toml"), [
-        "[product]",
-        'name = "widget"',
-        'version = "9.9.9"',
-        "[deploy]",
-        'inputs = ["artifact"]',
-      ].join("\n"));
+      await writeFile(
+        join(root, "tenkai.toml"),
+        [
+          "[product]",
+          'name = "widget"',
+          'version = "9.9.9"',
+          "[deploy]",
+          'inputs = ["artifact"]',
+        ].join("\n"),
+      );
     }
     return result;
   };
@@ -558,9 +635,10 @@ test("a multi-product Tenkai plan cannot advance or apply the selected candidate
   assert.equal(planned.state, "unknown");
   assert.match(planned.error ?? "", /not a complete single-release plan/);
   await assert.rejects(
-    () => broker.plan("project-1", root, root, "team/widget", "apply", {
-      sessionId: prepared.id,
-    }),
+    () =>
+      broker.plan("project-1", root, root, "team/widget", "apply", {
+        sessionId: prepared.id,
+      }),
     /unavailable from state unknown/,
   );
 });
@@ -604,7 +682,8 @@ test("known Chisei denial and Tenkai publish timeout stay fail-closed and resuma
   const denied = await previewExecute(broker, root, "evaluate", { sessionId: prepared.id });
   assert.equal(denied.state, "governance_denied");
   await assert.rejects(
-    () => broker.plan("project-1", root, root, "team/widget", "publish", { sessionId: prepared.id }),
+    () =>
+      broker.plan("project-1", root, root, "team/widget", "publish", { sessionId: prepared.id }),
     /unavailable from state governance_denied/,
   );
 
@@ -655,11 +734,7 @@ test("a nonzero Tenkai process cannot advance with a succeeded payload", async (
       ? { ...result, exitCode: 1 }
       : result;
   };
-  broker = new ReleaseDeliveryBroker(
-    new ReleaseDeliveryStore(state),
-    env,
-    failedProcessRunner,
-  );
+  broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, failedProcessRunner);
 
   const promoted = await previewExecute(broker, root, "promote", { sessionId: prepared.id });
 
@@ -678,11 +753,10 @@ test("a malformed mutation result becomes durable unknown before any retry", asy
     evaluated.candidate.chisei.artifact_digest.slice(7),
     evaluated.candidate.identity,
   );
-  const malformedRunner: ReleaseCommandRunner = async (executable, args, options) => (
+  const malformedRunner: ReleaseCommandRunner = async (executable, args, options) =>
     executable === "tenkaictl" && args.includes("publish")
       ? { stdout: "{", stderr: "", exitCode: 0, timedOut: false, aborted: false }
-      : releaseRunner(executable, args, options)
-  );
+      : releaseRunner(executable, args, options);
   broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, malformedRunner);
 
   const unknown = await previewExecute(broker, root, "publish", { sessionId: prepared.id });
@@ -690,9 +764,10 @@ test("a malformed mutation result becomes durable unknown before any retry", asy
   assert.equal(unknown.state, "publication_unknown");
   assert.match(unknown.error ?? "", /incompatible result/);
   await assert.rejects(
-    () => broker.plan("project-1", root, root, "team/widget", "publish", {
-      sessionId: prepared.id,
-    }),
+    () =>
+      broker.plan("project-1", root, root, "team/widget", "publish", {
+        sessionId: prepared.id,
+      }),
     /unavailable from state publication_unknown/,
   );
 });
@@ -711,19 +786,16 @@ test("post-mutation inspection failures reconcile promotion and planning before 
   let failEnvironmentInspection = false;
   const runner: ReleaseCommandRunner = async (executable, args, options) => {
     if (
-      failEnvironmentInspection
-      && executable === "tenkaictl"
-      && args.includes("env")
-      && args.includes("inspect")
+      failEnvironmentInspection &&
+      executable === "tenkaictl" &&
+      args.includes("env") &&
+      args.includes("inspect")
     ) {
       failEnvironmentInspection = false;
       return { stdout: "", stderr: "", exitCode: 1, timedOut: false, aborted: false };
     }
     const result = await releaseRunner(executable, args, options);
-    if (
-      executable === "tenkaictl"
-      && (args.includes("promote") || args.includes("plan"))
-    ) {
+    if (executable === "tenkaictl" && (args.includes("promote") || args.includes("plan"))) {
       failEnvironmentInspection = true;
     }
     return result;
@@ -766,10 +838,7 @@ test("incompatible Chisei result and receipt schemas fail closed", async () => {
     /incompatible governed-subject contract/,
   );
 
-  fake.setResultContract(
-    "chisei.governed-subject-result/v1",
-    "chisei.governed-subject-receipt/v1",
-  );
+  fake.setResultContract("chisei.governed-subject-result/v1", "chisei.governed-subject-receipt/v1");
   fake.setArtifactReferenceOverride(`tenkai:artifact-tree:sha256:${"0".repeat(64)}`);
   await assert.rejects(
     () => previewExecute(broker, root, "evaluate", { sessionId: prepared.id }),
@@ -787,12 +856,9 @@ test("incompatible Chisei result and receipt schemas fail closed", async () => {
     env,
     failedRunner,
   );
-  const unavailable = await previewExecute(
-    failedBroker,
-    root,
-    "evaluate",
-    { sessionId: prepared.id },
-  );
+  const unavailable = await previewExecute(failedBroker, root, "evaluate", {
+    sessionId: prepared.id,
+  });
   assert.equal(unavailable.state, "governance_unavailable");
   assert.notEqual(unavailable.evaluation?.decision, "allow");
 });
@@ -801,14 +867,9 @@ test("changed committed content stales prior evidence and previews are single-us
   const { root, state } = await repositoryFixture();
   const fake = fakeRunner();
   const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, fake.runner);
-  const preview = await broker.plan(
-    "project-1",
-    root,
-    root,
-    "team/widget",
-    "prepare",
-    { manifestPath: "tenkai.toml" },
-  );
+  const preview = await broker.plan("project-1", root, root, "team/widget", "prepare", {
+    manifestPath: "tenkai.toml",
+  });
   const prepared = await broker.execute(preview.id, "project-1", root, root, "team/widget");
   await assert.rejects(
     () => broker.execute(preview.id, "project-1", root, root, "team/widget"),
@@ -818,7 +879,8 @@ test("changed committed content stales prior evidence and previews are single-us
   await execFileAsync("git", ["-C", root, "add", "."]);
   await execFileAsync("git", ["-C", root, "commit", "-qm", "change candidate"]);
   await assert.rejects(
-    () => broker.plan("project-1", root, root, "team/widget", "evaluate", { sessionId: prepared.id }),
+    () =>
+      broker.plan("project-1", root, root, "team/widget", "evaluate", { sessionId: prepared.id }),
     /Prepare and evaluate a new candidate/,
   );
   const inspected = await broker.inspect("project-1", root, root);
@@ -833,23 +895,17 @@ test("a changed package script cannot execute after preview", async () => {
     if (executable === "npm") npmCalls += 1;
     return fake.runner(executable, args, options);
   };
-  const broker = new ReleaseDeliveryBroker(
-    new ReleaseDeliveryStore(state),
-    env,
-    countingRunner,
+  const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, countingRunner);
+  const preview = await broker.plan("project-1", root, root, "team/widget", "prepare", {
+    manifestPath: "tenkai.toml",
+  });
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "widget",
+      scripts: { build: "node changed.mjs", test: "node --test" },
+    }),
   );
-  const preview = await broker.plan(
-    "project-1",
-    root,
-    root,
-    "team/widget",
-    "prepare",
-    { manifestPath: "tenkai.toml" },
-  );
-  await writeFile(join(root, "package.json"), JSON.stringify({
-    name: "widget",
-    scripts: { build: "node changed.mjs", test: "node --test" },
-  }));
   await assert.rejects(
     () => broker.execute(preview.id, "project-1", root, root, "team/widget"),
     /Commit or remove every tracked and untracked change/,
@@ -867,14 +923,9 @@ test("a changed Chisei namespace invalidates its evaluation preview", async () =
   };
   const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, runner);
   const prepared = await previewExecute(broker, root, "prepare", { manifestPath: "tenkai.toml" });
-  const preview = await broker.plan(
-    "project-1",
-    root,
-    root,
-    "team/widget",
-    "evaluate",
-    { sessionId: prepared.id },
-  );
+  const preview = await broker.plan("project-1", root, root, "team/widget", "evaluate", {
+    sessionId: prepared.id,
+  });
 
   await assert.rejects(
     () => broker.execute(preview.id, "project-1", root, root, "team/other"),
@@ -899,32 +950,28 @@ test("prepare installs the bound lockfile and restores scripts inside one detach
         test: "node --test",
       });
     }
-    await writeFile(join(options.cwd, "package.json"), JSON.stringify({
-      name: "widget",
-      scripts: { build: "node changed.mjs", test: "node changed-test.mjs" },
-    }));
+    await writeFile(
+      join(options.cwd, "package.json"),
+      JSON.stringify({
+        name: "widget",
+        scripts: { build: "node changed.mjs", test: "node changed-test.mjs" },
+      }),
+    );
     return { stdout: "", stderr: "", exitCode: 0, timedOut: false, aborted: false };
   };
   const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, runner);
 
-  const prepared = await previewExecute(
-    broker,
-    root,
-    "prepare",
-    { manifestPath: "tenkai.toml" },
-  );
+  const prepared = await previewExecute(broker, root, "prepare", { manifestPath: "tenkai.toml" });
 
-  assert.deepEqual(npmCalls.map(({ args }) => args), [
-    ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
-    ["run", "build"],
-    ["test"],
-  ]);
+  assert.deepEqual(
+    npmCalls.map(({ args }) => args),
+    [["ci", "--ignore-scripts", "--no-audit", "--no-fund"], ["run", "build"], ["test"]],
+  );
   assert.equal(new Set(npmCalls.map(({ cwd }) => cwd)).size, 1);
-  assert.deepEqual(prepared.buildEvidence.commands.map(({ id }) => id), [
-    "install",
-    "build",
-    "test",
-  ]);
+  assert.deepEqual(
+    prepared.buildEvidence.commands.map(({ id }) => id),
+    ["install", "build", "test"],
+  );
 });
 
 test("concurrent previews cannot advance the same session twice", async () => {
@@ -935,8 +982,12 @@ test("concurrent previews cannot advance the same session twice", async () => {
   let evaluationCalls = 0;
   let releaseFirst!: () => void;
   let reportFirstEntered!: () => void;
-  const firstEntered = new Promise<void>((resolve) => { reportFirstEntered = resolve; });
-  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const firstEntered = new Promise<void>((resolve) => {
+    reportFirstEntered = resolve;
+  });
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
   const blockingRunner: ReleaseCommandRunner = async (executable, args, options) => {
     if (executable === "sekaictl" && !args.includes("provenance")) {
       evaluationCalls += 1;
@@ -948,22 +999,12 @@ test("concurrent previews cannot advance the same session twice", async () => {
     return fake.runner(executable, args, options);
   };
   broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, blockingRunner);
-  const first = await broker.plan(
-    "project-1",
-    root,
-    root,
-    "team/widget",
-    "evaluate",
-    { sessionId: prepared.id },
-  );
-  const second = await broker.plan(
-    "project-1",
-    root,
-    root,
-    "team/widget",
-    "evaluate",
-    { sessionId: prepared.id },
-  );
+  const first = await broker.plan("project-1", root, root, "team/widget", "evaluate", {
+    sessionId: prepared.id,
+  });
+  const second = await broker.plan("project-1", root, root, "team/widget", "evaluate", {
+    sessionId: prepared.id,
+  });
 
   const firstExecution = broker.execute(first.id, "project-1", root, root, "team/widget");
   await firstEntered;
@@ -973,10 +1014,7 @@ test("concurrent previews cannot advance the same session twice", async () => {
   releaseFirst();
   const evaluated = await firstExecution;
   assert.equal(evaluated.state, "governance_allowed");
-  await assert.rejects(
-    () => secondExecution,
-    /state changed after preview/,
-  );
+  await assert.rejects(() => secondExecution, /state changed after preview/);
   assert.equal(evaluationCalls, 1);
 });
 
@@ -1055,11 +1093,11 @@ test("unknown apply reconciles before rollback and reaches a terminal recovered 
 
 test("corrupt persisted history fails visibly instead of resetting sessions", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-release-corrupt-"));
-  await writeFile(join(directory, "release-deliveries.v1.json"), "{\"schema\":\"wrong\",\"sessions\":[]}");
-  await assert.rejects(
-    () => new ReleaseDeliveryStore(directory).load(),
-    /history is corrupt/,
+  await writeFile(
+    join(directory, "release-deliveries.v1.json"),
+    '{"schema":"wrong","sessions":[]}',
   );
+  await assert.rejects(() => new ReleaseDeliveryStore(directory).load(), /history is corrupt/);
 });
 
 test("nested persisted-session corruption is rejected before workflow routing", async () => {
@@ -1074,16 +1112,10 @@ test("nested persisted-session corruption is rejected before workflow routing", 
   const missingCandidateDocument = structuredClone(original);
   (missingCandidateDocument.sessions[0]?.candidate as Record<string, unknown>).document = null;
   await writeFile(path, JSON.stringify(missingCandidateDocument));
-  await assert.rejects(
-    () => new ReleaseDeliveryStore(state).load(),
-    /history is corrupt/,
-  );
+  await assert.rejects(() => new ReleaseDeliveryStore(state).load(), /history is corrupt/);
 
   const invalidState = structuredClone(original);
   invalidState.sessions[0]!.state = "invented";
   await writeFile(path, JSON.stringify(invalidState));
-  await assert.rejects(
-    () => new ReleaseDeliveryStore(state).load(),
-    /history is corrupt/,
-  );
+  await assert.rejects(() => new ReleaseDeliveryStore(state).load(), /history is corrupt/);
 });
