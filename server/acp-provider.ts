@@ -99,6 +99,10 @@ function acpMessageEvents(
     const outer = record(entry);
     const content = outer?.type === "content" ? record(outer.content) : outer;
     if (content?.type === "text") {
+      // Streaming ACP providers may emit an empty text chunk as framing between
+      // progress updates. It carries no conversation content, but it is still a
+      // valid text payload and must not terminate the provider session.
+      if (content.text === "") return [];
       return [{ kind: "assistant_text", text: requiredString(content.text, "message text") }];
     }
     if (content?.type === "image") {
