@@ -155,6 +155,7 @@ import {
   restorePersistedConversation,
   type PersistedConversationProjection,
 } from "../../lib/persisted-conversation-restoration";
+import { startPersistedConversationPolling } from "../../lib/persisted-conversation-polling";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
@@ -1377,16 +1378,15 @@ export function Conversation({
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
-    let timer: number | undefined;
     const restore = async () => {
       if (!conversation?.id) {
         setHistoryRestored(true);
-        return;
+        return false;
       }
       const projection = (await loadConversationHistory(
         conversation.id,
       )) as PersistedConversationProjection;
-      if (!active) return;
+      if (!active) return false;
       const restoration = restorePersistedConversation(projection, {
         conversationId: conversation.id,
         projectId: repository.projectId,
@@ -1397,11 +1397,11 @@ export function Conversation({
       });
       if (restoration.kind === "thread_missing") {
         setHistoryRestored(true);
-        return;
+        return false;
       }
       if (restoration.kind === "provider_changed") {
         setProvider(restoration.provider);
-        return;
+        return false;
       }
       const binding = restoration.thread;
       if (binding.profileId) setProfileId(binding.profileId);
@@ -1411,7 +1411,7 @@ export function Conversation({
       setFolderPins(binding.folderPins);
       if (restoration.kind === "empty_thread") {
         setHistoryRestored(true);
-        return;
+        return false;
       }
       setThreadId(binding.threadId);
       setRunId(restoration.pendingRunId);
@@ -1471,31 +1471,29 @@ export function Conversation({
       lastAttentionState.current = latest.status;
       setHistoryRestored(true);
       setHistoryRestoreError(null);
-      if (
+      return (
         latest.status === "active" ||
         latest.status === "running" ||
         latest.status === "waiting_for_approval" ||
         latest.status === "waiting_for_user"
-      ) {
-        timer = window.setTimeout(() => attempt(), 10_000);
-      }
+      );
     };
-    const attempt = () => {
-      void restore().catch(() => {
-        if (!active) return;
-        setHistoryRestoreError("Conversation history could not be restored. Retrying locally…");
-        timer = window.setTimeout(attempt, 5_000);
-      });
-    };
-    attempt();
-    const visible = () => {
-      if (document.visibilityState === "visible") attempt();
-    };
-    document.addEventListener("visibilitychange", visible);
+    const stop = startPersistedConversationPolling(
+      async () => {
+        try {
+          return await restore();
+        } catch (error) {
+          if (!active) return false;
+          setHistoryRestoreError("Conversation history could not be restored. Retrying locally…");
+          throw error;
+        }
+      },
+      { background: notificationsEnabled && !quietDelegatedChild },
+      document,
+    );
     return () => {
       active = false;
-      if (timer) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", visible);
+      stop();
     };
   }, [
     conversation?.id,
