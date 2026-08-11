@@ -1,134 +1,17 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { RepositoryMetadata } from "../../types";
 import type { SavedProject } from "./repository-dialog";
 import { Button, Field, Input, Textarea } from "../../components/ui";
 import { OverlayDialog } from "./overlay-dialog";
+import {
+  AutonomyLedgerSessionModule,
+  type AutonomyHookEvent,
+} from "../../lib/autonomy-ledger-session";
 
-type RunStatus =
-  "queued" | "running" | "waiting" | "blocked" | "succeeded" | "failed" | "cancelled" | "lost";
-type HookEvent =
-  "heartbeat_tick" | "turn_completed" | "turn_failed" | "automation_completed" | "task_completed";
-
-interface Finding {
-  id: string;
-  severity: "info" | "low" | "medium" | "high";
-  path: string | null;
-  summary: string;
-  suggestedAction: string;
-}
-
-interface RunResult {
-  summary: string;
-  findings: Finding[];
-  filesScanned: number;
-  changedFiles: number;
-  durationMs: number;
-  digest: string;
-}
-
-interface Run {
-  id: string;
-  flowId: string;
-  kind: "heartbeat" | "maintenance" | "workflow";
-  name: string;
-  projectId: string | null;
-  status: RunStatus;
-  trigger: string;
-  goal: string;
-  result: RunResult | null;
-  error: string | null;
-  createdAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-}
-
-interface Task {
-  id: string;
-  runId: string;
-  stepId: string;
-  title: string;
-  status: string;
-  attempt: number;
-  maxAttempts: number;
-  error: string | null;
-}
-
-interface Flow {
-  id: string;
-  name: string;
-  description: string;
-  readOnly: boolean;
-  steps: Array<{ id: string; title: string }>;
-}
-
-interface Heartbeat {
-  id: string;
-  name: string;
-  flowId: string;
-  projectId: string | null;
-  worktree: string | null;
-  goal: string;
-  enabled: boolean;
-  everySeconds: number;
-  lastStatus: RunStatus | null;
-  lastRunAt: string | null;
-}
-
-interface StandingOrder {
-  id: string;
-  name: string;
-  scope: "global" | "project";
-  projectId: string | null;
-  instruction: string;
-  enabled: boolean;
-}
-
-interface Hook {
-  id: string;
-  name: string;
-  event: HookEvent;
-  flowId: string;
-  projectId: string | null;
-  enabled: boolean;
-  cooldownSeconds: number;
-}
-
-interface Snapshot {
-  runs: Run[];
-  tasks: Task[];
-  flows: Flow[];
-  heartbeatMonitors: Heartbeat[];
-  standingOrders: StandingOrder[];
-  hooks: Hook[];
-}
-
-export const AUTONOMY_REFRESH_INTERVAL_MS = 5_000;
-
-export function startAutonomyRefreshPolling(
-  load: () => void,
-  visibility: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">,
-  timers: Pick<Window, "setInterval" | "clearInterval"> = window,
-) {
-  let refresh: number | undefined;
-  const stop = () => {
-    if (refresh !== undefined) timers.clearInterval(refresh);
-    refresh = undefined;
-  };
-  const start = () => {
-    stop();
-    if (visibility.visibilityState !== "visible") return;
-    load();
-    refresh = timers.setInterval(load, AUTONOMY_REFRESH_INTERVAL_MS);
-  };
-  const onVisibilityChange = () => start();
-
-  start();
-  visibility.addEventListener("visibilitychange", onVisibilityChange);
-  return () => {
-    stop();
-    visibility.removeEventListener("visibilitychange", onVisibilityChange);
-  };
-}
+export {
+  AUTONOMY_REFRESH_INTERVAL_MS,
+  startAutonomyRefreshPolling,
+} from "../../lib/autonomy-ledger-session";
 
 function formatAge(value: string | null): string {
   if (!value) return "never";
@@ -161,72 +44,63 @@ export function AutonomyDialog({
   managed?: boolean;
   onClose: () => void;
 }) {
-  const [snapshot, setSnapshot] = useState<Snapshot>({
-    runs: [],
-    tasks: [],
-    flows: [],
-    heartbeatMonitors: [],
-    standingOrders: [],
-    hooks: [],
-  });
-  const [tab, setTab] = useState<"runs" | "heartbeats" | "orders" | "hooks">("runs");
-  const [projectId, setProjectId] = useState(repository?.projectId ?? "");
-  const [worktree, setWorktree] = useState(repository?.selectedWorktree ?? "");
-  const [goal, setGoal] = useState("Find bounded maintenance work worth an operator review.");
-  const [heartbeatName, setHeartbeatName] = useState("Nightly awareness");
-  const [heartbeatGoal, setHeartbeatGoal] = useState(
-    "Check for maintenance signals and report them.",
-  );
-  const [heartbeatMinutes, setHeartbeatMinutes] = useState(60);
-  const [heartbeatFlowId, setHeartbeatFlowId] = useState("heartbeat-awareness.v1");
-  const [orderName, setOrderName] = useState("Maintenance preference");
-  const [orderInstruction, setOrderInstruction] = useState("");
-  const [orderScope, setOrderScope] = useState<"global" | "project">("project");
-  const [hookName, setHookName] = useState("After completed turn");
-  const [hookEvent, setHookEvent] = useState<HookEvent>("turn_completed");
-  const [hookFlowId, setHookFlowId] = useState("maintenance-gardener.v1");
-  const [hookCooldown, setHookCooldown] = useState(300);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLInputElement>(null);
-  const loadInFlightRef = useRef(false);
-
-  useEffect(() => {
-    if (!open) return;
-    if (repository?.projectId) setProjectId(repository.projectId);
-    if (repository?.selectedWorktree) setWorktree(repository.selectedWorktree);
-  }, [open, repository?.projectId, repository?.selectedWorktree]);
-
-  const load = useCallback(async () => {
-    if (loadInFlightRef.current) return;
-    loadInFlightRef.current = true;
-    try {
-      const response = await fetch("/api/autonomy/load", { method: "POST" });
-      if (!response.ok) {
-        setLoadError("Could not load the autonomy ledger.");
-        return;
-      }
-      setSnapshot((await response.json()) as Snapshot);
-      setLoadError(null);
-    } catch {
-      setLoadError("Could not load the autonomy ledger.");
-    } finally {
-      loadInFlightRef.current = false;
-    }
-  }, []);
+  const session = useMemo(
+    () =>
+      new AutonomyLedgerSessionModule({
+        managed: Boolean(managed),
+        visibility: document,
+        timers: window,
+        request: async (path, body) => {
+          const response = await fetch(path, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+          });
+          const result = (await response.json().catch(() => ({}))) as { error?: string };
+          if (!response.ok) throw new Error(result.error ?? "Autonomy operation failed.");
+          return result;
+        },
+      }),
+    [managed],
+  );
+  const sessionSnapshot = useSyncExternalStore(
+    session.subscribe,
+    session.getSnapshot,
+    session.getSnapshot,
+  );
+  const { ledger: snapshot, tab, draft, busy, error, loadError } = sessionSnapshot;
+  const {
+    projectId,
+    worktree,
+    goal,
+    heartbeatName,
+    heartbeatGoal,
+    heartbeatMinutes,
+    heartbeatFlowId,
+    orderName,
+    orderInstruction,
+    orderScope,
+    hookName,
+    hookEvent,
+    hookFlowId,
+    hookCooldown,
+  } = draft;
 
   useEffect(() => {
     if (!open) return;
     const focus = () => firstFieldRef.current?.focus();
     focus();
     const frame = window.requestAnimationFrame(focus);
-    const stopPolling = startAutonomyRefreshPolling(() => void load(), document);
+    session.open({
+      projectId: repository?.projectId,
+      worktree: repository?.selectedWorktree,
+    });
     return () => {
       window.cancelAnimationFrame(frame);
-      stopPolling();
+      session.close();
     };
-  }, [load, open]);
+  }, [open, repository?.projectId, repository?.selectedWorktree, session]);
 
   const projectOptions = useMemo(() => {
     const entries = new Map<string, { id: string; label: string; root: string }>();
@@ -241,34 +115,7 @@ export function AutonomyDialog({
     return [...entries.values()].sort((left, right) => left.label.localeCompare(right.label));
   }, [projects, repository]);
 
-  const request = async (path: string, body: Record<string, unknown> = {}) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(path, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const result = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "Autonomy operation failed.");
-      await load();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Autonomy operation failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const displayedError = error ?? loadError;
-
-  const createGardener = () => {
-    if (!projectId) {
-      setError("Open a repository before starting the gardener.");
-      return;
-    }
-    void request("/api/autonomy/gardener/start", { projectId, worktree: worktree || null, goal });
-  };
 
   const currentProjectLabel =
     projectOptions.find((project) => project.id === projectId)?.label ?? "No project selected";
@@ -296,7 +143,7 @@ export function AutonomyDialog({
               key={item}
               type="button"
               className={tab === item ? "active" : undefined}
-              onClick={() => setTab(item)}
+              onClick={() => session.selectTab(item)}
             >
               {item === "orders" ? "Standing orders" : item[0].toLocaleUpperCase() + item.slice(1)}
             </button>
@@ -316,7 +163,7 @@ export function AutonomyDialog({
                   id="autonomy-project"
                   className="ui-input"
                   value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
+                  onChange={(event) => session.updateDraft({ projectId: event.target.value })}
                 >
                   <option value="">Select a project</option>
                   {projectOptions.map((project) => (
@@ -330,7 +177,7 @@ export function AutonomyDialog({
                 <Input
                   id="autonomy-worktree"
                   value={worktree}
-                  onChange={(event) => setWorktree(event.target.value)}
+                  onChange={(event) => session.updateDraft({ worktree: event.target.value })}
                   placeholder="Repository worktree"
                 />
               </Field>
@@ -339,14 +186,14 @@ export function AutonomyDialog({
                   id="autonomy-goal"
                   rows={2}
                   value={goal}
-                  onChange={(event) => setGoal(event.target.value)}
+                  onChange={(event) => session.updateDraft({ goal: event.target.value })}
                 />
               </Field>
               <Button
                 type="button"
                 variant="primary"
                 disabled={busy || managed || !projectId}
-                onClick={createGardener}
+                onClick={() => void session.command({ kind: "start_gardener" })}
               >
                 Start gardener
               </Button>
@@ -397,7 +244,7 @@ export function AutonomyDialog({
                       <Button
                         size="sm"
                         type="button"
-                        onClick={() => void request("/api/autonomy/runs/cancel", { runId: run.id })}
+                        onClick={() => void session.command({ kind: "cancel_run", runId: run.id })}
                       >
                         Cancel
                       </Button>
@@ -406,7 +253,7 @@ export function AutonomyDialog({
                       <Button
                         size="sm"
                         type="button"
-                        onClick={() => void request("/api/autonomy/runs/resume", { runId: run.id })}
+                        onClick={() => void session.command({ kind: "resume_run", runId: run.id })}
                       >
                         Resume
                       </Button>
@@ -427,7 +274,7 @@ export function AutonomyDialog({
                   ref={firstFieldRef}
                   id="heartbeat-name"
                   value={heartbeatName}
-                  onChange={(event) => setHeartbeatName(event.target.value)}
+                  onChange={(event) => session.updateDraft({ heartbeatName: event.target.value })}
                 />
               </Field>
               <Field label="Goal" htmlFor="heartbeat-goal">
@@ -435,7 +282,7 @@ export function AutonomyDialog({
                   id="heartbeat-goal"
                   rows={2}
                   value={heartbeatGoal}
-                  onChange={(event) => setHeartbeatGoal(event.target.value)}
+                  onChange={(event) => session.updateDraft({ heartbeatGoal: event.target.value })}
                 />
               </Field>
               <Field label="Workflow" htmlFor="heartbeat-flow">
@@ -443,7 +290,7 @@ export function AutonomyDialog({
                   id="heartbeat-flow"
                   className="ui-input"
                   value={heartbeatFlowId}
-                  onChange={(event) => setHeartbeatFlowId(event.target.value)}
+                  onChange={(event) => session.updateDraft({ heartbeatFlowId: event.target.value })}
                 >
                   <option value="heartbeat-awareness.v1">Awareness check</option>
                   <option value="maintenance-gardener.v1">Nightly maintenance gardener</option>
@@ -457,9 +304,12 @@ export function AutonomyDialog({
                   max={10080}
                   value={heartbeatMinutes}
                   onChange={(event) =>
-                    setHeartbeatMinutes(
-                      Math.min(10080, Math.max(1, Number(event.target.value) || 1)),
-                    )
+                    session.updateDraft({
+                      heartbeatMinutes: Math.min(
+                        10080,
+                        Math.max(1, Number(event.target.value) || 1),
+                      ),
+                    })
                   }
                 />
               </Field>
@@ -467,16 +317,7 @@ export function AutonomyDialog({
                 type="button"
                 variant="primary"
                 disabled={busy || managed || !heartbeatName.trim() || !heartbeatGoal.trim()}
-                onClick={() =>
-                  void request("/api/autonomy/heartbeats/create", {
-                    name: heartbeatName,
-                    goal: heartbeatGoal,
-                    flowId: heartbeatFlowId,
-                    everySeconds: heartbeatMinutes * 60,
-                    projectId: projectId || null,
-                    worktree: worktree || null,
-                  })
-                }
+                onClick={() => void session.command({ kind: "create_heartbeat" })}
               >
                 Add heartbeat
               </Button>
@@ -503,7 +344,8 @@ export function AutonomyDialog({
                         size="sm"
                         type="button"
                         onClick={() =>
-                          void request("/api/autonomy/heartbeats/update", {
+                          void session.command({
+                            kind: "set_heartbeat_enabled",
                             id: monitor.id,
                             enabled: !monitor.enabled,
                           })
@@ -515,7 +357,7 @@ export function AutonomyDialog({
                         size="sm"
                         type="button"
                         onClick={() =>
-                          void request("/api/autonomy/heartbeats/run-now", { id: monitor.id })
+                          void session.command({ kind: "run_heartbeat", id: monitor.id })
                         }
                       >
                         Run now
@@ -525,7 +367,7 @@ export function AutonomyDialog({
                         variant="danger"
                         type="button"
                         onClick={() =>
-                          void request("/api/autonomy/heartbeats/delete", { id: monitor.id })
+                          void session.command({ kind: "delete_heartbeat", id: monitor.id })
                         }
                       >
                         Delete
@@ -551,7 +393,7 @@ export function AutonomyDialog({
                   ref={firstFieldRef}
                   id="order-name"
                   value={orderName}
-                  onChange={(event) => setOrderName(event.target.value)}
+                  onChange={(event) => session.updateDraft({ orderName: event.target.value })}
                 />
               </Field>
               <Field label="Scope" htmlFor="order-scope">
@@ -559,7 +401,9 @@ export function AutonomyDialog({
                   id="order-scope"
                   className="ui-input"
                   value={orderScope}
-                  onChange={(event) => setOrderScope(event.target.value as typeof orderScope)}
+                  onChange={(event) =>
+                    session.updateDraft({ orderScope: event.target.value as typeof orderScope })
+                  }
                 >
                   <option value="project">Current project</option>
                   <option value="global">All projects</option>
@@ -570,7 +414,9 @@ export function AutonomyDialog({
                   id="order-instruction"
                   rows={3}
                   value={orderInstruction}
-                  onChange={(event) => setOrderInstruction(event.target.value)}
+                  onChange={(event) =>
+                    session.updateDraft({ orderInstruction: event.target.value })
+                  }
                   placeholder="Example: Prefer small, verifiable maintenance suggestions."
                 />
               </Field>
@@ -584,14 +430,7 @@ export function AutonomyDialog({
                   !orderInstruction.trim() ||
                   (orderScope === "project" && !projectId)
                 }
-                onClick={() =>
-                  void request("/api/autonomy/standing-orders/create", {
-                    name: orderName,
-                    scope: orderScope,
-                    projectId: orderScope === "project" ? projectId : null,
-                    instruction: orderInstruction,
-                  })
-                }
+                onClick={() => void session.command({ kind: "create_order" })}
               >
                 Save standing order
               </Button>
@@ -616,7 +455,8 @@ export function AutonomyDialog({
                         size="sm"
                         type="button"
                         onClick={() =>
-                          void request("/api/autonomy/standing-orders/update", {
+                          void session.command({
+                            kind: "set_order_enabled",
                             id: order.id,
                             enabled: !order.enabled,
                           })
@@ -628,9 +468,7 @@ export function AutonomyDialog({
                         size="sm"
                         variant="danger"
                         type="button"
-                        onClick={() =>
-                          void request("/api/autonomy/standing-orders/delete", { id: order.id })
-                        }
+                        onClick={() => void session.command({ kind: "delete_order", id: order.id })}
                       >
                         Delete
                       </Button>
@@ -655,7 +493,7 @@ export function AutonomyDialog({
                   ref={firstFieldRef}
                   id="hook-name"
                   value={hookName}
-                  onChange={(event) => setHookName(event.target.value)}
+                  onChange={(event) => session.updateDraft({ hookName: event.target.value })}
                 />
               </Field>
               <Field label="Event" htmlFor="hook-event">
@@ -663,7 +501,9 @@ export function AutonomyDialog({
                   id="hook-event"
                   className="ui-input"
                   value={hookEvent}
-                  onChange={(event) => setHookEvent(event.target.value as HookEvent)}
+                  onChange={(event) =>
+                    session.updateDraft({ hookEvent: event.target.value as AutonomyHookEvent })
+                  }
                 >
                   <option value="turn_completed">Turn completed</option>
                   <option value="turn_failed">Turn failed</option>
@@ -677,7 +517,7 @@ export function AutonomyDialog({
                   id="hook-flow"
                   className="ui-input"
                   value={hookFlowId}
-                  onChange={(event) => setHookFlowId(event.target.value)}
+                  onChange={(event) => session.updateDraft({ hookFlowId: event.target.value })}
                 >
                   {snapshot.flows
                     .filter((flow) => flow.readOnly)
@@ -696,7 +536,9 @@ export function AutonomyDialog({
                   max={86400}
                   value={hookCooldown}
                   onChange={(event) =>
-                    setHookCooldown(Math.min(86400, Math.max(0, Number(event.target.value) || 0)))
+                    session.updateDraft({
+                      hookCooldown: Math.min(86400, Math.max(0, Number(event.target.value) || 0)),
+                    })
                   }
                 />
               </Field>
@@ -704,15 +546,7 @@ export function AutonomyDialog({
                 type="button"
                 variant="primary"
                 disabled={busy || managed || !hookName.trim()}
-                onClick={() =>
-                  void request("/api/autonomy/hooks/create", {
-                    name: hookName,
-                    event: hookEvent,
-                    flowId: hookFlowId,
-                    projectId: projectId || null,
-                    cooldownSeconds: hookCooldown,
-                  })
-                }
+                onClick={() => void session.command({ kind: "create_hook" })}
               >
                 Add hook
               </Button>
@@ -736,7 +570,8 @@ export function AutonomyDialog({
                         size="sm"
                         type="button"
                         onClick={() =>
-                          void request("/api/autonomy/hooks/update", {
+                          void session.command({
+                            kind: "set_hook_enabled",
                             id: hook.id,
                             enabled: !hook.enabled,
                           })
@@ -748,7 +583,7 @@ export function AutonomyDialog({
                         size="sm"
                         variant="danger"
                         type="button"
-                        onClick={() => void request("/api/autonomy/hooks/delete", { id: hook.id })}
+                        onClick={() => void session.command({ kind: "delete_hook", id: hook.id })}
                       >
                         Delete
                       </Button>

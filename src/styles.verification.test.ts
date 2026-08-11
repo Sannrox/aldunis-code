@@ -486,13 +486,18 @@ test("autonomy runs refresh while visible and keep row status readable", () => {
     join(dirname(fileURLToPath(import.meta.url)), "features/dialogs/autonomy-dialog.tsx"),
     "utf8",
   );
-  assert.match(dialog, /loadInFlightRef/);
+  const session = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "lib/autonomy-ledger-session.ts"),
+    "utf8",
+  );
+  assert.match(dialog, /AutonomyLedgerSessionModule/);
   assert.match(dialog, /loadError/);
-  assert.match(dialog, /setLoadError\(null\)/);
-  assert.match(dialog, /AUTONOMY_REFRESH_INTERVAL_MS = 5_000/);
-  assert.match(dialog, /visibility\.visibilityState !== "visible"/);
-  assert.match(dialog, /visibility\.addEventListener\("visibilitychange"/);
-  assert.match(dialog, /timers\.clearInterval\(refresh\)/);
+  assert.match(session, /loadInFlight/);
+  assert.match(session, /loadError: null/);
+  assert.match(session, /AUTONOMY_REFRESH_INTERVAL_MS = 5_000/);
+  assert.match(session, /visibility\.visibilityState !== "visible"/);
+  assert.match(session, /visibility\.addEventListener\("visibilitychange"/);
+  assert.match(session, /timers\.clearInterval/);
   assert.match(css, /\.autonomy-dialog-body \.row\s*\{[^}]*display:\s*flex[^}]*gap:\s*8px/s);
   assert.match(css, /\.autonomy-dialog-body \.autonomy-card > \.row\s*\{[^}]*flex-wrap:\s*wrap/s);
 });
