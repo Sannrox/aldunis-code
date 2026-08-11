@@ -30,6 +30,10 @@
       "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
     },
     {
+      "name": "RemoteAccessRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates remote administration, device pairing, and descriptor route recognition, local-control and managed-host admission, configured-origin readiness, pairing-link derivation, request validation, and response mapping behind one internal dispatch interface while RemoteAuth retains credential, proof, session, and persistence authority."
+    },
+    {
       "name": "DesktopRemoteEnvironmentManager",
       "description": "The Electron main-process boundary that stores named remote-environment metadata, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
     },
@@ -416,6 +420,16 @@
       "description": "The local host delegates accepted HTTP requests and request-scoped authority facts to one internal dispatch module without creating a new network, product, or trust seam.",
       "domain": "AldunisLocalHost",
       "range": "LocalApiDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_remote_access_route_dispatch",
+      "description": "The local API dispatch module delegates remote administration, device pairing, and descriptor requests through one internal interface while retaining shared authentication, origin checks, and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "RemoteAccessRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1339,6 +1353,12 @@
       "subject": "RemoteAuthCommand",
       "source": "Aldunis Code CLI command contract",
       "locator": "server/cli.ts#parseAuth; server/main.ts#RemoteAuth",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteAccessRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#672",
+      "locator": "server/remote-access-routes.ts#handleRemoteAccessRoute",
       "confidence": 1.0
     },
     {

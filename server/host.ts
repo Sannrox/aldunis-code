@@ -76,6 +76,7 @@ import {
 } from "./workbench-projection-routes.ts";
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
 import { handlePreviewRoute } from "./preview-routes.ts";
+import { handleRemoteAccessRoute } from "./remote-access-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -555,77 +556,17 @@ async function handleApi(
       })
     )
       return true;
-    const remoteAdminAction = route.match(/^\/api\/remote\/admin\/(status|pair|revoke)$/);
-    if (remoteAdminAction) {
-      if (!localControlRequest || managedHost) {
-        throw new RemoteAuthError(
-          "Remote access administration is available only from the local host.",
-          403,
-        );
-      }
-      const action = remoteAdminAction[1];
-      if (action === "status") {
-        sendJson(response, 200, {
-          remoteEnabled: Boolean(remoteAuth),
-          descriptor: remoteAuth ? await remoteAuth.descriptor() : null,
-          sessions: remoteAuth ? await remoteAuth.listSessions() : [],
-        });
-        return true;
-      }
-      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
-      if (action === "pair") {
-        const configuredOrigin = typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
-        if (publicOrigin !== undefined && !configuredOrigin) {
-          throw new RemoteAuthError("The public remote origin is not ready.", 503);
-        }
-        const origin = configuredOrigin
-          ? new URL(configuredOrigin).origin
-          : (() => {
-              const encrypted = "encrypted" in request.socket && request.socket.encrypted === true;
-              const protocol = encrypted ? "https" : "http";
-              const host = request.headers.host ?? "localhost";
-              return `${protocol}://${host}`;
-            })();
-        const pairing = await remoteAuth.issuePairing();
-        sendJson(response, 200, {
-          ...pairing,
-          pairingUrl: `${origin}/#pair=${pairing.credential}`,
-        });
-        return true;
-      }
-      const body = (await readJson(request)) as { sessionId?: unknown };
-      if (typeof body.sessionId !== "string" || !body.sessionId.trim()) {
-        throw new RemoteAuthError("A remote session is required.", 400);
-      }
-      sendJson(response, 200, { revoked: await remoteAuth.revoke(body.sessionId) });
+    if (
+      await handleRemoteAccessRoute(route, request, response, {
+        remoteAuth,
+        managed: Boolean(managedHost),
+        localControlRequest,
+        publicOrigin,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/remote/pair") {
-      if (managedHost)
-        throw new RemoteAuthError("Remote pairing is unavailable in managed hosted mode.", 404);
-      if (!remoteAuth) throw new RemoteAuthError("Remote access is disabled.", 404);
-      const body = (await readJson(request)) as {
-        credential?: unknown;
-        label?: unknown;
-        publicKey?: unknown;
-      };
-      sendJson(response, 200, await remoteAuth.pair(body));
-      return true;
-    }
-    if (route === "/api/remote/descriptor") {
-      // Loopback hosts answer 200 with remoteEnabled:false so the shell does not
-      // log a console 404 on every local boot (local-first default).
-      if (managedHost) {
-        sendJson(response, 200, { remoteEnabled: false, hostedMode: true });
-        return true;
-      }
-      if (!remoteAuth) {
-        sendJson(response, 200, { remoteEnabled: false });
-        return true;
-      }
-      sendJson(response, 200, { remoteEnabled: true, ...(await remoteAuth.descriptor()) });
-      return true;
-    }
     if (
       await handleWorkspaceRoute(route, request, response, {
         state,
