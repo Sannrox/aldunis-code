@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { electronMcpEnvironment } from "./electron-runtime.ts";
 import { type ApprovalSnapshot, isMutatingTool, PermissionBroker } from "./permission.ts";
+import { terminateProviderChild } from "./provider-process.ts";
 import { normalizeClaudeModelSlug } from "./profiles.ts";
 
 const execFileAsync = promisify(execFile);
@@ -445,15 +446,6 @@ interface ActiveRun {
   spawnFailed: boolean;
 }
 
-function terminateProviderProcess(child: ChildProcessWithoutNullStreams): NodeJS.Timeout {
-  child.kill("SIGTERM");
-  const timer = setTimeout(() => {
-    if (child.exitCode === null) child.kill("SIGKILL");
-  }, 2_000);
-  timer.unref();
-  return timer;
-}
-
 export class ClaudeCodeAdapter {
   readonly #active = new Map<string, ActiveRun>();
 
@@ -591,7 +583,7 @@ export class ClaudeCodeAdapter {
     if (!active) return false;
     active.cancelled = true;
     this.permissions.closeRun(id, "cancelled");
-    terminateProviderProcess(active.child);
+    terminateProviderChild(active.child);
     return true;
   }
 
@@ -607,7 +599,6 @@ export class ClaudeCodeAdapter {
   ): AsyncIterable<ProviderEvent> {
     let buffer = "";
     let protocolFailed = false;
-    let terminationTimer: NodeJS.Timeout | undefined;
     try {
       providerOutput: for await (const chunk of active.child.stdout) {
         buffer += chunk.toString("utf8");
@@ -630,7 +621,7 @@ export class ClaudeCodeAdapter {
                 yield event;
                 if (event.kind === "failed") {
                   protocolFailed = true;
-                  terminationTimer = terminateProviderProcess(active.child);
+                  terminateProviderChild(active.child);
                   break providerOutput;
                 }
                 if (event.kind === "tool_finished") {
@@ -688,7 +679,6 @@ export class ClaudeCodeAdapter {
         active.child.once("close", (exitCode, signal) => resolve([exitCode, signal]));
       }
     });
-    clearTimeout(terminationTimer);
     this.#active.delete(id);
     if (active.cancelled) {
       yield { kind: "cancelled" };

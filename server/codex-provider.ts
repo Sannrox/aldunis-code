@@ -21,6 +21,7 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import { BROWSER_MCP_NAME } from "./browser.ts";
+import { terminateProviderChild } from "./provider-process.ts";
 
 const execFileAsync = promisify(execFile);
 /** Major line of the app-server protocol we speak. */
@@ -1067,12 +1068,7 @@ export class CodexCliAdapter {
   }
 
   #terminate(child: ChildProcessWithoutNullStreams): void {
-    if (child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    const force = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
-    }, 2_000);
-    force.unref();
+    terminateProviderChild(child);
   }
 
   async *#lines(
