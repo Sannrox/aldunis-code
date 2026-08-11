@@ -440,6 +440,10 @@
     {
       "name": "LocalStateMaintenanceRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates destructive local-state maintenance route recognition, request validation, managed-host admission, affected-project exclusion, checkpoint invalidation, Git reference cleanup, persistence ordering, lock release, and response mapping behind one internal dispatch interface without deleting conversation worktrees or changing filesystem, persistence, provider, permission, tenant, or product authority."
+    },
+    {
+      "name": "ApplicationShellBootstrapModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates application-shell boot, project request coalescing and freshness, repository-open consequences, managed-aware restoration ordering, failure recovery, and lifecycle cancellation behind one interface while the local host retains repository and filesystem authority."
     }
   ],
   "relations": [
@@ -1280,6 +1284,16 @@
       "range": "ConversationComposer",
       "cardinality": {
         "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "synchronizes_application_shell_with_host",
+      "description": "The renderer application shell uses host projections and repository-open contracts through one bootstrap lifecycle without acquiring host authority.",
+      "domain": "ApplicationShellBootstrapModule",
+      "range": "LocalApplicationHost",
+      "cardinality": {
+        "min": 1,
         "max": 1
       }
     }
@@ -2381,6 +2395,18 @@
       "subject": "delegates_local_state_maintenance_route_dispatch",
       "source": "Aldunis Code local state maintenance route dispatch interface",
       "locator": "server/host.ts#handleApi; server/state-maintenance-routes.ts#handleStateMaintenanceRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ApplicationShellBootstrapModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#707",
+      "locator": "src/lib/application-shell-bootstrap.ts#ApplicationShellBootstrapModule; src/main.tsx#App",
+      "confidence": 1.0
+    },
+    {
+      "subject": "synchronizes_application_shell_with_host",
+      "source": "Aldunis Code application-shell bootstrap interface",
+      "locator": "src/lib/application-shell-bootstrap.ts#ApplicationShellBootstrapModule",
       "confidence": 1.0
     }
   ]
