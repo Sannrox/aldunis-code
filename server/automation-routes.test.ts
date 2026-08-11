@@ -19,7 +19,7 @@ function context(overrides: Record<string, unknown> = {}) {
   return {
     sent,
     automations: { list: unused, create: unused, update: unused, remove: unused },
-    automationScheduler: { runNow: unused },
+    automationScheduler: { runNow: unused, refresh: unused },
     state: { inspect: unused, latestAutomationFire: unused, getAutomationFireById: unused },
     remoteRequest: false,
     managed: false,
@@ -116,6 +116,59 @@ test("automation creation requires an existing conversation", async () => {
   );
 });
 
+test("automation mutations reconcile scheduler state before responding", async () => {
+  const refreshes: string[] = [];
+  const automationScheduler = {
+    runNow: unused,
+    refresh: async () => {
+      refreshes.push("refresh");
+    },
+  };
+  const created = context({
+    automationScheduler,
+    readJson: async () => ({
+      name: "Daily",
+      threadId: "thread-1",
+      prompt: "Check status",
+      schedule: { kind: "interval", seconds: 60 },
+    }),
+    state: { inspect: async () => ({ threads: [{ id: "thread-1" }] }) },
+    automations: { create: async () => ({ id: "automation-1" }) },
+  });
+  await handleAutomationRoute(
+    "/api/automations/create",
+    request(),
+    response,
+    created as unknown as AutomationRouteContext,
+  );
+
+  const updated = context({
+    automationScheduler,
+    readJson: async () => ({ id: "automation-1", enabled: false }),
+    automations: { update: async () => ({ id: "automation-1", enabled: false }) },
+  });
+  await handleAutomationRoute(
+    "/api/automations/update",
+    request(),
+    response,
+    updated as unknown as AutomationRouteContext,
+  );
+
+  const deleted = context({
+    automationScheduler,
+    readJson: async () => ({ id: "automation-1" }),
+    automations: { remove: async () => undefined },
+  });
+  await handleAutomationRoute(
+    "/api/automations/delete",
+    request(),
+    response,
+    deleted as unknown as AutomationRouteContext,
+  );
+
+  assert.deepEqual(refreshes, ["refresh", "refresh", "refresh"]);
+});
+
 test("run-now rejects retry identities that do not belong to an unknown fire", async () => {
   await assert.rejects(
     handleAutomationRoute(
@@ -149,6 +202,7 @@ test("run-now forwards bounded identity and returns latest fire", async () => {
       latestAutomationFire: async () => ({ id: "latest-fire" }),
     },
     automationScheduler: {
+      refresh: unused,
       runNow: async (...args: unknown[]) => {
         runNowCalls.push(args);
         return { id: "automation-1", accepted: true };

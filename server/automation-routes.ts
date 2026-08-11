@@ -80,18 +80,16 @@ export async function handleAutomationRoute(
     if (!projection.threads.some((thread) => thread.id === body.threadId)) {
       throw new AutomationError("Target conversation was not found.", 404);
     }
-    sendJson(
-      response,
-      200,
-      await automations.create({
-        name: body.name,
-        threadId: body.threadId,
-        prompt: body.prompt,
-        mode: body.mode as InteractionMode | undefined,
-        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-        schedule: body.schedule as AutomationSchedule,
-      }),
-    );
+    const automation = await automations.create({
+      name: body.name,
+      threadId: body.threadId,
+      prompt: body.prompt,
+      mode: body.mode as InteractionMode | undefined,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      schedule: body.schedule as AutomationSchedule,
+    });
+    await automationScheduler.refresh();
+    sendJson(response, 200, automation);
     return true;
   }
 
@@ -106,17 +104,15 @@ export async function handleAutomationRoute(
       schedule?: unknown;
     };
     if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-    sendJson(
-      response,
-      200,
-      await automations.update(body.id, {
-        name: typeof body.name === "string" ? body.name : undefined,
-        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
-        mode: body.mode as InteractionMode | undefined,
-        enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-        schedule: body.schedule as AutomationSchedule | undefined,
-      }),
-    );
+    const automation = await automations.update(body.id, {
+      name: typeof body.name === "string" ? body.name : undefined,
+      prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+      mode: body.mode as InteractionMode | undefined,
+      enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
+      schedule: body.schedule as AutomationSchedule | undefined,
+    });
+    await automationScheduler.refresh();
+    sendJson(response, 200, automation);
     return true;
   }
 
@@ -125,6 +121,7 @@ export async function handleAutomationRoute(
     const body = (await readJson(request)) as { id?: unknown };
     if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
     await automations.remove(body.id);
+    await automationScheduler.refresh();
     sendJson(response, 200, { ok: true });
     return true;
   }
