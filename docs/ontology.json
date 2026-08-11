@@ -62,6 +62,10 @@
       "description": "A deep renderer module that concentrates transcript opening placement, remembered scroll position, follow state, content-growth and resize response, jump-to-latest settling, conversation rebinding, persistence, and browser-resource cleanup behind one hook interface while ConversationComposer retains transcript rendering and content identity."
     },
     {
+      "name": "WorkspacePanelLifecycleModule",
+      "description": "A deep renderer module that concentrates Files, Preview, and Changes panel transitions, roving focus, preview mounting and floating, browser-observation projection, current-versus-immutable-turn review, and reset decisions behind one deterministic interface while ConversationComposer retains DOM, rendering, network refresh, and host preview-process authority."
+    },
+    {
       "name": "PromptStash",
       "description": "A conversation-composer module that atomically loads, parks, restores or swaps, and removes bounded text-only drafts while hiding storage selection, identity isolation, migration, validation, capacity, and persistence failure handling behind one interface."
     },
@@ -762,6 +766,16 @@
       "description": "The conversation composer delegates one pane's transcript viewport lifetime to a renderer module without transferring conversation, persistence, provider, filesystem, or permission authority.",
       "domain": "ConversationComposer",
       "range": "TranscriptViewportLifecycleModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "uses_workspace_panel_lifecycle",
+      "description": "The conversation composer delegates deterministic workspace-panel state transitions and explicit UI effect decisions to one renderer module without transferring DOM, repository, network, preview-process, or changed-file authority.",
+      "domain": "ConversationComposer",
+      "range": "WorkspacePanelLifecycleModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1487,6 +1501,18 @@
       "subject": "TranscriptViewportLifecycleModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#687",
       "locator": "src/lib/transcript-viewport.ts; src/features/code/conversation.tsx; src/lib/transcript-viewport.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorkspacePanelLifecycleModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#691",
+      "locator": "src/lib/workspace-panel.ts; src/features/code/conversation.tsx; src/lib/workspace-panel.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_workspace_panel_lifecycle",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#691",
+      "locator": "src/lib/workspace-panel.ts#transitionWorkspacePanelLifecycle; src/features/code/conversation.tsx",
       "confidence": 1.0
     },
     {

@@ -1,46 +1,113 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  moveWorkspacePanelFocus,
-  toggleWorkspacePanel,
+  initialWorkspacePanelLifecycle,
+  transitionWorkspacePanelLifecycle,
   workspacePanelTabStop,
-  type WorkspacePanel,
+  type WorkspacePanelLifecycleEvent,
+  type WorkspacePanelLifecycleState,
 } from "./workspace-panel";
 
-test("workspace panel activation opens, switches, and closes one destination", () => {
-  let active: WorkspacePanel = "none";
-  active = toggleWorkspacePanel(active, "files");
-  assert.equal(active, "files");
-  active = toggleWorkspacePanel(active, "preview");
-  assert.equal(active, "preview");
-  active = toggleWorkspacePanel(active, "changes");
-  assert.equal(active, "changes");
-  active = toggleWorkspacePanel(active, "changes");
-  assert.equal(active, "none");
+function apply(state: WorkspacePanelLifecycleState, event: WorkspacePanelLifecycleEvent) {
+  return transitionWorkspacePanelLifecycle(state, event);
+}
+
+test("workspace lifecycle opens, switches, refreshes, closes, and restores focus", () => {
+  let state = initialWorkspacePanelLifecycle();
+  let transition = apply(state, { type: "toggle", destination: "files" });
+  state = transition.state;
+  assert.equal(state.activePanel, "files");
+  assert.deepEqual(transition.effects, [{ type: "change_panel", panel: "files" }]);
+
+  transition = apply(state, { type: "toggle", destination: "preview" });
+  state = transition.state;
+  assert.equal(state.previewMounted, true);
+  assert.equal(state.previewFloating, false);
+
+  transition = apply(state, { type: "open_changes", mode: "deliver" });
+  state = transition.state;
+  assert.equal(state.changesMode, "deliver");
+  assert.deepEqual(transition.effects, [
+    { type: "refresh_changes" },
+    { type: "change_panel", panel: "changes" },
+  ]);
+
+  transition = apply(state, { type: "close", destination: "changes" });
+  assert.equal(transition.state.activePanel, "none");
+  assert.deepEqual(transition.effects, [
+    { type: "change_panel", panel: "none" },
+    { type: "focus_panel", destination: "changes", defer: true },
+  ]);
 });
 
-test("external panel signals select one state without preserving an invalid combination", () => {
-  let active: WorkspacePanel = "preview";
-  active = "files";
-  assert.equal(active, "files");
-  active = "changes";
-  assert.equal(active, "changes");
-});
-
-test("workspace panel roving focus prefers active, wraps, and skips unavailable destinations", () => {
-  assert.equal(workspacePanelTabStop("preview", ["files", "preview", "changes"]), "preview");
-  assert.equal(
-    workspacePanelTabStop("files", ["files", "preview", "changes"], "preview"),
-    "preview",
+test("workspace lifecycle coordinates floating preview and browser observations", () => {
+  let state = initialWorkspacePanelLifecycle("preview");
+  let transition = apply(state, { type: "toggle_preview_floating" });
+  state = transition.state;
+  assert.deepEqual(
+    { active: state.activePanel, mounted: state.previewMounted, floating: state.previewFloating },
+    { active: "none", mounted: true, floating: true },
   );
-  assert.equal(workspacePanelTabStop("files", ["files", "changes"], "preview"), "files");
-  assert.equal(workspacePanelTabStop("none", ["files", "changes"]), "files");
-  assert.equal(workspacePanelTabStop("preview", ["files", "changes"]), "files");
-  assert.equal(workspacePanelTabStop("none", []), null);
+  transition = apply(state, { type: "browser_observation", present: true });
+  state = transition.state;
+  assert.equal(state.browserObservationOpen, true);
+  transition = apply(state, { type: "toggle_preview_floating" });
+  state = transition.state;
+  assert.equal(state.activePanel, "preview");
+  assert.equal(state.previewFloating, false);
+  transition = apply(state, { type: "close_preview" });
+  assert.equal(transition.state.browserObservationOpen, false);
+});
 
-  assert.equal(moveWorkspacePanelFocus("files", "next", ["files", "changes"]), "changes");
-  assert.equal(moveWorkspacePanelFocus("changes", "next", ["files", "changes"]), "files");
-  assert.equal(moveWorkspacePanelFocus("files", "previous", ["files", "changes"]), "changes");
-  assert.equal(moveWorkspacePanelFocus("changes", "first", ["files", "changes"]), "files");
-  assert.equal(moveWorkspacePanelFocus("files", "last", ["files", "changes"]), "changes");
+test("workspace lifecycle keeps current and immutable turn review distinct", () => {
+  let state = initialWorkspacePanelLifecycle("changes");
+  let transition = apply(state, {
+    type: "open_turn_changes",
+    checkpoint: {
+      id: "checkpoint-1",
+      turnId: "turn-1",
+      worktree: "/repo",
+      baselineIdentity: "a",
+      baselineIndexIdentity: "a",
+      completedIdentity: "b",
+      completedIndexIdentity: "b",
+      state: "completed",
+      message: null,
+      files: [
+        {
+          path: "src/app.ts",
+          previousPath: null,
+          state: "modified",
+          additions: 2,
+          deletions: 1,
+        },
+      ],
+    },
+  });
+  state = transition.state;
+  assert.equal(state.turnReview?.checkpointId, "checkpoint-1");
+  assert.deepEqual(transition.effects, []);
+  transition = apply(state, { type: "open_changes", mode: "review" });
+  assert.equal(transition.state.turnReview, null);
+  assert.deepEqual(transition.effects, [{ type: "refresh_changes" }]);
+});
+
+test("workspace lifecycle derives roving focus and reset decisions", () => {
+  let state = initialWorkspacePanelLifecycle("preview");
+  assert.equal(workspacePanelTabStop(state, ["files", "preview", "changes"]), "preview");
+  const transition = apply(state, {
+    type: "move_focus",
+    from: "preview",
+    direction: "next",
+    available: ["files", "preview", "changes"],
+  });
+  state = transition.state;
+  assert.equal(state.focusedPanel, "changes");
+  assert.deepEqual(transition.effects, [
+    { type: "focus_panel", destination: "changes", defer: false },
+  ]);
+  state = apply(state, { type: "browser_observation", present: true }).state;
+  state = apply(state, { type: "workspace_reset" }).state;
+  assert.equal(state.previewFloating, false);
+  assert.equal(state.browserObservationOpen, false);
 });
