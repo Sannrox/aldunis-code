@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { AutonomyEngine } from "./autonomy-engine.ts";
+import type { AutonomyEngine, AutonomyScheduler } from "./autonomy-engine.ts";
 import {
   AutonomyError,
   parseAutonomyHook,
@@ -12,6 +12,7 @@ import type { LocalStateStore } from "./state.ts";
 
 export interface AutonomyRouteContext {
   autonomy: AutonomyEngine;
+  autonomyScheduler: AutonomyScheduler;
   state: LocalStateStore;
   remoteRequest: boolean;
   managed: boolean;
@@ -46,7 +47,8 @@ export async function handleAutonomyRoute(
   context: AutonomyRouteContext,
 ): Promise<boolean> {
   if (!AUTONOMY_ROUTES.has(route)) return false;
-  const { autonomy, state, remoteRequest, managed, readJson, sendJson } = context;
+  const { autonomy, autonomyScheduler, state, remoteRequest, managed, readJson, sendJson } =
+    context;
   const now = context.now ?? (() => new Date().toISOString());
   const assertLocalMutation = (message: string) => {
     if (remoteRequest || managed) throw new AutonomyError(message, 403);
@@ -148,19 +150,17 @@ export async function handleAutonomyRoute(
       throw new AutonomyError("Heartbeat project is invalid.");
     if (body.worktree !== undefined && body.worktree !== null && typeof body.worktree !== "string")
       throw new AutonomyError("Heartbeat worktree is invalid.");
-    sendJson(
-      response,
-      200,
-      await autonomy.addHeartbeat({
-        name: body.name,
-        projectId: typeof body.projectId === "string" ? body.projectId : null,
-        worktree: typeof body.worktree === "string" ? body.worktree : null,
-        goal: body.goal,
-        everySeconds: body.everySeconds,
-        flowId: typeof body.flowId === "string" ? body.flowId : undefined,
-        activeHours: body.activeHours as HeartbeatMonitor["activeHours"] | undefined,
-      }),
-    );
+    const heartbeat = await autonomy.addHeartbeat({
+      name: body.name,
+      projectId: typeof body.projectId === "string" ? body.projectId : null,
+      worktree: typeof body.worktree === "string" ? body.worktree : null,
+      goal: body.goal,
+      everySeconds: body.everySeconds,
+      flowId: typeof body.flowId === "string" ? body.flowId : undefined,
+      activeHours: body.activeHours as HeartbeatMonitor["activeHours"] | undefined,
+    });
+    await autonomyScheduler.refresh();
+    sendJson(response, 200, heartbeat);
     return true;
   }
 
@@ -187,6 +187,7 @@ export async function handleAutonomyRoute(
       updatedAt: now(),
     });
     await state.saveAutonomyRecords({ heartbeatMonitors: [updated] });
+    await autonomyScheduler.refresh();
     sendJson(response, 200, updated);
     return true;
   }
@@ -201,6 +202,7 @@ export async function handleAutonomyRoute(
     if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
     if (route.endsWith("delete")) {
       await state.removeAutonomyRecord("heartbeat", body.id);
+      await autonomyScheduler.refresh();
       sendJson(response, 200, { ok: true });
       return true;
     }
@@ -285,18 +287,15 @@ export async function handleAutonomyRoute(
       typeof body.flowId !== "string"
     )
       throw new AutonomyError("Hook name, event, and workflow are required.");
-    sendJson(
-      response,
-      200,
-      await autonomy.addHook({
-        name: body.name,
-        event: body.event as AutonomyHookEvent,
-        flowId: body.flowId,
-        projectId: typeof body.projectId === "string" ? body.projectId : null,
-        cooldownSeconds:
-          typeof body.cooldownSeconds === "number" ? body.cooldownSeconds : undefined,
-      }),
-    );
+    const hook = await autonomy.addHook({
+      name: body.name,
+      event: body.event as AutonomyHookEvent,
+      flowId: body.flowId,
+      projectId: typeof body.projectId === "string" ? body.projectId : null,
+      cooldownSeconds: typeof body.cooldownSeconds === "number" ? body.cooldownSeconds : undefined,
+    });
+    await autonomyScheduler.refresh();
+    sendJson(response, 200, hook);
     return true;
   }
 
@@ -324,6 +323,7 @@ export async function handleAutonomyRoute(
     if (!projection.autonomyFlows.find((item) => item.id === updated.flowId)?.readOnly)
       throw new AutonomyError("Only built-in read-only workflows can be hooked.", 400);
     await state.saveAutonomyRecords({ hooks: [updated] });
+    await autonomyScheduler.refresh();
     sendJson(response, 200, updated);
     return true;
   }
@@ -333,6 +333,7 @@ export async function handleAutonomyRoute(
     const body = (await readJson(request)) as { id?: unknown };
     if (typeof body.id !== "string") throw new AutonomyError("A hook is required.");
     await state.removeAutonomyRecord("hook", body.id);
+    await autonomyScheduler.refresh();
     sendJson(response, 200, { ok: true });
     return true;
   }

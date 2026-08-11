@@ -192,6 +192,14 @@ export class AutonomyEngine {
     if (flows.length) await this.state.saveAutonomyRecords({ flows });
   }
 
+  async hasScheduledWork(): Promise<boolean> {
+    const projection = await this.state.inspect();
+    return (
+      projection.heartbeatMonitors.some((monitor) => monitor.enabled) ||
+      projection.autonomyHooks.some((hook) => hook.enabled && hook.event === "heartbeat_tick")
+    );
+  }
+
   async snapshot(limit = 50): Promise<AutonomyStateSnapshot> {
     // Public API surface: clone so callers cannot mutate live journaled records.
     const projection = await this.state.load();
@@ -943,29 +951,104 @@ export class AutonomyEngine {
 }
 
 export class AutonomyScheduler {
-  #timer: NodeJS.Timeout | null = null;
+  #timer: { unref(): void } | null = null;
+  #started = false;
+  #running = false;
+  #refreshPromise: Promise<void> | null = null;
+  #refreshRequested = false;
+  #hasScheduledWork = false;
 
   constructor(
     private readonly engine: AutonomyEngine,
-    private readonly intervalMs = 30_000,
+    private readonly options: {
+      intervalMs?: number;
+      timers?: {
+        setTimeout(callback: () => void, delayMs: number): { unref(): void };
+        clearTimeout(handle: { unref(): void }): void;
+      };
+    } = {},
   ) {}
 
   start(): void {
-    if (this.#timer) return;
-    this.#timer = setInterval(() => {
-      void this.tick().catch(() => undefined);
-    }, this.intervalMs);
-    this.#timer.unref();
-    void this.tick().catch(() => undefined);
+    if (this.#started) return;
+    this.#started = true;
+    void this.#wake().catch(() => undefined);
   }
 
   stop(): void {
-    if (this.#timer) clearInterval(this.#timer);
+    this.#started = false;
+    this.#refreshRequested = false;
+    this.#clearTimer();
+  }
+
+  /** Reconcile timer state after a local mutation without running workflows. */
+  refresh(): Promise<void> {
+    if (!this.#started) return Promise.resolve();
+    this.#refreshRequested = true;
+    if (!this.#refreshPromise) {
+      const refresh = this.#drainRefresh();
+      const tracked = refresh.finally(() => {
+        if (this.#refreshPromise === tracked) this.#refreshPromise = null;
+      });
+      this.#refreshPromise = tracked;
+    }
+    return this.#refreshPromise;
+  }
+
+  #clearTimer(): void {
+    if (this.#timer) {
+      const clear =
+        this.options.timers?.clearTimeout ??
+        ((handle: { unref(): void }) => clearTimeout(handle as NodeJS.Timeout));
+      clear(this.#timer);
+    }
     this.#timer = null;
   }
 
+  #schedule(): void {
+    if (!this.#started || !this.#hasScheduledWork || this.#timer) return;
+    const schedule =
+      this.options.timers?.setTimeout ??
+      ((callback: () => void, delayMs: number) => setTimeout(callback, delayMs));
+    this.#timer = schedule(() => {
+      this.#timer = null;
+      void this.#wake().catch(() => undefined);
+    }, this.options.intervalMs ?? 30_000);
+    this.#timer.unref();
+  }
+
+  async #drainRefresh(): Promise<void> {
+    let failed = false;
+    try {
+      do {
+        this.#refreshRequested = false;
+        this.#hasScheduledWork = await this.engine.hasScheduledWork();
+        if (!this.#hasScheduledWork) this.#clearTimer();
+      } while (this.#started && this.#refreshRequested);
+    } catch {
+      failed = true;
+    } finally {
+      if (failed) this.#hasScheduledWork = true;
+      this.#schedule();
+    }
+  }
+
+  async #wake(): Promise<void> {
+    try {
+      await this.tick();
+    } finally {
+      await this.refresh();
+    }
+  }
+
   async tick(): Promise<void> {
-    await this.engine.tickHeartbeats();
-    await this.engine.dispatch("heartbeat_tick");
+    if (this.#running) return;
+    this.#running = true;
+    try {
+      await this.engine.tickHeartbeats();
+      await this.engine.dispatch("heartbeat_tick");
+    } finally {
+      this.#running = false;
+    }
   }
 }

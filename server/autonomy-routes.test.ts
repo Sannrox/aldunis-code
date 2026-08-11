@@ -17,6 +17,9 @@ function context(
   const sent: Array<{ status: number; value: unknown }> = [];
   return {
     autonomy: {} as AutonomyRouteContext["autonomy"],
+    autonomyScheduler: {
+      refresh: async () => undefined,
+    } as AutonomyRouteContext["autonomyScheduler"],
     state: {} as AutonomyRouteContext["state"],
     remoteRequest: false,
     managed: false,
@@ -64,6 +67,77 @@ test("denies remote Autonomy mutations before calling an adapter", async () => {
     ),
     { message: "Remote clients cannot create standing orders.", status: 403 },
   );
+});
+
+test("scheduled Autonomy mutations reconcile the scheduler", async () => {
+  let refreshes = 0;
+  const heartbeat = {
+    schemaVersion: 2,
+    id: "heartbeat-1",
+    name: "Heartbeat",
+    projectId: null,
+    worktree: null,
+    goal: "Check",
+    enabled: true,
+    everySeconds: 60,
+    activeHours: null,
+    flowId: "heartbeat-awareness.v1",
+    lastRunAt: null,
+    lastRunId: null,
+    lastStatus: null,
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  };
+  const hook = {
+    schemaVersion: 2,
+    id: "hook-1",
+    name: "Hook",
+    event: "heartbeat_tick",
+    flowId: "heartbeat-awareness.v1",
+    projectId: null,
+    enabled: true,
+    cooldownSeconds: 300,
+    lastTriggeredAt: null,
+    lastRunId: null,
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  };
+  const module = context({
+    autonomyScheduler: {
+      refresh: async () => {
+        refreshes += 1;
+      },
+    } as AutonomyRouteContext["autonomyScheduler"],
+    autonomy: {
+      addHeartbeat: async () => heartbeat,
+      addHook: async () => hook,
+    } as unknown as AutonomyRouteContext["autonomy"],
+    state: {
+      load: async () => ({
+        heartbeatMonitors: [heartbeat],
+        autonomyHooks: [hook],
+        autonomyFlows: [{ id: "heartbeat-awareness.v1", readOnly: true }],
+      }),
+      saveAutonomyRecords: async () => undefined,
+      removeAutonomyRecord: async () => undefined,
+    } as unknown as AutonomyRouteContext["state"],
+  });
+
+  const calls: Array<[string, unknown]> = [
+    ["/api/autonomy/heartbeats/create", { name: "Heartbeat", goal: "Check", everySeconds: 60 }],
+    ["/api/autonomy/heartbeats/update", { id: heartbeat.id, enabled: false }],
+    ["/api/autonomy/heartbeats/delete", { id: heartbeat.id }],
+    [
+      "/api/autonomy/hooks/create",
+      { name: "Hook", event: "heartbeat_tick", flowId: "heartbeat-awareness.v1" },
+    ],
+    ["/api/autonomy/hooks/update", { id: hook.id, enabled: false }],
+    ["/api/autonomy/hooks/delete", { id: hook.id }],
+  ];
+  for (const [route, body] of calls) {
+    await handleAutonomyRoute(route, request(body), response(), module);
+  }
+  assert.equal(refreshes, calls.length);
 });
 
 test("filters managed snapshots to visible projects and their tasks", async () => {
