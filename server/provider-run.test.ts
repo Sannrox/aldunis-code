@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  admitProviderRun,
+  createProviderRunSink,
   handleProviderRun,
   type ProviderRunModuleContext,
   type ProviderRunOutput,
@@ -38,6 +40,23 @@ test("run admission rejects incomplete input before touching provider dependenci
       error instanceof RepositoryError &&
       error.status === 400 &&
       error.message.includes("interaction mode, provider, and model"),
+  );
+});
+
+test("typed admission reports the same rejection to acceptance and completion callers", async () => {
+  const execution = admitProviderRun(
+    { body: { root: "/repo", worktree: "/repo", prompt: "Inspect" } },
+    createProviderRunSink(),
+    moduleContext(),
+  );
+
+  await assert.rejects(
+    execution.accepted,
+    (error: unknown) => error instanceof RepositoryError && error.status === 400,
+  );
+  await assert.rejects(
+    execution.completed,
+    (error: unknown) => error instanceof RepositoryError && error.status === 400,
   );
 });
 
