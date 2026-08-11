@@ -117,6 +117,7 @@ import {
 } from "../../lib/composer-images";
 import { stageComposerImages, stageComposerImageWithHost } from "../../lib/composer-image-staging";
 import {
+  createThreadBottomSettler,
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
   scrollThreadToBottom,
@@ -535,6 +536,7 @@ export function Conversation({
   const threadRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const ignoreThreadScrollRef = useRef(false);
+  const bottomSettlerRef = useRef<ReturnType<typeof createThreadBottomSettler> | null>(null);
   /** One-shot open placement after history is ready for this mount. */
   const openScrollAppliedRef = useRef(false);
   const conversationOpenScrollRef = useRef(conversationOpenScroll);
@@ -670,13 +672,31 @@ export function Conversation({
     if (ignoreThreadScrollRef.current) return;
     const thread = threadRef.current;
     if (!thread) return;
-    setThreadFollowing(nextThreadFollowEnabled(readThreadScrollMetrics(thread)));
+    const nextFollowing = nextThreadFollowEnabled(readThreadScrollMetrics(thread));
+    if (!nextFollowing) bottomSettlerRef.current?.cancel();
+    setThreadFollowing(nextFollowing);
     persistThreadScrollPosition();
   }, [persistThreadScrollPosition, setThreadFollowing]);
   const resumeThreadFollow = useCallback(() => {
     setThreadFollowing(true);
-    pinThreadToBottom();
-  }, [pinThreadToBottom, setThreadFollowing]);
+    const thread = threadRef.current;
+    if (!thread) return;
+    const settler =
+      bottomSettlerRef.current ??
+      createThreadBottomSettler(
+        (callback) => requestAnimationFrame(callback),
+        (handle) => cancelAnimationFrame(handle),
+      );
+    bottomSettlerRef.current = settler;
+    ignoreThreadScrollRef.current = true;
+    settler.settle(thread);
+    queueMicrotask(() => {
+      ignoreThreadScrollRef.current = false;
+    });
+  }, [setThreadFollowing]);
+  useEffect(() => {
+    return () => bottomSettlerRef.current?.cancel();
+  }, []);
   useEffect(() => {
     return () => {
       persistThreadScrollPosition();
@@ -1652,6 +1672,7 @@ export function Conversation({
   const boundConversationWorkspaceMode = conversation?.workspaceMode;
   const conversationScopeKey = boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
   useEffect(() => {
+    bottomSettlerRef.current?.cancel();
     voiceInputModule.reset();
     setHistoryRestored(boundConversationId === null);
     setHistoryRestoreError(null);
