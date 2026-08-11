@@ -24,9 +24,54 @@ export interface BranchPrLookupResult {
   pr: BranchPrStatus | null;
 }
 
-const CACHE_TTL_MS = 45_000;
 const MAX_BATCH = 24;
-const cache = new Map<string, { at: number; value: BranchPrLookupResult }>();
+export const BRANCH_PR_CACHE_TTL_MS = 45_000;
+export const BRANCH_PR_CACHE_LIMIT = MAX_BATCH * 4;
+
+export class BranchPrResultCache {
+  readonly #entries = new Map<string, { at: number; value: BranchPrLookupResult }>();
+
+  constructor(
+    readonly limit = BRANCH_PR_CACHE_LIMIT,
+    readonly ttlMs = BRANCH_PR_CACHE_TTL_MS,
+  ) {}
+
+  #purgeExpired(now: number): void {
+    for (const [worktree, entry] of this.#entries) {
+      if (now - entry.at >= this.ttlMs) this.#entries.delete(worktree);
+    }
+  }
+
+  get(worktree: string, now = Date.now()): BranchPrLookupResult | null {
+    this.#purgeExpired(now);
+    const entry = this.#entries.get(worktree);
+    if (!entry) return null;
+    this.#entries.delete(worktree);
+    this.#entries.set(worktree, entry);
+    return entry.value;
+  }
+
+  set(worktree: string, value: BranchPrLookupResult, now = Date.now()): void {
+    this.#purgeExpired(now);
+    this.#entries.delete(worktree);
+    this.#entries.set(worktree, { at: now, value });
+    while (this.#entries.size > this.limit) {
+      const oldest = this.#entries.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.#entries.delete(oldest);
+    }
+  }
+
+  clear(): void {
+    this.#entries.clear();
+  }
+
+  get size(): number {
+    return this.#entries.size;
+  }
+}
+
+const cache = new BranchPrResultCache();
 
 function finitePositiveInt(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
@@ -98,20 +143,20 @@ async function ghPrViewJson(worktree: string): Promise<unknown | null> {
 
 export async function inspectBranchPr(worktree: string): Promise<BranchPrLookupResult> {
   const now = Date.now();
-  const cached = cache.get(worktree);
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.value;
+  const cached = cache.get(worktree, now);
+  if (cached) return cached;
 
   const branch = await gitShowCurrentBranch(worktree);
   if (!branch) {
     const value: BranchPrLookupResult = { worktree, branch: null, pr: null };
-    cache.set(worktree, { at: now, value });
+    cache.set(worktree, value, now);
     return value;
   }
 
   const payload = await ghPrViewJson(worktree);
   const pr = payload ? parseBranchPrPayload(worktree, branch, payload) : null;
   const value: BranchPrLookupResult = { worktree, branch, pr };
-  cache.set(worktree, { at: now, value });
+  cache.set(worktree, value, now);
   return value;
 }
 
