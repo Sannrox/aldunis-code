@@ -1524,6 +1524,8 @@ export function Conversation({
         item.path === repository.selectedWorktree &&
         (item.state === "available" || item.state === "detached"),
     ) ?? null;
+  // Split panes recreate projection objects during unrelated Workbench renders;
+  // keep resource effects keyed to the request target, not object identity.
   const [resourceRoot, resourceWorktree] = conversationResourceTarget(repository, worktree);
   useEffect(() => {
     if (!resourceRoot || !resourceWorktree) {
