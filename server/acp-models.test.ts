@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import {
-  acpSetModelRequest,
-  parseAcpSessionModels,
-  probeAcpModels,
-} from "./acp-models.ts";
+import { acpSetModelRequest, parseAcpSessionModels, probeAcpModels } from "./acp-models.ts";
 
 test("parseAcpSessionModels reads Kiro/Grok session models field", () => {
   const models = parseAcpSessionModels({
@@ -72,7 +68,9 @@ test("acpSetModelRequest builds session/set_model", () => {
 test("probeAcpModels streams initialize + session/new from a fixture CLI", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-models-"));
   const executable = join(directory, "fake-acp");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -102,7 +100,8 @@ rl.on("line", (line) => {
     }) + "\\n");
   }
 });
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const models = await probeAcpModels({
     executable,
@@ -113,4 +112,45 @@ rl.on("line", (line) => {
   assert.equal(models.length, 2);
   assert.equal(models.find((model) => model.id === "model-b")?.isDefault, true);
   assert.equal(models.find((model) => model.id === "model-a")?.displayName, "Model A");
+});
+
+test("probeAcpModels force-terminates a fixture that ignores SIGTERM", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-models-"));
+  const executable = join(directory, "stubborn-acp");
+  const pidPath = join(directory, "pid");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+
+  const models = await probeAcpModels({
+    executable,
+    arguments: [],
+    cwd: directory,
+    timeoutMs: 1_000,
+    terminationGraceMs: 25,
+  });
+  assert.deepEqual(models, []);
+  const pid = Number(await readFile(pidPath, "utf8"));
+  const isAlive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  };
+  for (let attempt = 0; attempt < 50 && isAlive(); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  try {
+    assert.equal(isAlive(), false);
+  } finally {
+    if (isAlive()) process.kill(pid, "SIGKILL");
+  }
 });
