@@ -388,6 +388,10 @@
     {
       "name": "DeliveryRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, pull-request projection, release-project correlation, cancellation lifetime, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+    },
+    {
+      "name": "ConversationForkRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates LocalConversation fork preview and creation route recognition, managed-host admission, request validation, managed-worktree invariants, provider and profile readiness, model validation, reviewed context digest confirmation, persistence ordering, and response mapping behind one internal dispatch interface without changing provider, repository, worktree, persistence, or managed-host authority."
     }
   ],
   "relations": [
@@ -506,6 +510,16 @@
       "description": "The local API dispatch module delegates source-control and capability-linked release delivery requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "DeliveryRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_conversation_fork_route_dispatch",
+      "description": "The local API dispatch module delegates LocalConversation fork preview and creation requests plus request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ConversationForkRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2047,6 +2061,18 @@
       "subject": "delegates_delivery_route_dispatch",
       "source": "Aldunis Code delivery route dispatch interface",
       "locator": "server/host.ts#handleApi; server/delivery-routes.ts#handleDeliveryRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationForkRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#657",
+      "locator": "server/conversation-fork-routes.ts#handleConversationForkRoute; docs/decisions/cross-provider-conversation-forks.md; docs/decisions/managed-conversation-worktrees.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_conversation_fork_route_dispatch",
+      "source": "Aldunis Code conversation fork route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/conversation-fork-routes.ts#handleConversationForkRoute",
       "confidence": 1.0
     }
   ]
