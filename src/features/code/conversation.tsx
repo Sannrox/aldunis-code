@@ -156,6 +156,7 @@ import {
   type PersistedConversationProjection,
 } from "../../lib/persisted-conversation-restoration";
 import { startPersistedConversationPolling } from "../../lib/persisted-conversation-polling";
+import { conversationResourceTarget } from "../../lib/conversation-resource-target";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
@@ -1523,8 +1524,9 @@ export function Conversation({
         item.path === repository.selectedWorktree &&
         (item.state === "available" || item.state === "detached"),
     ) ?? null;
+  const [resourceRoot, resourceWorktree] = conversationResourceTarget(repository, worktree);
   useEffect(() => {
-    if (!repository || !worktree) {
+    if (!resourceRoot || !resourceWorktree) {
       setDraftContextReceipt(null);
       return;
     }
@@ -1535,8 +1537,8 @@ export function Conversation({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          root: repository.root,
-          worktree: worktree.path,
+          root: resourceRoot,
+          worktree: resourceWorktree,
           pins: contextPins,
         }),
       })
@@ -1564,9 +1566,9 @@ export function Conversation({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [repository, worktree, contextPins]);
+  }, [resourceRoot, resourceWorktree, contextPins]);
   useEffect(() => {
-    if (provider !== "codex-cli" || !repository || !worktree) {
+    if (provider !== "codex-cli" || !resourceRoot || !resourceWorktree) {
       setProviderSkills([]);
       return;
     }
@@ -1577,8 +1579,8 @@ export function Conversation({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         provider,
-        root: repository.root,
-        worktree: worktree.path,
+        root: resourceRoot,
+        worktree: resourceWorktree,
       }),
       signal: controller.signal,
     })
@@ -1591,7 +1593,7 @@ export function Conversation({
         if (error instanceof Error && error.name !== "AbortError") setProviderSkills([]);
       });
     return () => controller.abort();
-  }, [provider, repository, worktree]);
+  }, [provider, resourceRoot, resourceWorktree]);
   const conversationBranch = worktree?.branch ?? "Detached HEAD";
   const runActive =
     providerState === "starting" ||
