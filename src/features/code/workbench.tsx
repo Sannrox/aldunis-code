@@ -33,11 +33,16 @@ import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_MOBILE_SIDEBAR_OPEN,
   DEFAULT_SIDEBAR_OPEN,
+  initialSidebarLifecycle,
+  isSidebarShortcutCapturedTarget,
   MOBILE_SIDEBAR_OPEN_STORAGE_KEY,
   matchesSidebarToggleShortcut,
   readSidebarOpenPreference,
   SIDEBAR_OPEN_STORAGE_KEY,
   SIDEBAR_TOGGLE_SHORTCUT_LABEL,
+  transitionSidebarLifecycle,
+  type SidebarLifecycleEvent,
+  type SidebarFocusTarget,
   writeSidebarOpenPreference,
 } from "../../lib/sidebar-state";
 import {
@@ -93,17 +98,16 @@ function readNarrowViewport(): boolean {
   );
 }
 
-function readInitialSidebarOpen(): boolean {
+function readInitialSidebarOpen(narrowViewport = readNarrowViewport()): boolean {
   if (typeof window === "undefined") return DEFAULT_SIDEBAR_OPEN;
   try {
-    const narrowViewport = readNarrowViewport();
     return readSidebarOpenPreference(
       window.localStorage,
       narrowViewport ? MOBILE_SIDEBAR_OPEN_STORAGE_KEY : SIDEBAR_OPEN_STORAGE_KEY,
       narrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN,
     );
   } catch {
-    return readNarrowViewport() ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN;
+    return narrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN;
   }
 }
 
@@ -118,15 +122,6 @@ function persistSidebarOpen(open: boolean, narrowViewport: boolean): void {
   } catch {
     /* Ignore unavailable browser storage. */
   }
-}
-
-function isSidebarShortcutCaptured(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return (
-    target.isContentEditable ||
-    target.closest("[data-keybinding-capture]") !== null ||
-    target.matches("input, textarea, select")
-  );
 }
 
 export { isThreadStatusEvent };
@@ -642,41 +637,75 @@ export function CodeWorkbench({
   managedModel?: string;
   managedAccount?: ManagedAccount | null;
 }) {
-  const [narrowViewport, setNarrowViewport] = useState(readNarrowViewport);
-  const [sidebarOpen, setSidebarOpen] = useState(readInitialSidebarOpen);
+  const [sidebarLifecycle, setSidebarLifecycle] = useState(() => {
+    const narrowViewport = readNarrowViewport();
+    return initialSidebarLifecycle(readInitialSidebarOpen(narrowViewport), narrowViewport);
+  });
+  const sidebarLifecycleReference = useRef(sidebarLifecycle);
+  sidebarLifecycleReference.current = sidebarLifecycle;
+  const { open: sidebarOpen, narrowViewport } = sidebarLifecycle;
   const sidebarOpenButtonReference = useRef<HTMLButtonElement>(null);
   const mainReference = useRef<HTMLElement>(null);
-  const sidebarOpenReference = useRef(sidebarOpen);
-  const sidebarFocusSourceReference = useRef<"user" | "responsive" | "navigation" | "dialog">(
-    "user",
-  );
-  const narrowViewportReference = useRef(narrowViewport);
-  const previousSidebarOpenReference = useRef(sidebarOpen);
-  const updateSidebarOpen = useCallback(
-    (open: boolean, source: "user" | "responsive" | "navigation" | "dialog") => {
-      if (sidebarOpenReference.current === open) return;
-      sidebarOpenReference.current = open;
-      sidebarFocusSourceReference.current = source;
-      setSidebarOpen(open);
+  const sidebarFocusFrameReference = useRef<number | null>(null);
+  const focusSidebarTarget = useCallback((target: SidebarFocusTarget) => {
+    if (target === "escape_hidden") {
+      const active = document.activeElement;
+      const sidebar = document.getElementById("code-sidebar");
+      if (!(active instanceof HTMLElement) || !sidebar?.contains(active)) return;
+    }
+    if (sidebarFocusFrameReference.current !== null) {
+      window.cancelAnimationFrame(sidebarFocusFrameReference.current);
+    }
+    sidebarFocusFrameReference.current = window.requestAnimationFrame(() => {
+      sidebarFocusFrameReference.current = null;
+      if (target === "main") {
+        mainReference.current?.focus({ preventScroll: true });
+        return;
+      }
+      if (target === "escape_hidden") {
+        const expandToggle = document.querySelector<HTMLElement>("[data-sidebar-open-toggle]");
+        if (expandToggle) expandToggle.focus({ preventScroll: true });
+        else mainReference.current?.focus({ preventScroll: true });
+        return;
+      }
+      const selector =
+        target === "collapse_toggle"
+          ? "[data-sidebar-collapse-toggle]"
+          : "[data-sidebar-open-toggle]";
+      document.querySelector<HTMLElement>(selector)?.focus();
+    });
+  }, []);
+  useEffect(
+    () => () => {
+      if (sidebarFocusFrameReference.current !== null) {
+        window.cancelAnimationFrame(sidebarFocusFrameReference.current);
+      }
     },
     [],
   );
-  const toggleSidebar = useCallback(() => {
-    updateSidebarOpen(!sidebarOpenReference.current, "user");
-  }, [updateSidebarOpen]);
-  const closeSidebar = useCallback(() => {
-    updateSidebarOpen(false, "user");
-  }, [updateSidebarOpen]);
-  useEffect(() => {
-    persistSidebarOpen(sidebarOpen, narrowViewport);
-  }, [narrowViewport, sidebarOpen]);
+  const dispatchSidebar = useCallback(
+    (event: SidebarLifecycleEvent) => {
+      const transition = transitionSidebarLifecycle(sidebarLifecycleReference.current, event);
+      sidebarLifecycleReference.current = transition.state;
+      setSidebarLifecycle(transition.state);
+      for (const effect of transition.effects) {
+        if (effect.type === "persist") persistSidebarOpen(effect.open, effect.narrowViewport);
+        else focusSidebarTarget(effect.target);
+      }
+    },
+    [focusSidebarTarget],
+  );
+  const toggleSidebar = useCallback(() => dispatchSidebar({ type: "toggle" }), [dispatchSidebar]);
+  const closeSidebar = useCallback(
+    () => dispatchSidebar({ type: "set_open", open: false, source: "user" }),
+    [dispatchSidebar],
+  );
+  useEffect(() => dispatchSidebar({ type: "initialize" }), [dispatchSidebar]);
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const onResize = () => {
       const nextNarrowViewport = readNarrowViewport();
-      if (nextNarrowViewport === narrowViewportReference.current) return;
-      narrowViewportReference.current = nextNarrowViewport;
-      setNarrowViewport(nextNarrowViewport);
+      if (nextNarrowViewport === sidebarLifecycleReference.current.narrowViewport) return;
       let nextSidebarOpen: boolean;
       try {
         nextSidebarOpen = readSidebarOpenPreference(
@@ -687,23 +716,20 @@ export function CodeWorkbench({
       } catch {
         nextSidebarOpen = nextNarrowViewport ? DEFAULT_MOBILE_SIDEBAR_OPEN : DEFAULT_SIDEBAR_OPEN;
       }
-      const sidebarStateChanged = sidebarOpenReference.current !== nextSidebarOpen;
-      updateSidebarOpen(nextSidebarOpen, "responsive");
-      /*
-       * The focus effect below restores focus only for explicit user changes.
-       * Breakpoint changes should never pull focus out of the active editor.
-       */
-      if (!sidebarStateChanged) {
-        sidebarFocusSourceReference.current = "user";
-      }
+      dispatchSidebar({
+        type: "viewport_change",
+        narrowViewport: nextNarrowViewport,
+        preferredOpen: nextSidebarOpen,
+      });
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [updateSidebarOpen]);
+  }, [dispatchSidebar]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (!matchesSidebarToggleShortcut(event) || isSidebarShortcutCaptured(event.target)) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!matchesSidebarToggleShortcut(event) || isSidebarShortcutCapturedTarget(target)) return;
       event.preventDefault();
       event.stopPropagation();
       toggleSidebar();
@@ -712,44 +738,6 @@ export function CodeWorkbench({
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [toggleSidebar]);
-  useEffect(() => {
-    const wasOpen = previousSidebarOpenReference.current;
-    previousSidebarOpenReference.current = sidebarOpen;
-    const focusSource = sidebarFocusSourceReference.current;
-    sidebarFocusSourceReference.current = "user";
-    if (wasOpen === sidebarOpen || focusSource === "dialog") return;
-    /*
-     * Responsive breakpoint changes must not yank focus out of the active
-     * editor. When the sidebar auto-collapses while focus is still inside it,
-     * though, leave the hidden region so aria-hidden/inert stay honest.
-     */
-    if (focusSource === "responsive") {
-      if (sidebarOpen) return;
-      const active = document.activeElement;
-      const sidebar = document.getElementById("code-sidebar");
-      if (!(active instanceof HTMLElement) || !sidebar?.contains(active)) return;
-      const frame = window.requestAnimationFrame(() => {
-        const expandToggle = document.querySelector<HTMLElement>("[data-sidebar-open-toggle]");
-        if (expandToggle) {
-          expandToggle.focus({ preventScroll: true });
-          return;
-        }
-        mainReference.current?.focus({ preventScroll: true });
-      });
-      return () => window.cancelAnimationFrame(frame);
-    }
-    const frame = window.requestAnimationFrame(() => {
-      if (focusSource === "navigation") {
-        mainReference.current?.focus({ preventScroll: true });
-        return;
-      }
-      const selector = sidebarOpen
-        ? "[data-sidebar-collapse-toggle]"
-        : "[data-sidebar-open-toggle]";
-      document.querySelector<HTMLElement>(selector)?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [sidebarOpen]);
   const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
   useEffect(() => {
     setChiseiCorrelationId(null);
@@ -1449,11 +1437,13 @@ export function CodeWorkbench({
     window.addEventListener("pointerup", finish);
   };
   const closeSidebarAfterMobileNavigation = useCallback(() => {
-    if (narrowViewport) updateSidebarOpen(false, "navigation");
-  }, [narrowViewport, updateSidebarOpen]);
+    if (narrowViewport) {
+      dispatchSidebar({ type: "set_open", open: false, source: "navigation" });
+    }
+  }, [dispatchSidebar, narrowViewport]);
   const closeSidebarBeforeMobileDialog = useCallback(() => {
-    if (narrowViewport) updateSidebarOpen(false, "dialog");
-  }, [narrowViewport, updateSidebarOpen]);
+    if (narrowViewport) dispatchSidebar({ type: "set_open", open: false, source: "dialog" });
+  }, [dispatchSidebar, narrowViewport]);
   return (
     <>
       <div
