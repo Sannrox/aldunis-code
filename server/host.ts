@@ -11,12 +11,7 @@ import { createServer as createHttpsServer, request as httpsRequest } from "node
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  ClaudeCodeAdapter,
-  type InteractionMode,
-  type ProviderId,
-  ProviderProtocolError,
-} from "./provider.ts";
+import { ClaudeCodeAdapter, type ProviderId, ProviderProtocolError } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { buildUsageReport, isUsageRangeDays } from "../src/lib/usage.ts";
@@ -77,7 +72,6 @@ import {
   type Automation,
   type AutomationFire,
   type AutomationFireExecution,
-  type AutomationSchedule,
 } from "./automations.ts";
 import { AutonomyScheduler, AutonomyEngine } from "./autonomy-engine.ts";
 import { AutonomyError } from "./autonomy.ts";
@@ -101,6 +95,7 @@ import { handleCheckpointRoute } from "./checkpoint-routes.ts";
 import { handleWorkspaceRoute } from "./workspace-routes.ts";
 import { handleChiseiRoute } from "./chisei-routes.ts";
 import { handleDelegatedControlRoute } from "./delegated-control-routes.ts";
+import { handleAutomationRoute } from "./automation-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -1116,141 +1111,18 @@ async function handleApi(
       sendJson(response, 200, resolveProductAvailability());
       return true;
     }
-    if (route === "/api/automations/list") {
-      if (managedHost) {
-        sendJson(response, 200, { automations: [] });
-        return true;
-      }
-      const items = await automations.list();
-      sendJson(response, 200, {
-        automations: await Promise.all(
-          items.map(async (automation) => ({
-            ...automation,
-            lastFire: await state.latestAutomationFire(automation.id),
-          })),
-        ),
-      });
+    if (
+      await handleAutomationRoute(route, request, response, {
+        automations,
+        automationScheduler,
+        state,
+        remoteRequest,
+        managed: Boolean(managedHost),
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/automations/create") {
-      // Mutating automations can start provider runs; keep them loopback-local like adapter admin.
-      if (remoteRequest || managedHost) {
-        throw new AutomationError("Remote clients cannot create automations.", 403);
-      }
-      const body = (await readJson(request)) as {
-        name?: unknown;
-        threadId?: unknown;
-        prompt?: unknown;
-        mode?: unknown;
-        enabled?: unknown;
-        schedule?: unknown;
-      };
-      if (
-        typeof body.name !== "string" ||
-        typeof body.threadId !== "string" ||
-        typeof body.prompt !== "string" ||
-        !body.schedule ||
-        typeof body.schedule !== "object"
-      ) {
-        throw new AutomationError("name, threadId, prompt, and schedule are required.");
-      }
-      const projection = await state.inspect();
-      if (!projection.threads.some((thread) => thread.id === body.threadId)) {
-        throw new AutomationError("Target conversation was not found.", 404);
-      }
-      sendJson(
-        response,
-        200,
-        await automations.create({
-          name: body.name,
-          threadId: body.threadId,
-          prompt: body.prompt,
-          mode: body.mode as InteractionMode | undefined,
-          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-          schedule: body.schedule as AutomationSchedule,
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/automations/update") {
-      if (remoteRequest || managedHost) {
-        throw new AutomationError("Remote clients cannot update automations.", 403);
-      }
-      const body = (await readJson(request)) as {
-        id?: unknown;
-        name?: unknown;
-        prompt?: unknown;
-        mode?: unknown;
-        enabled?: unknown;
-        schedule?: unknown;
-      };
-      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-      sendJson(
-        response,
-        200,
-        await automations.update(body.id, {
-          name: typeof body.name === "string" ? body.name : undefined,
-          prompt: typeof body.prompt === "string" ? body.prompt : undefined,
-          mode: body.mode as InteractionMode | undefined,
-          enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
-          schedule: body.schedule as AutomationSchedule | undefined,
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/automations/delete") {
-      if (remoteRequest || managedHost) {
-        throw new AutomationError("Remote clients cannot delete automations.", 403);
-      }
-      const body = (await readJson(request)) as { id?: unknown };
-      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-      await automations.remove(body.id);
-      sendJson(response, 200, { ok: true });
-      return true;
-    }
-    if (route === "/api/automations/run-now") {
-      if (remoteRequest || managedHost) {
-        throw new AutomationError("Remote clients cannot run automations.", 403);
-      }
-      const body = (await readJson(request)) as {
-        id?: unknown;
-        idempotencyKey?: unknown;
-        retryOf?: unknown;
-      };
-      if (typeof body.id !== "string") throw new AutomationError("Automation id is required.");
-      if (
-        body.idempotencyKey !== undefined &&
-        (typeof body.idempotencyKey !== "string" ||
-          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(body.idempotencyKey))
-      ) {
-        throw new AutomationError("A bounded automation idempotency key is required.");
-      }
-      if (
-        body.retryOf !== undefined &&
-        (typeof body.retryOf !== "string" || !/^[0-9a-f-]{36}$/i.test(body.retryOf))
-      ) {
-        throw new AutomationError("A valid automation fire retry identity is required.");
-      }
-      if (typeof body.retryOf === "string") {
-        const original = await state.getAutomationFireById(body.retryOf);
-        if (!original || original.automationId !== body.id || original.status !== "unknown") {
-          throw new AutomationError(
-            "Only an unknown fire for this automation can be retried.",
-            409,
-          );
-        }
-      }
-      const result = await automationScheduler.runNow(
-        body.id,
-        typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
-        typeof body.retryOf === "string" ? body.retryOf : null,
-      );
-      sendJson(response, 200, {
-        ...result,
-        lastFire: await state.latestAutomationFire(result.id),
-      });
-      return true;
-    }
     if (
       await handleAutonomyRoute(route, request, response, {
         autonomy,

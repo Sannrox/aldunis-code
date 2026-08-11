@@ -350,6 +350,10 @@
       "description": "A deep server-side Aldunis Code module that concentrates Autonomy route recognition, local and managed-host admission, request validation, managed projection filtering, persistence coordination, timestamps, and Autonomy engine invocation behind one internal dispatch interface without granting provider, filesystem, credential, tenant, or approval authority."
     },
     {
+      "name": "ConversationAutomationRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates timer-only ConversationAutomation route recognition, local and managed-host admission, request validation, existing-conversation targeting, fire retry identity, persistence coordination, scheduler invocation, and response projection behind one internal dispatch interface without changing provider, filesystem, permission, credential, tenant, or approval authority."
+    },
+    {
       "name": "ChangedFileReviewRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
     },
@@ -398,6 +402,16 @@
       "description": "The local API dispatch module delegates the Autonomy route family and request-scoped authority facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "AutonomyRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_conversation_automation_route_dispatch",
+      "description": "The local API dispatch module delegates timer-only ConversationAutomation requests and request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ConversationAutomationRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1065,6 +1079,18 @@
       "subject": "AutonomyRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#624",
       "locator": "server/autonomy-routes.ts#handleAutonomyRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationAutomationRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#650",
+      "locator": "server/automation-routes.ts#handleAutomationRoute; docs/decisions/conversation-automations.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_conversation_automation_route_dispatch",
+      "source": "Aldunis Code Conversation Automation route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/automation-routes.ts#handleAutomationRoute",
       "confidence": 1.0
     },
     {
