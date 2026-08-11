@@ -12,9 +12,14 @@ interface ProviderDiscoveryOptions {
   worktree?: string;
 }
 
-const cached = new Map<string, ProviderDiscovery[]>();
+interface ProviderDiscoveryCacheEntry {
+  providers: ProviderDiscovery[];
+  timedOut: boolean;
+}
+
+export const PROVIDER_DISCOVERY_CACHE_LIMIT = 32;
+const cached = new Map<string, ProviderDiscoveryCacheEntry>();
 const inflight = new Map<string, Promise<ProviderDiscovery[]>>();
-const timedOut = new Map<string, boolean>();
 
 export const PROVIDER_DISCOVERY_TIMEOUT_DETAIL =
   "Provider discovery timed out. Retry the provider check.";
@@ -27,30 +32,46 @@ function contextKey(options: ProviderDiscoveryOptions): string {
   return JSON.stringify([options.root ?? null, options.worktree ?? null]);
 }
 
+function cachedEntry(key: string): ProviderDiscoveryCacheEntry | undefined {
+  const entry = cached.get(key);
+  if (!entry) return undefined;
+  // Map insertion order is the LRU order. Reinsert reads at the newest edge.
+  cached.delete(key);
+  cached.set(key, entry);
+  return entry;
+}
+
+function cacheEntry(key: string, entry: ProviderDiscoveryCacheEntry): void {
+  cached.delete(key);
+  cached.set(key, entry);
+  while (cached.size > PROVIDER_DISCOVERY_CACHE_LIMIT) {
+    const oldest = cached.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cached.delete(oldest);
+  }
+}
+
 export function invalidateProviderDiscoveryCache(): void {
   cached.clear();
   inflight.clear();
-  timedOut.clear();
 }
 
 export function peekProviderDiscoveryCache(
   options: ProviderDiscoveryOptions = {},
 ): ProviderDiscovery[] | null {
-  return cached.get(contextKey(options)) ?? null;
+  return cachedEntry(contextKey(options))?.providers ?? null;
 }
 
-export function providerDiscoveryTimedOut(
-  options: ProviderDiscoveryOptions = {},
-): boolean {
-  return timedOut.get(contextKey(options)) ?? false;
+export function providerDiscoveryTimedOut(options: ProviderDiscoveryOptions = {}): boolean {
+  return cachedEntry(contextKey(options))?.timedOut ?? false;
 }
 
 export async function loadProviderDiscovery(
   options: ProviderDiscoveryOptions = {},
 ): Promise<ProviderDiscovery[]> {
   const key = contextKey(options);
-  const existing = cached.get(key);
-  if (existing) return existing;
+  const existing = cachedEntry(key);
+  if (existing) return existing.providers;
   const pending = inflight.get(key);
   if (pending) return pending;
   const controller = new AbortController();
@@ -61,12 +82,10 @@ export async function loadProviderDiscovery(
     method: "POST",
     signal: controller.signal,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(hasContext
-      ? { root: options.root, worktree: options.worktree }
-      : {}),
+    body: JSON.stringify(hasContext ? { root: options.root, worktree: options.worktree } : {}),
   }).then(async (response) => {
     if (!response.ok) throw new Error("Provider discovery failed.");
-    const body = await response.json() as { providers?: ProviderDiscovery[] };
+    const body = (await response.json()) as { providers?: ProviderDiscovery[] };
     return body.providers ?? [];
   });
   const timedRequest = Promise.race([
@@ -78,22 +97,19 @@ export async function loadProviderDiscovery(
       }, timeoutMs);
     }),
   ]).finally(() => clearTimeout(timeout));
-  let next!: Promise<ProviderDiscovery[]>;
-  next = timedRequest
+  const next = timedRequest
     .then((providers) => {
-      timedOut.set(key, false);
-      cached.set(key, providers);
+      cacheEntry(key, { providers, timedOut: false });
       return providers;
     })
     .catch((error: unknown) => {
       // Keep Claude selectable offline. Track a timeout independently from any
       // provider so restored adapter conversations get the same recovery path.
-      timedOut.set(
-        key,
-        error instanceof Error && error.message === PROVIDER_DISCOVERY_TIMEOUT_DETAIL,
-      );
       const fallback: ProviderDiscovery[] = [{ id: "claude-code", installed: true }];
-      cached.set(key, fallback);
+      cacheEntry(key, {
+        providers: fallback,
+        timedOut: error instanceof Error && error.message === PROVIDER_DISCOVERY_TIMEOUT_DETAIL,
+      });
       return fallback;
     })
     .finally(() => {
