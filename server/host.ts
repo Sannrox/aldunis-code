@@ -11,17 +11,13 @@ import { createServer as createHttpsServer, request as httpsRequest } from "node
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ClaudeCodeAdapter, type ProviderId, ProviderProtocolError } from "./provider.ts";
+import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { buildUsageReport, isUsageRangeDays } from "../src/lib/usage.ts";
 import { ShikigamiAdapter } from "./shikigami-provider.ts";
 import { ProviderDiscovery } from "./provider-discovery.ts";
-import {
-  isAdapterProviderId,
-  ProviderModelError,
-  validateProviderModel,
-} from "./provider-models.ts";
+import { ProviderModelError } from "./provider-models.ts";
 import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
@@ -72,7 +68,6 @@ import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.ts";
 import { ChiseiClientError, ChiseiProjectionClient } from "./chisei-client.ts";
-import type { WorkspaceMode } from "../src/types.ts";
 import { handleProviderRun } from "./provider-run.ts";
 import { handleBrowserRoute } from "./browser-routes.ts";
 import { handleAutonomyRoute } from "./autonomy-routes.ts";
@@ -86,6 +81,7 @@ import { handleChiseiRoute } from "./chisei-routes.ts";
 import { handleDelegatedControlRoute } from "./delegated-control-routes.ts";
 import { handleAutomationRoute } from "./automation-routes.ts";
 import { handleDeliveryRoute } from "./delivery-routes.ts";
+import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -816,175 +812,20 @@ async function handleApi(
       sendJson(response, 200, history);
       return true;
     }
-    if (route === "/api/forks/preview") {
-      if (managedHost) {
-        throw new LocalStateError(
-          "Conversation forks are unavailable in managed hosted mode.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as { sourceThreadId?: unknown };
-      if (typeof body.sourceThreadId !== "string") {
-        throw new LocalStateError("A source conversation is required.", 400);
-      }
-      const preview = await state.previewFork(body.sourceThreadId);
-      if (preview.byteCount > 64 * 1024) {
-        throw new LocalStateError("The source context exceeds the 64 KiB fork limit.", 413);
-      }
-      sendJson(response, 200, preview);
-      return true;
-    }
-    if (route === "/api/forks/create") {
-      const body = (await readJson(request)) as {
-        sourceThreadId?: unknown;
-        provider?: unknown;
-        profileId?: unknown;
-        model?: unknown;
-        expectedDigest?: unknown;
-        worktree?: unknown;
-        workspaceMode?: unknown;
-      };
-      const providerValue = typeof body.provider === "string" ? body.provider : null;
-      const supportedProvider =
-        providerValue === "claude-code" ||
-        providerValue === "codex-cli" ||
-        providerValue === "shikigami" ||
-        (providerValue !== null && isAdapterProviderId(providerValue));
-      if (
-        typeof body.sourceThreadId !== "string" ||
-        !supportedProvider ||
-        typeof body.model !== "string" ||
-        !body.model ||
-        typeof body.expectedDigest !== "string" ||
-        (body.worktree !== undefined && typeof body.worktree !== "string") ||
-        (body.workspaceMode !== undefined &&
-          !["shared", "aldunis-managed", "provider-native"].includes(
-            body.workspaceMode as string,
-          )) ||
-        (providerValue === "claude-code" && typeof body.profileId !== "string") ||
-        (providerValue === "codex-cli" && body.profileId !== null) ||
-        (providerValue !== "claude-code" &&
-          providerValue !== "shikigami" &&
-          providerValue !== "codex-cli" &&
-          body.profileId !== null) ||
-        (providerValue === "shikigami" &&
-          body.profileId !== undefined &&
-          body.profileId !== null &&
-          typeof body.profileId !== "string")
-      ) {
-        throw new LocalStateError(
-          "A source conversation, destination provider, profile, model, and reviewed context size are required.",
-          400,
-        );
-      }
-      if (managedHost) {
-        throw new LocalStateError(
-          "Conversation forks are unavailable in managed hosted mode.",
-          403,
-        );
-      }
-      const projection = await state.inspect();
-      const source = projection.threads.find((thread) => thread.id === body.sourceThreadId);
-      const project = source
-        ? projection.projects.find((candidate) => candidate.id === source.projectId)
-        : undefined;
-      if (!source || !project)
-        throw new LocalStateError("The source conversation is unavailable.", 404);
-      await selectedWorktree(project.root, source.worktree);
-      const sourceWorkspaceMode = source.workspaceMode ?? "shared";
-      const requestedWorkspaceMode = body.workspaceMode as WorkspaceMode | undefined;
-      const destinationWorkspaceMode =
-        requestedWorkspaceMode ??
-        (sourceWorkspaceMode === "aldunis-managed" ? "aldunis-managed" : "shared");
-      let destinationWorktree = source.worktree;
-      if (sourceWorkspaceMode === "aldunis-managed") {
-        if (destinationWorkspaceMode !== "aldunis-managed" || typeof body.worktree !== "string") {
-          throw new LocalStateError(
-            "A fork from an Aldunis-managed conversation requires a separately approved Aldunis worktree.",
-            409,
-          );
-        }
-        destinationWorktree = (await selectedWorktree(project.root, body.worktree)).worktree;
-        if (destinationWorktree === source.worktree) {
-          throw new LocalStateError(
-            "A fork from an Aldunis-managed conversation cannot reuse its source worktree.",
-            409,
-          );
-        }
-        const selected = (await worktrees.list(project.root)).find(
-          (candidate) => candidate.path === destinationWorktree,
-        );
-        if (!selected || selected.ownership !== "aldunis" || selected.recovery !== "available") {
-          throw new LocalStateError(
-            "The fork destination must be an available Aldunis-owned worktree.",
-            409,
-          );
-        }
-        if (projection.threads.some((thread) => thread.worktree === destinationWorktree)) {
-          throw new LocalStateError(
-            "The fork destination worktree is already bound to another conversation.",
-            409,
-          );
-        }
-      } else if (destinationWorkspaceMode !== "shared") {
-        throw new LocalStateError(
-          "Only the shared workspace mode is available for forks from this conversation.",
-          409,
-        );
-      }
-      const provider = providerValue as ProviderId;
-      const shikigamiProfile =
-        provider === "shikigami" && typeof body.profileId === "string"
-          ? await profiles.runtime(body.profileId)
-          : null;
-      if (shikigamiProfile && shikigamiProfile.profile.provider !== "shikigami") {
-        throw new ProfileError("The selected profile does not belong to Shikigami.", 400);
-      }
-      const effectiveModel = await validateProviderModel(
-        provider,
-        body.model,
-        {
-          codex,
-          shikigami,
-          shikigamiProfile: shikigamiProfile
-            ? {
-                executable: shikigamiProfile.executable,
-                environment: shikigamiProfile.environment,
-                configPath: shikigamiProfile.configPath,
-              }
-            : undefined,
-          adapters,
-        },
-        destinationWorktree,
-      );
-      if (provider === "claude-code") {
-        await profiles.runtime(body.profileId as string);
-      } else if (provider === "shikigami") {
-        const readiness = await shikigami.readiness(shikigamiProfile?.environment ?? process.env, {
-          executable: shikigamiProfile?.executable,
-          configPath: shikigamiProfile?.configPath,
-          cwd: destinationWorktree,
-        });
-        if (!readiness.installed || !readiness.authenticated) {
-          throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
-        }
-      } else if (provider === "codex-cli") {
-        const readiness = await codex.readiness();
-        if (!readiness.installed || !readiness.authenticated) {
-          throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
-        }
-      }
-      const created = await state.createFork({
-        sourceThreadId: source.id,
-        provider,
-        profileId: typeof body.profileId === "string" ? body.profileId : null,
-        model: effectiveModel,
-        worktree: source.worktree,
-        destinationWorktree,
-        workspaceMode: destinationWorkspaceMode,
-        expectedDigest: body.expectedDigest,
-      });
-      sendJson(response, 201, created);
+    if (
+      await handleConversationForkRoute(route, request, response, {
+        state,
+        worktrees,
+        profiles,
+        codex,
+        shikigami,
+        adapters,
+        managed: Boolean(managedHost),
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    ) {
       return true;
     }
     if (route === "/api/state/search") {
