@@ -53,6 +53,7 @@ export interface CodexCliAdapterOptions {
   idleSessionTtlMs?: number;
   maxIdleSessions?: number;
   onSessionClosed?: (conversationId: string) => void;
+  onInputSettled?: (runId: string, requestId: string) => void;
   timers?: {
     setTimeout(callback: () => void, delayMs: number): CodexIdleTimer;
     clearTimeout(handle: CodexIdleTimer): void;
@@ -937,6 +938,7 @@ export class CodexCliAdapter {
     const active = this.#active.get(id);
     if (!active) return false;
     active.cancelled = true;
+    this.#forgetPendingInputs(id, active);
     this.permissions.closeRun(id, "cancelled");
     if (active.threadId && active.turnId) {
       this.#send(active.child, {
@@ -974,7 +976,7 @@ export class CodexCliAdapter {
         ),
       },
     });
-    if (sent) active.pendingInputs.delete(requestId);
+    if (sent) this.#forgetPendingInput(runId, requestId, active);
     return sent;
   }
 
@@ -986,12 +988,26 @@ export class CodexCliAdapter {
       id: pending.rpcId,
       result: { answers: {} },
     });
-    if (sent) active.pendingInputs.delete(requestId);
+    if (sent) this.#forgetPendingInput(runId, requestId, active);
     return sent;
   }
 
   close(): void {
-    for (const session of [...this.#sessions.values()]) this.#retireSession(session);
+    for (const session of [...this.#sessions.values()]) {
+      if (session.currentRunId) this.#forgetPendingInputs(session.currentRunId, session);
+      this.#retireSession(session);
+    }
+  }
+
+  #forgetPendingInput(runId: string, requestId: string, active: ActiveRun): void {
+    if (!active.pendingInputs.delete(requestId)) return;
+    this.options.onInputSettled?.(runId, requestId);
+  }
+
+  #forgetPendingInputs(runId: string, active: ActiveRun): void {
+    for (const requestId of [...active.pendingInputs.keys()]) {
+      this.#forgetPendingInput(runId, requestId, active);
+    }
   }
 
   #clearIdleTimer(active: ActiveRun): void {
@@ -1473,6 +1489,7 @@ export class CodexCliAdapter {
             };
       }
     } finally {
+      this.#forgetPendingInputs(id, active);
       this.#active.delete(id);
       if (active.currentRunId === id) {
         active.currentRunId = null;

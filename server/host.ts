@@ -54,6 +54,7 @@ import { ChiseiClientError, ChiseiProjectionClient } from "./chisei-client.ts";
 import {
   admitProviderRun,
   createProviderRunSink,
+  ProviderInputExpiryTimers,
   type ProviderRunModuleContext,
 } from "./provider-run.ts";
 import { handleBrowserRoute } from "./browser-routes.ts";
@@ -342,6 +343,7 @@ interface LocalApiDispatchContext {
   adapters: ProviderAdapterStore;
   providerDiscovery: ProviderDiscovery;
   activeAcp: Map<string, AcpProviderAdapter>;
+  inputExpiryTimers: ProviderInputExpiryTimers;
   wake: WakeBroker;
   withDelegatedControlLock: DelegatedControlLock;
   runChildFollowUp: (body: Record<string, unknown>) => Promise<void>;
@@ -383,6 +385,7 @@ async function handleApi(
     adapters,
     providerDiscovery,
     activeAcp,
+    inputExpiryTimers,
     wake,
     withDelegatedControlLock,
     runChildFollowUp,
@@ -709,6 +712,7 @@ async function handleApi(
         shikigami,
         permissions,
         activeAcp,
+        inputExpiryTimers,
         managed: Boolean(managedHost),
         selectWorktree: selectedWorktree,
         startRun: (body, localPort, output) =>
@@ -949,8 +953,10 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
   const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const provider = new ClaudeCodeAdapter("claude", permissions);
+  const inputExpiryTimers = new ProviderInputExpiryTimers();
   const codex = new CodexCliAdapter("codex", permissions, {
     onSessionClosed: (conversationId) => browser?.releaseProviderToken(conversationId),
+    onInputSettled: (runId, requestId) => inputExpiryTimers.clear(runId, requestId),
   });
   const shikigami = new ShikigamiAdapter(
     managedHost?.shikigami.executable ?? "shikigami",
@@ -1050,6 +1056,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     worktrees,
     adapters,
     activeAcp,
+    inputExpiryTimers,
     wake,
     withDelegatedControlLock,
     internalApprovalUrl: internalPermissionCallback?.url,

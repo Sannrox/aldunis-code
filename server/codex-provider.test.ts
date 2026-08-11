@@ -749,6 +749,7 @@ if (process.argv.includes("--version")) {
           threadId:"thread-input",
           turnId:"turn-input",
           itemId:"item-input",
+          autoResolutionMs:60000,
           questions:[{
             id:"strategy",
             header:"Strategy",
@@ -769,7 +770,10 @@ if (process.argv.includes("--version")) {
 `,
   );
   await chmod(executable, 0o700);
-  const adapter = new CodexCliAdapter(executable);
+  const settled: Array<{ runId: string; requestId: string }> = [];
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    onInputSettled: (runId, requestId) => settled.push({ runId, requestId }),
+  });
   try {
     const run = await adapter.start({
       repository: directory,
@@ -790,6 +794,8 @@ if (process.argv.includes("--version")) {
       }
     }
     assert.ok(events.some((event) => event.kind === "turn_completed"));
+    assert.equal(settled.length, 1);
+    assert.equal(settled[0]?.runId, run.id);
   } finally {
     adapter.close();
   }
@@ -851,12 +857,26 @@ if (process.argv.includes("--version")) {
       method:"item/started",
       params:{item:{id:"command-before-cancel",type:"commandExecution",command:"private"}}
     }));
+    if (message.id === 2) console.log(JSON.stringify({
+      id:42,
+      method:"item/tool/requestUserInput",
+      params:{
+        threadId:"0199a213-81c0-7800-8aa1-bbab2a035a53",
+        turnId:"0199a213-81c0-7800-8aa1-bbab2a035a54",
+        itemId:"input-before-cancel",
+        autoResolutionMs:60000,
+        questions:[{id:"confirm",question:"Continue?",options:[]}]
+      }
+    }));
   });
 }
 `,
   );
   await chmod(executable, 0o700);
-  const adapter = new CodexCliAdapter(executable);
+  const settled: string[] = [];
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    onInputSettled: (_runId, requestId) => settled.push(requestId),
+  });
   const run = await adapter.start({
     repository: directory,
     worktree: directory,
@@ -868,11 +888,16 @@ if (process.argv.includes("--version")) {
   const kinds: string[] = [];
   for await (const event of run.events) {
     kinds.push(event.kind);
-    if (event.kind === "session_started") {
-      setTimeout(() => adapter.cancel(run.id), 50).unref();
-    }
+    if (event.kind === "input_requested") adapter.cancel(run.id);
   }
-  assert.deepEqual(kinds, ["session_started", "tool_started", "tool_finished", "cancelled"]);
+  assert.deepEqual(kinds, [
+    "session_started",
+    "tool_started",
+    "input_requested",
+    "tool_finished",
+    "cancelled",
+  ]);
+  assert.equal(settled.length, 1);
   assert.equal(adapter.cancel(run.id), false);
 });
 
