@@ -192,6 +192,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates local workbench projection refresh coalescing, stale-response suppression, event-stream lifetime, malformed-event rejection, optimistic visit reconciliation, and recovery-field normalization behind one refresh and snapshot interface without acquiring persistence, provider, filesystem, permission, or remote-product authority."
     },
     {
+      "name": "SplitWorkspaceLifecycleModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates dual-pane restoration, invariant-preserving pane transitions, project membership and activation decisions, same-project secondary selection, safe conversation repository projection, focus fallback, and resize clamping behind one deterministic interface while CodeWorkbench retains browser, DOM, network, and rendering adapters."
+    },
+    {
       "name": "LocalApplicationHost",
       "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
     },
@@ -419,6 +423,16 @@
     }
   ],
   "relations": [
+    {
+      "name": "coordinates_split_workspace_conversations",
+      "description": "The split workspace lifecycle module keeps primary and secondary LocalConversation selections distinct and safely projected without acquiring repository, persistence, provider, or filesystem authority.",
+      "domain": "SplitWorkspaceLifecycleModule",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": 2
+      }
+    },
     {
       "name": "dispatches_through_local_api",
       "description": "The local host delegates accepted HTTP requests and request-scoped authority facts to one internal dispatch module without creating a new network, product, or trust seam.",
@@ -1201,6 +1215,12 @@
     }
   ],
   "provenance": [
+    {
+      "subject": "SplitWorkspaceLifecycleModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#679",
+      "locator": "src/split-workspace.ts; src/features/code/workbench.tsx; server/split-workspace.test.ts",
+      "confidence": 1.0
+    },
     {
       "subject": "AldunisLocalHost",
       "source": "Aldunis Code local host composition",
