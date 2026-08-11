@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { DeliveryBroker, inspectDelivery, pullRequestDraft, sanitizeDiagnostic } from "./delivery.ts";
+import {
+  DeliveryBroker,
+  inspectDelivery,
+  pullRequestDraft,
+  sanitizeDiagnostic,
+} from "./delivery.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -55,7 +60,10 @@ test("pull-request drafts reject detached branches and invalid bases", async () 
   const { root } = await fixture(true);
   const context = await inspectDelivery(root, root);
   assert.throws(() => pullRequestDraft(context, "main"), /Detached HEAD/);
-  assert.throws(() => pullRequestDraft({ ...context, branch: "codex/example" }, ""), /base branch is required/);
+  assert.throws(
+    () => pullRequestDraft({ ...context, branch: "codex/example" }, ""),
+    /base branch is required/,
+  );
 });
 
 test("stage plans preserve unrelated changes and approvals are single-use", async () => {
@@ -65,7 +73,7 @@ test("stage plans preserve unrelated changes and approvals are single-use", asyn
   assert.match(plan.summary, /1 selected file/);
   await broker.execute(plan.id, root, root);
   const status = (await git("status", "--porcelain=v1")).stdout;
-  assert.match(status, /^M  reviewed\.txt$/m);
+  assert.match(status, /^M {2}reviewed\.txt$/m);
   assert.match(status, /^ M unrelated\.txt$/m);
   await assert.rejects(() => broker.execute(plan.id, root, root), /does not exist/);
 });
@@ -80,6 +88,17 @@ test("concurrent execution consumes a plan before asynchronous validation", asyn
   ]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+});
+
+test("delivery broker evicts the oldest abandoned preview at capacity", async () => {
+  const { root } = await fixture();
+  const broker = new DeliveryBroker(1);
+  const oldest = await broker.plan(root, root, "stage", { paths: ["reviewed.txt"] });
+  const newest = await broker.plan(root, root, "stage", { paths: ["unrelated.txt"] });
+
+  assert.equal(broker.retainedPlanCount, 1);
+  await assert.rejects(() => broker.execute(oldest.id, root, root), /does not exist/);
+  await broker.execute(newest.id, root, root);
 });
 
 test("stage plans include both sides of a rename", async () => {
@@ -109,7 +128,7 @@ test("stage plans treat Git pathspec magic as a literal filename", async () => {
   const plan = await broker.plan(root, root, "stage", { paths: [":(glob)**"] });
   await broker.execute(plan.id, root, root);
   const status = (await git("status", "--porcelain=v1")).stdout;
-  assert.match(status, /^A  :\(glob\)\*\*$/m);
+  assert.match(status, /^A {2}:\(glob\)\*\*$/m);
   assert.match(status, /^ M reviewed\.txt$/m);
   assert.match(status, /^ M unrelated\.txt$/m);
 });
@@ -117,7 +136,10 @@ test("stage plans treat Git pathspec magic as a literal filename", async () => {
 test("commit plans require staged changes and execute the reviewed message", async () => {
   const { root, git } = await fixture();
   const broker = new DeliveryBroker();
-  await assert.rejects(() => broker.plan(root, root, "commit", { message: "reviewed" }), /Stage reviewed/);
+  await assert.rejects(
+    () => broker.plan(root, root, "commit", { message: "reviewed" }),
+    /Stage reviewed/,
+  );
   await git("add", "--", "reviewed.txt");
   const plan = await broker.plan(root, root, "commit", { message: "feat: reviewed delivery" });
   await broker.execute(plan.id, root, root);
@@ -139,14 +161,18 @@ test("commit plans reject files with staged and unstaged edits", async () => {
 test("detached HEAD and protected branch mutations fail explicitly", async () => {
   const detached = await fixture(true);
   await assert.rejects(
-    () => new DeliveryBroker().plan(detached.root, detached.root, "stage", { paths: ["reviewed.txt"] }),
+    () =>
+      new DeliveryBroker().plan(detached.root, detached.root, "stage", { paths: ["reviewed.txt"] }),
     /Detached HEAD/,
   );
   const protectedFixture = await fixture();
   await protectedFixture.git("switch", "-q", "main");
   await protectedFixture.git("add", "--", "reviewed.txt");
   await assert.rejects(
-    () => new DeliveryBroker().plan(protectedFixture.root, protectedFixture.root, "commit", { message: "no" }),
+    () =>
+      new DeliveryBroker().plan(protectedFixture.root, protectedFixture.root, "commit", {
+        message: "no",
+      }),
     /protected branch/,
   );
 });
@@ -157,12 +183,21 @@ test("push plans show non-origin destinations and never add force flags", async 
   assert.equal(plan.remote, "upstream");
   assert.ok(plan.destination);
   assert.equal(plan.details.includes("force: disabled"), true);
-  assert.equal(plan.details.some((detail) => detail.includes("--force")), false);
+  assert.equal(
+    plan.details.some((detail) => detail.includes("--force")),
+    false,
+  );
 });
 
 test("displayed remotes omit URL credentials, query strings, and fragments", async () => {
   const { root, git } = await fixture();
-  await git("remote", "set-url", "--push", "upstream", "ssh://user:password@example.invalid/org/repo.git?token=secret#fragment");
+  await git(
+    "remote",
+    "set-url",
+    "--push",
+    "upstream",
+    "ssh://user:password@example.invalid/org/repo.git?token=secret#fragment",
+  );
   const context = await inspectDelivery(root, root);
   assert.equal(context.remotes[0]?.url, "ssh://example.invalid/org/repo");
 });
@@ -181,12 +216,13 @@ test("pull request plans reject GitHub lookalike hosts", async () => {
   const { root, git } = await fixture();
   await git("remote", "set-url", "--push", "upstream", "https://evilgithub.com/org/repo.git");
   await assert.rejects(
-    () => new DeliveryBroker().plan(root, root, "pull_request", {
-      remote: "upstream",
-      base: "main",
-      title: "Reviewed",
-      body: "Reviewed body",
-    }),
+    () =>
+      new DeliveryBroker().plan(root, root, "pull_request", {
+        remote: "upstream",
+        base: "main",
+        title: "Reviewed",
+        body: "Reviewed body",
+      }),
     /requires a GitHub remote/,
   );
 });
@@ -194,20 +230,41 @@ test("pull request plans reject GitHub lookalike hosts", async () => {
 test("execution rejects changed file content, index state, HEAD, and remote destinations", async () => {
   const stageFixture = await fixture();
   const stageBroker = new DeliveryBroker();
-  const stage = await stageBroker.plan(stageFixture.root, stageFixture.root, "stage", { paths: ["reviewed.txt"] });
+  const stage = await stageBroker.plan(stageFixture.root, stageFixture.root, "stage", {
+    paths: ["reviewed.txt"],
+  });
   await writeFile(join(stageFixture.root, "reviewed.txt"), "changed after review\n");
-  await assert.rejects(() => stageBroker.execute(stage.id, stageFixture.root, stageFixture.root), /state or destination changed/);
+  await assert.rejects(
+    () => stageBroker.execute(stage.id, stageFixture.root, stageFixture.root),
+    /state or destination changed/,
+  );
 
   const commitFixture = await fixture();
   await commitFixture.git("add", "--", "reviewed.txt");
   const commitBroker = new DeliveryBroker();
-  const commit = await commitBroker.plan(commitFixture.root, commitFixture.root, "commit", { message: "reviewed" });
+  const commit = await commitBroker.plan(commitFixture.root, commitFixture.root, "commit", {
+    message: "reviewed",
+  });
   await commitFixture.git("add", "--", "unrelated.txt");
-  await assert.rejects(() => commitBroker.execute(commit.id, commitFixture.root, commitFixture.root), /state or destination changed/);
+  await assert.rejects(
+    () => commitBroker.execute(commit.id, commitFixture.root, commitFixture.root),
+    /state or destination changed/,
+  );
 
   const remoteFixture = await fixture();
   const pushBroker = new DeliveryBroker();
-  const push = await pushBroker.plan(remoteFixture.root, remoteFixture.root, "push", { remote: "upstream" });
-  await remoteFixture.git("remote", "set-url", "--push", "upstream", "https://example.invalid/redirect.git");
-  await assert.rejects(() => pushBroker.execute(push.id, remoteFixture.root, remoteFixture.root), /state or destination changed/);
+  const push = await pushBroker.plan(remoteFixture.root, remoteFixture.root, "push", {
+    remote: "upstream",
+  });
+  await remoteFixture.git(
+    "remote",
+    "set-url",
+    "--push",
+    "upstream",
+    "https://example.invalid/redirect.git",
+  );
+  await assert.rejects(
+    () => pushBroker.execute(push.id, remoteFixture.root, remoteFixture.root),
+    /state or destination changed/,
+  );
 });

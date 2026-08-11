@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { MAX_PENDING_APPROVAL_PLANS, retainBoundedPendingPlan } from "./pending-plan-retention.ts";
 import {
   deliveryCandidateIdentity,
   prepareReleaseCandidate,
@@ -1048,7 +1049,13 @@ export class ReleaseDeliveryBroker {
     readonly store: ReleaseDeliveryStore,
     readonly env: NodeJS.ProcessEnv = process.env,
     readonly runner: ReleaseCommandRunner = defaultRunner,
+    private readonly maxRetainedPlans = MAX_PENDING_APPROVAL_PLANS,
   ) {}
+
+  /** Test and diagnostics: unexpired approvals still retained in memory. */
+  get retainedPlanCount(): number {
+    return this.#plans.size;
+  }
 
   async inspect(
     projectId: string,
@@ -1322,7 +1329,7 @@ export class ReleaseDeliveryBroker {
       sessionBinding: session?.updatedAt ?? null,
       used: false,
     };
-    this.#plans.set(pending.id, pending);
+    retainBoundedPendingPlan(this.#plans, pending, Date.now(), this.maxRetainedPlans);
     const {
       repository: _repository,
       worktree: _worktree,

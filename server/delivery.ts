@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import { MAX_PENDING_APPROVAL_PLANS, retainBoundedPendingPlan } from "./pending-plan-retention.ts";
 import { RepositoryError } from "./repository.ts";
 import type { PullRequestDraft } from "../src/types.ts";
 
@@ -94,8 +95,10 @@ async function fingerprint(
   let remoteHead: string | null = null;
   if (action === "pull_request" && remote) {
     const branch = (await git(worktree, ["branch", "--show-current"])).stdout.trim();
-    remoteHead = (await git(worktree, ["ls-remote", "--heads", remote, `refs/heads/${branch}`]))
-      .stdout.trim().split(/\s+/)[0] || null;
+    remoteHead =
+      (await git(worktree, ["ls-remote", "--heads", remote, `refs/heads/${branch}`])).stdout
+        .trim()
+        .split(/\s+/)[0] || null;
     if (!remoteHead) {
       throw new RepositoryError("Push the reviewed branch before opening a pull request.", 409);
     }
@@ -151,7 +154,9 @@ function assertText(value: unknown, name: string, max = 4_000): string {
 
 function assertPath(path: unknown): string {
   if (typeof path !== "string" || !path.length || path.length > 1_024 || path.includes("\0")) {
-    throw new RepositoryError("A changed file is required and must be shorter than 1024 characters.");
+    throw new RepositoryError(
+      "A changed file is required and must be shorter than 1024 characters.",
+    );
   }
   if (path === "." || path.startsWith("/") || path.split(/[\\/]/).includes("..")) {
     throw new RepositoryError("Staged paths must stay inside the selected worktree.", 403);
@@ -159,10 +164,15 @@ function assertPath(path: unknown): string {
   return path;
 }
 
-export async function inspectDelivery(repository: string, worktree: string): Promise<DeliveryContext> {
+export async function inspectDelivery(
+  repository: string,
+  worktree: string,
+): Promise<DeliveryContext> {
   const [branchResult, upstreamResult, remotesResult, statusResult] = await Promise.all([
     git(worktree, ["branch", "--show-current"]),
-    git(worktree, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(() => null),
+    git(worktree, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(
+      () => null,
+    ),
     git(worktree, ["remote", "-v"]),
     git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
   ]);
@@ -208,20 +218,16 @@ function markdownCode(value: string): string {
 }
 
 function branchTitle(branch: string): string {
-  const words = branch.split(/[\/_-]+/).filter(Boolean);
-  const withoutPrefix = words.length > 1 && [
-    "bugfix",
-    "chore",
-    "codex",
-    "feature",
-    "fix",
-    "refactor",
-    "research",
-  ].includes(words[0]!.toLocaleLowerCase())
-    ? words.slice(1)
-    : words;
+  const words = branch.split(/[/_-]+/).filter(Boolean);
+  const withoutPrefix =
+    words.length > 1 &&
+    ["bugfix", "chore", "codex", "feature", "fix", "refactor", "research"].includes(
+      words[0]!.toLocaleLowerCase(),
+    )
+      ? words.slice(1)
+      : words;
   const label = withoutPrefix
-    .map((word) => /^\d+$/.test(word) ? word : `${word[0]!.toLocaleUpperCase()}${word.slice(1)}`)
+    .map((word) => (/^\d+$/.test(word) ? word : `${word[0]!.toLocaleUpperCase()}${word.slice(1)}`))
     .join(" ")
     .trim();
   return label || "branch changes";
@@ -241,9 +247,10 @@ export function pullRequestDraft(context: DeliveryContext, baseInput: unknown): 
   const changedFiles = paths.slice(0, MAX_DRAFT_PATHS);
   const omittedFiles = Math.max(0, paths.length - changedFiles.length);
   const title = `Update ${branchTitle(context.branch)}`.slice(0, 120).trim();
-  const pathLines = changedFiles.length > 0
-    ? changedFiles.map((path) => `- \`${boundedPath(path)}\``)
-    : ["- No changed paths detected; inspect the branch before publishing."];
+  const pathLines =
+    changedFiles.length > 0
+      ? changedFiles.map((path) => `- \`${boundedPath(path)}\``)
+      : ["- No changed paths detected; inspect the branch before publishing."];
   if (omittedFiles > 0) {
     pathLines.push(`- …and ${omittedFiles} more changed path${omittedFiles === 1 ? "" : "s"}.`);
   }
@@ -258,7 +265,9 @@ export function pullRequestDraft(context: DeliveryContext, baseInput: unknown): 
     "",
     "## Changed paths",
     ...pathLines,
-  ].join("\n").slice(0, 12_000);
+  ]
+    .join("\n")
+    .slice(0, 12_000);
   return {
     title,
     body,
@@ -280,6 +289,13 @@ export async function draftPullRequest(
 export class DeliveryBroker {
   readonly #plans = new Map<string, PendingPlan>();
 
+  constructor(private readonly maxRetainedPlans = MAX_PENDING_APPROVAL_PLANS) {}
+
+  /** Test and diagnostics: unexpired approvals still retained in memory. */
+  get retainedPlanCount(): number {
+    return this.#plans.size;
+  }
+
   async plan(
     repository: string,
     worktree: string,
@@ -292,10 +308,16 @@ export class DeliveryBroker {
     }
     const context = await inspectDelivery(repository, worktree);
     if (!context.branch) {
-      throw new RepositoryError("Detached HEAD cannot be delivered. Create or select a branch first.", 409);
+      throw new RepositoryError(
+        "Detached HEAD cannot be delivered. Create or select a branch first.",
+        409,
+      );
     }
     if (action !== "stage" && PROTECTED_BRANCHES.has(context.branch)) {
-      throw new RepositoryError(`Direct ${action.replace("_", " ")} on protected branch ${context.branch} is not allowed.`, 409);
+      throw new RepositoryError(
+        `Direct ${action.replace("_", " ")} on protected branch ${context.branch} is not allowed.`,
+        409,
+      );
     }
 
     let args: string[];
@@ -315,7 +337,8 @@ export class DeliveryBroker {
       details = paths;
     } else if (action === "commit") {
       const message = assertText(input.message, "A commit message", 240);
-      if (!context.staged.length) throw new RepositoryError("Stage reviewed changes before committing.", 409);
+      if (!context.staged.length)
+        throw new RepositoryError("Stage reviewed changes before committing.", 409);
       const mixed = context.staged.filter((path) => context.unstaged.includes(path));
       if (mixed.length) {
         throw new RepositoryError(
@@ -341,13 +364,35 @@ export class DeliveryBroker {
       const base = assertText(input.base, "A base branch", 240);
       const title = assertText(input.title, "A pull request title", 240);
       const body = assertText(input.body, "A pull request body", 20_000);
-      const rawRemote = (await git(worktree, ["remote", "get-url", "--push", remote])).stdout.trim();
+      const rawRemote = (
+        await git(worktree, ["remote", "get-url", "--push", remote])
+      ).stdout.trim();
       const repositoryName = githubRepository(rawRemote);
-      if (!repositoryName) throw new RepositoryError("Pull-request creation currently requires a GitHub remote.", 409);
+      if (!repositoryName)
+        throw new RepositoryError("Pull-request creation currently requires a GitHub remote.", 409);
       destination = selected.url;
-      args = ["pr", "create", "--repo", repositoryName, "--base", base, "--head", context.branch, "--title", title, "--body", body];
+      args = [
+        "pr",
+        "create",
+        "--repo",
+        repositoryName,
+        "--base",
+        base,
+        "--head",
+        context.branch,
+        "--title",
+        title,
+        "--body",
+        body,
+      ];
       summary = `Open pull request from ${context.branch} to ${base}`;
-      details = [`destination: ${destination}`, `head: ${context.branch}`, `base: ${base}`, `title: ${title}`, `body: ${body}`];
+      details = [
+        `destination: ${destination}`,
+        `head: ${context.branch}`,
+        `base: ${base}`,
+        `title: ${title}`,
+        `body: ${body}`,
+      ];
     }
     const stateBinding = await fingerprint(
       worktree,
@@ -370,12 +415,16 @@ export class DeliveryBroker {
       used: false,
       expiresAt: new Date(Date.now() + PLAN_TTL_MS).toISOString(),
     };
-    this.#plans.set(plan.id, plan);
+    retainBoundedPendingPlan(this.#plans, plan, Date.now(), this.maxRetainedPlans);
     const { args: _args, stateBinding: _stateBinding, used: _used, ...snapshot } = plan;
     return snapshot;
   }
 
-  async execute(id: string, repository: string, worktree: string): Promise<{ status: string; output: string }> {
+  async execute(
+    id: string,
+    repository: string,
+    worktree: string,
+  ): Promise<{ status: string; output: string }> {
     const plan = this.#plans.get(id);
     if (!plan) throw new RepositoryError("The delivery approval does not exist.", 404);
     if (plan.used || Date.parse(plan.expiresAt) <= Date.now()) {
@@ -383,14 +432,20 @@ export class DeliveryBroker {
       throw new RepositoryError("The delivery approval is expired or already used.", 409);
     }
     if (plan.repository !== repository || plan.worktree !== worktree) {
-      throw new RepositoryError("The delivery approval is bound to another repository or worktree.", 403);
+      throw new RepositoryError(
+        "The delivery approval is bound to another repository or worktree.",
+        403,
+      );
     }
     plan.used = true;
     this.#plans.delete(id);
     const context = await inspectDelivery(repository, worktree);
     if (context.branch !== plan.branch) {
       this.#plans.delete(id);
-      throw new RepositoryError("The selected branch changed after review. Inspect the action again.", 409);
+      throw new RepositoryError(
+        "The selected branch changed after review. Inspect the action again.",
+        409,
+      );
     }
     const currentBinding = await fingerprint(
       worktree,
@@ -400,11 +455,15 @@ export class DeliveryBroker {
     );
     if (currentBinding !== plan.stateBinding) {
       this.#plans.delete(id);
-      throw new RepositoryError("The reviewed Git state or destination changed. Inspect the action again.", 409);
+      throw new RepositoryError(
+        "The reviewed Git state or destination changed. Inspect the action again.",
+        409,
+      );
     }
-    const result = plan.action === "pull_request"
-      ? await run(worktree, "gh", plan.args, 30_000)
-      : await git(worktree, plan.args);
+    const result =
+      plan.action === "pull_request"
+        ? await run(worktree, "gh", plan.args, 30_000)
+        : await git(worktree, plan.args);
     return { status: "completed", output: result.stdout.trim() };
   }
 }
