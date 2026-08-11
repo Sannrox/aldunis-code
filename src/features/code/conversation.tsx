@@ -132,6 +132,7 @@ import {
   type ConversationOpenScroll,
 } from "../../lib/thread-open-scroll";
 import { loadConversationHistory, loadFreshConversationHistory } from "../../lib/local-state-load";
+import { useComposerPopoverInteraction } from "../../lib/composer-popover-interaction";
 import {
   loadProviderCapabilities,
   peekProviderCapabilitiesCache,
@@ -866,23 +867,24 @@ export function Conversation({
   /** Compact composer chip text — adapters use presentation names, not raw ids. */
   const providerChipName = formatProviderChipName(provider, selectedProvider);
   const selectedProfileName = providerProfileDisplayName(profiles, provider, profileId);
-  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [worktreeFilter, setWorktreeFilter] = useState("");
   const providerMenuRef = useRef<HTMLDivElement | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
-  /** Ignore option activation that rides the same gesture that opened the menu. */
-  const providerMenuOpenedAtRef = useRef(0);
-  const modelMenuOpenedAtRef = useRef(0);
-  const modeMenuOpenedAtRef = useRef(0);
-  const projectMenuOpenedAtRef = useRef(0);
-  const workspaceMenuOpenedAtRef = useRef(0);
+  const composerPopovers = useComposerPopoverInteraction({
+    provider: { container: providerMenuRef, optionSelector: "[data-provider-option]" },
+    model: { container: modelMenuRef, optionSelector: "[data-model-option]" },
+    mode: { container: modeMenuRef, optionSelector: "[data-mode-option]" },
+    project: { container: projectMenuRef, optionSelector: "[data-project-option]" },
+    workspace: { container: workspaceMenuRef, optionSelector: "[data-workspace-option]" },
+  });
+  const providerMenuOpen = composerPopovers.isOpen("provider");
+  const modelMenuOpen = composerPopovers.isOpen("model");
+  const modeMenuOpen = composerPopovers.isOpen("mode");
+  const projectMenuOpen = composerPopovers.isOpen("project");
+  const workspaceMenuOpen = composerPopovers.isOpen("workspace");
   const INTERACTION_MODES: InteractionMode[] = ["ask", "plan", "build"];
   /**
    * Providers a *new* conversation can start with. Existing threads keep their
@@ -1065,11 +1067,11 @@ export function Conversation({
   };
   const selectProvider = (next: ProviderId, source: "menu" | "keyboard" = "menu") => {
     // Opening click must never select a provider — only an explicit menu choice.
-    if (source === "menu" && performance.now() < providerMenuOpenedAtRef.current) {
+    if (source === "menu" && !composerPopovers.pointerSelectionAllowed("provider")) {
       return;
     }
     if (!canSwitchProvider) {
-      setProviderMenuOpen(false);
+      composerPopovers.closeMenus();
       return;
     }
     if (next !== provider) {
@@ -1077,12 +1079,10 @@ export function Conversation({
       applyProviderDefaults(next);
       dispatchConversationRun({ type: "clear_context" });
     }
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setModeMenuOpen(false);
+    composerPopovers.closeMenus();
   };
   const selectModel = (nextModel: string, source: "menu" | "keyboard" = "menu") => {
-    if (source === "menu" && performance.now() < modelMenuOpenedAtRef.current) {
+    if (source === "menu" && !composerPopovers.pointerSelectionAllowed("model")) {
       return;
     }
     if (nextModel !== model) {
@@ -1103,7 +1103,7 @@ export function Conversation({
         }
       }
     }
-    setModelMenuOpen(false);
+    composerPopovers.closeMenus();
   };
 
   // Promote unpinned / legacy short Claude aliases to concrete T3-style slugs.
@@ -1125,69 +1125,31 @@ export function Conversation({
     else if (efforts.length > 0) setReasoningEffort(efforts[0]!);
   }, [model, provider, selectedProvider]);
   const selectMode = (nextMode: InteractionMode, source: "menu" | "keyboard" = "menu") => {
-    if (source === "menu" && performance.now() < modeMenuOpenedAtRef.current) {
+    if (source === "menu" && !composerPopovers.pointerSelectionAllowed("mode")) {
       return;
     }
     if (nextMode !== mode) setMode(nextMode);
-    setModeMenuOpen(false);
+    composerPopovers.closeMenus();
   };
-  const closeComposerMenus = () => {
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setModeMenuOpen(false);
-    setProjectMenuOpen(false);
-    setWorkspaceMenuOpen(false);
-  };
-  const openModeMenu = () => {
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setProjectMenuOpen(false);
-    setModeMenuOpen((open) => {
-      if (open) return false;
-      modeMenuOpenedAtRef.current = performance.now() + 200;
-      return true;
-    });
-  };
+  const closeComposerMenus = composerPopovers.closeMenus;
+  const openModeMenu = () => composerPopovers.toggleMenu("mode");
   const selectWorkspaceMode = (nextMode: WorkspaceMode, source: "menu" | "keyboard" = "menu") => {
-    if (source === "menu" && performance.now() < workspaceMenuOpenedAtRef.current) return;
+    if (source === "menu" && !composerPopovers.pointerSelectionAllowed("workspace")) return;
     if (!canPickWorkspace) {
-      setWorkspaceMenuOpen(false);
+      composerPopovers.closeMenus();
       return;
     }
     if (nextMode === "provider-native" && !providerNativeWorkspaceAvailable) return;
     setWorkspaceMode(nextMode);
-    setWorkspaceMenuOpen(false);
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setModeMenuOpen(false);
+    composerPopovers.closeMenus();
   };
   const selectProject = (projectId: string, source: "menu" | "keyboard" = "menu") => {
-    if (source === "menu" && performance.now() < projectMenuOpenedAtRef.current) return;
-    setProjectMenuOpen(false);
+    if (source === "menu" && !composerPopovers.pointerSelectionAllowed("project")) return;
+    composerPopovers.closeMenus();
     onSelectProject(projectId);
   };
-  const openProjectMenu = () => {
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setModeMenuOpen(false);
-    setWorkspaceMenuOpen(false);
-    setProjectMenuOpen((open) => {
-      if (open) return false;
-      projectMenuOpenedAtRef.current = performance.now() + 200;
-      return true;
-    });
-  };
-  const openWorkspaceMenu = () => {
-    setProviderMenuOpen(false);
-    setModelMenuOpen(false);
-    setModeMenuOpen(false);
-    setProjectMenuOpen(false);
-    setWorkspaceMenuOpen((open) => {
-      if (open) return false;
-      workspaceMenuOpenedAtRef.current = performance.now() + 200;
-      return true;
-    });
-  };
+  const openProjectMenu = () => composerPopovers.toggleMenu("project");
+  const openWorkspaceMenu = () => composerPopovers.toggleMenu("workspace");
   const modelOptions = managedMode
     ? [
         {
@@ -1198,282 +1160,8 @@ export function Conversation({
       ]
     : providerModelOptions(provider, selectedProvider);
   useEffect(() => {
-    if (!providerMenuOpen) return;
-    const optionButtons = () =>
-      Array.from(
-        providerMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-provider-option]") ??
-          [],
-      );
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && providerMenuRef.current?.contains(target)) return;
-      // Prevent the outside click from also activating a chip beneath the menu.
-      event.preventDefault();
-      setProviderMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setProviderMenuOpen(false);
-        return;
-      }
-      const options = optionButtons();
-      if (options.length === 0) return;
-      const active = document.activeElement as HTMLElement | null;
-      const index = options.findIndex((button) => button === active);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          index < 0
-            ? delta > 0
-              ? 0
-              : options.length - 1
-            : (index + delta + options.length) % options.length;
-        options[next]?.focus();
-        return;
-      }
-      if (event.key === "Home") {
-        event.preventDefault();
-        options[0]?.focus();
-        return;
-      }
-      if (event.key === "End") {
-        event.preventDefault();
-        options[options.length - 1]?.focus();
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
-        event.preventDefault();
-        const id = options[index]?.dataset.providerId as ProviderId | undefined;
-        if (id) selectProvider(id, "keyboard");
-      }
-    };
-    // Attach after the opening gesture finishes so the open click cannot select.
-    const timer = window.setTimeout(() => {
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [providerMenuOpen, canSwitchProvider, provider]);
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-    const optionButtons = () =>
-      Array.from(
-        modelMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-model-option]") ?? [],
-      );
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && modelMenuRef.current?.contains(target)) return;
-      event.preventDefault();
-      setModelMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setModelMenuOpen(false);
-        return;
-      }
-      const options = optionButtons();
-      if (options.length === 0) return;
-      const active = document.activeElement as HTMLElement | null;
-      const index = options.findIndex((button) => button === active);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          index < 0
-            ? delta > 0
-              ? 0
-              : options.length - 1
-            : (index + delta + options.length) % options.length;
-        options[next]?.focus();
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
-        event.preventDefault();
-        const id = options[index]?.dataset.modelId;
-        if (id) selectModel(id, "keyboard");
-      }
-    };
-    const timer = window.setTimeout(() => {
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [modelMenuOpen, model, provider, selectedProvider, reasoningEffort]);
-  useEffect(() => {
-    if (!modeMenuOpen) return;
-    const optionButtons = () =>
-      Array.from(
-        modeMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-mode-option]") ?? [],
-      );
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && modeMenuRef.current?.contains(target)) return;
-      event.preventDefault();
-      setModeMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setModeMenuOpen(false);
-        return;
-      }
-      const options = optionButtons();
-      if (options.length === 0) return;
-      const active = document.activeElement as HTMLElement | null;
-      const index = options.findIndex((button) => button === active);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          index < 0
-            ? delta > 0
-              ? 0
-              : options.length - 1
-            : (index + delta + options.length) % options.length;
-        options[next]?.focus();
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
-        event.preventDefault();
-        const id = options[index]?.dataset.modeId as InteractionMode | undefined;
-        if (id === "ask" || id === "plan" || id === "build") selectMode(id, "keyboard");
-      }
-    };
-    const timer = window.setTimeout(() => {
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [modeMenuOpen, mode]);
-  useEffect(() => {
-    if (!workspaceMenuOpen) return;
-    const optionButtons = () =>
-      Array.from(
-        workspaceMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-workspace-option]") ??
-          [],
-      ).filter((button) => !button.disabled);
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && workspaceMenuRef.current?.contains(target)) return;
-      event.preventDefault();
-      setWorkspaceMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setWorkspaceMenuOpen(false);
-        return;
-      }
-      const options = optionButtons();
-      if (options.length === 0) return;
-      const active = document.activeElement as HTMLElement | null;
-      const index = options.findIndex((button) => button === active);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          index < 0
-            ? delta > 0
-              ? 0
-              : options.length - 1
-            : (index + delta + options.length) % options.length;
-        options[next]?.focus();
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
-        event.preventDefault();
-        const id = options[index]?.dataset.workspaceMode as WorkspaceMode | undefined;
-        if (id) selectWorkspaceMode(id, "keyboard");
-      }
-    };
-    const timer = window.setTimeout(() => {
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [workspaceMenuOpen, providerNativeWorkspaceAvailable, canPickWorkspace]);
-  useEffect(() => {
-    if (!projectMenuOpen) return;
-    const optionButtons = () =>
-      Array.from(
-        projectMenuRef.current?.querySelectorAll<HTMLButtonElement>("[data-project-option]") ?? [],
-      );
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && projectMenuRef.current?.contains(target)) return;
-      event.preventDefault();
-      setProjectMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setProjectMenuOpen(false);
-        return;
-      }
-      const options = optionButtons();
-      if (options.length === 0) return;
-      const active = document.activeElement as HTMLElement | null;
-      const index = options.findIndex((button) => button === active);
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          index < 0
-            ? delta > 0
-              ? 0
-              : options.length - 1
-            : (index + delta + options.length) % options.length;
-        options[next]?.focus();
-        return;
-      }
-      if (event.key === "Home") {
-        event.preventDefault();
-        options[0]?.focus();
-        return;
-      }
-      if (event.key === "End") {
-        event.preventDefault();
-        options[options.length - 1]?.focus();
-        return;
-      }
-      if ((event.key === "Enter" || event.key === " ") && index >= 0) {
-        event.preventDefault();
-        const projectId = options[index]?.dataset.projectId;
-        if (projectId) selectProject(projectId, "keyboard");
-      }
-    };
-    const timer = window.setTimeout(() => {
-      document.addEventListener("pointerdown", onPointerDown, true);
-      document.addEventListener("keydown", onKeyDown);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [projectMenuOpen, onSelectProject]);
-  useEffect(() => {
-    if (!canSwitchProvider) setProviderMenuOpen(false);
-  }, [canSwitchProvider]);
+    if (!canSwitchProvider && providerMenuOpen) composerPopovers.closeMenus();
+  }, [canSwitchProvider, composerPopovers.closeMenus, providerMenuOpen]);
   useEffect(() => {
     if (profiles.length === 0) return;
     if (provider === "claude-code") {
@@ -2034,11 +1722,11 @@ export function Conversation({
   const canPickModel = !managedMode && !runActive && modelOptions.length > 0;
   const canPickMode = !managedMode && !runActive;
   useEffect(() => {
-    if (!canPickModel) setModelMenuOpen(false);
-  }, [canPickModel]);
+    if (!canPickModel && modelMenuOpen) composerPopovers.closeMenus();
+  }, [canPickModel, modelMenuOpen, composerPopovers.closeMenus]);
   useEffect(() => {
-    if (!canPickMode) setModeMenuOpen(false);
-  }, [canPickMode]);
+    if (!canPickMode && modeMenuOpen) composerPopovers.closeMenus();
+  }, [canPickMode, modeMenuOpen, composerPopovers.closeMenus]);
   const providerReadiness = assessProviderRunReadiness({
     provider,
     discoveryLoaded: providersLoaded,
@@ -2957,7 +2645,7 @@ export function Conversation({
   const selectPreviousWorktree = () => {
     if (!previousWorktreeSeed) return;
     setWorkspaceMode("shared");
-    setWorkspaceMenuOpen(false);
+    composerPopovers.closeMenus();
     onSelectWorktree(previousWorktreeSeed.worktreePath);
   };
   const showSharedWorktreePicker = canPickWorkspace && workspaceMode === "shared";
@@ -3936,7 +3624,7 @@ export function Conversation({
                               className="composer-provider-option add"
                               aria-label="Add project: Register a local repository once"
                               onClick={() => {
-                                setProjectMenuOpen(false);
+                                composerPopovers.closeMenus();
                                 onAddProject();
                               }}
                             >
@@ -4610,14 +4298,7 @@ export function Conversation({
                           onOpenProfiles(provider);
                           return;
                         }
-                        setModelMenuOpen(false);
-                        setModeMenuOpen(false);
-                        setProviderMenuOpen((open) => {
-                          if (open) return false;
-                          // Block accidental option activation from the open gesture.
-                          providerMenuOpenedAtRef.current = performance.now() + 200;
-                          return true;
-                        });
+                        composerPopovers.toggleMenu("provider");
                       }}
                     >
                       <span className="pv" aria-hidden="true">
@@ -4761,7 +4442,7 @@ export function Conversation({
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            setProviderMenuOpen(false);
+                            composerPopovers.closeMenus();
                             onOpenProfiles(provider);
                           }}
                         >
@@ -4795,13 +4476,7 @@ export function Conversation({
                         event.stopPropagation();
                         if (managedMode) return;
                         if (!canPickModel) return;
-                        setProviderMenuOpen(false);
-                        setModeMenuOpen(false);
-                        setModelMenuOpen((open) => {
-                          if (open) return false;
-                          modelMenuOpenedAtRef.current = performance.now() + 200;
-                          return true;
-                        });
+                        composerPopovers.toggleMenu("model");
                       }}
                     >
                       {showReasoningEffort
@@ -4871,9 +4546,9 @@ export function Conversation({
                                   onClick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
-                                    if (performance.now() < modelMenuOpenedAtRef.current) return;
+                                    if (!composerPopovers.pointerSelectionAllowed("model")) return;
                                     setReasoningEffort(effort);
-                                    setModelMenuOpen(false);
+                                    composerPopovers.closeMenus();
                                   }}
                                 >
                                   <span className="n">{effort}</span>
