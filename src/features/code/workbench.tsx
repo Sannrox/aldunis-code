@@ -57,6 +57,7 @@ import {
   type WorkbenchStateProjection,
 } from "./workbench-projection-sync";
 import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
+import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
 import { DomainPage } from "../shell/domain-page";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
@@ -1193,17 +1194,9 @@ export function CodeWorkbench({
     };
   }, [prStatusLookupKey]);
   const worktreeLimit = managedWorktreeLimitPreference;
-  const postLifecycle = async (route: string, body: Record<string, unknown>) => {
-    const response = await fetch(route, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) throw new Error(result.error ?? "Conversation lifecycle action failed.");
-    await refreshStateProjection();
-    return result;
-  };
+  const lifecycleControl = new ConversationLifecycleControl(refreshStateProjection);
+  const postLifecycle = (route: string, body: Record<string, unknown>) =>
+    lifecycleControl.post(route, body);
   const manageConversation = async (
     conversation: ConversationSummary,
     action: "rename" | "pin" | "archive" | "restore" | "delete",
@@ -1234,17 +1227,7 @@ export function CodeWorkbench({
           active instanceof HTMLElement
             ? (active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null)
             : null;
-        const previewResponse = await fetch("/api/state/conversations/delete/preview", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ threadId: conversation.id }),
-        });
-        const preview = (await previewResponse.json()) as {
-          affectedRecords?: Record<string, number>;
-          excluded?: string[];
-          error?: string;
-        };
-        if (!previewResponse.ok) throw new Error(preview.error ?? "Deletion preview failed.");
+        const preview = await lifecycleControl.previewDeletion(conversation.id);
         setDeleteTarget({ conversation, preview });
       }
     } catch (error) {
@@ -1971,21 +1954,18 @@ export function CodeWorkbench({
           }}
           onDelete={async () => {
             const conversation = deleteTarget.conversation;
-            const response = await fetch("/api/state/conversations/delete", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ threadId: conversation.id, confirm: true }),
+            const outcome = await lifecycleControl.deleteConversation(conversation.id, {
+              primaryId,
+              secondaryId,
             });
-            const result = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(result.error ?? "Conversation deletion failed.");
-            if (primaryId === conversation.id) setPrimaryId(null);
-            if (secondaryId === conversation.id) setSecondaryId(null);
+            setPrimaryId(outcome.selection.primaryId);
+            setSecondaryId(outcome.selection.secondaryId);
             setConversations((current) => current.filter((item) => item.id !== conversation.id));
-            void refreshStateProjection().catch(() =>
+            if (outcome.refreshFailed) {
               setLifecycleError(
                 "Conversation deleted, but the conversation list could not be refreshed.",
-              ),
-            );
+              );
+            }
           }}
         />
       )}
@@ -2026,44 +2006,7 @@ export function CodeWorkbench({
             );
           }}
           onConfirm={async () => {
-            const targets = bulkReleaseTargets;
-            const failures: string[] = [];
-            let released = 0;
-            for (const conversation of targets) {
-              try {
-                const response = await fetch("/api/state/conversations/release-worktree", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ threadId: conversation.id, confirm: true }),
-                });
-                const result = (await response.json()) as {
-                  error?: string;
-                  released?: boolean;
-                  managedWorktreeCount?: number;
-                };
-                if (!response.ok) {
-                  throw new Error(result.error ?? "Managed worktree release failed.");
-                }
-                if (result.released) released += 1;
-                if (typeof result.managedWorktreeCount === "number") {
-                  setManagedWorktreeCount(result.managedWorktreeCount);
-                }
-              } catch (reason: unknown) {
-                const message =
-                  reason instanceof Error ? reason.message : "Managed worktree release failed.";
-                failures.push(`${conversation.title}: ${message}`);
-              }
-            }
-            try {
-              await refreshStateProjection();
-            } catch {
-              /* meter already updated from release responses when available */
-            }
-            if (failures.length > 0) {
-              const preview = failures.slice(0, 3).join("; ");
-              const more = failures.length > 3 ? ` (+${failures.length - 3} more)` : "";
-              throw new Error(`Released ${released} of ${targets.length}. ${preview}${more}`);
-            }
+            await lifecycleControl.releaseSettled(bulkReleaseTargets, setManagedWorktreeCount);
           }}
         />
       )}
