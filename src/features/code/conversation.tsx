@@ -116,21 +116,8 @@ import {
   dataTransferHasFiles,
 } from "../../lib/composer-images";
 import { stageComposerImages, stageComposerImageWithHost } from "../../lib/composer-image-staging";
-import {
-  createThreadBottomSettler,
-  nextThreadFollowEnabled,
-  readThreadScrollMetrics,
-  scrollThreadToBottom,
-  shouldPinThreadToBottom,
-} from "../../lib/thread-auto-follow";
-import {
-  readThreadScrollPosition,
-  restoreThreadScrollTop,
-  shouldRestoreThreadScrollOnOpen,
-  snapshotThreadScroll,
-  writeThreadScrollPosition,
-  type ConversationOpenScroll,
-} from "../../lib/thread-open-scroll";
+import type { ConversationOpenScroll } from "../../lib/thread-open-scroll";
+import { useTranscriptViewport } from "../../lib/transcript-viewport";
 import { loadConversationHistory, loadFreshConversationHistory } from "../../lib/local-state-load";
 import { useComposerPopoverInteraction } from "../../lib/composer-popover-interaction";
 import {
@@ -533,16 +520,6 @@ export function Conversation({
     if (active) return;
     voiceInputModule.reset();
   }, [active, voiceInputModule]);
-  /** Scroll container for the transcript; auto-follows when the operator holds the tail. */
-  const threadRef = useRef<HTMLDivElement>(null);
-  const followingRef = useRef(true);
-  const ignoreThreadScrollRef = useRef(false);
-  const bottomSettlerRef = useRef<ReturnType<typeof createThreadBottomSettler> | null>(null);
-  /** One-shot open placement after history is ready for this mount. */
-  const openScrollAppliedRef = useRef(false);
-  const conversationOpenScrollRef = useRef(conversationOpenScroll);
-  conversationOpenScrollRef.current = conversationOpenScroll;
-  const [following, setFollowing] = useState(true);
   const [messages, setMessages] = useState<
     Array<{ text: string; mode: InteractionMode; createdAt?: string }>
   >([]);
@@ -632,77 +609,6 @@ export function Conversation({
     observer.observe(composer);
     return () => observer.disconnect();
   }, []);
-  const setThreadFollowing = useCallback((value: boolean) => {
-    followingRef.current = value;
-    setFollowing(value);
-  }, []);
-  const pinThreadToBottom = useCallback(() => {
-    const thread = threadRef.current;
-    if (!thread) return;
-    ignoreThreadScrollRef.current = true;
-    scrollThreadToBottom(thread);
-    queueMicrotask(() => {
-      ignoreThreadScrollRef.current = false;
-    });
-  }, []);
-  const resetThreadToTop = useCallback(() => {
-    const thread = threadRef.current;
-    if (!thread || thread.scrollTop === 0) return;
-    ignoreThreadScrollRef.current = true;
-    thread.scrollTop = 0;
-    queueMicrotask(() => {
-      ignoreThreadScrollRef.current = false;
-    });
-  }, []);
-  const persistThreadScrollPosition = useCallback(() => {
-    if (conversationOpenScrollRef.current !== "remember") return;
-    const thread = threadRef.current;
-    const id = conversation?.id ?? threadId;
-    if (!thread || !id) return;
-    const metrics = readThreadScrollMetrics(thread);
-    writeThreadScrollPosition(
-      id,
-      snapshotThreadScroll({
-        ...metrics,
-        following: followingRef.current,
-      }),
-      typeof window === "undefined" ? null : window.localStorage,
-    );
-  }, [conversation?.id, threadId]);
-  const onThreadScroll = useCallback(() => {
-    if (ignoreThreadScrollRef.current) return;
-    const thread = threadRef.current;
-    if (!thread) return;
-    const nextFollowing = nextThreadFollowEnabled(readThreadScrollMetrics(thread));
-    if (!nextFollowing) bottomSettlerRef.current?.cancel();
-    setThreadFollowing(nextFollowing);
-    persistThreadScrollPosition();
-  }, [persistThreadScrollPosition, setThreadFollowing]);
-  const resumeThreadFollow = useCallback(() => {
-    setThreadFollowing(true);
-    const thread = threadRef.current;
-    if (!thread) return;
-    const settler =
-      bottomSettlerRef.current ??
-      createThreadBottomSettler(
-        (callback) => requestAnimationFrame(callback),
-        (handle) => cancelAnimationFrame(handle),
-      );
-    bottomSettlerRef.current = settler;
-    ignoreThreadScrollRef.current = true;
-    settler.settle(thread);
-    queueMicrotask(() => {
-      ignoreThreadScrollRef.current = false;
-    });
-  }, [setThreadFollowing]);
-  useEffect(() => {
-    return () => bottomSettlerRef.current?.cancel();
-  }, []);
-  useEffect(() => {
-    return () => {
-      persistThreadScrollPosition();
-    };
-  }, [persistThreadScrollPosition]);
   const [currentContextReceipt, setCurrentContextReceipt] = useState<ContextReceipt | null>(null);
   const [contextPackageBusy, setContextPackageBusy] = useState(false);
   const contextPins = useMemo<ContextPin[]>(
@@ -1360,7 +1266,6 @@ export function Conversation({
   const boundConversationWorkspaceMode = conversation?.workspaceMode;
   const conversationScopeKey = boundConversationId ?? `new:${repository?.projectId ?? "none"}`;
   useEffect(() => {
-    bottomSettlerRef.current?.cancel();
     voiceInputModule.reset();
     setHistoryRestored(boundConversationId === null);
     setHistoryRestoreError(null);
@@ -1406,8 +1311,6 @@ export function Conversation({
     setContextOpen(false);
     dispatchConversationRun({ type: "reset", epoch: ++runEpochReference.current });
     setRunId(null);
-    followingRef.current = true;
-    setFollowing(true);
     // Only rebind when the pane's conversation scope changes — not on every
     // composer chip edit (those would fight last-used persistence).
   }, [
@@ -1976,8 +1879,7 @@ export function Conversation({
       { text: value, mode: turnMode, createdAt: new Date().toISOString() },
     ]);
     // Sending always re-engages follow so the operator sees their prompt and the reply.
-    followingRef.current = true;
-    setFollowing(true);
+    transcriptViewport.engageFollow();
     if (promptOverride === undefined) setDraft("");
     const sentElementReferences = promptOverride === undefined ? elementReferences : [];
     if (promptOverride === undefined) setElementReferences([]);
@@ -2376,74 +2278,15 @@ export function Conversation({
     checkpoint?.state ?? "no-checkpoint",
     failure ? "failed" : "ok",
   ].join(":");
-  useLayoutEffect(() => {
-    // History is still loading — never commit the one-shot open placement yet.
-    if (!historyRestored) {
-      if (conversationEmpty) resetThreadToTop();
-      return;
-    }
-    if (conversationEmpty) {
-      openScrollAppliedRef.current = true;
-      resetThreadToTop();
-      return;
-    }
-
-    // First ready layout for this mount: honor open-scroll preference once.
-    if (!openScrollAppliedRef.current) {
-      openScrollAppliedRef.current = true;
-      const id = conversation?.id ?? threadId;
-      const saved =
-        conversationOpenScroll === "remember"
-          ? readThreadScrollPosition(id, typeof window === "undefined" ? null : window.localStorage)
-          : null;
-      if (shouldRestoreThreadScrollOnOpen(conversationOpenScroll, saved) && saved) {
-        const thread = threadRef.current;
-        if (thread) {
-          setThreadFollowing(false);
-          ignoreThreadScrollRef.current = true;
-          restoreThreadScrollTop(thread, saved);
-          queueMicrotask(() => {
-            ignoreThreadScrollRef.current = false;
-          });
-        }
-        return;
-      }
-      setThreadFollowing(true);
-      pinThreadToBottom();
-      return;
-    }
-
-    if (!shouldPinThreadToBottom(followingRef.current, !conversationEmpty)) return;
-    pinThreadToBottom();
-  }, [
-    activePanel,
-    conversation?.id,
-    conversationEmpty,
-    conversationOpenScroll,
-    historyRestored,
-    pinThreadToBottom,
-    resetThreadToTop,
-    setThreadFollowing,
-    threadFollowContentKey,
-    threadId,
-  ]);
-  useEffect(() => {
-    const thread = threadRef.current;
-    if (!thread) return;
-    const content = thread.querySelector(".wrap");
-    if (!(content instanceof HTMLElement)) return;
-    const observer = new ResizeObserver(() => {
-      if (conversationEmpty) {
-        resetThreadToTop();
-        return;
-      }
-      if (!shouldPinThreadToBottom(followingRef.current, !conversationEmpty)) return;
-      pinThreadToBottom();
-    });
-    observer.observe(content);
-    observer.observe(thread);
-    return () => observer.disconnect();
-  }, [conversationEmpty, pinThreadToBottom, resetThreadToTop, conversation?.id, historyRestored]);
+  const transcriptViewport = useTranscriptViewport({
+    scopeKey: conversationScopeKey,
+    conversationId: conversation?.id ?? threadId,
+    openScroll: conversationOpenScroll,
+    historyReady: historyRestored,
+    empty: conversationEmpty,
+    contentKey: threadFollowContentKey,
+    layoutKey: activePanel,
+  });
   const failureView = failure ? parseProviderFailure(failure.message) : null;
   const failureNeedsConfiguration = failure
     ? providerFailureNeedsConfiguration(failure.message) ||
@@ -2991,11 +2834,11 @@ export function Conversation({
           <div className="thread-shell">
             <div
               className="thread"
-              ref={threadRef}
-              onScroll={onThreadScroll}
-              data-following={following ? "true" : "false"}
+              ref={transcriptViewport.viewportRef}
+              onScroll={transcriptViewport.onScroll}
+              data-following={transcriptViewport.following ? "true" : "false"}
             >
-              <div className="wrap">
+              <div className="wrap" ref={transcriptViewport.contentRef}>
                 {conversationEmpty ? (
                   <section
                     className={`conversation-empty sparse ${canPickWorkspace ? "conversation-empty--setup" : ""} ${conversationWorktreeMissing ? "conversation-empty--blocked" : ""}`.trim()}
@@ -3419,11 +3262,11 @@ export function Conversation({
                 )}
               </div>
             </div>
-            {!following && !conversationEmpty && (
+            {!transcriptViewport.following && !conversationEmpty && (
               <button
                 type="button"
                 className="thread-follow-jump"
-                onClick={resumeThreadFollow}
+                onClick={transcriptViewport.jumpToLatest}
                 aria-label={`Jump to latest messages, ${pane} pane`}
               >
                 Jump to latest
