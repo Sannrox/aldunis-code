@@ -1,11 +1,17 @@
 import { BrowserWindow, webContents, type WebContents } from "electron";
-import { assertBrowserUrl, type BrowserHost, type BrowserHostResult, type BrowserHostState, type BrowserOperation } from "../server/browser.ts";
+import {
+  assertBrowserUrl,
+  type BrowserHost,
+  type BrowserHostResult,
+  type BrowserHostState,
+  type BrowserOperation,
+} from "../server/browser.ts";
 import { BROWSER_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "./channels.ts";
+import { startPictureInPictureCapture } from "./picture-in-picture-capture.ts";
 
 const MAX_SNAPSHOT_TEXT = 20_000;
 const MAX_SNAPSHOT_ELEMENTS = 100;
 const MAX_SCREENSHOT_BYTES = 512_000;
-const PICTURE_IN_PICTURE_FPS = 12;
 
 type AgentInput =
   | { kind: "key"; type: "keyDown"; key: string }
@@ -29,18 +35,17 @@ interface BrowserEntry {
   pendingAgentInputs: AgentInput[];
   actions: Array<{ kind: string; at: string }>;
   pictureInPicture: BrowserWindow | null;
-  captureTimer: NodeJS.Timeout | null;
-  captureInFlight: boolean;
+  stopCapture: (() => void) | null;
 }
 
 function isLoopbackUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return (
-      (url.protocol === "http:" || url.protocol === "https:")
-      && ["localhost", "127.0.0.1", "::1"].includes(url.hostname.replace(/^\[|\]$/g, ""))
-      && !url.username
-      && !url.password
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      ["localhost", "127.0.0.1", "::1"].includes(url.hostname.replace(/^\[|\]$/g, "")) &&
+      !url.username &&
+      !url.password
     );
   } catch {
     return false;
@@ -102,7 +107,10 @@ export class SharedBrowserManager implements BrowserHost {
     this.#ownerWindow = ownerWindow;
     ownerWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       const partition = typeof params.partition === "string" ? params.partition : "";
-      if (params.src !== "about:blank" || !/^persist:aldunis-browser-[0-9a-f]{32}$/.test(partition)) {
+      if (
+        params.src !== "about:blank" ||
+        !/^persist:aldunis-browser-[0-9a-f]{32}$/.test(partition)
+      ) {
         event.preventDefault();
         return;
       }
@@ -113,7 +121,9 @@ export class SharedBrowserManager implements BrowserHost {
     });
     ownerWindow.webContents.on("did-attach-webview", (_event, guest) => {
       guest.setWindowOpenHandler(() => ({ action: "deny" }));
-      guest.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+      guest.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+        callback(false),
+      );
       guest.session.setPermissionCheckHandler(() => false);
       guest.on("will-navigate", (event, url) => {
         if (!isLoopbackUrl(url)) event.preventDefault();
@@ -127,24 +137,26 @@ export class SharedBrowserManager implements BrowserHost {
   registerView(sessionId: string, guestId: number, originInput: string): boolean {
     const origin = assertBrowserUrl(originInput);
     const guest = webContents.fromId(guestId);
-    if (!guest || guest.isDestroyed() || guest.hostWebContents !== this.#ownerWindow?.webContents) return false;
+    if (!guest || guest.isDestroyed() || guest.hostWebContents !== this.#ownerWindow?.webContents)
+      return false;
     const existing = this.#entries.get(sessionId);
     if (existing && new URL(existing.origin).origin !== new URL(origin).origin) return false;
     const shouldConfigure = !existing || existing.contents !== guest;
-    const entry = existing ?? {
-      sessionId,
-      origin,
-      contents: null,
-      debuggerReady: false,
-      controlEpoch: 0,
-      controller: "none",
-      error: null,
-      pendingAgentInputs: [],
-      actions: [],
-      pictureInPicture: null,
-      captureTimer: null,
-      captureInFlight: false,
-    } satisfies BrowserEntry;
+    const entry =
+      existing ??
+      ({
+        sessionId,
+        origin,
+        contents: null,
+        debuggerReady: false,
+        controlEpoch: 0,
+        controller: "none",
+        error: null,
+        pendingAgentInputs: [],
+        actions: [],
+        pictureInPicture: null,
+        stopCapture: null,
+      } satisfies BrowserEntry);
     entry.origin = origin;
     entry.contents = guest;
     entry.error = null;
@@ -153,7 +165,10 @@ export class SharedBrowserManager implements BrowserHost {
     if (shouldConfigure) {
       this.#configureGuest(entry, guest);
       void guest.loadURL(origin).catch((error: unknown) => {
-        entry.error = error instanceof Error ? error.message.slice(0, 240) : "The shared browser could not load the preview.";
+        entry.error =
+          error instanceof Error
+            ? error.message.slice(0, 240)
+            : "The shared browser could not load the preview.";
       });
     }
     void this.#enableDebugger(entry);
@@ -202,17 +217,26 @@ export class SharedBrowserManager implements BrowserHost {
     const entry = this.#entries.get(sessionId);
     const contents = entry?.contents;
     if (!entry || !contents || contents.isDestroyed() || !entry.debuggerReady) {
-      return { ok: false, code: "browser_view_unavailable", message: "The shared browser view is not connected." };
+      return {
+        ok: false,
+        code: "browser_view_unavailable",
+        message: "The shared browser view is not connected.",
+      };
     }
     if (entry.controlEpoch !== expectedControlEpoch) {
       entry.controller = "human";
-      return { ok: false, code: "browser_human_control", message: "The operator took control of the shared browser." };
+      return {
+        ok: false,
+        code: "browser_human_control",
+        message: "The operator took control of the shared browser.",
+      };
     }
     try {
       if (operation.kind === "status") {
         return { ok: true, kind: "status", state: await this.getState(sessionId) };
       }
-      if (operation.kind === "snapshot") return { ok: true, kind: "snapshot", snapshot: await this.#snapshot(entry) };
+      if (operation.kind === "snapshot")
+        return { ok: true, kind: "snapshot", snapshot: await this.#snapshot(entry) };
       if (operation.kind === "navigate") {
         const url = assertBrowserUrl(operation.url);
         if (!isApprovedPageUrl(url, entry.origin)) {
@@ -225,31 +249,72 @@ export class SharedBrowserManager implements BrowserHost {
         await this.#command(entry, "Page.navigate", { url }, expectedControlEpoch);
         if (!this.#completeAgentAction(entry, expectedControlEpoch)) return this.#controlChanged();
         this.#recordAction(entry, operation.kind);
-        return { ok: true, kind: "action", message: `Navigated to ${new URL(url).origin}${new URL(url).pathname}`, state: await this.getState(sessionId) };
+        return {
+          ok: true,
+          kind: "action",
+          message: `Navigated to ${new URL(url).origin}${new URL(url).pathname}`,
+          state: await this.getState(sessionId),
+        };
       }
       if (operation.kind === "click") {
         if (operation.selector) {
-          const result = await this.#evaluate(entry, `(() => {
+          const result = await this.#evaluate(
+            entry,
+            `(() => {
             const element = document.querySelector(${safeJson(operation.selector)});
             if (!element) return { error: "The requested element is not present." };
             element.scrollIntoView({ block: "center", inline: "center" });
             element.click();
             return { ok: true };
-          })()`, expectedControlEpoch);
-          if (result?.error) return { ok: false, code: "browser_element_missing", message: String(result.error).slice(0, 240) };
+          })()`,
+            expectedControlEpoch,
+          );
+          if (result?.error)
+            return {
+              ok: false,
+              code: "browser_element_missing",
+              message: String(result.error).slice(0, 240),
+            };
         } else {
-          await this.#sendMouse(entry, "mousePressed", operation.x!, operation.y!, expectedControlEpoch);
-          await this.#sendMouse(entry, "mouseReleased", operation.x!, operation.y!, expectedControlEpoch);
+          await this.#sendMouse(
+            entry,
+            "mousePressed",
+            operation.x!,
+            operation.y!,
+            expectedControlEpoch,
+          );
+          await this.#sendMouse(
+            entry,
+            "mouseReleased",
+            operation.x!,
+            operation.y!,
+            expectedControlEpoch,
+          );
         }
         if (!this.#completeAgentAction(entry, expectedControlEpoch)) return this.#controlChanged();
         this.#recordAction(entry, operation.kind);
-        return { ok: true, kind: "action", message: "Clicked the requested page element.", state: await this.getState(sessionId) };
+        return {
+          ok: true,
+          kind: "action",
+          message: "Clicked the requested page element.",
+          state: await this.getState(sessionId),
+        };
       }
       if (operation.kind === "type") {
-        await this.#command(entry, "Input.insertText", { text: operation.text }, expectedControlEpoch);
+        await this.#command(
+          entry,
+          "Input.insertText",
+          { text: operation.text },
+          expectedControlEpoch,
+        );
         if (!this.#completeAgentAction(entry, expectedControlEpoch)) return this.#controlChanged();
         this.#recordAction(entry, operation.kind);
-        return { ok: true, kind: "action", message: "Inserted text into the focused page control.", state: await this.getState(sessionId) };
+        return {
+          ok: true,
+          kind: "action",
+          message: "Inserted text into the focused page control.",
+          state: await this.getState(sessionId),
+        };
       }
       if (operation.kind === "press") {
         await this.#dispatchAgentInput(
@@ -259,22 +324,47 @@ export class SharedBrowserManager implements BrowserHost {
           { type: "keyDown", key: operation.key },
           expectedControlEpoch,
         );
-        await this.#command(entry, "Input.dispatchKeyEvent", { type: "keyUp", key: operation.key }, expectedControlEpoch);
+        await this.#command(
+          entry,
+          "Input.dispatchKeyEvent",
+          { type: "keyUp", key: operation.key },
+          expectedControlEpoch,
+        );
         if (!this.#completeAgentAction(entry, expectedControlEpoch)) return this.#controlChanged();
         this.#recordAction(entry, operation.kind);
-        return { ok: true, kind: "action", message: `Pressed ${operation.key}.`, state: await this.getState(sessionId) };
+        return {
+          ok: true,
+          kind: "action",
+          message: `Pressed ${operation.key}.`,
+          state: await this.getState(sessionId),
+        };
       }
       if (operation.kind === "scroll") {
-        await this.#evaluate(entry, `window.scrollBy(${operation.x}, ${operation.y})`, expectedControlEpoch);
+        await this.#evaluate(
+          entry,
+          `window.scrollBy(${operation.x}, ${operation.y})`,
+          expectedControlEpoch,
+        );
         if (!this.#completeAgentAction(entry, expectedControlEpoch)) return this.#controlChanged();
         this.#recordAction(entry, operation.kind);
-        return { ok: true, kind: "action", message: "Scrolled the shared browser.", state: await this.getState(sessionId) };
+        return {
+          ok: true,
+          kind: "action",
+          message: "Scrolled the shared browser.",
+          state: await this.getState(sessionId),
+        };
       }
       await new Promise((resolve) => setTimeout(resolve, operation.milliseconds));
-      return { ok: true, kind: "action", message: "Wait completed.", state: await this.getState(sessionId) };
+      return {
+        ok: true,
+        kind: "action",
+        message: "Wait completed.",
+        state: await this.getState(sessionId),
+      };
     } catch (error) {
       if (error instanceof BrowserControlChangedError) return this.#controlChanged();
-      entry.error = error instanceof Error ? error.message.slice(0, 240) : "The browser operation failed.";
+      entry.error =
+        error instanceof Error ? error.message.slice(0, 240) : "The browser operation failed.";
       return { ok: false, code: "browser_operation_failed", message: entry.error };
     }
   }
@@ -338,9 +428,12 @@ export class SharedBrowserManager implements BrowserHost {
         this.#stopCapture(entry);
       }
     });
-    if (process.platform === "darwin") picture.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (process.platform === "darwin")
+      picture.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     picture.setSkipTaskbar(true);
-    await picture.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(pictureInPictureDocument())}`);
+    await picture.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(pictureInPictureDocument())}`,
+    );
     picture.show();
     this.#startCapture(entry);
   }
@@ -356,7 +449,9 @@ export class SharedBrowserManager implements BrowserHost {
   #configureGuest(entry: BrowserEntry, contents: WebContents): void {
     const allow = (value: string) => isApprovedPageUrl(value, entry.origin);
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
-    contents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    contents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
+      callback(false),
+    );
     contents.session.setPermissionCheckHandler(() => false);
     contents.on("will-navigate", (event, url) => {
       if (!allow(url)) event.preventDefault();
@@ -365,24 +460,33 @@ export class SharedBrowserManager implements BrowserHost {
       if (!allow(url)) event.preventDefault();
     });
     contents.on("before-input-event", (_event, input) => {
-      if (input.type === "keyDown" && this.#consumeAgentInput(entry, {
-        kind: "key",
-        type: "keyDown",
-        key: input.key,
-      })) return;
+      if (
+        input.type === "keyDown" &&
+        this.#consumeAgentInput(entry, {
+          kind: "key",
+          type: "keyDown",
+          key: input.key,
+        })
+      )
+        return;
       if (input.type === "keyDown" || input.type === "mouseDown") {
         entry.controlEpoch += 1;
         entry.controller = "human";
       }
     });
     contents.on("before-mouse-event", (_event, mouse) => {
-      if (mouse.type === "mouseDown" && mouse.button === "left" && this.#consumeAgentInput(entry, {
-        kind: "mouse",
-        type: "mouseDown",
-        x: mouse.x,
-        y: mouse.y,
-        button: "left",
-      })) return;
+      if (
+        mouse.type === "mouseDown" &&
+        mouse.button === "left" &&
+        this.#consumeAgentInput(entry, {
+          kind: "mouse",
+          type: "mouseDown",
+          x: mouse.x,
+          y: mouse.y,
+          button: "left",
+        })
+      )
+        return;
       if (mouse.type === "mouseDown" || mouse.type === "mouseWheel") {
         entry.controlEpoch += 1;
         entry.controller = "human";
@@ -403,7 +507,10 @@ export class SharedBrowserManager implements BrowserHost {
       entry.error = null;
     } catch (error) {
       entry.debuggerReady = false;
-      entry.error = error instanceof Error ? error.message.slice(0, 240) : "The browser debugger could not attach.";
+      entry.error =
+        error instanceof Error
+          ? error.message.slice(0, 240)
+          : "The browser debugger could not attach.";
     }
   }
 
@@ -417,20 +524,29 @@ export class SharedBrowserManager implements BrowserHost {
       throw new Error("The shared browser debugger is unavailable.");
     }
     if (
-      expectedControlEpoch !== undefined
-      && (entry.controlEpoch !== expectedControlEpoch || entry.controller !== "agent")
+      expectedControlEpoch !== undefined &&
+      (entry.controlEpoch !== expectedControlEpoch || entry.controller !== "agent")
     ) {
       throw new BrowserControlChangedError();
     }
     return entry.contents.debugger.sendCommand(method, params);
   }
 
-  async #evaluate(entry: BrowserEntry, expression: string, expectedControlEpoch?: number): Promise<any> {
-    const result = await this.#command(entry, "Runtime.evaluate", {
-      expression,
-      returnByValue: true,
-      awaitPromise: true,
-    }, expectedControlEpoch);
+  async #evaluate(
+    entry: BrowserEntry,
+    expression: string,
+    expectedControlEpoch?: number,
+  ): Promise<any> {
+    const result = await this.#command(
+      entry,
+      "Runtime.evaluate",
+      {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      },
+      expectedControlEpoch,
+    );
     return result?.result?.value;
   }
 
@@ -441,20 +557,32 @@ export class SharedBrowserManager implements BrowserHost {
     y: number,
     expectedControlEpoch?: number,
   ): Promise<void> {
-    const expected = type === "mousePressed"
-      ? { kind: "mouse", type: "mouseDown", x, y, button: "left" } satisfies AgentInput
-      : null;
+    const expected =
+      type === "mousePressed"
+        ? ({ kind: "mouse", type: "mouseDown", x, y, button: "left" } satisfies AgentInput)
+        : null;
     if (expected) {
-      await this.#dispatchAgentInput(entry, expected, "Input.dispatchMouseEvent", {
-        type,
-        x,
-        y,
-        button: "left",
-        clickCount: 1,
-      }, expectedControlEpoch);
+      await this.#dispatchAgentInput(
+        entry,
+        expected,
+        "Input.dispatchMouseEvent",
+        {
+          type,
+          x,
+          y,
+          button: "left",
+          clickCount: 1,
+        },
+        expectedControlEpoch,
+      );
       return;
     }
-    await this.#command(entry, "Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, expectedControlEpoch);
+    await this.#command(
+      entry,
+      "Input.dispatchMouseEvent",
+      { type, x, y, button: "left", clickCount: 1 },
+      expectedControlEpoch,
+    );
   }
 
   async #dispatchAgentInput(
@@ -482,11 +610,13 @@ export class SharedBrowserManager implements BrowserHost {
     const index = entry.pendingAgentInputs.findIndex((expected) => {
       if (expected.kind !== actual.kind || expected.type !== actual.type) return false;
       if (expected.kind === "key" && actual.kind === "key") return expected.key === actual.key;
-      return expected.kind === "mouse"
-        && actual.kind === "mouse"
-        && expected.x === actual.x
-        && expected.y === actual.y
-        && expected.button === actual.button;
+      return (
+        expected.kind === "mouse" &&
+        actual.kind === "mouse" &&
+        expected.x === actual.x &&
+        expected.y === actual.y &&
+        expected.button === actual.button
+      );
     });
     if (index < 0) return false;
     entry.pendingAgentInputs.splice(index, 1);
@@ -508,11 +638,19 @@ export class SharedBrowserManager implements BrowserHost {
   }
 
   #controlChanged(): BrowserHostResult {
-    return { ok: false, code: "browser_human_control", message: "The operator took control of the shared browser." };
+    return {
+      ok: false,
+      code: "browser_human_control",
+      message: "The operator took control of the shared browser.",
+    };
   }
 
-  async #snapshot(entry: BrowserEntry): Promise<import("../server/browser.ts").BrowserPageSnapshot> {
-    const value = await this.#evaluate(entry, `(() => {
+  async #snapshot(
+    entry: BrowserEntry,
+  ): Promise<import("../server/browser.ts").BrowserPageSnapshot> {
+    const value = await this.#evaluate(
+      entry,
+      `(() => {
       const clip = (input, max) => String(input ?? "").replace(/\\s+/g, " ").trim().slice(0, max);
       const cssPath = (element) => {
         if (element.id && /^[A-Za-z][A-Za-z0-9_:-]{0,120}$/.test(element.id)) return "#" + element.id;
@@ -546,8 +684,9 @@ export class SharedBrowserManager implements BrowserHost {
         visibleText: clip(document.body?.innerText, ${MAX_SNAPSHOT_TEXT}),
         interactiveElements: nodes,
       };
-    })()`);
-    const base = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    })()`,
+    );
+    const base = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
     let screenshot: string | null = null;
     if (entry.contents && !entry.contents.isDestroyed()) {
       const image = await entry.contents.capturePage();
@@ -555,14 +694,22 @@ export class SharedBrowserManager implements BrowserHost {
       const resized = size.width > 1280 ? image.resize({ width: 1280 }) : image;
       let jpeg = resized.toJPEG(78);
       if (jpeg.byteLength > MAX_SCREENSHOT_BYTES) jpeg = resized.resize({ width: 960 }).toJPEG(70);
-      if (jpeg.byteLength <= MAX_SCREENSHOT_BYTES) screenshot = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+      if (jpeg.byteLength <= MAX_SCREENSHOT_BYTES)
+        screenshot = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
     }
     return {
-      url: typeof base.url === "string" && isApprovedPageUrl(base.url, entry.origin) ? base.url : null,
+      url:
+        typeof base.url === "string" && isApprovedPageUrl(base.url, entry.origin) ? base.url : null,
       title: typeof base.title === "string" ? base.title.slice(0, 240) : null,
       loading: base.loading === true,
-      visibleText: typeof base.visibleText === "string" ? base.visibleText.slice(0, MAX_SNAPSHOT_TEXT) : "",
-      interactiveElements: Array.isArray(base.interactiveElements) ? base.interactiveElements.slice(0, MAX_SNAPSHOT_ELEMENTS) as import("../server/browser.ts").BrowserPageElement[] : [],
+      visibleText:
+        typeof base.visibleText === "string" ? base.visibleText.slice(0, MAX_SNAPSHOT_TEXT) : "",
+      interactiveElements: Array.isArray(base.interactiveElements)
+        ? (base.interactiveElements.slice(
+            0,
+            MAX_SNAPSHOT_ELEMENTS,
+          ) as import("../server/browser.ts").BrowserPageElement[])
+        : [],
       screenshot,
       actionTimeline: [...entry.actions],
     };
@@ -574,19 +721,25 @@ export class SharedBrowserManager implements BrowserHost {
   }
 
   #startCapture(entry: BrowserEntry): void {
-    if (entry.captureTimer) return;
-    const tick = async () => {
-      if (entry.captureInFlight || !entry.pictureInPicture || entry.pictureInPicture.isDestroyed()) return;
+    if (entry.stopCapture || !entry.pictureInPicture) return;
+    const picture = entry.pictureInPicture;
+    entry.stopCapture = startPictureInPictureCapture(picture, async () => {
       if (!entry.contents || entry.contents.isDestroyed()) return;
-      entry.captureInFlight = true;
       try {
         const image = await entry.contents.capturePage();
         const size = image.getSize();
         const resized = size.width > 1280 ? image.resize({ width: 1280 }) : image;
         let jpeg = resized.toJPEG(78);
-        if (jpeg.byteLength > MAX_SCREENSHOT_BYTES) jpeg = resized.resize({ width: 960 }).toJPEG(70);
-        if (jpeg.byteLength <= MAX_SCREENSHOT_BYTES && entry.pictureInPicture && !entry.pictureInPicture.isDestroyed()) {
-          entry.pictureInPicture.webContents.send(BROWSER_PICTURE_IN_PICTURE_FRAME_CHANNEL, {
+        if (jpeg.byteLength > MAX_SCREENSHOT_BYTES)
+          jpeg = resized.resize({ width: 960 }).toJPEG(70);
+        if (
+          jpeg.byteLength <= MAX_SCREENSHOT_BYTES &&
+          entry.pictureInPicture === picture &&
+          !picture.isDestroyed() &&
+          picture.isVisible() &&
+          !picture.isMinimized()
+        ) {
+          picture.webContents.send(BROWSER_PICTURE_IN_PICTURE_FRAME_CHANNEL, {
             dataUrl: `data:image/jpeg;base64,${jpeg.toString("base64")}`,
             width: size.width,
             height: size.height,
@@ -594,18 +747,12 @@ export class SharedBrowserManager implements BrowserHost {
         }
       } catch {
         // A closing guest or PiP window can race a capture. The next tick retries.
-      } finally {
-        entry.captureInFlight = false;
       }
-    };
-    void tick();
-    entry.captureTimer = setInterval(() => { void tick(); }, Math.round(1_000 / PICTURE_IN_PICTURE_FPS));
-    entry.captureTimer.unref();
+    });
   }
 
   #stopCapture(entry: BrowserEntry): void {
-    if (entry.captureTimer) clearInterval(entry.captureTimer);
-    entry.captureTimer = null;
-    entry.captureInFlight = false;
+    entry.stopCapture?.();
+    entry.stopCapture = null;
   }
 }
