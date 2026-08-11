@@ -134,9 +134,10 @@ the same names, and fails before publication if an update manifest references
 an asset that was not generated for that architecture.
 
 The updater is disabled for development builds, missing update manifests, and
-Linux packages that are not running from an AppImage. A restart first closes
-the local host and shared-browser sessions through the normal desktop shutdown
-path, then invokes Electron's signed-package installer. The renderer receives
+Linux packages that are not running from an AppImage. A restart first hands the
+downloaded package to Electron's native installer. The installer-triggered quit
+then closes the local host and shared-browser sessions through the normal
+desktop shutdown path. The renderer receives
 only update state and the four explicit actions: check, download, install, and
 subscribe to state changes.
 

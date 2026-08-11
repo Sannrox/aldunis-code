@@ -1,4 +1,11 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import {
+  app,
+  autoUpdater as nativeAutoUpdater,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+} from "electron";
 import electronUpdater from "electron-updater";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -13,11 +20,11 @@ import {
 import {
   closeServer,
   DESKTOP_PROTOCOL,
+  finishDesktopShutdown,
   isLiveDesktopWindow,
   isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
-  prepareForUpdateShutdown,
   selectedDirectoryPath,
   shouldHideWindowOnClose,
 } from "./lifecycle.ts";
@@ -63,6 +70,7 @@ let approvedOrigins: Set<string> | null = null;
 let releaseWriterLease: (() => Promise<void>) | null = null;
 let desktopUpdater: DesktopUpdater | null = null;
 let shuttingDown = false;
+let updateInstallHandoffStarted = false;
 
 function showWindow(): void {
   const activeWindow = window;
@@ -93,20 +101,6 @@ async function closeLocalServices(): Promise<void> {
   }
 }
 
-async function prepareForUpdate(): Promise<void> {
-  shuttingDown = true;
-  await prepareForUpdateShutdown({
-    disposeUpdater: () => desktopUpdater?.dispose(),
-    destroyWindow: () => {
-      if (window && !window.isDestroyed()) window.destroy();
-    },
-    closeServices: closeLocalServices,
-    onCloseError: () => {
-      console.error("Local services could not be closed cleanly before installing the update.");
-    },
-  });
-}
-
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
@@ -121,6 +115,9 @@ if (!gotSingleInstanceLock) {
     handleDeepLink(url);
   });
   app.on("activate", showWindow);
+  nativeAutoUpdater.on("before-quit-for-update", () => {
+    updateInstallHandoffStarted = true;
+  });
 
   app
     .whenReady()
@@ -175,7 +172,8 @@ if (!gotSingleInstanceLock) {
       });
       browser.bindOwnerWindow(window);
       window.on("close", (event) => {
-        if (!shouldHideWindowOnClose(process.platform, shuttingDown)) return;
+        if (!shouldHideWindowOnClose(process.platform, shuttingDown || updateInstallHandoffStarted))
+          return;
         event.preventDefault();
         window?.hide();
       });
@@ -234,7 +232,6 @@ if (!gotSingleInstanceLock) {
             window.webContents.send(DESKTOP_UPDATE_STATE_CHANNEL, snapshot);
           }
         },
-        prepareForInstall: prepareForUpdate,
       });
       ipcMain.removeHandler(CHOOSE_DIRECTORY_CHANNEL);
       ipcMain.handle(CHOOSE_DIRECTORY_CHANNEL, async (event) => {
@@ -460,7 +457,16 @@ if (!gotSingleInstanceLock) {
     if (shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
-    desktopUpdater?.dispose();
-    void closeLocalServices().finally(() => app.quit());
+    void finishDesktopShutdown({
+      disposeUpdater: () => desktopUpdater?.dispose(),
+      destroyWindow: () => {
+        if (window && !window.isDestroyed()) window.destroy();
+      },
+      closeServices: closeLocalServices,
+    })
+      .catch(() => {
+        console.error("Local services could not be closed cleanly during desktop shutdown.");
+      })
+      .finally(() => app.quit());
   });
 }
