@@ -54,6 +54,10 @@
       "description": "The desktop conversation input surface that accepts typed or transient browser speech transcript text while selecting a provider, model, interaction mode, and explicit tool scope."
     },
     {
+      "name": "ComposerPopoverInteractionModule",
+      "description": "A deep renderer module that concentrates mutually-exclusive composer popover lifetime, opening-gesture isolation, outside-pointer suppression, keyboard traversal and activation, disabled-option filtering, and document-listener cleanup behind one hook interface while ConversationComposer retains option rendering and domain selection authority."
+    },
+    {
       "name": "PromptStash",
       "description": "A conversation-composer module that atomically loads, parks, restores or swaps, and removes bounded text-only drafts while hiding storage selection, identity isolation, migration, validation, capacity, and persistence failure handling behind one interface."
     },
@@ -737,6 +741,16 @@
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "uses_composer_popover_interaction",
+      "description": "The conversation composer delegates generic provider, model, mode, workspace, and project popover interaction lifetime to one renderer module without moving provider or workspace decisions behind that seam.",
+      "domain": "ConversationComposer",
+      "range": "ComposerPopoverInteractionModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
       }
     },
     {
@@ -1447,6 +1461,12 @@
       "subject": "ConversationComposer",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ComposerPopoverInteractionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#684",
+      "locator": "src/lib/composer-popover-interaction.ts; src/features/code/conversation.tsx; src/lib/composer-popover-interaction.test.ts",
       "confidence": 1.0
     },
     {
