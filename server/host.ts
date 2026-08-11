@@ -25,18 +25,8 @@ import {
 import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
 import { listChangedFiles, readFileDiff } from "./changes.ts";
-import {
-  DeliveryBroker,
-  draftPullRequest,
-  inspectDelivery,
-  type DeliveryAction,
-} from "./delivery.ts";
-import { BRANCH_PR_BATCH_LIMIT, inspectBranchPr, inspectBranchPrBatch } from "./branch-pr.ts";
-import {
-  ReleaseDeliveryBroker,
-  ReleaseDeliveryStore,
-  type ReleaseWorkflowAction,
-} from "./release-delivery-workflow.ts";
+import { DeliveryBroker } from "./delivery.ts";
+import { ReleaseDeliveryBroker, ReleaseDeliveryStore } from "./release-delivery-workflow.ts";
 import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
 import { projectDelegatedApprovals } from "./delegated-approvals.ts";
 import { projectDelegatedInputs } from "./delegated-inputs.ts";
@@ -45,7 +35,6 @@ import {
   deleteCheckpointReferences,
   discoverWorktrees,
   RepositoryError,
-  repositoryCommonDir,
 } from "./repository.ts";
 import {
   LocalStateError,
@@ -96,6 +85,7 @@ import { handleWorkspaceRoute } from "./workspace-routes.ts";
 import { handleChiseiRoute } from "./chisei-routes.ts";
 import { handleDelegatedControlRoute } from "./delegated-control-routes.ts";
 import { handleAutomationRoute } from "./automation-routes.ts";
+import { handleDeliveryRoute } from "./delivery-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -382,41 +372,6 @@ async function selectWorktreeForRepository(
     throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
   }
   return { root, worktree: selected };
-}
-
-async function selectedReleaseProject(
-  state: LocalStateStore,
-  projectId: string,
-  context: { root: string; worktree: string },
-) {
-  const projection = await state.inspect();
-  const project = projection.projects.find((item) => item.id === projectId);
-  if (
-    !project ||
-    (await repositoryCommonDir(project.root)) !== (await repositoryCommonDir(context.root))
-  ) {
-    throw new RepositoryError("The selected release project is unavailable.", 404);
-  }
-  const exactWorktreeProjects: string[] = [];
-  for (const candidate of projection.projects) {
-    try {
-      if (
-        (await repositoryCommonDir(candidate.root)) === (await repositoryCommonDir(context.root)) &&
-        (await realpath(candidate.root)) === context.worktree
-      ) {
-        exactWorktreeProjects.push(candidate.id);
-      }
-    } catch {
-      // Missing project records cannot authorize a local release.
-    }
-  }
-  if (exactWorktreeProjects.length > 0 && !exactWorktreeProjects.includes(project.id)) {
-    throw new RepositoryError("The selected release project does not own this worktree.", 404);
-  }
-  if (exactWorktreeProjects.length === 0 && (await realpath(project.root)) !== context.root) {
-    throw new RepositoryError("The selected release project does not own this worktree.", 404);
-  }
-  return project;
 }
 
 function createInternalPermissionCallback(permissions: PermissionBroker): {
@@ -1507,269 +1462,18 @@ async function handleApi(
     ) {
       return true;
     }
-    if (route === "/api/delivery/inspect") {
-      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await inspectDelivery(context.root, context.worktree));
-      return true;
-    }
-    if (route === "/api/delivery/pr-status") {
-      // Best-effort GitHub PR projection for sidebar rows. Soft-fails when gh
-      // is missing or no PR is linked to the current branch.
-      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await inspectBranchPr(context.worktree));
-      return true;
-    }
-    if (route === "/api/delivery/pr-status/batch") {
-      const body = (await readJson(request)) as {
-        items?: unknown;
-      };
-      if (!Array.isArray(body.items)) {
-        throw new RepositoryError("A list of repository worktrees is required.");
-      }
-      // Soft-fail unavailable worktrees independently so one released checkout
-      // cannot blank PR chrome for every other row.
-      const worktrees: string[] = [];
-      for (const item of body.items) {
-        if (worktrees.length >= BRANCH_PR_BATCH_LIMIT) break;
-        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-        const entry = item as { root?: unknown; worktree?: unknown };
-        if (typeof entry.root !== "string" || typeof entry.worktree !== "string") continue;
-        try {
-          const context = await selectedWorktree(entry.root, entry.worktree);
-          worktrees.push(context.worktree);
-        } catch {
-          // Released, missing, or out-of-scope paths stay without PR projection.
-        }
-      }
-      sendJson(response, 200, { results: await inspectBranchPrBatch(worktrees) });
-      return true;
-    }
-    if (route === "/api/delivery/pr-draft") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        base?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.base !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and base branch are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, await draftPullRequest(context.root, context.worktree, body.base));
-      return true;
-    }
-    if (route === "/api/release-delivery/inspect") {
-      if (remoteRequest || managedHost) {
-        throw new RepositoryError(
-          "Release delivery is available only on the loopback workbench.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        projectId?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.projectId !== "string"
-      ) {
-        throw new RepositoryError("A project, repository, and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const project = await selectedReleaseProject(state, body.projectId, context);
-      sendJson(
-        response,
-        200,
-        await releaseDelivery.inspect(project.id, context.root, context.worktree),
-      );
-      return true;
-    }
-    if (route === "/api/release-delivery/plans") {
-      if (remoteRequest || managedHost) {
-        throw new RepositoryError(
-          "Release delivery is available only on the loopback workbench.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        projectId?: unknown;
-        action?: unknown;
-        input?: unknown;
-      };
-      const actions = new Set<ReleaseWorkflowAction>([
-        "prepare",
-        "evaluate",
-        "publish",
-        "promote",
-        "plan",
-        "apply",
-        "reconcile",
-        "rollback",
-      ]);
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.projectId !== "string" ||
-        typeof body.action !== "string" ||
-        !actions.has(body.action as ReleaseWorkflowAction) ||
-        !isRecord(body.input)
-      ) {
-        throw new RepositoryError("A complete release-delivery action is required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const project = await selectedReleaseProject(state, body.projectId, context);
-      sendJson(
-        response,
-        200,
-        await releaseDelivery.plan(
-          project.id,
-          context.root,
-          context.worktree,
-          project.chiseiNamespace ?? "",
-          body.action as ReleaseWorkflowAction,
-          body.input,
-        ),
-      );
-      return true;
-    }
-    const releaseDeliveryMatch = route.match(
-      /^\/api\/release-delivery\/plans\/([0-9a-f-]+)\/execute$/,
-    );
-    if (releaseDeliveryMatch) {
-      if (remoteRequest || managedHost) {
-        throw new RepositoryError(
-          "Release delivery is available only on the loopback workbench.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        projectId?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.projectId !== "string"
-      ) {
-        throw new RepositoryError("A project, repository, and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const project = await selectedReleaseProject(state, body.projectId, context);
-      const controller = new AbortController();
-      request.once("aborted", () => controller.abort());
-      response.once("close", () => {
-        if (!response.writableEnded) controller.abort();
-      });
-      sendJson(
-        response,
-        200,
-        await releaseDelivery.execute(
-          releaseDeliveryMatch[1],
-          project.id,
-          context.root,
-          context.worktree,
-          project.chiseiNamespace ?? "",
-          controller.signal,
-        ),
-      );
-      return true;
-    }
-    if (route === "/api/release-delivery/receipt") {
-      if (remoteRequest || managedHost) {
-        throw new RepositoryError(
-          "Release delivery is available only on the loopback workbench.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        projectId?: unknown;
-        sessionId?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.projectId !== "string" ||
-        typeof body.sessionId !== "string"
-      ) {
-        throw new RepositoryError("A complete release receipt request is required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const project = await selectedReleaseProject(state, body.projectId, context);
-      sendJson(
-        response,
-        200,
-        await releaseDelivery.receipt(body.sessionId, project.id, context.root, context.worktree),
-      );
-      return true;
-    }
-    if (route === "/api/delivery/plans") {
-      if (managedHost) {
-        throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
-      }
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        action?: unknown;
-        input?: unknown;
-      };
-      const actions = new Set<DeliveryAction>(["stage", "commit", "push", "pull_request"]);
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.action !== "string" ||
-        !actions.has(body.action as DeliveryAction) ||
-        typeof body.input !== "object" ||
-        body.input === null ||
-        Array.isArray(body.input)
-      ) {
-        throw new RepositoryError("A complete delivery action is required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(
-        response,
-        200,
-        await delivery.plan(
-          context.root,
-          context.worktree,
-          body.action as DeliveryAction,
-          body.input as Record<string, unknown>,
-        ),
-      );
-      return true;
-    }
-    const deliveryMatch = route.match(/^\/api\/delivery\/plans\/([0-9a-f-]+)\/execute$/);
-    if (deliveryMatch) {
-      if (managedHost) {
-        throw new RepositoryError("Delivery authority is unavailable in managed hosted mode.", 403);
-      }
-      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(
-        response,
-        200,
-        await delivery.execute(deliveryMatch[1], context.root, context.worktree),
-      );
+    if (
+      await handleDeliveryRoute(route, request, response, {
+        delivery,
+        releaseDelivery,
+        state,
+        remote: remoteRequest,
+        managed: Boolean(managedHost),
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    ) {
       return true;
     }
     if (route === "/api/previews/request") {
