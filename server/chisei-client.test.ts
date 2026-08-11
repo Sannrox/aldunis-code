@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  SDK_CONTRACT_VERSION,
-  SdkError,
-  SekaiChiseiClient,
-} from "@sannrox/sekai-chisei-sdk";
+import { SDK_CONTRACT_VERSION, SdkError, SekaiChiseiClient } from "@sannrox/sekai-chisei-sdk";
 import {
   ChiseiClientError,
   ChiseiProjectionClient,
@@ -25,6 +21,22 @@ type Handler = (
   options: FixtureOptions,
 ) => unknown | Promise<unknown>;
 
+class FakeCacheTimers {
+  readonly callbacks = new Map<object, () => void>();
+  readonly cleared = new Set<object>();
+
+  setTimeout(callback: () => void): { unref(): void } {
+    const timer = { unref() {} };
+    this.callbacks.set(timer, callback);
+    return timer;
+  }
+
+  clearTimeout(timer: object): void {
+    this.callbacks.delete(timer);
+    this.cleared.add(timer);
+  }
+}
+
 function fixtureClient(handlers: Record<string, Handler>): ChiseiSdkClient {
   return {
     raw: {
@@ -35,8 +47,9 @@ function fixtureClient(handlers: Record<string, Handler>): ChiseiSdkClient {
         options = {},
       ): Promise<T> {
         const handler = handlers[`${service}.${method}`] ?? handlers[method];
-        if (!handler) throw new SdkError("unimplemented", `missing fixture RPC ${service}.${method}`);
-        return await handler(request, options) as T;
+        if (!handler)
+          throw new SdkError("unimplemented", `missing fixture RPC ${service}.${method}`);
+        return (await handler(request, options)) as T;
       },
     },
     close() {},
@@ -82,18 +95,25 @@ test("ChiseiProjectionClient uses the server-owned SDK context and bounded Actio
       ALDUNIS_CHISEI_ENDPOINT: "https://plane.example:50051",
       ALDUNIS_CHISEI_TOKEN: "secret-token",
     },
-    fixtureFactory({
-      "sekai.ListActionInstances": (request, options) => {
-        call = { request, options };
-        return {
-          instances: [{
-            ...action,
-            parameters_json: "{\"secret\":\"not projected\"}",
-            principal: "not-projected",
-          }],
-        };
+    fixtureFactory(
+      {
+        "sekai.ListActionInstances": (request, options) => {
+          call = { request, options };
+          return {
+            instances: [
+              {
+                ...action,
+                parameters_json: '{"secret":"not projected"}',
+                principal: "not-projected",
+              },
+            ],
+          };
+        },
       },
-    }, (received) => { config = received; }),
+      (received) => {
+        config = received;
+      },
+    ),
     () => 2_000,
   );
   const result = await client.listActions("project-1", "team/project");
@@ -115,16 +135,18 @@ test("ChiseiProjectionClient uses the server-owned SDK context and bounded Actio
   assert.equal(call?.options.timeoutMs, 5_000);
   assert.match(call?.options.requestId ?? "", /^[0-9a-f-]{36}$/);
   assert.equal(result.state, "live");
-  assert.deepEqual(result.actions, [{
-    instanceId: "instance-1",
-    namespace: "team/project",
-    typeId: "review",
-    version: "1",
-    operationId: "operation-1",
-    status: "admitted",
-    createdAt: "1970-01-01T00:00:01.000Z",
-    decidedAt: "1970-01-01T00:00:01.100Z",
-  }]);
+  assert.deepEqual(result.actions, [
+    {
+      instanceId: "instance-1",
+      namespace: "team/project",
+      typeId: "review",
+      version: "1",
+      operationId: "operation-1",
+      status: "admitted",
+      createdAt: "1970-01-01T00:00:01.000Z",
+      decidedAt: "1970-01-01T00:00:01.100Z",
+    },
+  ]);
   assert.doesNotMatch(JSON.stringify(result), /secret|principal/);
 });
 
@@ -142,9 +164,10 @@ test("ChiseiProjectionClient rejects non-loopback HTTP before creating an SDK cl
   );
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
-    (error: unknown) => error instanceof ChiseiClientError
-      && error.kind === "unconfigured"
-      && /require HTTPS/.test(error.message),
+    (error: unknown) =>
+      error instanceof ChiseiClientError &&
+      error.kind === "unconfigured" &&
+      /require HTTPS/.test(error.message),
   );
   assert.equal(factoryCalled, false);
 });
@@ -191,6 +214,59 @@ test("ChiseiProjectionClient serves only recent in-memory data when the plane be
   );
 });
 
+test("ChiseiProjectionClient retains one expiry timer per refreshed cache key", async () => {
+  const timers = new FakeCacheTimers();
+  let available = true;
+  let now = 10_000;
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    fixtureFactory({
+      "sekai.ListActionInstances": () => {
+        if (!available) throw new SdkError("unavailable", "plane down");
+        return { instances: [action] };
+      },
+    }),
+    () => now,
+    timers,
+  );
+
+  await client.listActions("project-1", "team/project");
+  const staleTimer = [...timers.callbacks.entries()][0]!;
+  now += 1;
+  await client.listActions("project-1", "team/project");
+
+  assert.equal(timers.callbacks.size, 1);
+  assert.equal(timers.cleared.has(staleTimer[0]), true);
+  staleTimer[1]();
+  available = false;
+  assert.equal((await client.listActions("project-1", "team/project")).state, "stale");
+});
+
+test("ChiseiProjectionClient clears expiry timers on lazy expiry and capacity eviction", async () => {
+  const timers = new FakeCacheTimers();
+  let now = 10_000;
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    fixtureFactory({
+      "sekai.ListActionInstances": () => ({ instances: [action] }),
+    }),
+    () => now,
+    timers,
+  );
+
+  await client.listActions("expired", "team/project");
+  const expiredTimer = [...timers.callbacks.keys()][0]!;
+  now += 30_001;
+  await client.listActions("current", "team/project");
+  assert.equal(timers.cleared.has(expiredTimer), true);
+
+  for (let index = 0; index < 100; index += 1) {
+    await client.listActions(`project-${index}`, "team/project");
+  }
+  assert.equal(timers.callbacks.size, 100);
+  assert.equal(timers.cleared.size, 2);
+});
+
 test("ChiseiProjectionClient fails closed on SDK authorization errors and namespace drift", async () => {
   const unauthorized = new ChiseiProjectionClient(
     { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
@@ -202,9 +278,8 @@ test("ChiseiProjectionClient fails closed on SDK authorization errors and namesp
   );
   await assert.rejects(
     () => unauthorized.listActions("project-1", "team/project"),
-    (error: unknown) => error instanceof ChiseiClientError
-      && error.kind === "unauthorized"
-      && error.status === 403,
+    (error: unknown) =>
+      error instanceof ChiseiClientError && error.kind === "unauthorized" && error.status === 403,
   );
 
   const drifted = new ChiseiProjectionClient(
@@ -232,9 +307,8 @@ test("ChiseiProjectionClient rejects timestamps outside the JavaScript date rang
   );
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
-    (error: unknown) => error instanceof ChiseiClientError
-      && error.kind === "incompatible"
-      && error.status === 502,
+    (error: unknown) =>
+      error instanceof ChiseiClientError && error.kind === "incompatible" && error.status === 502,
   );
 });
 
@@ -249,24 +323,26 @@ test("ChiseiProjectionClient joins effect and receipt detail without returning r
       "sekai.ListActionEffects": (request) => {
         assert.equal(request.namespace, "team/project");
         return {
-          effects: [{
-            effect_id: "effect-1",
-            instance_id: action.instance_id,
-            namespace: action.namespace,
-            operation_id: action.operation_id,
-            kind: "runtime_dispatch",
-            status: "completed",
-            lifecycle_state: "completed",
-            created_at_ms: "1200",
-            updated_at_ms: "1300",
-            payload_json: "{\"task\":\"not projected\"}",
-          }],
+          effects: [
+            {
+              effect_id: "effect-1",
+              instance_id: action.instance_id,
+              namespace: action.namespace,
+              operation_id: action.operation_id,
+              kind: "runtime_dispatch",
+              status: "completed",
+              lifecycle_state: "completed",
+              created_at_ms: "1200",
+              updated_at_ms: "1300",
+              payload_json: '{"task":"not projected"}',
+            },
+          ],
         };
       },
       "chisei.GetOperationReceipt": (_request, options) => {
         assert.equal(options.operationId, "operation-1");
         return {
-          receipt_json: "{\"events\":[{\"prompt\":\"not projected\"},{\"kind\":\"complete\"}]}",
+          receipt_json: '{"events":[{"prompt":"not projected"},{"kind":"complete"}]}',
           complete: true,
           missing_surfaces: [],
         };
@@ -316,7 +392,7 @@ test("ChiseiProjectionClient exposes a bounded operation receipt projection", as
         request = received;
         options = receivedOptions;
         return {
-          receipt_json: "{\"events\":[{},{}],\"prompt\":\"not projected\"}",
+          receipt_json: '{"events":[{},{}],"prompt":"not projected"}',
           complete: true,
           missing_surfaces: [],
         };
