@@ -400,8 +400,12 @@ export class AutomationStore {
 }
 
 export class AutomationScheduler {
-  #timer: NodeJS.Timeout | null = null;
+  #timer: { unref(): void } | null = null;
+  #started = false;
   #running = false;
+  #drainPromise: Promise<void> | null = null;
+  #refreshRequested = false;
+  #hasEnabledAutomations = false;
   #threadExecutionTails = new Map<string, Promise<void>>();
 
   constructor(
@@ -420,22 +424,85 @@ export class AutomationScheduler {
       onFinished?: (automation: Automation, outcome: AutomationFireExecution) => Promise<void>;
       intervalMs?: number;
       now?: () => Date;
+      timers?: {
+        setTimeout(callback: () => void, delayMs: number): { unref(): void };
+        clearTimeout(handle: { unref(): void }): void;
+      };
     },
   ) {}
 
   start(): void {
-    if (this.#timer) return;
-    const intervalMs = this.options.intervalMs ?? 15_000;
-    this.#timer = setInterval(() => {
-      void this.tick();
-    }, intervalMs);
-    this.#timer.unref();
-    void this.tick();
+    if (this.#started) return;
+    this.#started = true;
+    void this.#wake().catch(() => undefined);
   }
 
   stop(): void {
-    if (this.#timer) clearInterval(this.#timer);
+    this.#started = false;
+    this.#refreshRequested = false;
+    this.#clearTimer();
+  }
+
+  /** Reconcile timer state after a local mutation without executing provider work. */
+  refresh(): Promise<void> {
+    if (!this.#started) return Promise.resolve();
+    this.#refreshRequested = true;
+    if (!this.#drainPromise) {
+      const drain = this.#drain();
+      const tracked = drain.finally(() => {
+        if (this.#drainPromise === tracked) this.#drainPromise = null;
+      });
+      this.#drainPromise = tracked;
+    }
+    return this.#drainPromise;
+  }
+
+  #clearTimer(): void {
+    if (this.#timer) {
+      const clear =
+        this.options.timers?.clearTimeout ??
+        ((handle: { unref(): void }) => clearTimeout(handle as NodeJS.Timeout));
+      clear(this.#timer);
+    }
     this.#timer = null;
+  }
+
+  #schedule(): void {
+    if (!this.#started || !this.#hasEnabledAutomations || this.#timer) return;
+    const schedule =
+      this.options.timers?.setTimeout ??
+      ((callback: () => void, delayMs: number) => setTimeout(callback, delayMs));
+    this.#timer = schedule(() => {
+      this.#timer = null;
+      void this.#wake().catch(() => undefined);
+    }, this.options.intervalMs ?? 15_000);
+    this.#timer.unref();
+  }
+
+  async #drain(): Promise<void> {
+    let failed = false;
+    try {
+      do {
+        this.#refreshRequested = false;
+        const items = await this.store.list();
+        this.#hasEnabledAutomations = items.some((automation) => automation.enabled);
+        if (!this.#hasEnabledAutomations) this.#clearTimer();
+      } while (this.#started && this.#refreshRequested);
+    } catch {
+      failed = true;
+    } finally {
+      // Preserve the existing retry behavior if a transient store read fails.
+      if (failed) this.#hasEnabledAutomations = true;
+      this.#schedule();
+    }
+  }
+
+  async #wake(): Promise<void> {
+    try {
+      await this.tick();
+    } finally {
+      await this.refresh();
+    }
   }
 
   #now(): Date {
@@ -582,6 +649,7 @@ export class AutomationScheduler {
     try {
       const now = this.#now();
       const items = await this.store.list();
+      this.#hasEnabledAutomations = items.some((automation) => automation.enabled);
       // Evaluate schedules first, then fire due items concurrently so one long
       // provider turn does not delay other due automations.
       const due: Array<{ automation: Automation; input: AutomationFireKey }> = [];
