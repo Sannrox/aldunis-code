@@ -444,6 +444,10 @@
     {
       "name": "ApplicationShellBootstrapModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates application-shell boot, project request coalescing and freshness, repository-open consequences, managed-aware restoration ordering, failure recovery, and lifecycle cancellation behind one interface while the local host retains repository and filesystem authority."
+    },
+    {
+      "name": "ConnectionsSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates Connections mode admission, loading, drafts, save-and-connect, re-pairing, disconnect and removal refresh, local restoration, host pairing and revocation, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while host and desktop adapters retain authority."
     }
   ],
   "relations": [
@@ -1294,6 +1298,16 @@
       "range": "LocalApplicationHost",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "coordinates_desktop_remote_environments",
+      "description": "The renderer Connections session coordinates explicit intents through the desktop manager without owning remote-environment metadata, SSH transport, credentials, repositories, providers, or conversations.",
+      "domain": "ConnectionsSessionModule",
+      "range": "DesktopRemoteEnvironmentManager",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     }
@@ -2407,6 +2421,18 @@
       "subject": "synchronizes_application_shell_with_host",
       "source": "Aldunis Code application-shell bootstrap interface",
       "locator": "src/lib/application-shell-bootstrap.ts#ApplicationShellBootstrapModule",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConnectionsSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#711",
+      "locator": "src/lib/connections-session.ts#ConnectionsSessionModule; src/features/dialogs/connections-dialog.tsx#ConnectionsDialog",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_desktop_remote_environments",
+      "source": "Aldunis Code Connections session interface",
+      "locator": "src/lib/connections-session.ts#ConnectionsSessionModule; desktop/preload.ts#listRemoteEnvironments",
       "confidence": 1.0
     }
   ]
