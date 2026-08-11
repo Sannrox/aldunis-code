@@ -4,12 +4,19 @@ import {
   admitProviderRun,
   createProviderRunSink,
   handleProviderRun,
+  shouldReleaseBrowserProviderToken,
   type ProviderRunModuleContext,
   type ProviderRunOutput,
 } from "./provider-run.ts";
 import { RepositoryError } from "./repository.ts";
 
 const output = {} as ProviderRunOutput;
+
+test("browser provider token release follows accepted Codex session ownership", () => {
+  assert.equal(shouldReleaseBrowserProviderToken("codex-cli", false), true);
+  assert.equal(shouldReleaseBrowserProviderToken("codex-cli", true), false);
+  assert.equal(shouldReleaseBrowserProviderToken("claude-code", false), true);
+});
 
 function moduleContext(
   overrides: Partial<ProviderRunModuleContext> = {},

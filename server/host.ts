@@ -947,8 +947,11 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     remoteAuth || managedHost ? createInternalPermissionCallback(permissions) : undefined;
   const delivery = new DeliveryBroker();
   const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
+  const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const provider = new ClaudeCodeAdapter("claude", permissions);
-  const codex = new CodexCliAdapter("codex", permissions);
+  const codex = new CodexCliAdapter("codex", permissions, {
+    onSessionClosed: (conversationId) => browser?.releaseProviderToken(conversationId),
+  });
   const shikigami = new ShikigamiAdapter(
     managedHost?.shikigami.executable ?? "shikigami",
     permissions,
@@ -967,7 +970,6 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     managedModel: managedHost?.shikigami.model,
   });
   const activeAcp = new Map<string, AcpProviderAdapter>();
-  const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const wake = new WakeBroker();
   const autonomy = new AutonomyEngine(state);
   const autonomyScheduler = new AutonomyScheduler(autonomy);

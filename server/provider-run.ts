@@ -174,6 +174,13 @@ export interface ProviderRunModuleContext {
   checkpointWorktreeKey: (projectId: string, worktree: string) => string;
 }
 
+export function shouldReleaseBrowserProviderToken(
+  providerId: ProviderId,
+  codexOwnsToken: boolean,
+): boolean {
+  return providerId !== "codex-cli" || !codexOwnsToken;
+}
+
 export async function handleProviderRun(
   input: ProviderRunInput,
   output: ProviderRunOutput,
@@ -660,6 +667,7 @@ export async function handleProviderRun(
   }
   activeCheckpointWorktrees.add(activeWorktreeKey);
   let browserProviderConversationId: string | null = null;
+  let codexOwnsBrowserProviderToken = false;
   try {
     const nativeResumeClaim = nativeResumeInput
       ? await state.claimNativeShikigamiResume(
@@ -886,6 +894,7 @@ export async function handleProviderRun(
                     model: effectiveModel,
                   },
                 );
+      if (providerId === "codex-cli" && browserMcp) codexOwnsBrowserProviderToken = true;
     } catch (error) {
       if (nativeResumeClaim) {
         await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
@@ -1125,7 +1134,10 @@ export async function handleProviderRun(
     activeAcp.delete(run.id);
     return true;
   } finally {
-    if (browserProviderConversationId) {
+    if (
+      browserProviderConversationId &&
+      shouldReleaseBrowserProviderToken(providerId, codexOwnsBrowserProviderToken)
+    ) {
       browser?.releaseProviderToken(browserProviderConversationId);
     }
     activeCheckpointWorktrees.delete(activeWorktreeKey);
