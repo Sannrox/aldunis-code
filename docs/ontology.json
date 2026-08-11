@@ -376,6 +376,10 @@
     {
       "name": "ChiseiProjectProjectionRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates Chisei project binding administration, request validation, server-owned namespace authority, bounded Action and observation projection reads, governance correlation ownership, and response mapping behind one internal dispatch interface without changing Chisei domain authority, persistence, credentials, or transport ownership."
+    },
+    {
+      "name": "DelegatedHumanControlRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates delegated approval and input-response route recognition, parent-child authority validation, single-use coordination, provider response routing, recovery, and thread-status publication behind one internal dispatch interface without changing provider, persistence, permission, or managed-host authority."
     }
   ],
   "relations": [
@@ -464,6 +468,16 @@
       "description": "The local API dispatch module delegates Chisei project binding and bounded read requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "ChiseiProjectProjectionRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_delegated_human_control_route_dispatch",
+      "description": "The local API dispatch module delegates approval and input-response decisions plus request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "DelegatedHumanControlRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1969,6 +1983,18 @@
       "subject": "stages_composer_images",
       "source": "Aldunis Code composer image staging interface",
       "locator": "src/lib/composer-image-staging.ts#stageComposerImages; src/features/code/conversation.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedHumanControlRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#648",
+      "locator": "server/delegated-control-routes.ts#handleDelegatedControlRoute; docs/decisions/delegated-human-control.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_delegated_human_control_route_dispatch",
+      "source": "Aldunis Code delegated human-control route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/delegated-control-routes.ts#handleDelegatedControlRoute",
       "confidence": 1.0
     }
   ]
