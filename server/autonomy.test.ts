@@ -12,7 +12,7 @@ import {
   parseStandingOrder,
   type AutonomyRun,
 } from "./autonomy.ts";
-import { AutonomyEngine } from "./autonomy-engine.ts";
+import { AutonomyEngine, AutonomyScheduler } from "./autonomy-engine.ts";
 import { LocalStateStore } from "./state.ts";
 
 const execFileAsync = promisify(execFile);
@@ -107,6 +107,112 @@ test("autonomy records validate bounded durable configuration", () => {
       }),
     /project/,
   );
+});
+
+test("Autonomy scheduler sleeps without work and preserves active deadlines", async () => {
+  type Timer = { callback: () => void; delay: number; referenced: boolean; unref(): void };
+  const timers = new Set<Timer>();
+  let hasWork = false;
+  let ticks = 0;
+  const engine = {
+    tickHeartbeats: async () => {
+      ticks += 1;
+    },
+    dispatch: async () => [],
+    hasScheduledWork: async () => hasWork,
+  } as unknown as AutonomyEngine;
+  const scheduler = new AutonomyScheduler(engine, {
+    intervalMs: 30_000,
+    timers: {
+      setTimeout(callback, delay) {
+        const timer: Timer = {
+          callback,
+          delay,
+          referenced: true,
+          unref() {
+            this.referenced = false;
+          },
+        };
+        timers.add(timer);
+        return timer;
+      },
+      clearTimeout(handle) {
+        timers.delete(handle as Timer);
+      },
+    },
+  });
+
+  scheduler.start();
+  await scheduler.refresh();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(ticks, 1);
+  assert.equal(timers.size, 0);
+
+  hasWork = true;
+  await scheduler.refresh();
+  assert.equal(timers.size, 1);
+  const deadline = [...timers][0]!;
+  assert.equal(deadline.delay, 30_000);
+  assert.equal(deadline.referenced, false);
+  await scheduler.refresh();
+  assert.equal([...timers][0], deadline);
+
+  timers.delete(deadline);
+  deadline.callback();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(ticks, 2);
+  assert.equal(timers.size, 1);
+
+  hasWork = false;
+  await scheduler.refresh();
+  assert.equal(timers.size, 0);
+  scheduler.stop();
+});
+
+test("Autonomy mutation refresh does not wait for a running workflow", async () => {
+  let release!: () => void;
+  const running = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const scheduler = new AutonomyScheduler({
+    tickHeartbeats: async () => running,
+    dispatch: async () => [],
+    hasScheduledWork: async () => true,
+  } as unknown as AutonomyEngine);
+
+  scheduler.start();
+  await scheduler.refresh();
+  release();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  scheduler.stop();
+});
+
+test("Autonomy scheduler retains a retry after transient reconciliation failure", async () => {
+  let retries = 0;
+  const timer = { unref: () => undefined };
+  const scheduler = new AutonomyScheduler(
+    {
+      tickHeartbeats: async () => undefined,
+      dispatch: async () => [],
+      hasScheduledWork: async () => {
+        throw new Error("temporary projection failure");
+      },
+    } as unknown as AutonomyEngine,
+    {
+      timers: {
+        setTimeout: () => {
+          retries += 1;
+          return timer;
+        },
+        clearTimeout: () => undefined,
+      },
+    },
+  );
+
+  scheduler.start();
+  await scheduler.refresh();
+  assert.equal(retries, 1);
+  scheduler.stop();
 });
 
 test("nightly gardener runs read-only, records tasks, and survives reload", async () => {

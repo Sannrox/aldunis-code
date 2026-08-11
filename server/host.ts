@@ -336,6 +336,7 @@ interface LocalApiDispatchContext {
   automations: AutomationStore;
   automationScheduler: AutomationScheduler;
   autonomy: AutonomyEngine;
+  autonomyScheduler: AutonomyScheduler;
   worktrees: WorktreeManager;
   directories: DirectoryBrowser;
   adapters: ProviderAdapterStore;
@@ -376,6 +377,7 @@ async function handleApi(
     automations,
     automationScheduler,
     autonomy,
+    autonomyScheduler,
     worktrees,
     directories,
     adapters,
@@ -657,6 +659,7 @@ async function handleApi(
     if (
       await handleAutonomyRoute(route, request, response, {
         autonomy,
+        autonomyScheduler,
         state,
         remoteRequest,
         managed: Boolean(managedHost),
@@ -1238,6 +1241,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         preferences,
         automations,
         automationScheduler,
+        autonomyScheduler,
         autonomy,
         worktrees,
         directories,
