@@ -102,6 +102,34 @@ interface Snapshot {
   hooks: Hook[];
 }
 
+export const AUTONOMY_REFRESH_INTERVAL_MS = 5_000;
+
+export function startAutonomyRefreshPolling(
+  load: () => void,
+  visibility: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener">,
+  timers: Pick<Window, "setInterval" | "clearInterval"> = window,
+) {
+  let refresh: number | undefined;
+  const stop = () => {
+    if (refresh !== undefined) timers.clearInterval(refresh);
+    refresh = undefined;
+  };
+  const start = () => {
+    stop();
+    if (visibility.visibilityState !== "visible") return;
+    load();
+    refresh = timers.setInterval(load, AUTONOMY_REFRESH_INTERVAL_MS);
+  };
+  const onVisibilityChange = () => start();
+
+  start();
+  visibility.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    stop();
+    visibility.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+}
+
 function formatAge(value: string | null): string {
   if (!value) return "never";
   const date = new Date(value);
@@ -190,14 +218,13 @@ export function AutonomyDialog({
 
   useEffect(() => {
     if (!open) return;
-    void load();
     const focus = () => firstFieldRef.current?.focus();
     focus();
     const frame = window.requestAnimationFrame(focus);
-    const refresh = window.setInterval(() => void load(), 1000);
+    const stopPolling = startAutonomyRefreshPolling(() => void load(), document);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.clearInterval(refresh);
+      stopPolling();
     };
   }, [load, open]);
 

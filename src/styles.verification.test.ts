@@ -481,7 +481,7 @@ test("automations dialog keeps content inset and independently scrollable", () =
   assert.match(css, /\.automations-dialog-body\s*\{[^}]*overflow-y:\s*auto[^}]*padding:\s*16px/s);
 });
 
-test("autonomy runs refresh while open and keep row status readable", () => {
+test("autonomy runs refresh while visible and keep row status readable", () => {
   const dialog = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), "features/dialogs/autonomy-dialog.tsx"),
     "utf8",
@@ -489,8 +489,10 @@ test("autonomy runs refresh while open and keep row status readable", () => {
   assert.match(dialog, /loadInFlightRef/);
   assert.match(dialog, /loadError/);
   assert.match(dialog, /setLoadError\(null\)/);
-  assert.match(dialog, /window\.setInterval\(\(\) => void load\(\), 1000\)/);
-  assert.match(dialog, /window\.clearInterval\(refresh\)/);
+  assert.match(dialog, /AUTONOMY_REFRESH_INTERVAL_MS = 5_000/);
+  assert.match(dialog, /visibility\.visibilityState !== "visible"/);
+  assert.match(dialog, /visibility\.addEventListener\("visibilitychange"/);
+  assert.match(dialog, /timers\.clearInterval\(refresh\)/);
   assert.match(css, /\.autonomy-dialog-body \.row\s*\{[^}]*display:\s*flex[^}]*gap:\s*8px/s);
   assert.match(css, /\.autonomy-dialog-body \.autonomy-card > \.row\s*\{[^}]*flex-wrap:\s*wrap/s);
 });
