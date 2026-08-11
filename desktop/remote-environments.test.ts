@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,6 +14,7 @@ import {
   normalizeRemoteEnvironmentInput,
   RemoteEnvironmentStore,
   assertSshRemoteDescriptor,
+  terminateRemoteChild,
 } from "./remote-environments.ts";
 
 test("remote environment inputs keep endpoints origin-only and SSH launch arguments fixed", () => {
@@ -28,44 +30,82 @@ test("remote environment inputs keep endpoints origin-only and SSH launch argume
   assert.equal(DEFAULT_REMOTE_BACKEND_PORT, 4177);
   assert.equal(endpoint.record.remoteCommand, DEFAULT_REMOTE_COMMAND);
   assert.throws(
-    () => normalizeRemoteEnvironmentInput({
-      label: "unsafe",
-      transport: "endpoint",
-      endpoint: "http://192.168.1.20:4174",
-    }),
+    () =>
+      normalizeRemoteEnvironmentInput({
+        label: "unsafe",
+        transport: "endpoint",
+        endpoint: "http://192.168.1.20:4174",
+      }),
     /HTTPS origins/,
   );
   assert.throws(
-    () => normalizeRemoteEnvironmentInput({
-      label: "unsafe",
-      transport: "ssh",
-      sshTarget: "prod; touch ~/.ssh/authorized_keys",
-    }),
+    () =>
+      normalizeRemoteEnvironmentInput({
+        label: "unsafe",
+        transport: "ssh",
+        sshTarget: "prod; touch ~/.ssh/authorized_keys",
+      }),
     /SSH targets/,
   );
   assert.deepEqual(
     buildSshForwardArguments("dev@example.test", 49152, DEFAULT_REMOTE_BACKEND_PORT),
     [
-      "-N", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ExitOnForwardFailure=yes",
-      "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30", "-L",
-      "127.0.0.1:49152:127.0.0.1:4177", "dev@example.test",
+      "-N",
+      "-T",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "StrictHostKeyChecking=yes",
+      "-o",
+      "ExitOnForwardFailure=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "-o",
+      "ServerAliveInterval=30",
+      "-L",
+      "127.0.0.1:49152:127.0.0.1:4177",
+      "dev@example.test",
     ],
   );
   assert.deepEqual(
-    buildSshServerArguments("dev@example.test", "/opt/bin/aldunis-code", DEFAULT_REMOTE_BACKEND_PORT),
+    buildSshServerArguments(
+      "dev@example.test",
+      "/opt/bin/aldunis-code",
+      DEFAULT_REMOTE_BACKEND_PORT,
+    ),
     [
-      "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10", "dev@example.test",
-      "/opt/bin/aldunis-code", "serve", "--remote", "ssh", "--host", "127.0.0.1",
-      "--port", "4177",
+      "-T",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "StrictHostKeyChecking=yes",
+      "-o",
+      "ConnectTimeout=10",
+      "dev@example.test",
+      "/opt/bin/aldunis-code",
+      "serve",
+      "--remote",
+      "ssh",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "4177",
     ],
   );
-  assert.deepEqual(
-    buildSshPairingArguments("dev@example.test", "/opt/bin/aldunis-code"),
-    [
-      "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
-      "dev@example.test", "/opt/bin/aldunis-code", "auth", "pairing", "create",
-    ],
-  );
+  assert.deepEqual(buildSshPairingArguments("dev@example.test", "/opt/bin/aldunis-code"), [
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "ConnectTimeout=10",
+    "dev@example.test",
+    "/opt/bin/aldunis-code",
+    "auth",
+    "pairing",
+    "create",
+  ]);
 });
 
 test("SSH connections require the authenticated remote descriptor", () => {
@@ -74,6 +114,49 @@ test("SSH connections require the authenticated remote descriptor", () => {
     () => assertSshRemoteDescriptor({ remoteEnabled: false }),
     /did not enable authenticated remote access/,
   );
+});
+
+test("remote child termination force-stops a process that ignores SIGTERM", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-child-"));
+  const executable = join(directory, "stubborn-child");
+  const pidPath = join(directory, "pid");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+  const child = spawn(executable, [], { stdio: "ignore" });
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await readFile(pidPath, "utf8");
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  const pid = Number(await readFile(pidPath, "utf8"));
+  const isAlive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ESRCH";
+    }
+  };
+
+  await terminateRemoteChild(child, 25);
+  try {
+    assert.equal(isAlive(), false);
+    const startedAt = Date.now();
+    await terminateRemoteChild(child, 1_000);
+    assert.ok(Date.now() - startedAt < 50);
+  } finally {
+    if (isAlive()) process.kill(pid, "SIGKILL");
+  }
 });
 
 test("remote environment store persists metadata without pairing credentials", async () => {
@@ -116,12 +199,17 @@ test("remote environment updates replace the record when pairing an existing end
   assert.equal(second.record.id, first.record.id);
   assert.equal(second.record.paired, false);
   assert.equal((await store.list()).length, 1);
-  assert.equal((await readFile(join(directory, "connections.v1.json"), "utf8")).includes("ZYXWV"), false);
+  assert.equal(
+    (await readFile(join(directory, "connections.v1.json"), "utf8")).includes("ZYXWV"),
+    false,
+  );
 });
 
 test("remote environment store rejects incompatible persisted state", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-environments-"));
   const path = join(directory, "connections.v1.json");
-  await import("node:fs/promises").then(({ writeFile }) => writeFile(path, JSON.stringify({ schemaVersion: 99 })));
+  await import("node:fs/promises").then(({ writeFile }) =>
+    writeFile(path, JSON.stringify({ schemaVersion: 99 })),
+  );
   await assert.rejects(() => new RemoteEnvironmentStore(path).list(), /corrupt or incompatible/);
 });
