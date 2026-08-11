@@ -47,10 +47,99 @@ export interface ProviderRunInput {
   localPort?: number;
 }
 
+export interface ProviderRunAcceptance {
+  runId: string;
+  threadId: string;
+  turnId: string;
+}
+
+export interface ProviderRunExecution {
+  accepted: Promise<ProviderRunAcceptance>;
+  completed: Promise<boolean>;
+}
+
 export type ProviderRunOutput = Pick<
   ServerResponse,
   "destroyed" | "writableEnded" | "setHeader" | "writeHead" | "flushHeaders" | "write" | "end"
 >;
+
+export function createProviderRunSink(): ProviderRunOutput {
+  let ended = false;
+  return {
+    get destroyed() {
+      return false;
+    },
+    get writableEnded() {
+      return ended;
+    },
+    setHeader: () => undefined,
+    writeHead: () => undefined as never,
+    flushHeaders: () => undefined,
+    write: () => true,
+    end: () => {
+      ended = true;
+      return undefined as never;
+    },
+  };
+}
+
+/**
+ * Starts one provider run through the same typed admission interface used by
+ * HTTP, automations, and delegated follow-ups. Transport adapters choose how
+ * to present the event stream; admission and completion remain authoritative
+ * in this module.
+ */
+export function admitProviderRun(
+  input: ProviderRunInput,
+  output: ProviderRunOutput,
+  module: ProviderRunModuleContext,
+): ProviderRunExecution {
+  let resolveAccepted!: (acceptance: ProviderRunAcceptance) => void;
+  let rejectAccepted!: (error: unknown) => void;
+  let acceptedSettled = false;
+  const accepted = new Promise<ProviderRunAcceptance>((resolve, reject) => {
+    resolveAccepted = resolve;
+    rejectAccepted = reject;
+  });
+  const admissionOutput: ProviderRunOutput = {
+    get destroyed() {
+      return output.destroyed;
+    },
+    get writableEnded() {
+      return output.writableEnded;
+    },
+    setHeader: output.setHeader.bind(output),
+    writeHead(statusCode, headers) {
+      const result = output.writeHead(statusCode, headers);
+      if (!acceptedSettled && statusCode >= 200 && statusCode < 300) {
+        const values = headers as Record<string, number | string | readonly string[] | undefined>;
+        const runId = values["x-provider-run-id"];
+        const threadId = values["x-thread-id"];
+        const turnId = values["x-turn-id"];
+        if (
+          typeof runId === "string" &&
+          typeof threadId === "string" &&
+          typeof turnId === "string"
+        ) {
+          acceptedSettled = true;
+          resolveAccepted({ runId, threadId, turnId });
+        }
+      }
+      return result;
+    },
+    flushHeaders: output.flushHeaders.bind(output),
+    write: output.write.bind(output),
+    end: output.end.bind(output),
+  };
+  const completed = handleProviderRun(input, admissionOutput, module).catch((error) => {
+    if (!acceptedSettled) {
+      acceptedSettled = true;
+      rejectAccepted(error);
+    }
+    throw error;
+  });
+  return { accepted, completed };
+}
 
 export interface ProviderRunModuleContext {
   provider: ClaudeCodeAdapter;

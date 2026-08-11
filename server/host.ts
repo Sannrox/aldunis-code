@@ -1,13 +1,11 @@
 import { createReadStream } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import {
   createServer as createHttpServer,
-  request as httpRequest,
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
+import { createServer as createHttpsServer } from "node:https";
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,7 +66,11 @@ import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.ts";
 import { ChiseiClientError, ChiseiProjectionClient } from "./chisei-client.ts";
-import { handleProviderRun } from "./provider-run.ts";
+import {
+  admitProviderRun,
+  createProviderRunSink,
+  type ProviderRunModuleContext,
+} from "./provider-run.ts";
 import { handleBrowserRoute } from "./browser-routes.ts";
 import { handleAutonomyRoute } from "./autonomy-routes.ts";
 import { handleReviewRoute } from "./review-routes.ts";
@@ -1215,7 +1217,7 @@ async function handleApi(
       return true;
     }
     if (route === "/api/provider/runs") {
-      return await handleProviderRun(
+      const execution = admitProviderRun(
         { body: await readJson(request), localPort: request.socket.localPort },
         response,
         {
@@ -1245,6 +1247,8 @@ async function handleApi(
           checkpointWorktreeKey,
         },
       );
+      void execution.accepted.catch(() => undefined);
+      return await execution.completed;
     }
     if (route === "/api/provider/permissions/request") {
       const body = (await readJson(request)) as {
@@ -1565,7 +1569,6 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   const wake = new WakeBroker();
   const autonomy = new AutonomyEngine(state);
   const autonomyScheduler = new AutonomyScheduler(autonomy);
-  const internalRequestToken = randomUUID();
   let delegatedControlTail = Promise.resolve();
   const withDelegatedControlLock: DelegatedControlLock = async (action) => {
     const previous = delegatedControlTail;
@@ -1620,6 +1623,46 @@ export function createLocalHost(options: LocalHostOptions = {}) {
 
   let serverRef: ReturnType<typeof createHttpServer> | null = null;
 
+  const localProviderPort = (): number => {
+    const address = serverRef?.address();
+    if (!address || typeof address === "string") {
+      throw new LocalStateError("The provider run interface is unavailable.", 503);
+    }
+    return address.port;
+  };
+
+  const providerRunContext = (
+    remoteRequest: boolean,
+    internalRequest: boolean,
+  ): ProviderRunModuleContext => ({
+    provider,
+    codex,
+    shikigami,
+    permissions,
+    state,
+    profiles,
+    preferences,
+    autonomy,
+    worktrees,
+    adapters,
+    activeAcp,
+    wake,
+    withDelegatedControlLock,
+    internalApprovalUrl: internalPermissionCallback?.url,
+    managedHost,
+    browser,
+    browserMcpPath,
+    remoteRequest,
+    internalRequest,
+    selectedWorktree: managedHost
+      ? (root, worktree) => managedHost.selectWorktree(root, worktree)
+      : selectWorktreeForRepository,
+    publishThreadStatusTransition,
+    activeCheckpointProjects,
+    activeCheckpointWorktrees,
+    checkpointWorktreeKey,
+  });
+
   async function isThreadBusy(threadId: string): Promise<boolean> {
     const projection = await state.inspect();
     return projection.turns.some(
@@ -1631,60 +1674,13 @@ export function createLocalHost(options: LocalHostOptions = {}) {
 
   async function runChildFollowUp(body: Record<string, unknown>): Promise<void> {
     if (childFollowUpOverride) return childFollowUpOverride(body);
-    const address = serverRef?.address();
-    if (!address || typeof address === "string") {
-      throw new LocalStateError("The child follow-up route is unavailable.", 503);
-    }
-    const payload = Buffer.from(JSON.stringify(body), "utf8");
-    const internalHost =
-      address.address === "::"
-        ? "::1"
-        : address.address === "0.0.0.0"
-          ? "127.0.0.1"
-          : address.address;
-    await new Promise<void>((resolve, reject) => {
-      const send = tls ? httpsRequest : httpRequest;
-      const outgoing = send(
-        {
-          host: internalHost,
-          port: address.port,
-          path: "/api/provider/runs",
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "content-length": String(payload.length),
-            "x-aldunis-internal-request": internalRequestToken,
-          },
-          ...(tls ? { rejectUnauthorized: false } : {}),
-        },
-        (incoming) => {
-          if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
-            // The run endpoint sends headers immediately after provider startup.
-            // Resolve on those headers and drain the event stream independently so
-            // the delegated-control lock never spans the child turn's lifetime.
-            incoming.resume();
-            resolve();
-            return;
-          }
-          const chunks: Buffer[] = [];
-          incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-          incoming.on("end", () => {
-            let message = `Child follow-up failed (${incoming.statusCode ?? 500}).`;
-            try {
-              const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-                error?: string;
-              };
-              if (parsed.error) message = parsed.error;
-            } catch {
-              // Keep the bounded repository-owned fallback.
-            }
-            reject(new LocalStateError(message, incoming.statusCode ?? 500));
-          });
-        },
-      );
-      outgoing.once("error", reject);
-      outgoing.end(payload);
-    });
+    const execution = admitProviderRun(
+      { body, localPort: localProviderPort() },
+      createProviderRunSink(),
+      providerRunContext(false, true),
+    );
+    void execution.completed.catch(() => undefined);
+    await execution.accepted;
   }
 
   async function fireAutomation(
@@ -1692,13 +1688,6 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     fire?: AutomationFire,
   ): Promise<AutomationFireExecution> {
     if (!fire) throw new AutomationError("Automation fire identity is unavailable.", 500);
-    const address = serverRef?.address();
-    if (!address || typeof address === "string") {
-      return {
-        status: "unknown",
-        error: "The provider outcome could not be proven because the local host was not listening.",
-      };
-    }
     const projection = await state.inspect();
     const thread = projection.threads.find((item) => item.id === automation.threadId);
     if (!thread) throw new AutomationError("Target conversation was not found.", 404);
@@ -1718,78 +1707,54 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       thread.profileId ??
       session?.profileId ??
       (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
-    const internalHost =
-      address.address === "::"
-        ? "::1"
-        : address.address === "0.0.0.0"
-          ? "127.0.0.1"
-          : address.address;
-    const payload = Buffer.from(
-      JSON.stringify({
-        root: project.root,
-        worktree: thread.worktree,
-        prompt: automation.prompt,
-        mode: automation.mode,
-        conversationId: thread.id,
-        projectId: project.id,
-        threadId: thread.id,
-        resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
-        provider: providerId,
-        model,
-        profileId:
-          providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
-        automationFireId: fire.id,
-      }),
-      "utf8",
-    );
-    let incoming: IncomingMessage;
+    let localPort: number;
     try {
-      const send = tls ? httpsRequest : httpRequest;
-      incoming = await new Promise<IncomingMessage>((resolve, reject) => {
-        const outgoing = send(
-          {
-            host: internalHost,
-            port: address.port,
-            path: "/api/provider/runs",
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "content-length": String(payload.length),
-              "x-aldunis-internal-request": internalRequestToken,
-            },
-            ...(tls ? { rejectUnauthorized: false } : {}),
-          },
-          resolve,
-        );
-        outgoing.once("error", reject);
-        outgoing.end(payload);
-      });
+      localPort = localProviderPort();
     } catch {
       return {
         status: "unknown",
-        error: "The provider outcome could not be proven after the local request disconnected.",
+        error: "The provider outcome could not be proven because the local host was not listening.",
       };
     }
-    const statusCode = incoming.statusCode ?? 500;
+    const execution = admitProviderRun(
+      {
+        body: {
+          root: project.root,
+          worktree: thread.worktree,
+          prompt: automation.prompt,
+          mode: automation.mode,
+          conversationId: thread.id,
+          projectId: project.id,
+          threadId: thread.id,
+          resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
+          provider: providerId,
+          model,
+          profileId:
+            providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
+          automationFireId: fire.id,
+        },
+        localPort,
+      },
+      createProviderRunSink(),
+      providerRunContext(false, true),
+    );
     try {
-      await new Promise<void>((resolve, reject) => {
-        incoming.once("end", resolve);
-        incoming.once("error", reject);
-        incoming.resume();
-      });
-    } catch {
-      const outcome = await state.automationFireOutcome(fire.id);
-      return outcome.status === "unknown"
-        ? {
-            status: "unknown",
-            error: "The provider outcome could not be proven after the event stream disconnected.",
-          }
-        : outcome;
-    }
-    if (statusCode < 200 || statusCode >= 300) {
+      void execution.accepted.catch(() => undefined);
+      await execution.completed;
+    } catch (error) {
       const outcome = await state.automationFireOutcome(fire.id);
       if (outcome.status !== "unknown") return outcome;
-      if (statusCode < 500 && !(await state.getAutomationFireById(fire.id))?.turnId) {
+      const status =
+        error instanceof RepositoryError ||
+        error instanceof PermissionError ||
+        error instanceof LocalStateError ||
+        error instanceof ProfileError ||
+        error instanceof PreferencesError ||
+        error instanceof ProviderAdapterError ||
+        error instanceof ProviderModelError
+          ? error.status
+          : 500;
+      if (status < 500 && !(await state.getAutomationFireById(fire.id))?.turnId) {
         return {
           status: "failed",
           error: "The automation request was rejected before provider launch.",
@@ -1822,14 +1787,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     await recovery;
     await profileBootstrap;
     const route = new URL(request.url ?? "/", "http://localhost").pathname;
-    const listeningAddress = serverRef?.address();
-    const internalRequest =
-      request.socket.remoteAddress !== undefined &&
-      (LOOPBACK_HOSTS.has(request.socket.remoteAddress) ||
-        (listeningAddress &&
-          typeof listeningAddress !== "string" &&
-          request.socket.remoteAddress === listeningAddress.address)) &&
-      request.headers["x-aldunis-internal-request"] === internalRequestToken;
+    const internalRequest = false;
     const configuredPublicOrigin =
       typeof publicOrigin === "function" ? publicOrigin() : publicOrigin;
     const localControlRequest =

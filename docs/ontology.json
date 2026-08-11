@@ -19,7 +19,7 @@
     },
     {
       "name": "ProviderRunExecutionModule",
-      "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one internal interface while provider-specific behavior remains in adapters."
+      "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
     },
     {
       "name": "HostCommand",
@@ -1057,11 +1057,31 @@
     },
     {
       "name": "delegates_provider_run_execution",
-      "description": "The local host dispatch module passes parsed run input, request-scoped authority facts, and an output adapter to one internal provider-run execution module without creating a new network or trust seam.",
+      "description": "The local host dispatch module passes parsed run input, request-scoped authority facts, and an HTTP output adapter to the typed provider-run admission interface without creating a new network or trust seam.",
       "domain": "LocalApiDispatchModule",
       "range": "ProviderRunExecutionModule",
       "cardinality": {
         "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "fires_through_provider_run_admission",
+      "description": "A conversation automation invokes the typed provider-run admission interface directly and derives its durable fire outcome from local run state without a loopback HTTP self-request.",
+      "domain": "ConversationAutomation",
+      "range": "ProviderRunExecutionModule",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "follows_up_through_provider_run_admission",
+      "description": "Delegated human control invokes the typed provider-run admission interface directly and releases its control lock when the child run is accepted without bypassing normal run admission.",
+      "domain": "DelegatedHumanControlRouteDispatchModule",
+      "range": "ProviderRunExecutionModule",
+      "cardinality": {
+        "min": 0,
         "max": 1
       }
     },
@@ -2005,14 +2025,26 @@
     },
     {
       "subject": "ProviderRunExecutionModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#614",
-      "locator": "server/provider-run.ts#handleProviderRun",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#614 and #659",
+      "locator": "server/provider-run.ts#admitProviderRun; server/provider-run.ts#handleProviderRun",
       "confidence": 1.0
     },
     {
       "subject": "delegates_provider_run_execution",
       "source": "Aldunis Code provider run execution interface",
-      "locator": "server/host.ts#handleApi; server/provider-run.ts#handleProviderRun",
+      "locator": "server/host.ts#handleApi; server/provider-run.ts#admitProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "fires_through_provider_run_admission",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#659",
+      "locator": "server/host.ts#fireAutomation; server/provider-run.ts#admitProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "follows_up_through_provider_run_admission",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#659",
+      "locator": "server/host.ts#runChildFollowUp; server/provider-run.ts#admitProviderRun",
       "confidence": 1.0
     },
     {
