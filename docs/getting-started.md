@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- **Node.js 22** or newer
+- **Node.js 22.12** or newer
 - **npm** (included with Node.js)
 - **Git**
 - A local Git repository to open

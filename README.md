@@ -4,7 +4,7 @@ Local-first workbench for agent-assisted software development.
 
 [![CI](https://github.com/Sannrox/aldunis-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Sannrox/aldunis-code/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933.svg)](package.json)
+[![Node.js 22.12+](https://img.shields.io/badge/Node.js-22.12%2B-339933.svg)](package.json)
 
 Aldunis Code gives you one loopback-bound interface for repositories, worktrees,
 conversations, tool approvals, and diffs. Provider CLIs (Claude Code, Codex,
@@ -27,11 +27,11 @@ is a **local host + web UI** that:
 
 ## Product family
 
-| Product | Role |
-| --- | --- |
-| **Aldunis Code** (this repo) | Local workbench, providers, approvals, diffs |
+| Product                                                 | Role                                         |
+| ------------------------------------------------------- | -------------------------------------------- |
+| **Aldunis Code** (this repo)                            | Local workbench, providers, approvals, diffs |
 | [Sekai Chisei](https://github.com/Sannrox/sekai-chisei) | Governance, policy, budgets, evidence, audit |
-| [Tenkai](https://github.com/Sannrox/tenkai) | Releases, environments, delivery, recovery |
+| [Tenkai](https://github.com/Sannrox/tenkai)             | Releases, environments, delivery, recovery   |
 
 Cross-product screens consume **authenticated contracts** only. They never share
 databases or treat cached UI projections as authority. Sekai / Chisei / Tenkai
@@ -40,7 +40,7 @@ appear in the product switcher only when configured (see
 
 ## Quick start
 
-**Requirements:** Node.js 22+, npm, Git, and a local Git repository to open.
+**Requirements:** Node.js 22.12+, npm, Git, and a local Git repository to open.
 
 ```sh
 npm ci
@@ -96,20 +96,20 @@ verification are especially useful.
 
 ## Documentation
 
-| Doc | Audience |
-| --- | --- |
-| [Documentation index](docs/README.md) | Map of all docs |
-| [Getting started](docs/getting-started.md) | Install, run, first conversation |
-| [Architecture](docs/architecture.md) | Topology, ownership, security invariants |
-| [Providers](docs/providers.md) | Claude, Codex, Shikigami, ACP adapters |
-| [Automations](docs/automations.md) | Scheduled prompts into existing threads |
-| [Local data](docs/local-data.md) | State directory, history, preferences |
-| [Remote workbench](docs/remote-workbench.md) | Tailscale / LAN remote access |
-| [Work lifecycle](docs/work-lifecycle.md) | Issues, PRs, review |
-| [Decisions](docs/decisions/README.md) | Accepted design decisions |
-| [Contributing](CONTRIBUTING.md) | How to contribute |
-| [Security](SECURITY.md) | Vulnerability reporting |
-| [AGENTS.md](AGENTS.md) | Repository-specific engineering rules for agents |
+| Doc                                          | Audience                                         |
+| -------------------------------------------- | ------------------------------------------------ |
+| [Documentation index](docs/README.md)        | Map of all docs                                  |
+| [Getting started](docs/getting-started.md)   | Install, run, first conversation                 |
+| [Architecture](docs/architecture.md)         | Topology, ownership, security invariants         |
+| [Providers](docs/providers.md)               | Claude, Codex, Shikigami, ACP adapters           |
+| [Automations](docs/automations.md)           | Scheduled prompts into existing threads          |
+| [Local data](docs/local-data.md)             | State directory, history, preferences            |
+| [Remote workbench](docs/remote-workbench.md) | Tailscale / LAN remote access                    |
+| [Work lifecycle](docs/work-lifecycle.md)     | Issues, PRs, review                              |
+| [Decisions](docs/decisions/README.md)        | Accepted design decisions                        |
+| [Contributing](CONTRIBUTING.md)              | How to contribute                                |
+| [Security](SECURITY.md)                      | Vulnerability reporting                          |
+| [AGENTS.md](AGENTS.md)                       | Repository-specific engineering rules for agents |
 
 ## License
 
