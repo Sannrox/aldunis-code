@@ -29,7 +29,7 @@ import {
 } from "./provider-models.ts";
 import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
-import { listChangedFiles, readCheckpointFileDiff, readFileDiff } from "./changes.ts";
+import { listChangedFiles, readFileDiff } from "./changes.ts";
 import {
   DeliveryBroker,
   draftPullRequest,
@@ -47,15 +47,12 @@ import { assertParentRoutedApproval, projectDelegatedApprovals } from "./delegat
 import { assertParentRoutedInput, projectDelegatedInputs } from "./delegated-inputs.ts";
 import {
   canonicalizeRepositoryRoot,
-  captureCheckpoint,
-  checkpointDiff,
   collapseProjectsByRepository,
   deleteCheckpointReferences,
   discoverWorktrees,
   openRepository,
   RepositoryError,
   repositoryCommonDir,
-  rewindCheckpoint,
 } from "./repository.ts";
 import {
   LocalStateError,
@@ -102,6 +99,7 @@ import { handleReviewRoute } from "./review-routes.ts";
 import { handleConversationLifecycleRoute } from "./conversation-lifecycle-routes.ts";
 import { handleProviderAdapterRoute } from "./provider-adapter-routes.ts";
 import { handleContextRoute, MAX_STAGE_IMAGE_BODY_BYTES } from "./context-routes.ts";
+import { handleCheckpointRoute } from "./checkpoint-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -1734,205 +1732,18 @@ async function handleApi(
       sendJson(response, 200, { status: "compacted" });
       return true;
     }
-    const previewMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/preview$/);
-    if (previewMatch) {
-      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.inspect();
-      const checkpoint = projection.checkpoints.find(
-        (item) => item.id === previewMatch[1] && item.worktree === context.worktree,
-      );
-      const checkpointThread = checkpoint
-        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
-        : undefined;
-      if (
-        checkpointThread &&
-        (activeCheckpointProjects.has(checkpointThread.projectId) ||
-          activeCheckpointWorktrees.has(
-            checkpointWorktreeKey(checkpointThread.projectId, context.worktree),
-          ))
-      ) {
-        throw new LocalStateError(
-          "Wait for the active turn to finish before previewing a rewind.",
-          409,
-        );
-      }
-      if (
-        !checkpoint ||
-        checkpoint.state !== "completed" ||
-        !checkpoint.baselineIdentity ||
-        !checkpoint.baselineIndexIdentity ||
-        !checkpoint.baselineHead ||
-        !checkpoint.completedIdentity ||
-        !checkpoint.completedIndexIdentity ||
-        !checkpoint.completedHead ||
-        checkpoint.baselineHead !== checkpoint.completedHead
-      ) {
-        throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
-      }
-      const current = await captureCheckpoint(context.worktree, true);
-      if (current.identity !== checkpoint.completedIdentity) {
-        throw new RepositoryError(
-          "The workspace changed after this checkpoint. Rewind is unavailable until those changes are handled.",
-          409,
-        );
-      }
-      if (current.indexIdentity !== checkpoint.completedIndexIdentity) {
-        throw new RepositoryError(
-          "The Git index changed after this checkpoint. Rewind is unavailable until those changes are handled.",
-          409,
-        );
-      }
-      if (current.head !== checkpoint.completedHead) {
-        throw new RepositoryError(
-          "HEAD changed after this checkpoint. Rewind does not rewrite Git history.",
-          409,
-        );
-      }
-      sendJson(response, 200, {
-        checkpoint,
-        currentIdentity: current.identity,
-        currentIndexIdentity: current.indexIdentity,
-        files: await checkpointDiff(
-          context.worktree,
-          checkpoint.completedIdentity,
-          checkpoint.baselineIdentity,
-        ),
-      });
+    if (
+      await handleCheckpointRoute(route, request, response, {
+        state,
+        activeProjects: activeCheckpointProjects,
+        activeWorktrees: activeCheckpointWorktrees,
+        worktreeKey: checkpointWorktreeKey,
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    const checkpointDiffMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/diff$/);
-    if (checkpointDiffMatch) {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        path?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.path !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and changed path are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.inspect();
-      const checkpoint = projection.checkpoints.find(
-        (item) => item.id === checkpointDiffMatch[1] && item.worktree === context.worktree,
-      );
-      const checkpointThread = checkpoint
-        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
-        : undefined;
-      if (!checkpointThread) {
-        throw new LocalStateError("The checkpoint conversation is unavailable.", 404);
-      }
-      if (
-        !checkpoint ||
-        (checkpoint.state !== "completed" && checkpoint.state !== "superseded") ||
-        !checkpoint.baselineIdentity ||
-        !checkpoint.completedIdentity
-      ) {
-        throw new RepositoryError("This turn diff is unavailable.", 409);
-      }
-      const files = checkpoint.files?.length
-        ? checkpoint.files
-        : await checkpointDiff(
-            context.worktree,
-            checkpoint.baselineIdentity,
-            checkpoint.completedIdentity,
-          );
-      sendJson(
-        response,
-        200,
-        await readCheckpointFileDiff(
-          context.worktree,
-          checkpoint.baselineIdentity,
-          checkpoint.completedIdentity,
-          body.path,
-          files,
-        ),
-      );
-      return true;
-    }
-    const rewindMatch = route.match(/^\/api\/checkpoints\/([0-9a-f-]+)\/rewind$/);
-    if (rewindMatch) {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        currentIdentity?: unknown;
-        currentIndexIdentity?: unknown;
-        confirm?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.currentIdentity !== "string" ||
-        typeof body.currentIndexIdentity !== "string" ||
-        body.confirm !== true
-      ) {
-        throw new RepositoryError("Preview and confirm the exact rewind before continuing.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const projection = await state.inspect();
-      const checkpoint = projection.checkpoints.find(
-        (item) => item.id === rewindMatch[1] && item.worktree === context.worktree,
-      );
-      const checkpointThread = checkpoint
-        ? projection.threads.find((thread) => thread.id === checkpoint.threadId)
-        : undefined;
-      const rewindLock = checkpointThread
-        ? checkpointWorktreeKey(checkpointThread.projectId, context.worktree)
-        : null;
-      if (
-        checkpointThread &&
-        (activeCheckpointProjects.has(checkpointThread.projectId) ||
-          (rewindLock && activeCheckpointWorktrees.has(rewindLock)))
-      ) {
-        throw new LocalStateError("Wait for the active turn to finish before rewinding.", 409);
-      }
-      if (
-        !checkpoint ||
-        checkpoint.state !== "completed" ||
-        !checkpoint.baselineIdentity ||
-        !checkpoint.baselineIndexIdentity ||
-        !checkpoint.baselineHead ||
-        !checkpoint.completedIdentity ||
-        !checkpoint.completedIndexIdentity ||
-        !checkpoint.completedHead ||
-        checkpoint.baselineHead !== checkpoint.completedHead ||
-        body.currentIdentity !== checkpoint.completedIdentity ||
-        body.currentIndexIdentity !== checkpoint.completedIndexIdentity
-      ) {
-        throw new RepositoryError("This checkpoint is unavailable for rewind.", 409);
-      }
-      if (!checkpointThread) {
-        throw new LocalStateError("The checkpoint conversation is unavailable.", 409);
-      }
-      activeCheckpointWorktrees.add(rewindLock!);
-      let files;
-      try {
-        files = await rewindCheckpoint(
-          context.worktree,
-          body.currentIdentity,
-          body.currentIndexIdentity,
-          checkpoint.completedHead,
-          checkpoint.baselineIdentity,
-          checkpoint.baselineIndexIdentity,
-        );
-        await state.saveCheckpoint({
-          ...checkpoint,
-          state: "superseded",
-          message: "Workspace rewound to this turn's baseline.",
-        });
-      } finally {
-        activeCheckpointWorktrees.delete(rewindLock!);
-      }
-      sendJson(response, 200, { status: "rewound", files });
-      return true;
-    }
     if (route === "/api/provider/capabilities") {
       if (managedHost) {
         sendJson(response, 200, {
