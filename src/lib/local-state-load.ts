@@ -31,13 +31,20 @@ export function loadFreshLocalStateProjection(): Promise<unknown> {
   return requestLocalStateProjection();
 }
 
-function requestConversationHistory(threadId: string): Promise<unknown> {
+function requestConversationHistory(
+  threadId: string,
+  knownSequence?: number,
+): Promise<unknown | null> {
   return fetch("/api/state/conversations/history", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ threadId }),
+    body: JSON.stringify({
+      threadId,
+      ...(knownSequence === undefined ? {} : { knownSequence }),
+    }),
   }).then(async (response) => {
     if (!response.ok) throw new Error("Conversation history could not be loaded.");
+    if (response.status === 204) return null;
     return response.json();
   });
 }
@@ -46,13 +53,17 @@ function requestConversationHistory(threadId: string): Promise<unknown> {
  * Thread-scoped transcript for restore. Coalesces concurrent restores of the
  * same conversation (dual-pane) without long-caching.
  */
-export async function loadConversationHistory(threadId: string): Promise<unknown> {
-  const existing = historyInflight.get(threadId);
+export async function loadConversationHistory(
+  threadId: string,
+  knownSequence?: number,
+): Promise<unknown | null> {
+  const requestKey = `${threadId}\0${knownSequence ?? "full"}`;
+  const existing = historyInflight.get(requestKey);
   if (existing) return existing;
-  const request = requestConversationHistory(threadId).finally(() => {
-    historyInflight.delete(threadId);
+  const request = requestConversationHistory(threadId, knownSequence).finally(() => {
+    historyInflight.delete(requestKey);
   });
-  historyInflight.set(threadId, request);
+  historyInflight.set(requestKey, request);
   return request;
 }
 

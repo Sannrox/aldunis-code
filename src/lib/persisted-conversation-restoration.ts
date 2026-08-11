@@ -12,6 +12,7 @@ import type {
 import type { RestoredTurnStatus } from "./thread-status-transition";
 
 export interface PersistedConversationProjection {
+  sequence: number;
   threads: Array<{
     id: string;
     projectId: string;

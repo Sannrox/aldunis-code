@@ -108,6 +108,7 @@ function context(overrides: Record<string, unknown> = {}) {
     assertManagedThread: () => assert.fail("managed admission must not run"),
     readJson: unused,
     sendJson: () => assert.fail("response must not be written"),
+    sendStatus: () => assert.fail("status response must not be written"),
     ...overrides,
   };
 }
@@ -228,6 +229,54 @@ test("history validates identity and applies managed admission", async () => {
     }) as never,
   );
   assert.equal(admitted, "active");
+});
+
+test("history rejects invalid sequences and skips unchanged transcript projection", async () => {
+  await assert.rejects(
+    handleWorkbenchProjectionRoute(
+      "/api/state/conversations/history",
+      request,
+      response,
+      context({
+        readJson: async () => ({ threadId: "active", knownSequence: -1 }),
+      }) as never,
+    ),
+    (error: unknown) => error instanceof LocalStateError && error.status === 400,
+  );
+
+  let status = 0;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/conversations/history",
+    request,
+    response,
+    context({
+      readJson: async () => ({ threadId: "active", knownSequence: 1 }),
+      state: { inspect: async () => projection() },
+      sendStatus: (_response: ServerResponse, value: number) => {
+        status = value;
+      },
+    }) as never,
+  );
+  assert.equal(status, 204);
+});
+
+test("history returns its sequence when the caller snapshot changed", async () => {
+  let value: Record<string, unknown> | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/conversations/history",
+    request,
+    response,
+    context({
+      readJson: async () => ({ threadId: "active", knownSequence: 0 }),
+      state: { inspect: async () => projection() },
+      sendJson: (_response: ServerResponse, status: number, body: unknown) => {
+        assert.equal(status, 200);
+        value = body as Record<string, unknown>;
+      },
+    }) as never,
+  );
+  assert.equal(value?.sequence, 1);
+  assert.equal((value?.messages as unknown[]).length, 1);
 });
 
 test("search enforces archive scope and managed visibility", async () => {

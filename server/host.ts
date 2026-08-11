@@ -592,6 +592,10 @@ async function handleApi(
         assertManagedThread,
         readJson,
         sendJson,
+        sendStatus: (output, status) => {
+          output.writeHead(status);
+          output.end();
+        },
       })
     )
       return true;

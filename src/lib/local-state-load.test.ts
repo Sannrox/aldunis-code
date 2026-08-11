@@ -104,6 +104,44 @@ test("loadConversationHistory coalesces by thread id and posts the thread body",
   }
 });
 
+test("loadConversationHistory sends a known sequence and maps unchanged to null", async () => {
+  let body = "";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input, init) => {
+    body = String(init?.body ?? "");
+    return new Response(null, { status: 204 });
+  }) as typeof fetch;
+
+  try {
+    assert.equal(await loadConversationHistory("thread-a", 42), null);
+    assert.deepEqual(JSON.parse(body), { threadId: "thread-a", knownSequence: 42 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("history coalescing does not mix callers with different known sequences", async () => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input, init) => {
+    calls += 1;
+    const body = JSON.parse(String(init?.body)) as { knownSequence: number };
+    return new Response(JSON.stringify({ sequence: body.knownSequence + 1 }), { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const [older, newer] = await Promise.all([
+      loadConversationHistory("thread-a", 1),
+      loadConversationHistory("thread-a", 2),
+    ]);
+    assert.equal(calls, 2);
+    assert.deepEqual(older, { sequence: 2 });
+    assert.deepEqual(newer, { sequence: 3 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("loadFreshConversationHistory does not reuse an in-flight restore", async () => {
   let calls = 0;
   let releaseOlder: (() => void) | undefined;
