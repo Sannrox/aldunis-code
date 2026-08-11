@@ -15,6 +15,7 @@ const PAIRING_TTL_MS = 10 * 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const PROOF_CLOCK_SKEW_MS = 60_000;
 const REPLAY_TTL_MS = 2 * PROOF_CLOCK_SKEW_MS;
+export const MAX_REMOTE_PROOF_REPLAY_ENTRIES = 10_000;
 
 interface PairingGrant {
   id: string;
@@ -49,9 +50,59 @@ export interface PairingResult {
 }
 
 export class RemoteAuthError extends Error {
-  constructor(message: string, readonly status = 401) {
+  constructor(
+    message: string,
+    readonly status = 401,
+  ) {
     super(message);
   }
+}
+
+export function assertRemoteProofNotReplayed(
+  replay: Map<string, number>,
+  key: string,
+  now = Date.now(),
+): void {
+  const expiresAt = replay.get(key);
+  if (expiresAt === undefined) return;
+  if (expiresAt <= now) {
+    replay.delete(key);
+    return;
+  }
+  throw new RemoteAuthError("The remote device proof was replayed.");
+}
+
+export function assertRemoteProofReplayCapacity(
+  replay: Map<string, number>,
+  now = Date.now(),
+  limit = MAX_REMOTE_PROOF_REPLAY_ENTRIES,
+): void {
+  if (replay.size < limit) return;
+  // Every entry uses the same TTL and Map preserves insertion order. Avoid a
+  // full scan while the oldest evidence is still live; capacity rejects remain
+  // constant-time even under a sustained authenticated request flood.
+  const oldestExpiry = replay.values().next().value;
+  if (oldestExpiry !== undefined && oldestExpiry > now) {
+    throw new RemoteAuthError("Remote device proof replay protection is at capacity.", 503);
+  }
+  for (const [candidate, expires] of replay) {
+    if (expires <= now) replay.delete(candidate);
+  }
+  if (replay.size >= limit) {
+    throw new RemoteAuthError("Remote device proof replay protection is at capacity.", 503);
+  }
+}
+
+export function retainRemoteProofReplay(
+  replay: Map<string, number>,
+  key: string,
+  expiresAt: number,
+  now = Date.now(),
+  limit = MAX_REMOTE_PROOF_REPLAY_ENTRIES,
+): void {
+  assertRemoteProofNotReplayed(replay, key, now);
+  assertRemoteProofReplayCapacity(replay, now, limit);
+  replay.set(key, expiresAt);
 }
 
 function digest(value: string): string {
@@ -76,11 +127,13 @@ function emptyState(): RemoteAuthState {
 function isP256PublicKey(value: unknown): value is JsonWebKey {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const key = value as Record<string, unknown>;
-  return key.kty === "EC"
-    && key.crv === "P-256"
-    && typeof key.x === "string"
-    && typeof key.y === "string"
-    && key.d === undefined;
+  return (
+    key.kty === "EC" &&
+    key.crv === "P-256" &&
+    typeof key.x === "string" &&
+    typeof key.y === "string" &&
+    key.d === undefined
+  );
 }
 
 export class RemoteAuth {
@@ -92,7 +145,10 @@ export class RemoteAuth {
   #mutationQueue: Promise<void> = Promise.resolve();
   readonly #replay = new Map<string, number>();
 
-  constructor(readonly directory: string, options: { allowLoopbackHttp?: boolean } = {}) {
+  constructor(
+    readonly directory: string,
+    options: { allowLoopbackHttp?: boolean } = {},
+  ) {
     this.#path = join(directory, "remote-auth.v1.json");
     this.#lockPath = join(directory, "remote-auth.v1.lock");
     this.#allowLoopbackHttp = options.allowLoopbackHttp === true;
@@ -103,10 +159,10 @@ export class RemoteAuth {
     try {
       const value = JSON.parse(await readFile(this.#path, "utf8")) as RemoteAuthState;
       if (
-        value.schemaVersion !== 1
-        || typeof value.hostId !== "string"
-        || !Array.isArray(value.pairingGrants)
-        || !Array.isArray(value.sessions)
+        value.schemaVersion !== 1 ||
+        typeof value.hostId !== "string" ||
+        !Array.isArray(value.pairingGrants) ||
+        !Array.isArray(value.sessions)
       ) {
         throw new Error("incompatible");
       }
@@ -138,7 +194,9 @@ export class RemoteAuth {
   async #mutate<T>(operation: (state: RemoteAuthState) => Promise<T> | T): Promise<T> {
     const previous = this.#mutationQueue;
     let release = () => undefined;
-    this.#mutationQueue = new Promise<void>((resolve) => { release = resolve; });
+    this.#mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await previous;
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     let lock: Awaited<ReturnType<typeof open>> | null = null;
@@ -195,16 +253,18 @@ export class RemoteAuth {
     publicKey: unknown;
   }): Promise<PairingResult> {
     if (
-      typeof input.credential !== "string"
-      || typeof input.label !== "string"
-      || !input.label.trim()
-      || !isP256PublicKey(input.publicKey)
+      typeof input.credential !== "string" ||
+      typeof input.label !== "string" ||
+      !input.label.trim() ||
+      !isP256PublicKey(input.publicKey)
     ) {
       throw new RemoteAuthError("A complete device pairing request is required.", 400);
     }
     return this.#mutate((state) => {
       const presented = digest(input.credential as string);
-      const grant = state.pairingGrants.find((candidate) => equalDigest(candidate.digest, presented));
+      const grant = state.pairingGrants.find((candidate) =>
+        equalDigest(candidate.digest, presented),
+      );
       if (!grant || grant.usedAt || Date.parse(grant.expiresAt) <= Date.now()) {
         throw new RemoteAuthError("The pairing credential is invalid, expired, or already used.");
       }
@@ -236,12 +296,12 @@ export class RemoteAuth {
     const signature = request.headers["x-aldunis-signature"];
     const signedOrigin = request.headers["x-aldunis-origin"];
     if (
-      typeof authorization !== "string"
-      || !authorization.startsWith("DPoP ")
-      || typeof timestamp !== "string"
-      || typeof nonce !== "string"
-      || typeof signature !== "string"
-      || typeof signedOrigin !== "string"
+      typeof authorization !== "string" ||
+      !authorization.startsWith("DPoP ") ||
+      typeof timestamp !== "string" ||
+      typeof nonce !== "string" ||
+      typeof signature !== "string" ||
+      typeof signedOrigin !== "string"
     ) {
       throw new RemoteAuthError("Remote device proof is required.");
     }
@@ -249,10 +309,10 @@ export class RemoteAuth {
     const state = await this.#load();
     const session = state.sessions.find((candidate) => candidate.id === sessionId);
     if (
-      !session
-      || session.revokedAt
-      || Date.parse(session.expiresAt) <= Date.now()
-      || !equalDigest(session.tokenDigest, digest(token ?? ""))
+      !session ||
+      session.revokedAt ||
+      Date.parse(session.expiresAt) <= Date.now() ||
+      !equalDigest(session.tokenDigest, digest(token ?? ""))
     ) {
       throw new RemoteAuthError("The remote session is invalid, expired, or revoked.");
     }
@@ -260,11 +320,9 @@ export class RemoteAuth {
     if (!Number.isFinite(proofTime) || Math.abs(Date.now() - proofTime) > PROOF_CLOCK_SKEW_MS) {
       throw new RemoteAuthError("The remote device proof is stale.");
     }
-    for (const [key, expires] of this.#replay) {
-      if (expires <= Date.now()) this.#replay.delete(key);
-    }
     const replayKey = `${session.id}:${nonce}`;
-    if (this.#replay.has(replayKey)) throw new RemoteAuthError("The remote device proof was replayed.");
+    assertRemoteProofNotReplayed(this.#replay, replayKey);
+    assertRemoteProofReplayCapacity(this.#replay);
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     let origin: URL;
     try {
@@ -280,14 +338,19 @@ export class RemoteAuth {
     } catch {
       requestHostname = "";
     }
-    const loopbackHttp = this.#allowLoopbackHttp
-      && origin.protocol === "http:"
-      && (originHostname === "127.0.0.1" || originHostname === "::1" || originHostname === "localhost")
-      && (requestHostname === "127.0.0.1" || requestHostname === "::1" || requestHostname === "localhost");
+    const loopbackHttp =
+      this.#allowLoopbackHttp &&
+      origin.protocol === "http:" &&
+      (originHostname === "127.0.0.1" ||
+        originHostname === "::1" ||
+        originHostname === "localhost") &&
+      (requestHostname === "127.0.0.1" ||
+        requestHostname === "::1" ||
+        requestHostname === "localhost");
     if (
-      (!loopbackHttp && origin.protocol !== "https:")
-      || origin.host !== requestHost
-      || (typeof request.headers.origin === "string" && request.headers.origin !== signedOrigin)
+      (!loopbackHttp && origin.protocol !== "https:") ||
+      origin.host !== requestHost ||
+      (typeof request.headers.origin === "string" && request.headers.origin !== signedOrigin)
     ) {
       throw new RemoteAuthError("The remote device proof targets another origin.");
     }
@@ -304,18 +367,23 @@ export class RemoteAuth {
       valid = verify(
         "sha256",
         Buffer.from(payload),
-        { key: createPublicKey({ key: session.publicKey, format: "jwk" }), dsaEncoding: "ieee-p1363" },
+        {
+          key: createPublicKey({ key: session.publicKey, format: "jwk" }),
+          dsaEncoding: "ieee-p1363",
+        },
         Buffer.from(signature, "base64url"),
       );
     } catch {
       valid = false;
     }
     if (!valid) throw new RemoteAuthError("The remote device proof is invalid.");
-    this.#replay.set(replayKey, Date.now() + REPLAY_TTL_MS);
+    retainRemoteProofReplay(this.#replay, replayKey, Date.now() + REPLAY_TTL_MS);
     return session;
   }
 
-  async listSessions(): Promise<Array<Pick<RemoteSession, "id" | "label" | "createdAt" | "expiresAt" | "revokedAt">>> {
+  async listSessions(): Promise<
+    Array<Pick<RemoteSession, "id" | "label" | "createdAt" | "expiresAt" | "revokedAt">>
+  > {
     return (await this.#load()).sessions.map(({ id, label, createdAt, expiresAt, revokedAt }) => ({
       id,
       label,
