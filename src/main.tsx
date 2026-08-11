@@ -1,11 +1,6 @@
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  DEFAULT_PREFERENCES,
-  readPreferencesResponse,
-  resolveTheme,
-  type Preferences,
-} from "./preferences";
+import { DEFAULT_PREFERENCES, resolveTheme, type Preferences } from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
 import "./styles.css";
 import "./mock-shell.css";
@@ -36,9 +31,9 @@ import { isKeybindingCaptured, matchesModifierShortcut } from "./lib/workspace-s
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
-  readProductAvailabilityResponse,
   type ProductAvailability,
 } from "./lib/product-availability";
+import { ApplicationShellBootstrapModule } from "./lib/application-shell-bootstrap";
 import type { DesktopUpdateSnapshot } from "../desktop/update-contract";
 
 const desktopPlatform = window.aldunisDesktop?.platform;
@@ -109,111 +104,44 @@ function App() {
       directoryBrowsing: true,
     },
   });
-  const [hostCapabilitiesLoaded, setHostCapabilitiesLoaded] = useState(false);
   const [hostCapabilitiesError, setHostCapabilitiesError] = useState<string | null>(null);
-  useEffect(() => {
-    void (async () => {
-      try {
-        const response = await fetch("/api/host/capabilities", { method: "POST" });
-        if (!response.ok) throw new Error("The host capability contract is unavailable.");
-        const body = (await response.json()) as HostCapabilities;
-        if (body.mode !== "local" && body.mode !== "remote" && body.mode !== "managed") {
-          throw new Error("The host capability contract is invalid.");
-        }
-        setHostCapabilities(body);
-        setHostCapabilitiesLoaded(true);
-      } catch (error) {
-        setHostCapabilitiesError(
-          error instanceof Error ? error.message : "The host capability contract is unavailable.",
-        );
-      }
-    })();
-  }, []);
-  const loadProfiles = async () => {
-    const response = await fetch("/api/provider/profiles/list", { method: "POST" });
-    const body = (await response.json()) as { profiles?: ClaudeProfile[] };
-    if (response.ok) {
-      // Profile list updates flow through React props. Do not force-invalidate
-      // provider discovery here — that restarts multi-second CLI probes on every
-      // cold boot after profiles/list settles, often while discovery is already inflight.
-      setProfiles(body.profiles ?? []);
-    }
-  };
-  useEffect(() => {
-    void loadProfiles();
-  }, []);
-  // Coalesce concurrent project-list callers (boot effect + repository restore).
-  // Post-mutation refreshes pass { fresh: true } so they never adopt a pre-mutation inflight.
-  // Sequence numbers prevent an older in-flight response from overwriting a fresher one.
-  const projectsListInflightReference = useRef<Promise<SavedProject[]> | null>(null);
-  const projectsListSequenceReference = useRef(0);
-  const loadSavedProjects = async (options: { fresh?: boolean } = {}): Promise<SavedProject[]> => {
-    if (!options.fresh && projectsListInflightReference.current) {
-      return projectsListInflightReference.current;
-    }
-    const sequence = ++projectsListSequenceReference.current;
-    const fetchProjects = async (): Promise<SavedProject[]> => {
-      try {
-        // Collapsed by git common-dir so worktree checkouts do not spawn duplicate chips.
-        const response = await fetch("/api/projects/list", { method: "POST" });
-        if (!response.ok) return [] as SavedProject[];
-        const body = (await response.json()) as {
-          projects?: SavedProject[];
-          chiseiBindingAdministrationAvailable?: boolean;
-        };
-        const projects = body.projects ?? [];
-        if (sequence === projectsListSequenceReference.current) {
+  const bootstrapReference = useRef<ApplicationShellBootstrapModule | null>(null);
+  if (!bootstrapReference.current) {
+    bootstrapReference.current = new ApplicationShellBootstrapModule({
+      request: (path, init) => fetch(path, init),
+      locationSearch: () => window.location.search,
+      readLastRepositoryRoot,
+      writeLastRepositoryRoot,
+      projection: {
+        capabilities: setHostCapabilities,
+        capabilitiesError: setHostCapabilitiesError,
+        profiles: setProfiles,
+        projects: (projects, available) => {
           setSavedProjects(projects);
-          setChiseiBindingAdministrationAvailable(
-            body.chiseiBindingAdministrationAvailable !== false,
-          );
-        }
-        return projects;
-      } catch {
-        /* leave existing list */
-        return [] as SavedProject[];
-      }
-    };
-    if (options.fresh) return fetchProjects();
-    const request = fetchProjects().finally(() => {
-      if (projectsListInflightReference.current === request) {
-        projectsListInflightReference.current = null;
-      }
+          setChiseiBindingAdministrationAvailable(available);
+        },
+        threads: setThreads,
+        preferences: (next, recovered) => {
+          setPreferences(next);
+          setPreferencesRecovered(recovered);
+        },
+        productAvailability: setProductAvailability,
+        repository: setRepository,
+        repositoryBusy: setRepositoryBusy,
+        repositoryError: setRepositoryError,
+        repositoryDialogClosed: () => setRepositoryDialog(false),
+        repositoryRestoring: setRepositoryRestoring,
+      },
     });
-    projectsListInflightReference.current = request;
-    return request;
-  };
-  const loadThreads = async () => {
-    const response = await fetch("/api/state/search", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: "" }),
-    });
-    const body = (await response.json()) as { threads?: ThreadMetadata[] };
-    if (response.ok) setThreads(body.threads ?? []);
-  };
+  }
+  const bootstrap = bootstrapReference.current;
   useEffect(() => {
-    void loadThreads();
-    void loadSavedProjects();
-    void fetch("/api/preferences/load", { method: "POST" })
-      .then(async (response) =>
-        response.ok ? readPreferencesResponse(await response.json()) : null,
-      )
-      .then((result) => {
-        if (!result) return;
-        setPreferences(result.preferences);
-        setPreferencesRecovered(result.recovered);
-      })
-      .catch(() => undefined);
-    void fetch("/api/products/availability", { method: "POST" })
-      .then(async (response) =>
-        response.ok ? readProductAvailabilityResponse(await response.json()) : null,
-      )
-      .then((availability) => {
-        if (availability) setProductAvailability(availability);
-      })
-      .catch(() => undefined);
-  }, []);
+    bootstrap.start();
+    return () => bootstrap.stop();
+  }, [bootstrap]);
+  const loadProfiles = () => bootstrap.refresh("profiles");
+  const loadSavedProjects = () => bootstrap.refresh("projects");
+  const loadThreads = () => bootstrap.refresh("threads");
   useEffect(() => {
     if (!isProductAvailable(product, productAvailability)) {
       setProduct("code");
@@ -272,97 +200,8 @@ function App() {
     setRepositoryError(null);
     setRepositoryDialog(true);
   };
-  const openRepository = async (target: string, options?: { quiet?: boolean }) => {
-    setRepositoryBusy(true);
-    if (!options?.quiet) setRepositoryError(null);
-    try {
-      const response = await fetch("/api/repositories/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(
-          hostCapabilities.managed ? { repositoryId: target } : { path: target },
-        ),
-      });
-      const body = (await response.json()) as RepositoryMetadata | { error?: string };
-      if (!response.ok)
-        throw new Error("error" in body ? body.error : "Repository discovery failed.");
-      const next = body as RepositoryMetadata;
-      setRepository(next);
-      if (!hostCapabilities.managed) writeLastRepositoryRoot(next.root);
-      // Quiet opens (chat select / restore) must not reshuffle project chips.
-      if (options?.quiet) {
-        await loadThreads();
-      } else {
-        // Opening can register a project — force-fresh after the mutation.
-        await Promise.all([loadThreads(), loadSavedProjects({ fresh: true })]);
-        setRepositoryDialog(false);
-      }
-      return next;
-    } catch (error) {
-      if (!options?.quiet) {
-        setRepositoryError(error instanceof Error ? error.message : "Repository discovery failed.");
-      }
-      return null;
-    } finally {
-      setRepositoryBusy(false);
-    }
-  };
-  // Restore the last selected project after refresh/restart.
-  useEffect(() => {
-    if (!hostCapabilitiesLoaded) return;
-    let active = true;
-    const restore = async () => {
-      try {
-        const params = new URLSearchParams(window.location.search);
-        const urlProjectId = params.get("project");
-        const lastRoot = hostCapabilities.managed ? null : readLastRepositoryRoot();
-        // Share the boot projects/list request instead of issuing a second POST.
-        const projects = await loadSavedProjects();
-        if (!active) return;
-
-        // Prefer URL project, then last root, then newest collapsed project (main checkout).
-        const rootCandidates: string[] = [];
-        if (urlProjectId) {
-          for (const project of projects) {
-            if (project.id === urlProjectId || project.memberIds?.includes(urlProjectId)) {
-              rootCandidates.push(
-                hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
-              );
-            }
-          }
-        }
-        if (lastRoot) rootCandidates.push(lastRoot);
-        for (const project of projects) {
-          rootCandidates.push(
-            hostCapabilities.managed ? (project.managedRepositoryId ?? "") : project.root,
-          );
-        }
-
-        const seen = new Set<string>();
-        for (const root of rootCandidates) {
-          if (!root || seen.has(root)) continue;
-          seen.add(root);
-          const opened = await openRepository(root, { quiet: true });
-          if (!active) return;
-          if (opened) {
-            // Quiet restore registers the repository on the host without
-            // refreshing the sidebar project registry. Keep the restored
-            // project visible before handing control back to the shell.
-            await loadSavedProjects({ fresh: true });
-            return;
-          }
-        }
-      } catch {
-        /* leave empty shell if history cannot be restored */
-      } finally {
-        if (active) setRepositoryRestoring(false);
-      }
-    };
-    void restore();
-    return () => {
-      active = false;
-    };
-  }, [hostCapabilitiesLoaded, hostCapabilities.managed]);
+  const openRepository = (target: string, options?: { quiet?: boolean }) =>
+    bootstrap.openRepository(target, options);
   const runDesktopUpdateAction = async (
     action: "checkForUpdate" | "downloadUpdate" | "installUpdate",
   ): Promise<void> => {
@@ -445,7 +284,7 @@ function App() {
         }}
         onSettings={() => setPreferencesOpen(true)}
         onProjectsChanged={async () => {
-          await loadSavedProjects({ fresh: true });
+          await loadSavedProjects();
         }}
         onRepositoryChanged={(next) => {
           setRepository(next);
