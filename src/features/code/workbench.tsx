@@ -13,7 +13,15 @@ import type {
   BranchPrLookupResult,
   BranchPrStatus,
 } from "../../types";
-import { clampSplitPercent, normalizeSplitWorkspaceState } from "../../split-workspace";
+import {
+  activeProjectIds,
+  normalizeSplitWorkspaceState,
+  projectActivationTarget,
+  repositoryForSplitConversation,
+  selectSecondaryConversation,
+  transitionSplitWorkspace,
+  type SplitWorkspacePane,
+} from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { UsagePage } from "./usage-page";
 import { PaneConversation } from "./pane-conversation";
@@ -809,15 +817,53 @@ export function CodeWorkbench({
   const [managedWorktreeCount, setManagedWorktreeCount] = useState(0);
   const [managedWorktreePaths, setManagedWorktreePaths] = useState<string[]>([]);
   const [incompleteDeletionIds, setIncompleteDeletionIds] = useState<string[]>([]);
-  const [primaryId, setPrimaryId] = useState<string | null>(null);
+  const [splitWorkspace, setSplitWorkspace] = useState(() =>
+    normalizeSplitWorkspaceState({}, null),
+  );
+  const { primaryId, secondaryId, activePane, splitPercent } = splitWorkspace;
+  const setPrimaryId = useCallback<React.Dispatch<React.SetStateAction<string | null>>>((value) => {
+    setSplitWorkspace((current) =>
+      transitionSplitWorkspace(current, {
+        type: "set_primary",
+        id: typeof value === "function" ? value(current.primaryId) : value,
+      }),
+    );
+  }, []);
+  const setSecondaryId = useCallback<React.Dispatch<React.SetStateAction<string | null>>>(
+    (value) => {
+      setSplitWorkspace((current) =>
+        transitionSplitWorkspace(current, {
+          type: "set_secondary",
+          id: typeof value === "function" ? value(current.secondaryId) : value,
+        }),
+      );
+    },
+    [],
+  );
+  const setActivePane = useCallback<React.Dispatch<React.SetStateAction<SplitWorkspacePane>>>(
+    (value) => {
+      setSplitWorkspace((current) =>
+        transitionSplitWorkspace(current, {
+          type: "focus",
+          pane: typeof value === "function" ? value(current.activePane) : value,
+        }),
+      );
+    },
+    [],
+  );
+  const setSplitPercent = useCallback<React.Dispatch<React.SetStateAction<number>>>((value) => {
+    setSplitWorkspace((current) =>
+      transitionSplitWorkspace(current, {
+        type: "resize",
+        percent: typeof value === "function" ? value(current.splitPercent) : value,
+      }),
+    );
+  }, []);
   const [primaryNewKey, setPrimaryNewKey] = useState(0);
   const primaryNewKeyReference = useRef(0);
   const [repairBrief, setRepairBrief] = useState<{ projectId: string; prompt: string } | null>(
     null,
   );
-  const [secondaryId, setSecondaryId] = useState<string | null>(null);
-  const [activePane, setActivePane] = useState<"primary" | "secondary">("primary");
-  const [splitPercent, setSplitPercent] = useState(50);
   const renameReturnFocusReference = useRef<HTMLElement | null>(null);
   const deleteReturnFocusReference = useRef<HTMLElement | null>(null);
   const releaseReturnFocusReference = useRef<HTMLElement | null>(null);
@@ -896,6 +942,7 @@ export function CodeWorkbench({
         let saved: {
           primaryId?: string | null;
           secondaryId?: string | null;
+          activePane?: SplitWorkspacePane;
           splitPercent?: number;
         } = {};
         try {
@@ -908,15 +955,16 @@ export function CodeWorkbench({
           {
             primaryId: urlConversation ?? saved.primaryId,
             secondaryId: parameters.get("beside") ?? saved.secondaryId,
+            activePane: saved.activePane,
             splitPercent: saved.splitPercent,
           },
           available[0]?.id ?? null,
         );
-        setPrimaryId(restored.primaryId);
+        setSplitWorkspace((current) =>
+          transitionSplitWorkspace(current, { type: "restore", state: restored }),
+        );
         primarySelectionReference.current = restored.primaryId ?? `new:${primaryNewKey}`;
-        setSecondaryId(restored.secondaryId);
         secondaryIdReference.current = restored.secondaryId;
-        setSplitPercent(restored.splitPercent);
       }
       restoredProjectReference.current = repository?.projectId ?? "inbox";
       setRestoreState("ready");
@@ -944,6 +992,7 @@ export function CodeWorkbench({
       JSON.stringify({
         primaryId,
         secondaryId,
+        activePane,
         splitPercent,
       }),
     );
@@ -958,7 +1007,7 @@ export function CodeWorkbench({
       "",
       `${window.location.pathname}${parameters.size ? `?${parameters}` : ""}${window.location.hash}`,
     );
-  }, [primaryId, repository?.projectId, secondaryId, splitPercent]);
+  }, [activePane, primaryId, repository?.projectId, secondaryId, splitPercent]);
   useEffect(() => {
     const moveFocus = (event: KeyboardEvent) => {
       if (!secondaryId || !event.altKey || !event.shiftKey) return;
@@ -1258,34 +1307,21 @@ export function CodeWorkbench({
       requestedProjectForPrimaryRef.current = null;
       return;
     }
-    const activeIds = new Set(
-      [
-        repository?.projectId,
-        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-      ].filter(Boolean) as string[],
+    const target = projectActivationTarget(
+      primaryId,
+      conversations,
+      activeProjectIds(repository?.projectId, projects),
+      requestedProjectForPrimaryRef.current,
     );
-    if (activeIds.has(thread.projectId)) {
+    if (!target) {
       requestedProjectForPrimaryRef.current = thread.projectId;
       return;
     }
-    // Dedup: async openRepository does not update projectId immediately.
-    if (requestedProjectForPrimaryRef.current === thread.projectId) return;
-    requestedProjectForPrimaryRef.current = thread.projectId;
-    onSelectProject(thread.projectId);
+    requestedProjectForPrimaryRef.current = target;
+    onSelectProject(target);
   }, [conversations, onSelectProject, primaryId, projects, repository?.projectId, restoreState]);
-  const repositoryFor = (conversation: ConversationSummary | null) => {
-    if (!repository) return null;
-    if (!conversation?.worktree) return repository;
-    // Never stamp a foreign worktree onto the open root — that causes /api/changes
-    // 403s and a disabled composer while project switch is still in flight.
-    const known = repository.worktrees.some((worktree) => worktree.path === conversation.worktree);
-    if (!known) return repository;
-    return {
-      ...repository,
-      selectedWorktree: conversation.worktree,
-      name: conversation.projectName ?? repository.name,
-    };
-  };
+  const repositoryFor = (conversation: ConversationSummary | null) =>
+    repositoryForSplitConversation(repository, conversation);
   const repositoryForDelegatedStart = (conversation: ConversationSummary | null) => {
     if (!repository || !conversation) return null;
     const activeProjectIds = new Set([
@@ -1300,21 +1336,13 @@ export function CodeWorkbench({
   const openBeside = (id?: string) => {
     // Prefer an explicit id (thread-row Beside). Topbar Open beside should stay in the
     // active project — not open a random foreign-worktree thread that cannot send.
-    const sameProjectIds = new Set(
-      [
-        repository?.projectId,
-        ...(projects.find((project) => project.id === repository?.projectId)?.memberIds ?? []),
-        primary?.projectId,
-      ].filter(Boolean) as string[],
+    const candidate = selectSecondaryConversation(
+      id,
+      conversations,
+      primaryId,
+      activeProjectIds(repository?.projectId, projects, primary?.projectId),
+      () => crypto.randomUUID(),
     );
-    const sameProjectOther = conversations.find(
-      (conversation) =>
-        conversation.id !== primaryId &&
-        !conversation.archivedAt &&
-        !conversation.settledAt &&
-        (sameProjectIds.size === 0 || sameProjectIds.has(conversation.projectId)),
-    );
-    const candidate = id ?? sameProjectOther?.id ?? `new:${crypto.randomUUID()}`;
     secondaryIdReference.current = candidate;
     setSecondaryId(candidate);
     setActivePane("secondary");
@@ -1411,7 +1439,7 @@ export function CodeWorkbench({
     event.currentTarget.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const bounds = element.getBoundingClientRect();
-      setSplitPercent(clampSplitPercent(((pointer.clientX - bounds.left) / bounds.width) * 100));
+      setSplitPercent(((pointer.clientX - bounds.left) / bounds.width) * 100);
     };
     const finish = () => {
       window.removeEventListener("pointermove", move);
