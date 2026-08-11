@@ -72,16 +72,6 @@ import {
   ProfileError,
   type ProfileProbeKind,
 } from "./profiles.ts";
-import {
-  assembleContextPackage,
-  browseRepositoryFiles,
-  previewRepositoryFile,
-  resolveWorktreeImagePath,
-  searchRepositoryFiles,
-  stageComposerImage,
-  stageWorktreeImageCopy,
-  type ContextPin,
-} from "./context.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
 import { projectConversationHistory, projectWorkbenchState } from "./state-projection.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
@@ -111,6 +101,7 @@ import { handleAutonomyRoute } from "./autonomy-routes.ts";
 import { handleReviewRoute } from "./review-routes.ts";
 import { handleConversationLifecycleRoute } from "./conversation-lifecycle-routes.ts";
 import { handleProviderAdapterRoute } from "./provider-adapter-routes.ts";
+import { handleContextRoute, MAX_STAGE_IMAGE_BODY_BYTES } from "./context-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -174,7 +165,6 @@ export function isLocalControlRequest(
 
 const MAX_BODY_BYTES = 128 * 1024;
 /** Base64 image staging: 2 MiB raw ≈ 2.7 MiB encoded, plus JSON envelope. */
-const MAX_STAGE_IMAGE_BODY_BYTES = 3 * 1024 * 1024;
 const activeCheckpointProjects = new Set<string>();
 const activeCheckpointWorktrees = new Set<string>();
 const requestBodies = new WeakMap<IncomingMessage, Buffer>();
@@ -1990,166 +1980,16 @@ async function handleApi(
       sendJson(response, 200, { approvals: permissions.approvalsFor(body.runId) });
       return true;
     }
-    if (route === "/api/context/files") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        query?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.query !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and file query are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, {
-        files: await searchRepositoryFiles(context.worktree, body.query),
-      });
+    if (
+      await handleContextRoute(route, request, response, {
+        remote: remoteRequest,
+        managed: Boolean(managedHost),
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/context/browse") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        query?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.query !== "string"
-      ) {
-        throw new RepositoryError("A repository, worktree, and search query are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const controller = new AbortController();
-      request.once("aborted", () => controller.abort());
-      sendJson(
-        response,
-        200,
-        await browseRepositoryFiles(context.worktree, body.query, controller.signal),
-      );
-      return true;
-    }
-    if (route === "/api/context/preview") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        path?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.path !== "string"
-      ) {
-        throw new RepositoryError(
-          "A repository, worktree, and repository-relative path are required.",
-        );
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, {
-        preview: await previewRepositoryFile(context.worktree, body.path),
-      });
-      return true;
-    }
-    if (route === "/api/context/stage-image") {
-      const body = (await readJson(request, MAX_STAGE_IMAGE_BODY_BYTES)) as {
-        root?: unknown;
-        worktree?: unknown;
-        mediaType?: unknown;
-        data?: unknown;
-        name?: unknown;
-        conversationId?: unknown;
-        absolutePath?: unknown;
-      };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new RepositoryError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      if (typeof body.absolutePath === "string" && body.absolutePath) {
-        if (remoteRequest || managedHost) {
-          throw new RepositoryError(
-            "Remote and managed hosts cannot pin absolute desktop paths; drop or paste the image bytes instead.",
-            403,
-          );
-        }
-        const resolved = await resolveWorktreeImagePath(context.worktree, body.absolutePath);
-        if (resolved) {
-          sendJson(response, 200, { attachment: resolved, staged: false });
-          return true;
-        }
-        const stagedCopy = await stageWorktreeImageCopy(context.worktree, body.absolutePath, {
-          ...(typeof body.conversationId === "string"
-            ? { conversationId: body.conversationId }
-            : {}),
-        });
-        if (!stagedCopy) {
-          throw new RepositoryError(
-            "The dropped file is outside the selected worktree or is not a supported image.",
-            400,
-          );
-        }
-        sendJson(response, 200, { attachment: stagedCopy, staged: true });
-        return true;
-      }
-      if (typeof body.mediaType !== "string" || typeof body.data !== "string") {
-        throw new RepositoryError("Image media type and base64 data are required.");
-      }
-      const staged = await stageComposerImage(context.worktree, {
-        mediaType: body.mediaType,
-        data: body.data,
-        ...(typeof body.name === "string" ? { name: body.name } : {}),
-        ...(typeof body.conversationId === "string" ? { conversationId: body.conversationId } : {}),
-      });
-      sendJson(response, 200, { attachment: staged, staged: true });
-      return true;
-    }
-    if (route === "/api/context/package/preview") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        pins?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        !Array.isArray(body.pins) ||
-        body.pins.length > 100 ||
-        body.pins.some(
-          (pin) =>
-            typeof pin !== "object" ||
-            pin === null ||
-            typeof (pin as { path?: unknown }).path !== "string" ||
-            !["file", "folder"].includes(String((pin as { kind?: unknown }).kind)),
-        )
-      ) {
-        throw new RepositoryError(
-          "A repository, worktree, and bounded context pin list are required.",
-        );
-      }
-      const pins = body.pins as ContextPin[];
-      if (remoteRequest && pins.some((pin) => pin.kind === "folder")) {
-        throw new RepositoryError(
-          "Remote folder pinning requires an authenticated repository grant and is unavailable.",
-          403,
-        );
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      const assembled = await assembleContextPackage(context.worktree, pins, {
-        includeProviderInstructions: !remoteRequest && !managedHost,
-      });
-      sendJson(response, 200, {
-        package: {
-          pins: assembled.pins,
-          entries: assembled.entries,
-          totalBytes: assembled.totalBytes,
-          estimatedTokens: assembled.estimatedTokens,
-          digest: assembled.digest,
-        },
-      });
-      return true;
-    }
     if (route === "/api/provider/profiles/list") {
       if (managedHost) {
         sendJson(response, 200, { profiles: [], administrationAvailable: false });
