@@ -17,6 +17,7 @@ import {
 const execFileAsync = promisify(execFile);
 const REGISTRY_SCHEMA_VERSION = 1;
 const PLAN_TTL_MS = 5 * 60_000;
+export const WORKTREE_PLAN_LIMIT = 64;
 
 export type ManagedWorktreeRecovery = "available" | "moved" | "missing" | "inaccessible";
 
@@ -71,7 +72,28 @@ export interface WorktreeRemovalPlan {
   expiresAt: string;
 }
 
-type WorktreePlan = WorktreeCreationPlan | WorktreeRemovalPlan;
+export type WorktreePlan = WorktreeCreationPlan | WorktreeRemovalPlan;
+
+export function retainBoundedWorktreePlan(
+  plans: Map<string, WorktreePlan>,
+  plan: WorktreePlan,
+  now = Date.now(),
+): void {
+  for (const [id, pending] of plans) {
+    const expiresAt = Date.parse(pending.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      plans.delete(id);
+    }
+  }
+
+  plans.delete(plan.id);
+  plans.set(plan.id, plan);
+  while (plans.size > WORKTREE_PLAN_LIMIT) {
+    const oldest = plans.keys().next().value;
+    if (oldest === undefined) break;
+    plans.delete(oldest);
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -480,7 +502,7 @@ export class WorktreeManager {
       path,
       expiresAt: new Date(Date.now() + PLAN_TTL_MS).toISOString(),
     };
-    this.#plans.set(plan.id, plan);
+    retainBoundedWorktreePlan(this.#plans, plan);
     return plan;
   }
 
@@ -578,7 +600,7 @@ export class WorktreeManager {
       ...identity,
       expiresAt: new Date(Date.now() + PLAN_TTL_MS).toISOString(),
     };
-    this.#plans.set(plan.id, plan);
+    retainBoundedWorktreePlan(this.#plans, plan);
     return plan;
   }
 

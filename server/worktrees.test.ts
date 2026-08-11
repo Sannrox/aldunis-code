@@ -9,11 +9,53 @@ import { openRepository } from "./repository.ts";
 import {
   hasStagedChanges,
   ManagedWorktreeStore,
+  retainBoundedWorktreePlan,
+  WORKTREE_PLAN_LIMIT,
   WorktreeManager,
   type ManagedWorktreeRecord,
+  type WorktreePlan,
 } from "./worktrees.ts";
 
 const execFileAsync = promisify(execFile);
+
+function creationPlan(id: string, expiresAt: string): WorktreePlan {
+  return {
+    id,
+    action: "create",
+    repository: "/repo",
+    base: "main",
+    baseRevision: "a".repeat(40),
+    branch: `codex/${id}`,
+    path: `/worktrees/${id}`,
+    expiresAt,
+  };
+}
+
+test("retaining a worktree plan removes expired previews", () => {
+  const now = Date.parse("2026-08-11T12:00:00.000Z");
+  const plans = new Map<string, WorktreePlan>([
+    ["expired", creationPlan("expired", new Date(now).toISOString())],
+    ["pending", creationPlan("pending", new Date(now + 60_000).toISOString())],
+  ]);
+
+  retainBoundedWorktreePlan(plans, creationPlan("new", new Date(now + 60_000).toISOString()), now);
+
+  assert.deepEqual([...plans.keys()], ["pending", "new"]);
+});
+
+test("retaining worktree plans evicts the oldest preview above the limit", () => {
+  const now = Date.parse("2026-08-11T12:00:00.000Z");
+  const plans = new Map<string, WorktreePlan>();
+  for (let index = 0; index <= WORKTREE_PLAN_LIMIT; index += 1) {
+    const plan = creationPlan(`plan-${index}`, new Date(now + 60_000).toISOString());
+    retainBoundedWorktreePlan(plans, plan, now);
+  }
+
+  assert.equal(plans.size, WORKTREE_PLAN_LIMIT);
+  assert.equal(plans.has("plan-0"), false);
+  assert.equal(plans.has("plan-1"), true);
+  assert.equal(plans.has(`plan-${WORKTREE_PLAN_LIMIT}`), true);
+});
 
 test("staged-change detection consumes rename and copy source paths", () => {
   assert.equal(hasStagedChanges(" R renamed.txt\0original.txt\0"), false);
