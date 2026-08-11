@@ -53,8 +53,10 @@ export function normalizeClaudeModelSlug(model: string): string {
 export function isAllowedClaudeModel(model: string): boolean {
   const trimmed = model.trim();
   const normalized = normalizeClaudeModelSlug(trimmed);
-  return (DEFAULT_MODELS as readonly string[]).includes(trimmed)
-    || (DEFAULT_MODELS as readonly string[]).includes(normalized);
+  return (
+    (DEFAULT_MODELS as readonly string[]).includes(trimmed) ||
+    (DEFAULT_MODELS as readonly string[]).includes(normalized)
+  );
 }
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -131,6 +133,13 @@ export interface ClaudeProfileSnapshot extends ClaudeProfile {
   probes: Record<ProfileProbeKind, ProfileProbe>;
 }
 
+interface ActiveProfileProbe {
+  profileId: string;
+  invalidated: boolean;
+  awaitedMutations: Set<object>;
+  promise: Promise<ClaudeProfileSnapshot>;
+}
+
 export interface AdapterProfileSeed {
   /** Full discovery id, e.g. `adapter:dev.kiro.cli@1.0.0`. */
   provider: string;
@@ -150,7 +159,10 @@ interface SecretDocument {
 }
 
 export class ProfileError extends Error {
-  constructor(message: string, readonly status = 400) {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
     super(message);
   }
 }
@@ -207,9 +219,8 @@ export function isDefaultProfileId(id: string): boolean {
 function normalizeProfile(raw: ClaudeProfile): ClaudeProfile {
   return {
     ...raw,
-    provider: typeof raw.provider === "string" && raw.provider.trim()
-      ? raw.provider.trim()
-      : "claude-code",
+    provider:
+      typeof raw.provider === "string" && raw.provider.trim() ? raw.provider.trim() : "claude-code",
     binaryPath: raw.binaryPath ?? "",
     homePath: raw.homePath ?? "",
     configPath: raw.configPath ?? "",
@@ -221,13 +232,15 @@ function publicProfile(profile: ClaudeProfile, secrets: SecretDocument): ClaudeP
   const normalized = normalizeProfile(profile);
   return {
     ...normalized,
-    environment: normalized.environment.map((variable) => variable.sensitive
-      ? {
-          name: variable.name,
-          sensitive: true,
-          valueSet: Object.hasOwn(secrets.values, `${normalized.id}:${variable.name}`),
-        }
-      : { name: variable.name, sensitive: false, value: variable.value ?? "" }),
+    environment: normalized.environment.map((variable) =>
+      variable.sensitive
+        ? {
+            name: variable.name,
+            sensitive: true,
+            valueSet: Object.hasOwn(secrets.values, `${normalized.id}:${variable.name}`),
+          }
+        : { name: variable.name, sensitive: false, value: variable.value ?? "" },
+    ),
   };
 }
 
@@ -262,6 +275,9 @@ export class ClaudeProfileStore {
   readonly #profilesPath: string;
   readonly #secretsPath: string;
   readonly #probes = new Map<string, Record<ProfileProbeKind, ProfileProbe>>();
+  readonly #activeProbes = new Map<string, ActiveProfileProbe>();
+  readonly #runningProbes = new Set<ActiveProfileProbe>();
+  readonly #pendingProfileMutations = new Map<string, Set<object>>();
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(readonly directory = defaultStateDirectory()) {
@@ -281,11 +297,11 @@ export class ClaudeProfileStore {
       }),
     ]);
     if (
-      profiles.schemaVersion !== PROFILE_SCHEMA_VERSION
-      || secrets.schemaVersion !== PROFILE_SCHEMA_VERSION
-      || !Array.isArray(profiles.profiles)
-      || typeof secrets.values !== "object"
-      || secrets.values === null
+      profiles.schemaVersion !== PROFILE_SCHEMA_VERSION ||
+      secrets.schemaVersion !== PROFILE_SCHEMA_VERSION ||
+      !Array.isArray(profiles.profiles) ||
+      typeof secrets.values !== "object" ||
+      secrets.values === null
     ) {
       throw new ProfileError("Provider profile storage uses an incompatible schema.", 500);
     }
@@ -298,6 +314,57 @@ export class ClaudeProfileStore {
       ...publicProfile(profile, secrets),
       probes: structuredClone(this.#probes.get(profile.id) ?? emptyProbes()),
     };
+  }
+
+  #invalidateActiveProbes(id: string, committedMutation: object): void {
+    for (const active of this.#runningProbes) {
+      if (active.profileId === id && !active.awaitedMutations.has(committedMutation)) {
+        active.invalidated = true;
+      }
+    }
+  }
+
+  #beginProfileMutation(id: string): object {
+    const mutation = {};
+    const pending = this.#pendingProfileMutations.get(id) ?? new Set<object>();
+    pending.add(mutation);
+    this.#pendingProfileMutations.set(id, pending);
+    return mutation;
+  }
+
+  #endProfileMutation(id: string, mutation: object): void {
+    const pending = this.#pendingProfileMutations.get(id);
+    pending?.delete(mutation);
+    if (pending?.size === 0) this.#pendingProfileMutations.delete(id);
+    for (const active of this.#runningProbes) active.awaitedMutations.delete(mutation);
+  }
+
+  #awaitsCurrentMutations(id: string, active: ActiveProfileProbe): boolean {
+    const pending = this.#pendingProfileMutations.get(id);
+    if (active.awaitedMutations.size !== (pending?.size ?? 0)) return false;
+    return !pending || [...pending].every((mutation) => active.awaitedMutations.has(mutation));
+  }
+
+  #storeProbeResult(
+    id: string,
+    kind: ProfileProbeKind,
+    probe: ProfileProbe,
+    active: ActiveProfileProbe,
+  ): Record<ProfileProbeKind, ProfileProbe> {
+    const probes = structuredClone(this.#probes.get(id) ?? emptyProbes());
+    probes[kind] = probe;
+    if (!active.invalidated) this.#probes.set(id, probes);
+    return probes;
+  }
+
+  /** Test and diagnostics: settled profile identities retained in memory. */
+  get retainedProbeProfileCount(): number {
+    return this.#probes.size;
+  }
+
+  /** Test and diagnostics: currently executing profile/kind probes. */
+  get activeProbeCount(): number {
+    return this.#runningProbes.size;
   }
 
   /**
@@ -406,6 +473,7 @@ export class ClaudeProfileStore {
     if (!name) throw new ProfileError("A profile name is required.");
     const environment = input.environment ?? [];
     validateEnvironment(environment);
+    const mutation = input.id ? this.#beginProfileMutation(input.id) : undefined;
 
     let result!: ClaudeProfileSnapshot;
     const operation = this.#writeQueue.then(async () => {
@@ -415,20 +483,18 @@ export class ClaudeProfileStore {
         : undefined;
       if (input.id && !existing) throw new ProfileError("The provider profile was not found.", 404);
       const id = existing?.id ?? randomUUID();
-      const provider = (
-        input.provider?.trim()
-        || existing?.provider
-        || "claude-code"
-      ).trim();
+      const provider = (input.provider?.trim() || existing?.provider || "claude-code").trim();
       if (!provider) throw new ProfileError("A provider is required.");
-      const binaryPath = input.binaryPath?.trim()
-        ?? existing?.binaryPath
-        ?? (
-          provider === "claude-code" ? "claude"
-          : provider === "codex-cli" ? "codex"
-          : provider === "shikigami" ? "shikigami"
-          : ""
-        );
+      const binaryPath =
+        input.binaryPath?.trim() ??
+        existing?.binaryPath ??
+        (provider === "claude-code"
+          ? "claude"
+          : provider === "codex-cli"
+            ? "codex"
+            : provider === "shikigami"
+              ? "shikigami"
+              : "");
       const homePath = input.homePath?.trim() ?? existing?.homePath ?? "";
       const configPath = input.configPath?.trim() ?? existing?.configPath ?? "";
       const now = new Date().toISOString();
@@ -468,15 +534,21 @@ export class ClaudeProfileStore {
       else profiles.profiles[index] = profile;
       await writeDocument(this.#secretsPath, secrets);
       await writeDocument(this.#profilesPath, profiles);
+      if (mutation) this.#invalidateActiveProbes(id, mutation);
       this.#probes.delete(id);
       result = { ...publicProfile(profile, secrets), probes: emptyProbes() };
     });
     this.#writeQueue = operation.catch(() => undefined);
-    await operation;
-    return result;
+    try {
+      await operation;
+      return result;
+    } finally {
+      if (input.id && mutation) this.#endProfileMutation(input.id, mutation);
+    }
   }
 
   async delete(id: string): Promise<void> {
+    const mutation = this.#beginProfileMutation(id);
     const operation = this.#writeQueue.then(async () => {
       const { profiles, secrets } = await this.#documents();
       if (!profiles.profiles.some((profile) => profile.id === id)) {
@@ -488,10 +560,15 @@ export class ClaudeProfileStore {
       }
       await writeDocument(this.#secretsPath, secrets);
       await writeDocument(this.#profilesPath, profiles);
+      this.#invalidateActiveProbes(id, mutation);
       this.#probes.delete(id);
     });
     this.#writeQueue = operation.catch(() => undefined);
-    await operation;
+    try {
+      await operation;
+    } finally {
+      this.#endProfileMutation(id, mutation);
+    }
   }
 
   async runtime(id: string): Promise<{
@@ -508,8 +585,8 @@ export class ClaudeProfileStore {
     const environment: NodeJS.ProcessEnv = { ...process.env };
     for (const variable of profile.environment) {
       environment[variable.name] = variable.sensitive
-        ? secrets.values[`${id}:${variable.name}`] ?? ""
-        : variable.value ?? "";
+        ? (secrets.values[`${id}:${variable.name}`] ?? "")
+        : (variable.value ?? "");
     }
     const resolvedHome = resolve(expandHome(profile.homePath || homedir()));
     if (profile.provider === "claude-code" && profile.homePath) {
@@ -520,17 +597,47 @@ export class ClaudeProfileStore {
       executable: profile.binaryPath,
       environment,
       configPath: profile.configPath ? resolve(expandHome(profile.configPath)) : "",
-      continuationKey: profile.provider === "claude-code"
-        ? `claude:home:${resolvedHome}`
-        : `${profile.provider}:profile:${profile.id}`,
+      continuationKey:
+        profile.provider === "claude-code"
+          ? `claude:home:${resolvedHome}`
+          : `${profile.provider}:profile:${profile.id}`,
     };
   }
 
   async refresh(id: string, kind: ProfileProbeKind): Promise<ClaudeProfileSnapshot> {
+    const key = `${id}\n${kind}`;
+    const existing = this.#activeProbes.get(key);
+    if (existing && !existing.invalidated && this.#awaitsCurrentMutations(id, existing)) {
+      return existing.promise;
+    }
+    const active = {
+      profileId: id,
+      invalidated: false,
+      awaitedMutations: new Set(this.#pendingProfileMutations.get(id) ?? []),
+    } as ActiveProfileProbe;
+    const operation = this.#refresh(id, kind, active).finally(() => {
+      if (this.#activeProbes.get(key) === active) this.#activeProbes.delete(key);
+      this.#runningProbes.delete(active);
+    });
+    active.promise = operation;
+    this.#activeProbes.set(key, active);
+    this.#runningProbes.add(active);
+    return operation;
+  }
+
+  async #refresh(
+    id: string,
+    kind: ProfileProbeKind,
+    active: ActiveProfileProbe,
+  ): Promise<ClaudeProfileSnapshot> {
+    await this.#writeQueue;
     const runtime = await this.runtime(id);
-    const probes = this.#probes.get(id) ?? emptyProbes();
+    if (active.invalidated) {
+      throw new ProfileError("The provider profile changed while its probe was running.", 409);
+    }
+    const probes = structuredClone(this.#probes.get(id) ?? emptyProbes());
     probes[kind] = { state: "refreshing", checkedAt: null, detail: null };
-    this.#probes.set(id, probes);
+    this.#storeProbeResult(id, kind, probes[kind], active);
     const checkedAt = new Date().toISOString();
     const isClaude = runtime.profile.provider === "claude-code";
     try {
@@ -539,11 +646,12 @@ export class ClaudeProfileStore {
           throw new Error("No binary path configured.");
         }
         if (isAbsolute(runtime.executable)) await access(runtime.executable);
-        const args = isClaude || runtime.profile.provider === "codex-cli"
-          ? ["--version"]
-          : runtime.profile.provider === "shikigami"
-          ? ["version"]
-          : ["--version"];
+        const args =
+          isClaude || runtime.profile.provider === "codex-cli"
+            ? ["--version"]
+            : runtime.profile.provider === "shikigami"
+              ? ["version"]
+              : ["--version"];
         await execFileAsync(runtime.executable, args, {
           env: runtime.environment,
           timeout: 5_000,
@@ -555,11 +663,12 @@ export class ClaudeProfileStore {
           detail: `${runtime.profile.name} is available.`,
         };
       } else if (kind === "version") {
-        const args = isClaude || runtime.profile.provider === "codex-cli"
-          ? ["--version"]
-          : runtime.profile.provider === "shikigami"
-          ? ["version"]
-          : ["--version"];
+        const args =
+          isClaude || runtime.profile.provider === "codex-cli"
+            ? ["--version"]
+            : runtime.profile.provider === "shikigami"
+              ? ["version"]
+              : ["--version"];
         const result = await execFileAsync(runtime.executable, args, {
           env: runtime.environment,
           timeout: 5_000,
@@ -585,13 +694,12 @@ export class ClaudeProfileStore {
             encoding: "utf8",
           });
           const normalizedStatus = result.stdout.toLowerCase();
-          let authenticated = !normalizedStatus.includes("not authenticated")
-            && !normalizedStatus.includes("not logged in")
-            && (
-              normalizedStatus.includes("loggedin")
-              || normalizedStatus.includes("logged in")
-              || normalizedStatus.includes("authenticated")
-            );
+          let authenticated =
+            !normalizedStatus.includes("not authenticated") &&
+            !normalizedStatus.includes("not logged in") &&
+            (normalizedStatus.includes("loggedin") ||
+              normalizedStatus.includes("logged in") ||
+              normalizedStatus.includes("authenticated"));
           try {
             const value = JSON.parse(result.stdout) as Record<string, unknown>;
             authenticated = value.loggedIn === true || value.authenticated === true;
@@ -601,7 +709,9 @@ export class ClaudeProfileStore {
           probes.authentication = {
             state: authenticated ? "ready" : "unavailable",
             checkedAt,
-            detail: authenticated ? "Claude authentication is ready." : "Claude is not authenticated.",
+            detail: authenticated
+              ? "Claude authentication is ready."
+              : "Claude is not authenticated.",
             authenticated,
           };
         }
@@ -624,19 +734,23 @@ export class ClaudeProfileStore {
       probes[kind] = {
         state: "unavailable",
         checkedAt,
-        detail: kind === "authentication"
-          ? "Authentication could not be verified for this profile."
-          : kind === "models"
-          ? "Models could not be resolved for this profile."
-          : `${runtime.profile.name} is unavailable for this profile.`,
+        detail:
+          kind === "authentication"
+            ? "Authentication could not be verified for this profile."
+            : kind === "models"
+              ? "Models could not be resolved for this profile."
+              : `${runtime.profile.name} is unavailable for this profile.`,
         ...(kind === "authentication" ? { authenticated: false } : {}),
         ...(kind === "models" ? { models: [] } : {}),
       };
     }
-    this.#probes.set(id, probes);
+    if (active.invalidated) {
+      throw new ProfileError("The provider profile changed while its probe was running.", 409);
+    }
+    const currentProbes = this.#storeProbeResult(id, kind, probes[kind], active);
     return {
       ...runtime.profile,
-      probes: structuredClone(probes),
+      probes: structuredClone(currentProbes),
     };
   }
 }
