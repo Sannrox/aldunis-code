@@ -5,7 +5,14 @@ import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { RemoteAuth } from "./remote-auth.ts";
+import {
+  MAX_REMOTE_PROOF_REPLAY_ENTRIES,
+  RemoteAuth,
+  RemoteAuthError,
+  assertRemoteProofNotReplayed,
+  assertRemoteProofReplayCapacity,
+  retainRemoteProofReplay,
+} from "./remote-auth.ts";
 
 function proof(
   session: { sessionId: string; sessionToken: string },
@@ -31,11 +38,10 @@ function proof(
       authorization: `DPoP ${session.sessionId}.${session.sessionToken}`,
       "x-aldunis-timestamp": timestamp.toString(),
       "x-aldunis-nonce": nonce,
-      "x-aldunis-signature": sign(
-        "sha256",
-        Buffer.from(payload),
-        { key: privateKey, dsaEncoding: "ieee-p1363" },
-      ).toString("base64url"),
+      "x-aldunis-signature": sign("sha256", Buffer.from(payload), {
+        key: privateKey,
+        dsaEncoding: "ieee-p1363",
+      }).toString("base64url"),
       "x-aldunis-origin": origin,
       origin,
       host: "aldunis.test",
@@ -43,12 +49,37 @@ function proof(
   } as IncomingMessage;
 }
 
+test("remote proof replay retention expires entries and fails closed at capacity", () => {
+  const now = Date.parse("2026-08-11T12:00:00.000Z");
+  const replay = new Map<string, number>([
+    ["expired", now],
+    ["live-1", now + 60_000],
+  ]);
+
+  retainRemoteProofReplay(replay, "live-2", now + 60_000, now, 2);
+  assert.deepEqual([...replay.keys()], ["live-1", "live-2"]);
+  assert.throws(
+    () => assertRemoteProofReplayCapacity(replay, now, 2),
+    (error: unknown) => error instanceof RemoteAuthError && error.status === 503,
+  );
+  assert.equal(replay.size, 2);
+  assert.throws(
+    () => assertRemoteProofNotReplayed(replay, "live-1", now),
+    (error: unknown) => error instanceof RemoteAuthError && error.status === 401,
+  );
+  assert.equal(MAX_REMOTE_PROOF_REPLAY_ENTRIES, 10_000);
+});
+
 test("pairing is single-use and sessions require non-replayed device proof", async () => {
   const auth = new RemoteAuth(await mkdtemp(join(tmpdir(), "aldunis-remote-auth-")));
   const pairing = await auth.issuePairing();
   const keys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const publicKey = keys.publicKey.export({ format: "jwk" });
-  const session = await auth.pair({ credential: pairing.credential, label: "Test iPad", publicKey });
+  const session = await auth.pair({
+    credential: pairing.credential,
+    label: "Test iPad",
+    publicKey,
+  });
   await assert.rejects(
     () => auth.pair({ credential: pairing.credential, label: "Replay", publicKey }),
     /already used/,
@@ -56,6 +87,7 @@ test("pairing is single-use and sessions require non-replayed device proof", asy
   const body = Buffer.from("{}");
   const request = proof(session, keys.privateKey, body);
   assert.equal((await auth.verify(request, body)).label, "Test iPad");
+  request.headers["x-aldunis-signature"] = "invalid";
   await assert.rejects(() => auth.verify(request, body), /replayed/);
 });
 
@@ -69,14 +101,19 @@ test("tampered, stale, and revoked device proofs fail closed", async () => {
     publicKey: keys.publicKey.export({ format: "jwk" }),
   });
   await assert.rejects(
-    () => auth.verify(proof(session, keys.privateKey, Buffer.from("{}")), Buffer.from('{"changed":true}')),
+    () =>
+      auth.verify(
+        proof(session, keys.privateKey, Buffer.from("{}")),
+        Buffer.from('{"changed":true}'),
+      ),
     /invalid/,
   );
   await assert.rejects(
-    () => auth.verify(
-      proof(session, keys.privateKey, Buffer.from("{}"), randomUUID(), Date.now() - 120_000),
-      Buffer.from("{}"),
-    ),
+    () =>
+      auth.verify(
+        proof(session, keys.privateKey, Buffer.from("{}"), randomUUID(), Date.now() - 120_000),
+        Buffer.from("{}"),
+      ),
     /stale/,
   );
   const wrongOrigin = proof(session, keys.privateKey, Buffer.from("{}"));
@@ -118,11 +155,25 @@ test("SSH remote authentication permits only the loopback HTTP origin", async ()
     publicKey: keys.publicKey.export({ format: "jwk" }),
   });
   const body = Buffer.from("{}");
-  const request = proof(session, keys.privateKey, body, randomUUID(), Date.now(), "http://127.0.0.1:49152");
+  const request = proof(
+    session,
+    keys.privateKey,
+    body,
+    randomUUID(),
+    Date.now(),
+    "http://127.0.0.1:49152",
+  );
   request.headers.host = "127.0.0.1:49152";
   assert.equal((await auth.verify(request, body)).label, "SSH desktop");
 
-  const publicRequest = proof(session, keys.privateKey, body, randomUUID(), Date.now(), "http://192.168.1.10:49152");
+  const publicRequest = proof(
+    session,
+    keys.privateKey,
+    body,
+    randomUUID(),
+    Date.now(),
+    "http://192.168.1.10:49152",
+  );
   publicRequest.headers.host = "192.168.1.10:49152";
   await assert.rejects(() => auth.verify(publicRequest, body), /another origin/);
 });
