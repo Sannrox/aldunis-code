@@ -34,6 +34,21 @@ test("backend readiness rejects non-TCP and unavailable addresses", () => {
   assert.throws(() => localApplicationUrl("/tmp/aldunis.sock"), /did not provide a TCP address/);
 });
 
+test("desktop shutdown bounds loopback server close when a request remains active", async () => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write("data: connected\n\n");
+  });
+  const url = await listenOnLoopback(server);
+  const request = fetch(url).catch(() => undefined);
+  await new Promise<void>((resolve) => server.once("connection", () => resolve()));
+
+  await closeServer(server, 10);
+  await request;
+
+  assert.equal(server.listening, false);
+});
+
 test("desktop connection IPC accepts only the local application origin", () => {
   assert.equal(
     isLocalApplicationOrigin("http://127.0.0.1:4174/settings", "http://127.0.0.1:4174"),
@@ -110,7 +125,10 @@ test("desktop main adapts the CommonJS updater and keeps cleanup in before-quit"
   assert.match(source, /engine: electronUpdater\.autoUpdater as unknown as DesktopUpdaterEngine/);
   assert.doesNotMatch(source, /prepareForInstall/);
   assert.match(source, /app\.on\("before-quit", \(event\) =>/);
+  assert.match(source, /if \(shutdownComplete\) return;\s+event\.preventDefault\(\);/);
+  assert.match(source, /event\.preventDefault\(\);\s+if \(shuttingDown\) return;/);
   assert.match(source, /void finishDesktopShutdown\(\{/);
+  assert.match(source, /shutdownComplete = true;\s+app\.quit\(\);/);
   assert.match(source, /shuttingDown \|\| updateInstallHandoffStarted/);
   assert.match(source, /nativeAutoUpdater\.on\("before-quit-for-update", \(\) =>/);
   assert.match(source, /Local services could not be closed cleanly during desktop shutdown\./);

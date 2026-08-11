@@ -339,7 +339,7 @@
     },
     {
       "name": "DesktopWindowLifecycle",
-      "description": "The Electron desktop window lifecycle that keeps the local host and active provider sessions alive when a macOS window is closed, restores a live hidden window on activation or second launch, ignores activation races after the retained window is destroyed, and preserves explicit application shutdown through Cmd+Q; Windows and Linux retain close-to-exit behavior."
+      "description": "The Electron desktop window lifecycle that keeps the local host and active provider sessions alive when a macOS window is closed, restores a live hidden window on activation or second launch, ignores activation races after the retained window is destroyed, and completes explicit application shutdown after bounded loopback-service cleanup without requiring a second Quit; Windows and Linux retain close-to-exit behavior."
     },
     {
       "name": "PersistedConversationRestoration",
@@ -1936,7 +1936,7 @@
     {
       "subject": "DesktopWindowLifecycle",
       "source": "Aldunis Code desktop window lifecycle contract",
-      "locator": "desktop/lifecycle.ts#isLiveDesktopWindow; desktop/main.ts#showWindow; desktop/main.ts#window.close; desktop/main.ts#app.activate; Issue #566",
+      "locator": "desktop/lifecycle.ts#isLiveDesktopWindow; desktop/lifecycle.ts#closeServer; desktop/main.ts#showWindow; desktop/main.ts#window.close; desktop/main.ts#app.activate; desktop/main.ts#app.before-quit; Issue #566",
       "confidence": 1.0
     },
     {
