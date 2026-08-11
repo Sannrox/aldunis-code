@@ -9,7 +9,7 @@ import {
 } from "node:http";
 import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { basename, dirname, extname, join, normalize } from "node:path";
+import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ClaudeCodeAdapter,
@@ -47,10 +47,8 @@ import { assertParentRoutedApproval, projectDelegatedApprovals } from "./delegat
 import { assertParentRoutedInput, projectDelegatedInputs } from "./delegated-inputs.ts";
 import {
   canonicalizeRepositoryRoot,
-  collapseProjectsByRepository,
   deleteCheckpointReferences,
   discoverWorktrees,
-  openRepository,
   RepositoryError,
   repositoryCommonDir,
 } from "./repository.ts";
@@ -100,6 +98,7 @@ import { handleConversationLifecycleRoute } from "./conversation-lifecycle-route
 import { handleProviderAdapterRoute } from "./provider-adapter-routes.ts";
 import { handleContextRoute, MAX_STAGE_IMAGE_BODY_BYTES } from "./context-routes.ts";
 import { handleCheckpointRoute } from "./checkpoint-routes.ts";
+import { handleWorkspaceRoute } from "./workspace-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -386,25 +385,6 @@ async function selectWorktreeForRepository(
     throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
   }
   return { root, worktree: selected };
-}
-
-async function managedWorktreePath(root: string, branch: string): Promise<string> {
-  const parent = dirname(root);
-  const [rootDetails, parentDetails] = await Promise.all([stat(root), stat(parent)]);
-  if (rootDetails.dev !== parentDetails.dev) {
-    throw new RepositoryError(
-      "Managed worktree creation requires the repository parent to share its filesystem.",
-      403,
-    );
-  }
-  const safeBranch =
-    branch
-      .trim()
-      .replaceAll("/", "-")
-      .replace(/[^A-Za-z0-9._-]/g, "-")
-      .replace(/^-+/, "")
-      .slice(0, 120) || "worktree";
-  return join(parent, ".aldunis-worktrees", basename(root), safeBranch);
 }
 
 async function selectedReleaseProject(
@@ -794,87 +774,22 @@ async function handleApi(
       sendJson(response, 200, { remoteEnabled: true, ...(await remoteAuth.descriptor()) });
       return true;
     }
-    if (route === "/api/repositories/open") {
-      const body = (await readJson(request)) as { path?: unknown; repositoryId?: unknown };
-      let managedRepositoryId: string | undefined;
-      const repository = managedHost
-        ? await (async () => {
-            if (typeof body.repositoryId !== "string" || body.path !== undefined) {
-              throw new RepositoryError("Select a repository from the managed catalogue.", 403);
-            }
-            const managedRepository = managedHost.repository(body.repositoryId);
-            await managedHost.verifyRepository(managedRepository);
-            managedRepositoryId = managedRepository.id;
-            return openRepository(managedRepository.root);
-          })()
-        : await (async () => {
-            if (typeof body.path !== "string") {
-              throw new RepositoryError("A repository path is required.");
-            }
-            return openRepository(body.path);
-          })();
-      repository.worktrees = await worktrees.list(repository.root);
-      const projection = await state.inspect();
-      // One project record per git repository (common dir), not per worktree path.
-      let existing = projection.projects.find((project) => project.root === repository.root);
-      if (!existing) {
-        let commonDir: string | null = null;
-        try {
-          commonDir = await repositoryCommonDir(repository.selectedWorktree || repository.root);
-        } catch {
-          commonDir = null;
-        }
-        if (commonDir) {
-          for (const candidate of projection.projects) {
-            try {
-              if ((await repositoryCommonDir(candidate.root)) === commonDir) {
-                existing = candidate;
-                break;
-              }
-            } catch {
-              /* skip missing roots */
-            }
-          }
-        }
-      }
-      const project = await state.saveProject({
-        id: existing?.id ?? randomUUID(),
-        name: repository.name,
-        root: repository.root,
-        // Keep original registration time when reopening an existing project.
-        ...(existing ? { openedAt: existing.openedAt } : {}),
-      });
-      sendJson(response, 200, {
-        ...repository,
-        projectId: project.id,
-        ...(managedRepositoryId ? { managedRepositoryId } : {}),
-      });
+    if (
+      await handleWorkspaceRoute(route, request, response, {
+        state,
+        preferences,
+        worktrees,
+        directories,
+        activeProjects: activeCheckpointProjects,
+        remoteRequest,
+        remoteHost: Boolean(remoteAuth),
+        managedHost,
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/projects/list") {
-      const projection = await state.inspect();
-      const projects = await collapseProjectsByRepository(projection.projects);
-      const visibleProjects = managedHost
-        ? projects.filter((project) => {
-            try {
-              managedHost.repositoryForRoot(project.root);
-              return true;
-            } catch {
-              return false;
-            }
-          })
-        : projects;
-      sendJson(response, 200, {
-        projects: visibleProjects.map((project) => ({
-          ...project,
-          ...(managedHost
-            ? { managedRepositoryId: managedHost.repositoryForRoot(project.root).id }
-            : {}),
-        })),
-        chiseiBindingAdministrationAvailable: !remoteRequest && !managedHost,
-      });
-      return true;
-    }
     if (route === "/api/integrations/chisei/bind") {
       if (remoteRequest || managedHost) {
         throw new LocalStateError(
@@ -1009,156 +924,6 @@ async function handleApi(
         throw new LocalStateError("The governance correlation is unavailable.", 404);
       }
       sendJson(response, 200, await chisei.operationReceipt(correlation.operationId));
-      return true;
-    }
-    if (route === "/api/directories/browse") {
-      if (remoteAuth || managedHost) {
-        throw new RepositoryError(
-          "Remote clients cannot browse the host filesystem without a directory grant.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as { path?: unknown; includeHidden?: unknown };
-      if (body.path !== undefined && typeof body.path !== "string") {
-        throw new RepositoryError("A directory path must be a string.");
-      }
-      if (body.includeHidden !== undefined && typeof body.includeHidden !== "boolean") {
-        throw new RepositoryError("The hidden-directory option must be a boolean.");
-      }
-      const controller = new AbortController();
-      request.once("aborted", () => controller.abort());
-      response.once("close", () => {
-        if (!response.writableEnded) controller.abort();
-      });
-      sendJson(
-        response,
-        200,
-        await directories.browse({
-          path: body.path,
-          includeHidden: body.includeHidden,
-          signal: controller.signal,
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/worktrees/create/preview") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        base?: unknown;
-        branch?: unknown;
-        path?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.base !== "string" ||
-        typeof body.branch !== "string" ||
-        (body.path !== undefined && typeof body.path !== "string")
-      ) {
-        throw new RepositoryError("A repository, base revision, and new branch are required.");
-      }
-      const managedRoot = managedHost
-        ? (await managedHost.selectWorktree(body.root, body.root)).root
-        : body.root;
-      if (managedHost && body.path !== undefined) {
-        throw new RepositoryError(
-          "Managed hosted mode does not accept arbitrary worktree paths.",
-          403,
-        );
-      }
-      const managedPath = managedHost
-        ? await managedWorktreePath(managedRoot, body.branch)
-        : undefined;
-      const { preferences: currentPreferences } = await preferences.load();
-      sendJson(
-        response,
-        200,
-        await worktrees.previewCreate({
-          repository: managedRoot,
-          base: body.base,
-          branch: body.branch,
-          ...(managedPath ? { path: managedPath } : {}),
-          ...(typeof body.path === "string" ? { path: body.path } : {}),
-          limit: currentPreferences.managedWorktreeLimit,
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/worktrees/create") {
-      const body = (await readJson(request)) as { planId?: unknown; confirm?: unknown };
-      if (typeof body.planId !== "string" || body.confirm !== true) {
-        throw new RepositoryError("A complete scoped worktree approval is required.");
-      }
-      if (managedHost)
-        await managedHost.verifyRepositoryRoot(worktrees.creationPlan(body.planId).repository);
-      const { preferences: currentPreferences } = await preferences.load();
-      const created = await worktrees.create(body.planId, currentPreferences.managedWorktreeLimit);
-      const repository = await openRepository(created.repository);
-      repository.worktrees = await worktrees.list(created.repository);
-      const projection = await state.inspect();
-      const project = projection.projects.find(
-        (candidate) => candidate.root === created.repository,
-      );
-      const managedRepositoryId = managedHost
-        ? managedHost.repositoryForRoot(created.repository).id
-        : undefined;
-      sendJson(response, 200, {
-        ...repository,
-        projectId: project?.id,
-        selectedWorktree: created.path,
-        ...(managedRepositoryId ? { managedRepositoryId } : {}),
-      });
-      return true;
-    }
-    if (route === "/api/worktrees/remove/preview") {
-      const body = (await readJson(request)) as { root?: unknown; path?: unknown };
-      if (typeof body.root !== "string" || typeof body.path !== "string") {
-        throw new RepositoryError("A repository and managed worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.path);
-      const projection = await state.inspect();
-      if (projection.threads.some((thread) => thread.worktree === context.worktree)) {
-        throw new RepositoryError(
-          "A conversation is still bound to this worktree. Conversation deletion never removes worktrees; remove or retain that history first.",
-          409,
-        );
-      }
-      sendJson(response, 200, await worktrees.previewRemove(context.root, context.worktree));
-      return true;
-    }
-    if (route === "/api/worktrees/remove") {
-      const body = (await readJson(request)) as { planId?: unknown; confirm?: unknown };
-      if (typeof body.planId !== "string" || body.confirm !== true) {
-        throw new RepositoryError("A complete scoped worktree removal approval is required.");
-      }
-      const plan = worktrees.removalPlan(body.planId);
-      if (managedHost) await managedHost.verifyRepositoryRoot(plan.repository);
-      const projection = await state.inspect();
-      const project = projection.projects.find((candidate) => candidate.root === plan.repository);
-      let projectLockAcquired = false;
-      try {
-        if (project && activeCheckpointProjects.has(project.id)) {
-          throw new LocalStateError(
-            "Wait for the active conversation operation before removing its worktree.",
-            409,
-          );
-        }
-        if (project) {
-          activeCheckpointProjects.add(project.id);
-          projectLockAcquired = true;
-        }
-        const current = await state.inspect();
-        if (current.threads.some((thread) => thread.worktree === plan.path)) {
-          throw new RepositoryError(
-            "A conversation became bound to this worktree after preview. Removal was cancelled.",
-            409,
-          );
-        }
-        await worktrees.remove(body.planId);
-      } finally {
-        if (project && projectLockAcquired) activeCheckpointProjects.delete(project.id);
-        worktrees.discardPlan(body.planId);
-      }
-      sendJson(response, 200, { status: "removed" });
       return true;
     }
     if (route === "/api/state/load") {

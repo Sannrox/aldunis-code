@@ -368,6 +368,10 @@
     {
       "name": "CheckpointRewindRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates checkpoint preview, file-diff, and rewind route recognition, canonical worktree selection, checkpoint identity and Git state validation, active-turn exclusion, rewind ordering, checkpoint persistence, and response mapping behind one internal dispatch interface without changing repository, filesystem, provider, or approval authority."
+    },
+    {
+      "name": "ConversationWorkspaceRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates repository admission and registration, managed catalogue projection, local directory browsing authority, and managed worktree preview, approval, creation, and removal ordering behind one internal dispatch interface without changing repository, filesystem, persistence, provider, or approval authority."
     }
   ],
   "relations": [
@@ -436,6 +440,16 @@
       "description": "The local API dispatch module delegates checkpoint preview, diff, and rewind requests and scoped repository facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "CheckpointRewindRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_conversation_workspace_route_dispatch",
+      "description": "The local API dispatch module delegates Conversation workspace repository, directory, and worktree requests and request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ConversationWorkspaceRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1089,6 +1103,18 @@
       "subject": "delegates_checkpoint_rewind_route_dispatch",
       "source": "Aldunis Code checkpoint rewind route dispatch interface",
       "locator": "server/host.ts#handleApi; server/checkpoint-routes.ts#handleCheckpointRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationWorkspaceRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#641",
+      "locator": "server/workspace-routes.ts#handleWorkspaceRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_conversation_workspace_route_dispatch",
+      "source": "Aldunis Code Conversation workspace route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/workspace-routes.ts#handleWorkspaceRoute",
       "confidence": 1.0
     },
     {
