@@ -71,10 +71,13 @@ test("first evaluation is due for seeding without prior lastRun", () => {
     false,
   );
   assert.equal(
-    isScheduleDue(baseAutomation({
-      lastRunAt: "2026-01-01T00:00:00.000Z",
-      schedule: { kind: "interval", seconds: 60 },
-    }), new Date("2026-01-01T00:01:00.000Z")),
+    isScheduleDue(
+      baseAutomation({
+        lastRunAt: "2026-01-01T00:00:00.000Z",
+        schedule: { kind: "interval", seconds: 60 },
+      }),
+      new Date("2026-01-01T00:01:00.000Z"),
+    ),
     true,
   );
 });
@@ -144,6 +147,191 @@ test("scheduler seeds first tick without firing and skips busy without advancing
   assert.equal(fires, 1);
   assert.equal(current?.lastStatus, "ok");
   assert.notEqual(current?.lastRunAt, lastBeforeSkip);
+});
+
+test("scheduler removes idle timers and wakes after enabled automation mutations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-idle-"));
+  const store = new AutomationStore(directory);
+  type Timer = { callback: () => void; delay: number; referenced: boolean; unref(): void };
+  const timers = new Set<Timer>();
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => undefined,
+    intervalMs: 15_000,
+    timers: {
+      setTimeout(callback, delay) {
+        const timer: Timer = {
+          callback,
+          delay,
+          referenced: true,
+          unref() {
+            this.referenced = false;
+          },
+        };
+        timers.add(timer);
+        return timer;
+      },
+      clearTimeout(handle) {
+        timers.delete(handle as Timer);
+      },
+    },
+  });
+
+  scheduler.start();
+  await scheduler.refresh();
+  assert.equal(timers.size, 0);
+
+  const automation = await store.create({
+    name: "Wake scheduler",
+    threadId: "thread-1",
+    prompt: "check",
+    schedule: { kind: "interval", seconds: 60 },
+  });
+  await scheduler.refresh();
+  assert.equal(timers.size, 1);
+  assert.equal([...timers][0]?.delay, 15_000);
+  assert.equal([...timers][0]?.referenced, false);
+
+  const originalTimer = [...timers][0];
+  await scheduler.refresh();
+  assert.equal([...timers][0], originalTimer);
+
+  const scheduled = [...timers][0]!;
+  timers.delete(scheduled);
+  scheduled.callback();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await scheduler.refresh();
+  assert.equal(timers.size, 1);
+  assert.equal([...timers][0]?.delay, 15_000);
+
+  await store.update(automation.id, { enabled: false });
+  await scheduler.refresh();
+  assert.equal(timers.size, 0);
+
+  await store.update(automation.id, { enabled: true });
+  await scheduler.refresh();
+  assert.equal(timers.size, 1);
+  scheduler.stop();
+  assert.equal(timers.size, 0);
+
+  await store.update(automation.id, { enabled: false });
+  await scheduler.refresh();
+  assert.equal(timers.size, 0);
+});
+
+test("scheduler serializes mutation refreshes behind an active store read", async () => {
+  const releases: Array<() => void> = [];
+  let listCalls = 0;
+  const store = {
+    list: () =>
+      new Promise<Automation[]>((resolve) => {
+        listCalls += 1;
+        releases.push(() => resolve([]));
+      }),
+  } as AutomationStore;
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => undefined,
+  });
+
+  scheduler.start();
+  releases.shift()?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releases.shift()?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  listCalls = 0;
+  const first = scheduler.refresh();
+  const second = scheduler.refresh();
+  assert.equal(listCalls, 1);
+
+  releases.shift()?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(listCalls, 2);
+  releases.shift()?.();
+  await Promise.all([first, second]);
+  scheduler.stop();
+});
+
+test("scheduler evaluates schedules immediately on startup", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-start-"));
+  const store = new AutomationStore(directory);
+  const automation = await store.create({
+    name: "Startup automation",
+    threadId: "thread-1",
+    prompt: "check",
+    schedule: { kind: "interval", seconds: 60 },
+  });
+  await store.update(automation.id, { lastRunAt: new Date(0).toISOString() });
+  let fired = 0;
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => {
+      fired += 1;
+    },
+  });
+
+  scheduler.start();
+  await scheduler.refresh();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(fired, 1);
+  scheduler.stop();
+});
+
+test("mutation refresh does not wait for due provider execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-refresh-"));
+  const store = new AutomationStore(directory);
+  const automation = await store.create({
+    name: "Slow automation",
+    threadId: "thread-1",
+    prompt: "check",
+    schedule: { kind: "interval", seconds: 60 },
+  });
+  await store.update(automation.id, { lastRunAt: new Date(0).toISOString() });
+  let releaseFire!: () => void;
+  const fire = new Promise<void>((resolve) => {
+    releaseFire = resolve;
+  });
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => fire,
+  });
+
+  scheduler.start();
+  const tick = scheduler.tick();
+  await scheduler.refresh();
+  releaseFire();
+  await tick;
+  scheduler.stop();
+});
+
+test("scheduler keeps mutation success recoverable after a transient store read failure", async () => {
+  let retries = 0;
+  const timer = {
+    unref: () => undefined,
+  };
+  const scheduler = new AutomationScheduler(
+    {
+      list: async () => {
+        throw new Error("temporary read failure");
+      },
+    } as AutomationStore,
+    {
+      isThreadBusy: async () => false,
+      fire: async () => undefined,
+      timers: {
+        setTimeout: () => {
+          retries += 1;
+          return timer;
+        },
+        clearTimeout: () => undefined,
+      },
+    },
+  );
+
+  scheduler.start();
+  await scheduler.refresh();
+  assert.equal(retries, 1);
+  scheduler.stop();
 });
 
 test("tick fires multiple due automations without waiting serially", async () => {
@@ -294,15 +482,21 @@ test("runNow is idempotent for one key and requires a new key for explicit retry
   };
   const fireStore: AutomationFireStore = {
     async get(automationId, key) {
-      return [...fires.values()].find((fire) => fire.automationId === automationId && fire.key === key) ?? null;
+      return (
+        [...fires.values()].find(
+          (fire) => fire.automationId === automationId && fire.key === key,
+        ) ?? null
+      );
     },
     async getById(fireId) {
       return fires.get(fireId) ?? null;
     },
     async latest(automationId) {
-      return [...fires.values()]
-        .filter((fire) => fire.automationId === automationId)
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+      return (
+        [...fires.values()]
+          .filter((fire) => fire.automationId === automationId)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+      );
     },
     async recordSkippedBusy(input) {
       const existing = await this.get(input.automationId, input.key);
