@@ -57,6 +57,7 @@ import { delegatedConversationLabels } from "./delegated-conversation-labels";
 import { delegatedConversationAncestorIds } from "../../lib/delegated-conversation-graph";
 import {
   BRANCH_PR_CLIENT_BATCH_LIMIT,
+  startBranchPrStatusPolling,
   chunkWorktreeRoots,
   indexBranchPrResults,
   uniqueWorktreeRoots,
@@ -1146,14 +1147,12 @@ export function CodeWorkbench({
         // Soft-fail: missing gh or network issues leave rows without PR chrome.
       }
     };
-    // Debounce: restore can still settle the lookup key a few times; one delayed
-    // batch is enough for sidebar PR chrome.
-    const debounceTimer = window.setTimeout(() => void refresh(), 250);
-    const timer = window.setInterval(() => void refresh(), 60_000);
+    // Restore can settle the lookup key a few times, so the initial visible
+    // batch stays debounced. Hidden windows do not need GitHub row chrome.
+    const stopPolling = startBranchPrStatusPolling(refresh, document);
     return () => {
       cancelled = true;
-      window.clearTimeout(debounceTimer);
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [prStatusLookupKey]);
   const worktreeLimit = managedWorktreeLimitPreference;
