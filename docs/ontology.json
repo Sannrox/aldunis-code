@@ -327,7 +327,7 @@
     },
     {
       "name": "AldunisDesktopAutoUpdater",
-      "description": "The packaged Electron main-process updater for Aldunis Code stable and nightly releases. It derives a fixed update feed from the packaged channel, enables prerelease checks only for nightly builds, exposes explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and preserves the local host shutdown boundary before installation."
+      "description": "The packaged Electron main-process updater for Aldunis Code stable and nightly releases. It derives a fixed update feed from the packaged channel, enables prerelease checks only for nightly builds, exposes explicit check, download, and restart actions, publishes only bounded state through the preload bridge, rejects automatic downgrades, and establishes native installer ownership before the normal local host shutdown boundary runs."
     },
     {
       "name": "DesktopUpdateChannel",

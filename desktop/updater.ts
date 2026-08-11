@@ -57,7 +57,6 @@ export interface DesktopUpdaterOptions {
   scheduleChecks?: boolean;
   scheduler?: DesktopUpdaterScheduler;
   onState?: (snapshot: DesktopUpdateSnapshot) => void;
-  prepareForInstall?: () => Promise<void>;
 }
 
 interface UpdateInfo {
@@ -268,11 +267,10 @@ export class DesktopUpdater {
     if (this.disposed || this.state.phase !== "downloaded") return this.getState();
     this.setState({ phase: "installing", error: undefined, errorStage: undefined });
     try {
-      await this.options.prepareForInstall?.();
-      // The desktop host disposes the updater while it closes local services.
-      // The installing phase is the handoff signal, so disposal during that
-      // preparation must not prevent Electron from receiving quitAndInstall.
-      if (this.state.phase !== "installing") return this.getState();
+      // Establish native installer ownership before Electron begins its normal
+      // quit lifecycle. The main process performs bounded service cleanup from
+      // before-quit; tearing down first can strand Squirrel.Mac's loopback
+      // staging handoff in a headless old process.
       this.options.engine.quitAndInstall(false, true);
     } catch {
       if (!this.disposed) {

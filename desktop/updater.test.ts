@@ -144,14 +144,9 @@ test("nightly desktop builds select the nightly prerelease feed", () => {
   assert.equal(engine.allowPrerelease, true);
 });
 
-test("desktop updater reports download progress and installs only after preparation", async () => {
+test("desktop updater hands installation to Electron after download", async () => {
   const engine = new FakeUpdaterEngine();
-  let prepared = false;
-  const { updater } = createUpdater(engine, {
-    prepareForInstall: async () => {
-      prepared = true;
-    },
-  });
+  const { updater } = createUpdater(engine);
   updater.start();
   await updater.checkForUpdate();
 
@@ -163,29 +158,6 @@ test("desktop updater reports download progress and installs only after preparat
   assert.equal(downloaded.phase, "downloaded");
   assert.equal(downloaded.progress, 100);
   assert.equal(downloaded.releaseName, "Desktop update");
-
-  const installing = await updater.installUpdate();
-  assert.equal(installing.phase, "installing");
-  assert.equal(prepared, true);
-  assert.deepEqual(engine.quitArguments, [false, true]);
-});
-
-test("desktop updater hands off installation after shutdown preparation disposes it", async () => {
-  const engine = new FakeUpdaterEngine();
-  let updater: DesktopUpdater | null = null;
-  const created = createUpdater(engine, {
-    prepareForInstall: async () => {
-      updater?.dispose();
-    },
-  });
-  updater = created.updater;
-  updater.start();
-  await updater.checkForUpdate();
-
-  engine.downloadUpdate = async () => {
-    engine.emit("update-downloaded", { version: "0.2.0" });
-  };
-  await updater.downloadUpdate();
 
   const installing = await updater.installUpdate();
   assert.equal(installing.phase, "installing");
@@ -223,13 +195,12 @@ test("desktop updater reports download failures separately from check failures",
   assert.equal(failed.error, "The update download failed. Check your connection and try again.");
 });
 
-test("desktop updater classifies asynchronous installation errors correctly", async () => {
+test("desktop updater classifies synchronous installer handoff errors correctly", async () => {
   const engine = new FakeUpdaterEngine();
-  const { updater } = createUpdater(engine, {
-    prepareForInstall: async () => {
-      engine.emit("error");
-    },
-  });
+  engine.quitAndInstall = () => {
+    throw new Error("native installer unavailable");
+  };
+  const { updater } = createUpdater(engine);
   updater.start();
   await updater.checkForUpdate();
 

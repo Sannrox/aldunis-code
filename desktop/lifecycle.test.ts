@@ -4,12 +4,12 @@ import { createServer } from "node:http";
 import test from "node:test";
 import {
   closeServer,
+  finishDesktopShutdown,
   isLiveDesktopWindow,
   isLocalApplicationOrigin,
   isSupportedDeepLink,
   listenOnLoopback,
   localApplicationUrl,
-  prepareForUpdateShutdown,
   selectedDirectoryPath,
   shouldHideWindowOnClose,
 } from "./lifecycle.ts";
@@ -103,21 +103,26 @@ test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle"
   assert.match(mainProcessBuild ?? "", /--external:@iarna\/toml/);
 });
 
-test("desktop main adapts the CommonJS updater and wires update shutdown", async () => {
+test("desktop main adapts the CommonJS updater and keeps cleanup in before-quit", async () => {
   const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
 
   assert.match(source, /import electronUpdater from "electron-updater";/);
   assert.match(source, /engine: electronUpdater\.autoUpdater as unknown as DesktopUpdaterEngine/);
-  assert.match(source, /prepareForInstall: prepareForUpdate,/);
+  assert.doesNotMatch(source, /prepareForInstall/);
+  assert.match(source, /app\.on\("before-quit", \(event\) =>/);
+  assert.match(source, /void finishDesktopShutdown\(\{/);
+  assert.match(source, /shuttingDown \|\| updateInstallHandoffStarted/);
+  assert.match(source, /nativeAutoUpdater\.on\("before-quit-for-update", \(\) =>/);
+  assert.match(source, /Local services could not be closed cleanly during desktop shutdown\./);
   assert.match(source, /window\.on\("close", \(event\) =>/);
   assert.match(source, /app\.on\("activate", showWindow\);/);
   assert.match(source, /process\.platform !== "darwin"/);
 });
 
-test("update shutdown disconnects the renderer before closing local services", async () => {
+test("desktop shutdown disconnects the renderer before closing local services", async () => {
   const events: string[] = [];
 
-  await prepareForUpdateShutdown({
+  await finishDesktopShutdown({
     disposeUpdater: () => events.push("dispose updater"),
     destroyWindow: () => events.push("destroy window"),
     closeServices: async () => {
@@ -128,25 +133,17 @@ test("update shutdown disconnects the renderer before closing local services", a
   assert.deepEqual(events, ["dispose updater", "destroy window", "close services"]);
 });
 
-test("update shutdown continues after local service cleanup fails", async () => {
-  const events: string[] = [];
-
-  await prepareForUpdateShutdown({
-    disposeUpdater: () => events.push("dispose updater"),
-    destroyWindow: () => events.push("destroy window"),
-    closeServices: async () => {
-      events.push("close services");
-      throw new Error("sensitive cleanup failure");
-    },
-    onCloseError: () => events.push("report bounded error"),
-  });
-
-  assert.deepEqual(events, [
-    "dispose updater",
-    "destroy window",
-    "close services",
-    "report bounded error",
-  ]);
+test("desktop shutdown exposes cleanup failure for bounded main-process handling", async () => {
+  await assert.rejects(
+    finishDesktopShutdown({
+      disposeUpdater: () => undefined,
+      destroyWindow: () => undefined,
+      closeServices: async () => {
+        throw new Error("sensitive cleanup failure");
+      },
+    }),
+    /sensitive cleanup failure/,
+  );
 });
 
 test("desktop build emits the Shikigami permission hook beside the main bundle", async () => {
