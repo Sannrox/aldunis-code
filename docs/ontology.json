@@ -22,6 +22,10 @@
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
     },
     {
+      "name": "ProviderControlRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, Codex skills, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
+    },
+    {
       "name": "HostCommand",
       "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
     },
@@ -490,6 +494,16 @@
       "description": "The local API dispatch module delegates provider discovery and ProviderProfile administration requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "ProviderProfileRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_provider_control_route_dispatch",
+      "description": "The local API dispatch module delegates provider control requests and request-scoped managed-host facts through one internal interface while retaining shared authentication, origin checks, and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ProviderControlRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2121,6 +2135,12 @@
       "subject": "ProviderRunExecutionModule",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#614 and #659",
       "locator": "server/provider-run.ts#admitProviderRun; server/provider-run.ts#handleProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderControlRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#675",
+      "locator": "server/provider-control-routes.ts#handleProviderControlRoute",
       "confidence": 1.0
     },
     {

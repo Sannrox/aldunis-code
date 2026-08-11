@@ -77,6 +77,11 @@ import {
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
 import { handlePreviewRoute } from "./preview-routes.ts";
 import { handleRemoteAccessRoute } from "./remote-access-routes.ts";
+import {
+  handleProviderControlRoute,
+  handleProviderPermissionRequest,
+  PROVIDER_PERMISSION_ROUTE,
+} from "./provider-control-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -285,35 +290,16 @@ function createInternalPermissionCallback(permissions: PermissionBroker): {
   url: Promise<string>;
 } {
   const server = createHttpServer(async (request, response) => {
-    if (request.method !== "POST" || request.url !== "/api/provider/permissions/request") {
+    if (request.method !== "POST" || request.url !== PROVIDER_PERMISSION_ROUTE) {
       sendJson(response, 404, { error: "Internal permission route not found." });
       return;
     }
     try {
-      const body = (await readJson(request)) as {
-        runId?: unknown;
-        toolName?: unknown;
-        input?: unknown;
-      };
-      const authorization = request.headers.authorization;
-      if (
-        typeof body.runId !== "string" ||
-        typeof body.toolName !== "string" ||
-        typeof authorization !== "string" ||
-        !authorization.startsWith("Bearer ")
-      ) {
-        throw new PermissionError("A valid provider permission request is required.", 403);
-      }
-      sendJson(
-        response,
-        200,
-        await permissions.awaitDecision(
-          body.runId,
-          authorization.slice("Bearer ".length),
-          body.toolName,
-          body.input,
-        ),
-      );
+      await handleProviderPermissionRequest(request, response, {
+        permissions,
+        readJson,
+        sendJson,
+      });
     } catch (error) {
       const status = error instanceof PermissionError ? error.status : 500;
       const message =
@@ -709,53 +695,47 @@ async function handleApi(
       })
     )
       return true;
-    if (route === "/api/provider/capabilities") {
-      if (managedHost) {
-        sendJson(response, 200, {
-          provider: "shikigami",
-          commands: [],
-          attachments: provider.capabilities().attachments,
-          workspace: {
-            shared: true,
-            aldunisManaged: true,
-            providerNative: false,
-            providerNativeDetail:
-              "Managed hosted mode supplies the workspace; provider-native worktree creation is unavailable.",
-          },
-        });
-        return true;
-      }
-      sendJson(response, 200, provider.capabilities());
+    if (
+      await handleProviderControlRoute(route, request, response, {
+        provider,
+        codex,
+        shikigami,
+        permissions,
+        activeAcp,
+        managed: Boolean(managedHost),
+        selectWorktree: selectedWorktree,
+        startRun: (body, localPort, output) =>
+          admitProviderRun({ body, localPort }, output, {
+            provider,
+            codex,
+            shikigami,
+            permissions,
+            state,
+            profiles,
+            preferences,
+            autonomy,
+            worktrees,
+            adapters,
+            activeAcp,
+            wake,
+            withDelegatedControlLock,
+            internalApprovalUrl,
+            managedHost,
+            browser,
+            browserMcpPath,
+            remoteRequest,
+            internalRequest,
+            selectedWorktree,
+            publishThreadStatusTransition,
+            activeCheckpointProjects,
+            activeCheckpointWorktrees,
+            checkpointWorktreeKey,
+          }),
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/provider/skills") {
-      if (managedHost) {
-        throw new LocalStateError("Codex skills are unavailable in managed hosted mode.", 403);
-      }
-      const body = (await readJson(request)) as {
-        provider?: unknown;
-        root?: unknown;
-        worktree?: unknown;
-      };
-      if (
-        body.provider !== "codex-cli" ||
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string"
-      ) {
-        throw new RepositoryError("A Codex provider, repository, and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(response, 200, { skills: await codex.skills(context.worktree) });
-      return true;
-    }
-    if (route === "/api/provider/approvals/list") {
-      const body = (await readJson(request)) as { runId?: unknown };
-      if (typeof body.runId !== "string") {
-        throw new PermissionError("A provider run is required.");
-      }
-      sendJson(response, 200, { approvals: permissions.approvalsFor(body.runId) });
-      return true;
-    }
     if (
       await handleContextRoute(route, request, response, {
         remote: remoteRequest,
@@ -766,67 +746,6 @@ async function handleApi(
       })
     )
       return true;
-    if (route === "/api/provider/runs") {
-      const execution = admitProviderRun(
-        { body: await readJson(request), localPort: request.socket.localPort },
-        response,
-        {
-          provider,
-          codex,
-          shikigami,
-          permissions,
-          state,
-          profiles,
-          preferences,
-          autonomy,
-          worktrees,
-          adapters,
-          activeAcp,
-          wake,
-          withDelegatedControlLock,
-          internalApprovalUrl,
-          managedHost,
-          browser,
-          browserMcpPath,
-          remoteRequest,
-          internalRequest,
-          selectedWorktree,
-          publishThreadStatusTransition,
-          activeCheckpointProjects,
-          activeCheckpointWorktrees,
-          checkpointWorktreeKey,
-        },
-      );
-      void execution.accepted.catch(() => undefined);
-      return await execution.completed;
-    }
-    if (route === "/api/provider/permissions/request") {
-      const body = (await readJson(request)) as {
-        runId?: unknown;
-        toolName?: unknown;
-        input?: unknown;
-      };
-      const authorization = request.headers.authorization;
-      if (
-        typeof body.runId !== "string" ||
-        typeof body.toolName !== "string" ||
-        typeof authorization !== "string" ||
-        !authorization.startsWith("Bearer ")
-      ) {
-        throw new PermissionError("A valid provider permission request is required.", 403);
-      }
-      sendJson(
-        response,
-        200,
-        await permissions.awaitDecision(
-          body.runId,
-          authorization.slice("Bearer ".length),
-          body.toolName,
-          body.input,
-        ),
-      );
-      return true;
-    }
     if (
       await handleDelegatedControlRoute(route, request, response, {
         state,
@@ -880,20 +799,6 @@ async function handleApi(
       })
     )
       return true;
-    const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
-    if (cancelMatch) {
-      const acp = activeAcp.get(cancelMatch[1]);
-      if (
-        !provider.cancel(cancelMatch[1]) &&
-        !codex.cancel(cancelMatch[1]) &&
-        !shikigami.cancel(cancelMatch[1]) &&
-        !acp?.cancel(cancelMatch[1])
-      ) {
-        throw new RepositoryError("The provider run is no longer active.", 404);
-      }
-      sendJson(response, 202, { status: "cancelling" });
-      return true;
-    }
     sendJson(response, 404, { error: "API route not found." });
   } catch (error) {
     const status =
