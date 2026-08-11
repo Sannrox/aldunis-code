@@ -400,6 +400,10 @@
     {
       "name": "WorkbenchProjectionRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates Workbench projection route recognition, coherent snapshot assembly, managed catalogue visibility, delegated outcome, approval, and input projection, bounded conversation history and search, managed-worktree inventory, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, permission, tenant, or product authority."
+    },
+    {
+      "name": "LocalStateMaintenanceRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates destructive local-state maintenance route recognition, request validation, managed-host admission, affected-project exclusion, checkpoint invalidation, Git reference cleanup, persistence ordering, lock release, and response mapping behind one internal dispatch interface without deleting conversation worktrees or changing filesystem, persistence, provider, permission, tenant, or product authority."
     }
   ],
   "relations": [
@@ -548,6 +552,16 @@
       "description": "The local API dispatch module delegates Workbench load, conversation history, and bounded search requests plus request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "WorkbenchProjectionRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_local_state_maintenance_route_dispatch",
+      "description": "The local API dispatch module delegates destructive project deletion and retention requests plus request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "LocalStateMaintenanceRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2157,6 +2171,18 @@
       "subject": "delegates_workbench_projection_route_dispatch",
       "source": "Aldunis Code Workbench projection route dispatch interface",
       "locator": "server/host.ts#handleApi; server/workbench-projection-routes.ts#handleWorkbenchProjectionRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalStateMaintenanceRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#665",
+      "locator": "server/state-maintenance-routes.ts#handleStateMaintenanceRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_local_state_maintenance_route_dispatch",
+      "source": "Aldunis Code local state maintenance route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/state-maintenance-routes.ts#handleStateMaintenanceRoute",
       "confidence": 1.0
     }
   ]
