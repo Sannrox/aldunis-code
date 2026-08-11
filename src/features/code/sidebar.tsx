@@ -25,6 +25,7 @@ import { AldunisBrandMark } from "../../components/brand-mark";
 import { ManagedAccountPanel } from "./managed-account-panel";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { snoozeWakeLabel, type SnoozePreset } from "../../lib/thread-snooze";
+import { startSidebarSnoozeClock } from "../../lib/sidebar-snooze-clock";
 
 export type ProjectFilter = "all" | string;
 
@@ -161,18 +162,15 @@ export function CodeSidebar({
   );
 
   useEffect(() => {
+    if (!sidebarOpen) return;
     const wakeTimes = conversations
       .map((conversation) => conversation.snoozedUntil)
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .map((value) => Date.parse(value))
-      .filter((value) => Number.isFinite(value) && value > nowMs);
+      .filter((value) => Number.isFinite(value));
     if (wakeTimes.length === 0) return;
-    const nextWake = Math.min(...wakeTimes);
-    // Cap long delays so tab sleep and large clock skew still re-evaluate.
-    const delay = Math.min(Math.max(nextWake - Date.now(), 250), 60_000);
-    const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
-    return () => window.clearTimeout(timer);
-  }, [conversations, nowMs]);
+    return startSidebarSnoozeClock(wakeTimes, setNowMs);
+  }, [conversations, sidebarOpen]);
 
   const meterPct =
     worktreeLimit !== null && worktreeLimit > 0
