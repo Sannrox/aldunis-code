@@ -10,6 +10,7 @@ import type {
 import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
 import { createPreviewHost, previewHostErrorMessage } from "../../lib/preview-host";
+import { startPreviewStatusPolling } from "../../lib/preview-status-polling";
 
 export interface PreviewPanelStatus {
   state: PreviewState | "inactive";
@@ -235,11 +236,8 @@ export function PreviewPanel({
     void previewHost.perform({ kind: "browser.release" });
   }, [browserSession, conversationId, previewHost]);
   useEffect(() => {
-    if (!preview || !["starting", "running", "stopping"].includes(preview.state)) return;
-    let inFlight = false;
-    const timer = window.setInterval(async () => {
-      if (inFlight) return;
-      inFlight = true;
+    if (!active || !preview || !["starting", "running", "stopping"].includes(preview.state)) return;
+    return startPreviewStatusPolling(async () => {
       try {
         const state = await previewHost.perform({ kind: "preview.status" });
         if (previewHostRef.current !== previewHost) return;
@@ -247,18 +245,12 @@ export function PreviewPanel({
       } catch {
         if (previewHostRef.current !== previewHost) return;
         setError("Preview status is unavailable.");
-      } finally {
-        inFlight = false;
       }
-    }, 1_000);
-    return () => window.clearInterval(timer);
-  }, [preview?.id, preview?.state]);
+    }, document);
+  }, [active, preview?.id, preview?.state, previewHost]);
   useEffect(() => {
-    if (!browserSession || !conversationId) return;
-    let inFlight = false;
-    const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
+    if (!active || !browserSession || !conversationId) return;
+    return startPreviewStatusPolling(async () => {
       try {
         const state = await previewHost.perform({ kind: "browser.status" });
         if (previewHostRef.current !== previewHost) return;
@@ -266,16 +258,10 @@ export function PreviewPanel({
       } catch (cause) {
         if (previewHostRef.current !== previewHost) return;
         setError(previewHostErrorMessage(cause, "Shared browser status is unavailable."));
-      } finally {
-        inFlight = false;
       }
-    };
-    void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 1_000);
-    return () => window.clearInterval(timer);
+    }, document);
   }, [
+    active,
     browserSession?.id,
     browserSession?.origin,
     conversationId,
