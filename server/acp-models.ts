@@ -22,15 +22,18 @@ type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as JsonRecord
+    ? (value as JsonRecord)
     : null;
 }
 
 const EFFORTS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh"];
 
 function parseEffort(value: unknown): ReasoningEffort | null {
-  return value === "minimal" || value === "low" || value === "medium"
-    || value === "high" || value === "xhigh"
+  return value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
     ? value
     : null;
 }
@@ -53,13 +56,16 @@ function effortsFromMeta(meta: JsonRecord | null): {
   if (list.length === 0) {
     return { reasoningEfforts: [], defaultReasoningEffort: "medium" };
   }
-  const preferred = parseEffort(meta?.reasoningEffort) ?? list.find((effort) => {
-    if (!Array.isArray(raw)) return false;
-    return raw.some((entry) => {
-      const row = record(entry);
-      return row?.default === true && parseEffort(row?.value ?? row?.id) === effort;
-    });
-  }) ?? list[0]!;
+  const preferred =
+    parseEffort(meta?.reasoningEffort) ??
+    list.find((effort) => {
+      if (!Array.isArray(raw)) return false;
+      return raw.some((entry) => {
+        const row = record(entry);
+        return row?.default === true && parseEffort(row?.value ?? row?.id) === effort;
+      });
+    }) ??
+    list[0]!;
   return {
     reasoningEfforts: list.filter((effort) => EFFORTS.includes(effort)),
     defaultReasoningEffort: preferred,
@@ -72,30 +78,30 @@ export function parseAcpSessionModels(result: unknown): AcpDiscoveredModel[] {
   if (!body) return [];
 
   const modelsState = record(body.models);
-  const available = Array.isArray(modelsState?.availableModels)
-    ? modelsState.availableModels
-    : [];
-  const currentId = typeof modelsState?.currentModelId === "string"
-    ? modelsState.currentModelId
-    : null;
+  const available = Array.isArray(modelsState?.availableModels) ? modelsState.availableModels : [];
+  const currentId =
+    typeof modelsState?.currentModelId === "string" ? modelsState.currentModelId : null;
 
   const fromModelsField = available.flatMap((entry): AcpDiscoveredModel[] => {
     const row = record(entry);
     if (!row) return [];
-    const id = typeof row.modelId === "string" && row.modelId
-      ? row.modelId
-      : typeof row.id === "string" && row.id
-      ? row.id
-      : null;
+    const id =
+      typeof row.modelId === "string" && row.modelId
+        ? row.modelId
+        : typeof row.id === "string" && row.id
+          ? row.id
+          : null;
     if (!id) return [];
     const meta = record(row._meta);
     const efforts = effortsFromMeta(meta);
-    return [{
-      id,
-      displayName: typeof row.name === "string" && row.name ? row.name : id,
-      isDefault: currentId === id,
-      ...efforts,
-    }];
+    return [
+      {
+        id,
+        displayName: typeof row.name === "string" && row.name ? row.name : id,
+        isDefault: currentId === id,
+        ...efforts,
+      },
+    ];
   });
 
   // configOptions category=model (preferred ACP config selectors).
@@ -108,13 +114,15 @@ export function parseAcpSessionModels(result: unknown): AcpDiscoveredModel[] {
     return values.flatMap((value): AcpDiscoveredModel[] => {
       const row = record(value);
       if (!row || typeof row.value !== "string" || !row.value) return [];
-      return [{
-        id: row.value,
-        displayName: typeof row.name === "string" && row.name ? row.name : row.value,
-        isDefault: current === row.value,
-        reasoningEfforts: [],
-        defaultReasoningEffort: "medium",
-      }];
+      return [
+        {
+          id: row.value,
+          displayName: typeof row.name === "string" && row.name ? row.name : row.value,
+          isDefault: current === row.value,
+          reasoningEfforts: [],
+          defaultReasoningEffort: "medium",
+        },
+      ];
     });
   });
 
@@ -151,38 +159,56 @@ export async function probeAcpModels(options: {
   cwd?: string;
   sessionCwd?: string;
   timeoutMs?: number;
+  terminationGraceMs?: number;
 }): Promise<AcpDiscoveredModel[]> {
   const timeoutMs = options.timeoutMs ?? 8_000;
+  const terminationGraceMs = options.terminationGraceMs ?? 500;
   const source = options.environment ?? process.env;
   const env: NodeJS.ProcessEnv = { ...source };
 
   return await new Promise((resolve) => {
     let settled = false;
+    let forceTimer: NodeJS.Timeout | null = null;
+    const clearForceTimer = () => {
+      if (forceTimer) clearTimeout(forceTimer);
+      forceTimer = null;
+    };
     const finish = (models: AcpDiscoveredModel[]) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       try {
-        if (child.exitCode === null) child.kill("SIGTERM");
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGTERM");
+          forceTimer = setTimeout(
+            () => {
+              forceTimer = null;
+              try {
+                if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+              } catch {
+                // ignore
+              }
+            },
+            Math.max(0, terminationGraceMs),
+          );
+          forceTimer.unref();
+        }
       } catch {
         // ignore
       }
       resolve(models);
     };
 
-    const child: ChildProcessWithoutNullStreams = spawn(
-      options.executable,
-      options.arguments,
-      {
-        cwd: options.cwd ?? process.cwd(),
-        env,
-        shell: false,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const child: ChildProcessWithoutNullStreams = spawn(options.executable, options.arguments, {
+      cwd: options.cwd ?? process.cwd(),
+      env,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     child.stderr.resume();
     child.stdin.on("error", () => {});
     child.once("error", () => finish([]));
+    child.once("close", clearForceTimer);
 
     const timer = setTimeout(() => finish([]), timeoutMs);
     timer.unref();
