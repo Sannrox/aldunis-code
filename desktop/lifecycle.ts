@@ -62,10 +62,16 @@ export async function listenOnLoopback(server: Server): Promise<string> {
   return localApplicationUrl(server.address());
 }
 
-export async function closeServer(server: Server): Promise<void> {
+export async function closeServer(server: Server, forceAfterMs = 1_000): Promise<void> {
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
+    const forceClose = setTimeout(() => server.closeAllConnections(), forceAfterMs);
+    forceClose.unref();
+    server.close((error) => {
+      clearTimeout(forceClose);
+      if (error) reject(error);
+      else resolve();
+    });
   });
 }
 

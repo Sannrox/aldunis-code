@@ -70,6 +70,7 @@ let approvedOrigins: Set<string> | null = null;
 let releaseWriterLease: (() => Promise<void>) | null = null;
 let desktopUpdater: DesktopUpdater | null = null;
 let shuttingDown = false;
+let shutdownComplete = false;
 let updateInstallHandoffStarted = false;
 
 function showWindow(): void {
@@ -454,8 +455,9 @@ if (!gotSingleInstanceLock) {
     if (!shuttingDown && process.platform !== "darwin") app.quit();
   });
   app.on("before-quit", (event) => {
-    if (shuttingDown) return;
+    if (shutdownComplete) return;
     event.preventDefault();
+    if (shuttingDown) return;
     shuttingDown = true;
     void finishDesktopShutdown({
       disposeUpdater: () => desktopUpdater?.dispose(),
@@ -467,6 +469,9 @@ if (!gotSingleInstanceLock) {
       .catch(() => {
         console.error("Local services could not be closed cleanly during desktop shutdown.");
       })
-      .finally(() => app.quit());
+      .finally(() => {
+        shutdownComplete = true;
+        app.quit();
+      });
   });
 }
