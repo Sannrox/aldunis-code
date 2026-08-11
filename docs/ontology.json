@@ -452,6 +452,10 @@
     {
       "name": "AutonomyLedgerSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
+    },
+    {
+      "name": "ConversationAutomationSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates timer-only conversation automation loading, typed drafts, create, pause, enable, run, explicit unknown-fire retry, delete, post-command reload, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains schedule, conversation, provider, permission, and persistence authority."
     }
   ],
   "relations": [
@@ -1320,6 +1324,16 @@
       "description": "The renderer Autonomy ledger session projects durable run state and submits bounded typed intents without acquiring execution or mutation authority.",
       "domain": "AutonomyLedgerSessionModule",
       "range": "AutonomyRun",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "projects_conversation_automations",
+      "description": "The renderer automation session projects timer-only conversation automations and submits bounded typed intents without acquiring schedule, run, permission, provider, or persistence authority.",
+      "domain": "ConversationAutomationSessionModule",
+      "range": "ConversationAutomation",
       "cardinality": {
         "min": 0,
         "max": null
@@ -2459,6 +2473,18 @@
       "subject": "projects_autonomy_runs",
       "source": "Aldunis Code Autonomy ledger session interface",
       "locator": "src/lib/autonomy-ledger-session.ts#AutonomyLedgerSessionModule",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationAutomationSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#723",
+      "locator": "src/lib/automation-session.ts#ConversationAutomationSessionModule; src/features/dialogs/automations-dialog.tsx#AutomationsDialog",
+      "confidence": 1.0
+    },
+    {
+      "subject": "projects_conversation_automations",
+      "source": "Aldunis Code conversation automation session interface",
+      "locator": "src/lib/automation-session.ts#ConversationAutomationSessionModule",
       "confidence": 1.0
     }
   ]
