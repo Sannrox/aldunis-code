@@ -41,6 +41,41 @@ export function scrollThreadToBottom(target: { scrollTop: number; scrollHeight: 
   target.scrollTop = target.scrollHeight;
 }
 
+export interface ThreadBottomSettler {
+  settle(target: { scrollTop: number; scrollHeight: number }): void;
+  cancel(): void;
+}
+
+/**
+ * Reach the current bottom immediately and once more after the browser has
+ * committed its next layout. Replacing or cancelling the retry prevents stale
+ * jump work from moving a different transcript.
+ */
+export function createThreadBottomSettler(
+  requestFrame: (callback: () => void) => number,
+  cancelFrame: (handle: number) => void,
+): ThreadBottomSettler {
+  let pendingFrame: number | null = null;
+
+  const cancel = () => {
+    if (pendingFrame === null) return;
+    cancelFrame(pendingFrame);
+    pendingFrame = null;
+  };
+
+  return {
+    settle(target) {
+      cancel();
+      scrollThreadToBottom(target);
+      pendingFrame = requestFrame(() => {
+        pendingFrame = null;
+        scrollThreadToBottom(target);
+      });
+    },
+    cancel,
+  };
+}
+
 /**
  * Empty first-run content should stay anchored at its heading, not at the
  * bottom of a short scroll container. Once real conversation content exists,

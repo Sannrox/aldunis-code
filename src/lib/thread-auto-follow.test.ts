@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   THREAD_FOLLOW_THRESHOLD_PX,
+  createThreadBottomSettler,
   isNearThreadBottom,
   nextThreadFollowEnabled,
   readThreadScrollMetrics,
@@ -73,6 +74,41 @@ test("scrollThreadToBottom pins scrollTop to scrollHeight", () => {
   assert.equal(target.scrollTop, 900);
 });
 
+test("thread bottom settler reaches content that grows before the next frame", () => {
+  let frame: (() => void) | null = null;
+  const settler = createThreadBottomSettler(
+    (callback) => {
+      frame = callback;
+      return 1;
+    },
+    () => undefined,
+  );
+  const target = { scrollTop: 12, scrollHeight: 900 };
+
+  settler.settle(target);
+  assert.equal(target.scrollTop, 900);
+  target.scrollHeight = 1200;
+  assert.ok(frame);
+  (frame as () => void)();
+  assert.equal(target.scrollTop, 1200);
+});
+
+test("thread bottom settler replaces and cancels pending frame work", () => {
+  const cancelled: number[] = [];
+  let nextHandle = 0;
+  const settler = createThreadBottomSettler(
+    () => ++nextHandle,
+    (handle) => cancelled.push(handle),
+  );
+
+  settler.settle({ scrollTop: 0, scrollHeight: 100 });
+  settler.settle({ scrollTop: 0, scrollHeight: 200 });
+  assert.deepEqual(cancelled, [1]);
+
+  settler.cancel();
+  assert.deepEqual(cancelled, [1, 2]);
+});
+
 test("empty first-run content is not pinned to the bottom", () => {
   assert.equal(shouldPinThreadToBottom(true, false), false);
   assert.equal(shouldPinThreadToBottom(false, false), false);
@@ -86,8 +122,9 @@ test("threadHasOverflow ignores 1px subpixel noise", () => {
 });
 
 test("readThreadScrollMetrics copies live element metrics", () => {
-  assert.deepEqual(
-    readThreadScrollMetrics({ scrollTop: 10, clientHeight: 20, scrollHeight: 30 }),
-    { scrollTop: 10, clientHeight: 20, scrollHeight: 30 },
-  );
+  assert.deepEqual(readThreadScrollMetrics({ scrollTop: 10, clientHeight: 20, scrollHeight: 30 }), {
+    scrollTop: 10,
+    clientHeight: 20,
+    scrollHeight: 30,
+  });
 });
