@@ -15,6 +15,7 @@ import {
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 import { acpSetModelRequest, parseAcpSessionModels } from "./acp-models.ts";
+import { terminateProviderChild } from "./provider-process.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
@@ -675,12 +676,7 @@ export class AcpProviderAdapter {
   }
 
   #terminate(child: ChildProcessWithoutNullStreams): void {
-    if (child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    const force = setTimeout(() => {
-      if (child.exitCode === null) child.kill("SIGKILL");
-    }, 2_000);
-    force.unref();
+    terminateProviderChild(child);
   }
 
   async *#lines(child: ChildProcessWithoutNullStreams): AsyncIterable<JsonRecord> {

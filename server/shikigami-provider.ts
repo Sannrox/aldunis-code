@@ -31,6 +31,7 @@ import {
   type ProviderStartOptions,
   ProviderProtocolError,
 } from "./provider.ts";
+import { terminateProviderChild } from "./provider-process.ts";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
@@ -1352,11 +1353,6 @@ export class ShikigamiAdapter {
   }
 
   #terminate(child: ChildProcessWithoutNullStreams): void {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.kill("SIGTERM");
-    const force = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }, 1_000);
-    force.unref();
+    terminateProviderChild(child, 1_000);
   }
 }
