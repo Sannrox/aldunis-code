@@ -204,6 +204,10 @@
       "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal."
     },
     {
+      "name": "ConstrainedPreviewRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates constrained-preview lifecycle route recognition, scoped request validation, canonical worktree selection, transition ordering, and response mapping behind one internal dispatch interface while PreviewManager retains approval and process authority."
+    },
+    {
       "name": "FloatingWebPreview",
       "description": "A transient presentation of a running ConstrainedWebPreview in a fixed in-workbench window so the operator can keep the local application visible while continuing the conversation; it adds no provider-browser, navigation, credential, or persistence authority."
     },
@@ -850,6 +854,16 @@
       "range": "ConstrainedWebPreview",
       "cardinality": {
         "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_constrained_preview_route_dispatch",
+      "description": "The local API dispatch module delegates constrained-preview start, decision, status, and stop requests through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ConstrainedPreviewRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
         "max": 1
       }
     },
@@ -1649,6 +1663,12 @@
       "subject": "PreviewHostContractModule",
       "source": "Aldunis Code preview host-contract implementation",
       "locator": "src/lib/preview-host.ts; src/lib/preview-host.test.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConstrainedPreviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#669",
+      "locator": "server/preview-routes.ts#handlePreviewRoute",
       "confidence": 1.0
     },
     {
