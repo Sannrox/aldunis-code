@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  persistedConversationRestorationFingerprint,
+  reconcilePersistedRestorationApplication,
   restorePersistedConversation,
   type PersistedConversationProjection,
 } from "./persisted-conversation-restoration";
@@ -91,6 +93,49 @@ test("restorePersistedConversation returns one complete renderer snapshot", () =
   assert.equal(restored.currentTurn.message.mode, "build");
   assert.equal(restored.currentTurn.events.at(-1)?.kind, "turn_completed");
   assert.equal(restored.providerState, "completed");
+});
+
+test("restoration fingerprint changes only with normalized renderer state", () => {
+  const first = restorePersistedConversation(projection(), target);
+  const equivalent = restorePersistedConversation(projection(), { ...target });
+  assert.equal(
+    persistedConversationRestorationFingerprint(first),
+    persistedConversationRestorationFingerprint(equivalent),
+  );
+
+  const changedMessage = projection();
+  changedMessage.messages[1] = { ...changedMessage.messages[1]!, text: "changed" };
+  assert.notEqual(
+    persistedConversationRestorationFingerprint(first),
+    persistedConversationRestorationFingerprint(
+      restorePersistedConversation(changedMessage, target),
+    ),
+  );
+
+  const changedBinding = projection();
+  changedBinding.threads[0] = {
+    ...changedBinding.threads[0]!,
+    contextPins: [
+      ...(changedBinding.threads[0]!.contextPins ?? []),
+      { kind: "file", path: "new.ts" },
+    ],
+  };
+  assert.notEqual(
+    persistedConversationRestorationFingerprint(first),
+    persistedConversationRestorationFingerprint(
+      restorePersistedConversation(changedBinding, target),
+    ),
+  );
+});
+
+test("restoration application resets through an unbound composer", () => {
+  const snapshot = { target: "thread-1", fingerprint: "same" };
+  const first = reconcilePersistedRestorationApplication(null, snapshot);
+  assert.equal(first.apply, true);
+  assert.equal(reconcilePersistedRestorationApplication(first.current, snapshot).apply, false);
+  const reset = reconcilePersistedRestorationApplication(first.current, null);
+  assert.equal(reset.current, null);
+  assert.equal(reconcilePersistedRestorationApplication(reset.current, snapshot).apply, true);
 });
 
 test("restoration event ordering is deterministic for mixed record generations", () => {
