@@ -82,6 +82,10 @@
       "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and a fixed Mod+B keybinding to toggle it. Its compact header mark crops the supplied tile frame, and its macOS collapse/expand control lives in the native row while opting out of the drag region. On macOS Electron, the shell reserves a distinct 52px native-titlebar row above the ordinary app header, with a compact sidebar affordance and aligned sidebar boundary, while keeping the explicitly positioned hidden-inset controls and without changing repository, provider, or permission authority."
     },
     {
+      "name": "SidebarLifecycleModule",
+      "description": "A deep renderer module that concentrates collapsible sidebar open and responsive states, independent desktop and mobile persistence decisions, user/navigation/dialog transition intent, shortcut capture admission, and focus outcomes behind one deterministic interface while Workbench retains browser listeners, storage I/O, rendering, inert projection, and DOM focus execution."
+    },
+    {
       "name": "SidebarOpenPreference",
       "description": "A local browser or desktop-profile presentation preference recording whether the Aldunis Code sidebar should start expanded; it grants no repository, provider, permission, or contract authority."
     },
@@ -1146,6 +1150,16 @@
       }
     },
     {
+      "name": "uses_sidebar_lifecycle",
+      "description": "The collapsible Code sidebar delegates responsive, persistence, shortcut-admission, and focus transition decisions to one renderer lifecycle module without transferring DOM, conversation, repository, provider, or permission authority.",
+      "domain": "CollapsibleCodeSidebar",
+      "range": "SidebarLifecycleModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
       "name": "exposes_sidebar_toggle_keybinding",
       "description": "Exposes the fixed Mod+B presentation keybinding for collapsing or reopening the shared Code sidebar without granting authority over local work or provider actions.",
       "domain": "CollapsibleCodeSidebar",
@@ -1561,6 +1575,18 @@
       "subject": "CollapsibleCodeSidebar",
       "source": "Sannrox/aldunis-code",
       "locator": "src/features/code/sidebar.tsx; src/features/code/workbench.tsx; src/components/brand-mark.tsx; src/mock-shell.css; src/main.tsx; desktop/main.ts; desktop/preload.ts; desktop/window-chrome.ts; docs/design-system.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SidebarLifecycleModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#696",
+      "locator": "src/lib/sidebar-state.ts#transitionSidebarLifecycle; src/features/code/workbench.tsx; src/lib/sidebar-state.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_sidebar_lifecycle",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#696",
+      "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
       "confidence": 1.0
     },
     {
