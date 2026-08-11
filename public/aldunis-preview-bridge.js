@@ -27,17 +27,23 @@
   function accessibleName(element) {
     const labelledBy = element.getAttribute("aria-labelledby");
     if (labelledBy) {
-      return labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+      return labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ");
     }
-    return element.getAttribute("aria-label")
-      ?? element.getAttribute("alt")
-      ?? element.getAttribute("title")
-      ?? null;
+    return (
+      element.getAttribute("aria-label") ??
+      element.getAttribute("alt") ??
+      element.getAttribute("title") ??
+      null
+    );
   }
 
   function snapshot(element) {
     const rect = element.getBoundingClientRect();
-    const markup = element.outerHTML.slice(0, MAX_MARKUP)
+    const markup = element.outerHTML
+      .slice(0, MAX_MARKUP)
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/\son\w+=(?:"[^"]*"|'[^']*')/gi, "");
     const width = Math.max(1, Math.min(Math.ceil(rect.width), 1_024));
@@ -59,7 +65,12 @@
   }
 
   window.addEventListener("message", (event) => {
-    if (event.source !== window.parent || event.data?.type !== "aldunis-preview:select-element") return;
+    if (event.source !== window.parent) return;
+    if (event.data?.type === "aldunis-preview:cancel-element-selection") {
+      if (active?.requestId === event.data.requestId) finish();
+      return;
+    }
+    if (event.data?.type !== "aldunis-preview:select-element") return;
     if (document.visibilityState !== "visible") {
       reply(event.source, event.origin, {
         type: "aldunis-preview:element-error",
@@ -72,43 +83,52 @@
     document.documentElement.setAttribute("data-aldunis-selecting", "");
   });
 
-  document.addEventListener("click", (event) => {
-    if (!active) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const element = event.target instanceof Element ? event.target : null;
-    if (!element || !element.isConnected || element.closest("iframe")) {
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (!active) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const element = event.target instanceof Element ? event.target : null;
+      if (!element || !element.isConnected || element.closest("iframe")) {
+        reply(active.source, active.origin, {
+          type: "aldunis-preview:element-error",
+          requestId: active.requestId,
+          message: "Cross-origin frames and stale elements cannot be referenced.",
+        });
+        finish();
+        return;
+      }
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      if (
+        style.visibility === "hidden" ||
+        style.display === "none" ||
+        rect.width === 0 ||
+        rect.height === 0
+      ) {
+        reply(active.source, active.origin, {
+          type: "aldunis-preview:element-error",
+          requestId: active.requestId,
+          message: "Hidden elements cannot be referenced.",
+        });
+        finish();
+        return;
+      }
       reply(active.source, active.origin, {
-        type: "aldunis-preview:element-error",
+        type: "aldunis-preview:element-reference",
         requestId: active.requestId,
-        message: "Cross-origin frames and stale elements cannot be referenced.",
+        selector: selectorFor(element),
+        tag: element.localName,
+        role: element.getAttribute("role"),
+        name: accessibleName(element)?.trim().slice(0, 240) || null,
+        text: element.textContent?.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT) || null,
+        screenshot: snapshot(element),
       });
       finish();
-      return;
-    }
-    const style = getComputedStyle(element);
-    const rect = element.getBoundingClientRect();
-    if (style.visibility === "hidden" || style.display === "none" || rect.width === 0 || rect.height === 0) {
-      reply(active.source, active.origin, {
-        type: "aldunis-preview:element-error",
-        requestId: active.requestId,
-        message: "Hidden elements cannot be referenced.",
-      });
-      finish();
-      return;
-    }
-    reply(active.source, active.origin, {
-      type: "aldunis-preview:element-reference",
-      requestId: active.requestId,
-      selector: selectorFor(element),
-      tag: element.localName,
-      role: element.getAttribute("role"),
-      name: accessibleName(element)?.trim().slice(0, 240) || null,
-      text: element.textContent?.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT) || null,
-      screenshot: snapshot(element),
-    });
-    finish();
-  }, true);
+    },
+    true,
+  );
 
   document.addEventListener("visibilitychange", () => {
     if (active && document.visibilityState !== "visible") {

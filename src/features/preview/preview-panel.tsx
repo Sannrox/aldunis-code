@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PreviewSnapshot,
   PreviewState,
@@ -11,6 +11,10 @@ import { Button, CloseButton } from "../../components/ui";
 import { Icon } from "../../components/icon";
 import { createPreviewHost, previewHostErrorMessage } from "../../lib/preview-host";
 import { startPreviewStatusPolling } from "../../lib/preview-status-polling";
+import {
+  isCurrentPreviewElementReferenceResponse,
+  PreviewElementReferenceDeadline,
+} from "../../lib/preview-element-reference-deadline";
 
 export interface PreviewPanelStatus {
   state: PreviewState | "inactive";
@@ -70,9 +74,29 @@ export function PreviewPanel({
   const previewHostRef = useRef(previewHost);
   const conversationIdRef = useRef(conversationId);
   const disposalTimersRef = useRef(new Map<typeof previewHost, number>());
+  const referenceDeadlineRef = useRef<PreviewElementReferenceDeadline | null>(null);
+  const referenceRequestIdRef = useRef<string | null>(null);
+  const referenceRequestOriginRef = useRef<string | null>(null);
+  if (!referenceDeadlineRef.current) {
+    referenceDeadlineRef.current = new PreviewElementReferenceDeadline();
+  }
   previewHostRef.current = previewHost;
   conversationIdRef.current = conversationId;
   browserSessionRef.current = browserSession;
+  const clearReferenceSelection = useCallback((notifyBridge = true, updateState = true) => {
+    const requestId = referenceRequestIdRef.current;
+    const requestOrigin = referenceRequestOriginRef.current;
+    if (notifyBridge && requestId && requestOrigin) {
+      frameRef.current?.contentWindow?.postMessage(
+        { type: "aldunis-preview:cancel-element-selection", requestId },
+        requestOrigin,
+      );
+    }
+    referenceRequestIdRef.current = null;
+    referenceRequestOriginRef.current = null;
+    referenceDeadlineRef.current?.clear();
+    if (updateState) setReferencePending(false);
+  }, []);
   const sharedBrowser = browserSession;
   const hasSharedBrowser = Boolean(sharedBrowser);
   const hasAgentObservation = !hasSharedBrowser && Boolean(agentObservation);
@@ -113,6 +137,7 @@ export function PreviewPanel({
       setPreview(state.preview);
       setFrameState("idle");
       setReference(null);
+      clearReferenceSelection();
     } catch (cause) {
       if (previewHostRef.current !== previewHost) return;
       setError(previewHostErrorMessage(cause, "Preview could not be stopped."));
@@ -213,6 +238,7 @@ export function PreviewPanel({
     }
     browserSessionScopeRef.current = null;
     browserSessionRef.current = null;
+    clearReferenceSelection();
     setPreview(null);
     setBrowserSession(null);
     setPictureInPicture(false);
@@ -225,7 +251,7 @@ export function PreviewPanel({
       }, 0);
       disposalTimersRef.current.set(previewHost, timer);
     };
-  }, [previewHost]);
+  }, [clearReferenceSelection, previewHost]);
   useEffect(() => {
     const scope = browserSessionScopeRef.current;
     if (!scope || scope.conversationId === conversationId || !browserSessionRef.current) return;
@@ -320,9 +346,10 @@ export function PreviewPanel({
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (!preview || event.origin !== preview.origin || !referencePending) return;
-      const value = event.data as Record<string, unknown>;
+      const value = event.data;
+      if (!isCurrentPreviewElementReferenceResponse(value, referenceRequestIdRef.current)) return;
       if (value?.type === "aldunis-preview:element-error") {
-        setReferencePending(false);
+        clearReferenceSelection(false);
         setError(
           typeof value.message === "string"
             ? value.message.slice(0, 240)
@@ -331,6 +358,7 @@ export function PreviewPanel({
         return;
       }
       if (value?.type !== "aldunis-preview:element-reference") return;
+      clearReferenceSelection(false);
       const screenshot =
         typeof value.screenshot === "string" &&
         value.screenshot.startsWith("data:image/") &&
@@ -355,29 +383,44 @@ export function PreviewPanel({
         setReference(nextReference);
         onReference(nextReference);
       }
-      setReferencePending(false);
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [onReference, preview, referencePending]);
+  }, [clearReferenceSelection, onReference, preview, referencePending]);
   const selectElement = () => {
     if (!preview || !frameRef.current?.contentWindow) return;
     setError(null);
+    clearReferenceSelection();
     setReferencePending(true);
+    const requestId = crypto.randomUUID();
+    referenceRequestIdRef.current = requestId;
+    referenceRequestOriginRef.current = preview.origin;
     frameRef.current.contentWindow.postMessage(
-      { type: "aldunis-preview:select-element", requestId: crypto.randomUUID() },
+      { type: "aldunis-preview:select-element", requestId },
       preview.origin,
     );
-    window.setTimeout(() => {
-      setReferencePending((pending) => {
-        if (pending)
-          setError(
-            "The page did not provide an element reference. Its preview bridge may be unavailable.",
-          );
-        return false;
-      });
-    }, 10_000);
+    referenceDeadlineRef.current?.start(() => {
+      if (referenceRequestIdRef.current !== requestId) return;
+      clearReferenceSelection();
+      setError(
+        "The page did not provide an element reference. Its preview bridge may be unavailable.",
+      );
+    });
   };
+  useEffect(() => {
+    if (active) return;
+    clearReferenceSelection();
+  }, [active, clearReferenceSelection]);
+  useEffect(() => {
+    if (preview?.state === "running") return;
+    clearReferenceSelection();
+  }, [clearReferenceSelection, preview?.id, preview?.state, previewHost]);
+  useEffect(
+    () => () => {
+      clearReferenceSelection(true, false);
+    },
+    [clearReferenceSelection],
+  );
   const running = preview?.state === "running";
   useEffect(() => {
     onStatusChange?.({
