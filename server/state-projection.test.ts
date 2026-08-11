@@ -160,6 +160,7 @@ test("conversation history is scoped to one thread", () => {
   const projection = sampleProjection();
   const history = projectConversationHistory(projection, "thread-a");
   assert.ok(history);
+  assert.equal(history.sequence, projection.sequence);
   assert.deepEqual(
     history.threads.map((thread) => thread.id),
     ["thread-a"],

@@ -1383,6 +1383,27 @@ export function Conversation({
   useEffect(() => {
     if (!repository?.projectId) return;
     let active = true;
+    let appliedHistorySequence: number | undefined;
+    let latestPollingTurn: { status: RestoredTurnStatus; providerRunId: string | null } | undefined;
+    const restorePendingApprovals = async () => {
+      if (
+        !latestPollingTurn?.providerRunId ||
+        latestPollingTurn.status !== "waiting_for_approval"
+      ) {
+        return;
+      }
+      const approvalsResponse = await fetch("/api/provider/approvals/list", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runId: latestPollingTurn.providerRunId }),
+      });
+      if (approvalsResponse.ok) {
+        const body = (await approvalsResponse.json()) as {
+          approvals: Array<Extract<ProviderEvent, { kind: "approval_pending" }>>;
+        };
+        dispatchConversationRun({ type: "approvals_restored", approvals: body.approvals });
+      }
+    };
     const restore = async () => {
       if (!conversation?.id) {
         appliedRestoration.current = reconcilePersistedRestorationApplication(
@@ -1394,8 +1415,14 @@ export function Conversation({
       }
       const projection = (await loadConversationHistory(
         conversation.id,
-      )) as PersistedConversationProjection;
+        appliedHistorySequence,
+      )) as PersistedConversationProjection | null;
       if (!active) return false;
+      if (!projection) {
+        await restorePendingApprovals();
+        return true;
+      }
+      appliedHistorySequence = projection.sequence;
       const restoration = restorePersistedConversation(projection, {
         conversationId: conversation.id,
         projectId: repository.projectId,
@@ -1460,24 +1487,13 @@ export function Conversation({
         status: restoration.latestStatus.status,
         providerRunId: restoration.pendingRunId,
       };
+      latestPollingTurn = latest;
       const thread = { id: restoration.thread.threadId };
       if (shouldRefreshAfterRestoredTurn(restoredTurnStatus.current, restoredStatus)) {
         conversationAvailableCallback.current?.(thread.id);
       }
       restoredTurnStatus.current = restoredStatus;
-      if (latest.providerRunId && latest.status === "waiting_for_approval") {
-        const approvalsResponse = await fetch("/api/provider/approvals/list", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ runId: latest.providerRunId }),
-        });
-        if (approvalsResponse.ok) {
-          const body = (await approvalsResponse.json()) as {
-            approvals: Array<Extract<ProviderEvent, { kind: "approval_pending" }>>;
-          };
-          dispatchConversationRun({ type: "approvals_restored", approvals: body.approvals });
-        }
-      }
+      await restorePendingApprovals();
       if (
         lastAttentionState.current !== latest.status &&
         shouldNotifyForRestoredTurn(

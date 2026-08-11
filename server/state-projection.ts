@@ -50,6 +50,7 @@ export function projectConversationHistory(
   threadId: string,
 ): Pick<
   StateProjection,
+  | "sequence"
   | "threads"
   | "turns"
   | "messages"
@@ -66,6 +67,7 @@ export function projectConversationHistory(
   const turns = projection.turns.filter((turn) => turn.threadId === threadId);
   const turnIds = new Set(turns.map((turn) => turn.id));
   return {
+    sequence: projection.sequence,
     threads: [thread],
     turns,
     messages: projection.messages.filter((message) => turnIds.has(message.turnId)),

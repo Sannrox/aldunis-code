@@ -9,6 +9,7 @@ import {
 
 function projection(): PersistedConversationProjection {
   return {
+    sequence: 1,
     threads: [
       {
         id: "thread-1",

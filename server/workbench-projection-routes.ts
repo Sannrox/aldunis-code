@@ -23,6 +23,7 @@ export interface WorkbenchProjectionRouteContext {
   assertManagedThread: (projection: StateProjection, threadId: string) => unknown;
   readJson: (request: IncomingMessage) => Promise<unknown>;
   sendJson: (response: ServerResponse, status: number, value: unknown) => void;
+  sendStatus: (response: ServerResponse, status: number) => void;
 }
 
 const ROUTES = new Set([
@@ -123,7 +124,16 @@ export async function handleWorkbenchProjectionRoute(
   context: WorkbenchProjectionRouteContext,
 ): Promise<boolean> {
   if (!ROUTES.has(route)) return false;
-  const { state, preferences, permissions, worktrees, managedHost, readJson, sendJson } = context;
+  const {
+    state,
+    preferences,
+    permissions,
+    worktrees,
+    managedHost,
+    readJson,
+    sendJson,
+    sendStatus,
+  } = context;
 
   if (route === "/api/state/load") {
     // Preferences first so orchestration-disabled installs skip transcript scans.
@@ -174,12 +184,25 @@ export async function handleWorkbenchProjectionRoute(
   }
 
   if (route === "/api/state/conversations/history") {
-    const body = (await readJson(request)) as { threadId?: unknown };
+    const body = (await readJson(request)) as { threadId?: unknown; knownSequence?: unknown };
     if (typeof body.threadId !== "string" || !body.threadId) {
       throw new LocalStateError("A conversation is required.", 400);
     }
+    if (
+      body.knownSequence !== undefined &&
+      (!Number.isSafeInteger(body.knownSequence) || Number(body.knownSequence) < 0)
+    ) {
+      throw new LocalStateError("The conversation history sequence is invalid.", 400);
+    }
     const projection = (await state.inspect()) as StateProjection;
+    if (!projection.threads.some((thread) => thread.id === body.threadId)) {
+      throw new LocalStateError("The conversation is unavailable.", 404);
+    }
     if (managedHost) context.assertManagedThread(projection, body.threadId);
+    if (body.knownSequence === projection.sequence) {
+      sendStatus(response, 204);
+      return true;
+    }
     const history = projectConversationHistory(projection, body.threadId);
     if (!history) throw new LocalStateError("The conversation is unavailable.", 404);
     sendJson(response, 200, history);
