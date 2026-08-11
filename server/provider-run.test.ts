@@ -4,6 +4,7 @@ import {
   admitProviderRun,
   createProviderRunSink,
   handleProviderRun,
+  ProviderInputExpiryTimers,
   shouldReleaseBrowserProviderToken,
   type ProviderRunModuleContext,
   type ProviderRunOutput,
@@ -11,6 +12,56 @@ import {
 import { RepositoryError } from "./repository.ts";
 
 const output = {} as ProviderRunOutput;
+
+class FakeInputTimers {
+  readonly pending = new Set<{ callback: () => void; unref(): void }>();
+  setTimeout(callback: () => void): { callback: () => void; unref(): void } {
+    const timer = { callback, unref() {} };
+    this.pending.add(timer);
+    return timer;
+  }
+  clearTimeout(timer: { callback: () => void; unref(): void }): void {
+    this.pending.delete(timer);
+  }
+  fire(timer: { callback: () => void; unref(): void }): void {
+    if (!this.pending.delete(timer)) return;
+    timer.callback();
+  }
+}
+
+test("provider input expiry timers release on answer, replacement, firing, and run close", () => {
+  const timers = new FakeInputTimers();
+  const expiry = new ProviderInputExpiryTimers(timers);
+  let fired = 0;
+  expiry.schedule("run-1", "input-1", new Date(Date.now() + 60_000).toISOString(), () => {
+    fired += 1;
+  });
+  const replaced = [...timers.pending][0]!;
+  expiry.schedule("run-1", "input-1", new Date(Date.now() + 60_000).toISOString(), () => {
+    fired += 1;
+  });
+  assert.equal(timers.pending.has(replaced), false);
+  replaced.callback();
+  assert.equal(fired, 0);
+  assert.equal(expiry.retainedTimerCount, 1);
+  assert.equal(expiry.clear("run-1", "input-1"), true);
+  assert.equal(expiry.retainedTimerCount, 0);
+
+  expiry.schedule("run-1", "input-1", new Date(Date.now() + 60_000).toISOString(), () => {
+    fired += 1;
+  });
+  const active = [...timers.pending][0]!;
+  timers.fire(active);
+  assert.equal(fired, 1);
+  assert.equal(expiry.retainedTimerCount, 0);
+  assert.equal(expiry.clear("run-1", "input-1"), false);
+
+  expiry.schedule("run-1", "input-1", new Date(Date.now() + 60_000).toISOString(), () => {});
+  expiry.schedule("run-1", "input-2", new Date(Date.now() + 60_000).toISOString(), () => {});
+  expiry.clearRun("run-1");
+  assert.equal(expiry.retainedTimerCount, 0);
+  assert.equal(timers.pending.size, 0);
+});
 
 test("browser provider token release follows accepted Codex session ownership", () => {
   assert.equal(shouldReleaseBrowserProviderToken("codex-cli", false), true);
@@ -26,6 +77,7 @@ function moduleContext(
     remoteRequest: false,
     activeCheckpointProjects: new Set(),
     activeCheckpointWorktrees: new Set(),
+    inputExpiryTimers: new ProviderInputExpiryTimers(),
     checkpointWorktreeKey: (projectId, worktree) => JSON.stringify([projectId, worktree]),
     selectedWorktree: async (root, worktree) => ({ root, worktree }),
     ...overrides,

@@ -41,6 +41,65 @@ import type { WorkspaceMode } from "../src/types.ts";
 
 type SelectedWorktree = { root: string; worktree: string };
 type DelegatedControlLock = <T>(operation: () => Promise<T>) => Promise<T>;
+type ProviderInputExpiryTimer = { unref(): void };
+
+export class ProviderInputExpiryTimers {
+  readonly #runs = new Map<string, Map<string, ProviderInputExpiryTimer>>();
+
+  constructor(
+    private readonly timers: {
+      setTimeout(callback: () => void, delayMs: number): ProviderInputExpiryTimer;
+      clearTimeout(handle: ProviderInputExpiryTimer): void;
+    } = {
+      setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+    },
+  ) {}
+
+  schedule(runId: string, requestId: string, expiresAt: string, expire: () => void): void {
+    this.clear(runId, requestId);
+    const run = this.#runs.get(runId) ?? new Map<string, ProviderInputExpiryTimer>();
+    const timer = this.timers.setTimeout(
+      () => {
+        if (this.#forget(runId, requestId, timer)) expire();
+      },
+      Math.max(0, Date.parse(expiresAt) - Date.now()),
+    );
+    timer.unref();
+    run.set(requestId, timer);
+    this.#runs.set(runId, run);
+  }
+
+  clear(runId: string, requestId: string): boolean {
+    const run = this.#runs.get(runId);
+    const timer = run?.get(requestId);
+    if (!run || !timer) return false;
+    this.timers.clearTimeout(timer);
+    this.#forget(runId, requestId, timer);
+    return true;
+  }
+
+  clearRun(runId: string): void {
+    const run = this.#runs.get(runId);
+    if (!run) return;
+    this.#runs.delete(runId);
+    for (const timer of run.values()) this.timers.clearTimeout(timer);
+  }
+
+  get retainedTimerCount(): number {
+    let count = 0;
+    for (const run of this.#runs.values()) count += run.size;
+    return count;
+  }
+
+  #forget(runId: string, requestId: string, timer: ProviderInputExpiryTimer): boolean {
+    const run = this.#runs.get(runId);
+    if (run?.get(requestId) !== timer) return false;
+    run.delete(requestId);
+    if (!run.size) this.#runs.delete(runId);
+    return true;
+  }
+}
 
 export interface ProviderRunInput {
   body: unknown;
@@ -153,6 +212,7 @@ export interface ProviderRunModuleContext {
   worktrees: WorktreeManager;
   adapters: ProviderAdapterStore;
   activeAcp: Map<string, AcpProviderAdapter>;
+  inputExpiryTimers: ProviderInputExpiryTimers;
   wake: WakeBroker;
   withDelegatedControlLock: DelegatedControlLock;
   internalApprovalUrl?: Promise<string>;
@@ -198,6 +258,7 @@ export async function handleProviderRun(
     worktrees,
     adapters,
     activeAcp,
+    inputExpiryTimers,
     wake,
     withDelegatedControlLock,
     internalApprovalUrl,
@@ -990,32 +1051,28 @@ export async function handleProviderRun(
           }
         }
         if (event.kind === "input_requested" && event.expiresAt) {
-          const timeout = setTimeout(
-            () => {
-              if (!codex.expireInput(run.id, event.id)) return;
-              void state
-                .recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
-                  kind: "input_resolved",
-                  id: event.id,
-                  state: "cancelled",
-                })
-                .then(async () => {
-                  if (!output.destroyed && !output.writableEnded) {
-                    output.write(
-                      `${JSON.stringify({
-                        kind: "input_resolved",
-                        id: event.id,
-                        state: "cancelled",
-                      })}\n`,
-                    );
-                  }
-                  await publishThreadStatusTransition(wake, state, persisted.thread.id, null, true);
-                })
-                .catch(() => undefined);
-            },
-            Math.max(0, Date.parse(event.expiresAt) - Date.now()),
-          );
-          timeout.unref();
+          inputExpiryTimers.schedule(run.id, event.id, event.expiresAt, () => {
+            if (!codex.expireInput(run.id, event.id)) return;
+            void state
+              .recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
+                kind: "input_resolved",
+                id: event.id,
+                state: "cancelled",
+              })
+              .then(async () => {
+                if (!output.destroyed && !output.writableEnded) {
+                  output.write(
+                    `${JSON.stringify({
+                      kind: "input_resolved",
+                      id: event.id,
+                      state: "cancelled",
+                    })}\n`,
+                  );
+                }
+                await publishThreadStatusTransition(wake, state, persisted.thread.id, null, true);
+              })
+              .catch(() => undefined);
+          });
         }
         await publishThreadStatusTransition(
           wake,
@@ -1134,6 +1191,7 @@ export async function handleProviderRun(
     activeAcp.delete(run.id);
     return true;
   } finally {
+    if (run?.id) inputExpiryTimers.clearRun(run.id);
     if (
       browserProviderConversationId &&
       shouldReleaseBrowserProviderToken(providerId, codexOwnsBrowserProviderToken)
