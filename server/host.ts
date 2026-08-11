@@ -22,8 +22,6 @@ import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { DeliveryBroker } from "./delivery.ts";
 import { ReleaseDeliveryBroker, ReleaseDeliveryStore } from "./release-delivery-workflow.ts";
 import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
-import { projectDelegatedApprovals } from "./delegated-approvals.ts";
-import { projectDelegatedInputs } from "./delegated-inputs.ts";
 import {
   canonicalizeRepositoryRoot,
   deleteCheckpointReferences,
@@ -33,9 +31,7 @@ import {
 import {
   LocalStateError,
   LocalStateStore,
-  projectDelegatedConversationOutcomes,
   projectThreadStatus,
-  projectThreadStatuses,
   type StateProjection,
   type ThreadStatus,
 } from "./state.ts";
@@ -46,7 +42,6 @@ import {
   type ProfileProbeKind,
 } from "./profiles.ts";
 import { PreviewError, PreviewManager } from "./preview.ts";
-import { projectConversationHistory, projectWorkbenchState } from "./state-projection.ts";
 import { PreferencesError, PreferencesStore } from "./preferences.ts";
 import {
   AutomationError,
@@ -84,6 +79,10 @@ import { handleDelegatedControlRoute } from "./delegated-control-routes.ts";
 import { handleAutomationRoute } from "./automation-routes.ts";
 import { handleDeliveryRoute } from "./delivery-routes.ts";
 import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
+import {
+  filterManagedProjection,
+  handleWorkbenchProjectionRoute,
+} from "./workbench-projection-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -158,86 +157,6 @@ function checkpointWorktreeKey(projectId: string, worktree: string): string {
 function projectHasActiveCheckpoint(projectId: string): boolean {
   const prefix = `[${JSON.stringify(projectId)},`;
   return [...activeCheckpointWorktrees].some((key) => key.startsWith(prefix));
-}
-
-function filterManagedProjection(
-  projection: StateProjection,
-  managedHost: ManagedHost,
-): StateProjection {
-  const projects = projection.projects.filter((project) => {
-    try {
-      managedHost.repositoryForRoot(project.root);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  const projectIds = new Set(projects.map((project) => project.id));
-  const threads = projection.threads.filter((thread) => projectIds.has(thread.projectId));
-  const threadIds = new Set(threads.map((thread) => thread.id));
-  const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
-  const turnIds = new Set(turns.map((turn) => turn.id));
-  return {
-    ...projection,
-    projects,
-    threads,
-    turns,
-    messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
-    activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
-    plans: projection.plans.filter(
-      (plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId),
-    ),
-    contextReceipts: projection.contextReceipts.filter(
-      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
-    ),
-    usageReceipts: projection.usageReceipts.filter(
-      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
-    ),
-    governanceCorrelations: projection.governanceCorrelations.filter((receipt) =>
-      threadIds.has(receipt.threadId),
-    ),
-    providerSessions: projection.providerSessions.filter((session) =>
-      threadIds.has(session.threadId),
-    ),
-    checkpoints: projection.checkpoints.filter(
-      (checkpoint) => threadIds.has(checkpoint.threadId) && turnIds.has(checkpoint.turnId),
-    ),
-    annotations: projection.annotations.filter((annotation) => threadIds.has(annotation.threadId)),
-    fileReviews: projection.fileReviews.filter((review) => threadIds.has(review.threadId)),
-    conversationDeletions: projection.conversationDeletions.filter((deletion) =>
-      threadIds.has(deletion.threadId),
-    ),
-    forks: projection.forks.filter(
-      (fork) => threadIds.has(fork.sourceThreadId) && threadIds.has(fork.destinationThreadId),
-    ),
-    delegatedRelationships: projection.delegatedRelationships.filter(
-      (relationship) =>
-        threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
-    ),
-    inputRequests: projection.inputRequests.filter((request) => threadIds.has(request.threadId)),
-    inputReceipts: projection.inputReceipts.filter(
-      (receipt) =>
-        threadIds.has(receipt.childThreadId) &&
-        (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
-    ),
-    autonomyRuns: projection.autonomyRuns.filter(
-      (run) => run.projectId === null || projectIds.has(run.projectId),
-    ),
-    autonomyTasks: projection.autonomyTasks.filter((task) => {
-      const run = projection.autonomyRuns.find((candidate) => candidate.id === task.runId);
-      return run?.projectId === null || (run?.projectId ? projectIds.has(run.projectId) : false);
-    }),
-    autonomyFlows: projection.autonomyFlows,
-    heartbeatMonitors: projection.heartbeatMonitors.filter(
-      (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
-    ),
-    standingOrders: projection.standingOrders.filter(
-      (order) => order.projectId === null || projectIds.has(order.projectId),
-    ),
-    autonomyHooks: projection.autonomyHooks.filter(
-      (hook) => hook.projectId === null || projectIds.has(hook.projectId),
-    ),
-  };
 }
 
 export function assertLoopbackHost(host: string): void {
@@ -751,69 +670,19 @@ async function handleApi(
       })
     )
       return true;
-    if (route === "/api/state/load") {
-      // Preferences first so orchestration-disabled installs skip transcript scans.
-      const { preferences: currentPreferences } = await preferences.load();
-      // Inspect avoids cloning multi-MB transcript arrays that this route never
-      // returns; workbench/list consumers only need lifecycle metadata.
-      const projection = await state.inspect();
-      const visibleProjection = managedHost
-        ? filterManagedProjection(projection as StateProjection, managedHost)
-        : (projection as StateProjection);
-      // Materialize projection-derived fields before later awaits so the response
-      // stays coherent if a provider event mutates live state mid-flight.
-      // Delegated outcomes/inputs need transcript arrays; derive them before
-      // projectWorkbenchState strips messages/activities/inputRequests.
-      const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
-      const delegatedOutcomes = orchestrationEnabled
-        ? projectDelegatedConversationOutcomes(visibleProjection)
-        : [];
-      const delegatedInputs = orchestrationEnabled ? projectDelegatedInputs(visibleProjection) : [];
-      const delegatedApprovals = orchestrationEnabled
-        ? projectDelegatedApprovals(
-            visibleProjection,
-            permissions.approvals().filter((approval) => {
-              if (!managedHost) return true;
-              try {
-                managedHost.repositoryForRoot(approval.repository);
-                return visibleProjection.threads.some(
-                  (thread) => thread.id === approval.conversationId,
-                );
-              } catch {
-                return false;
-              }
-            }),
-          )
-        : [];
-      const workbench = projectWorkbenchState(visibleProjection);
-      const threadStatuses = projectThreadStatuses(workbench);
-      const managedWorktreeCount = await worktrees.countActiveManaged();
-      const managedWorktreePaths = await worktrees.listActiveManagedPaths();
-      sendJson(response, 200, {
-        ...workbench,
-        delegatedRelationships: orchestrationEnabled ? workbench.delegatedRelationships : [],
-        delegatedOutcomes,
-        delegatedApprovals,
-        delegatedInputs,
-        threadStatuses,
-        managedWorktreeCount,
-        managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
-        managedWorktreePaths,
-      });
+    if (
+      await handleWorkbenchProjectionRoute(route, request, response, {
+        state,
+        preferences,
+        permissions,
+        worktrees,
+        managedHost,
+        assertManagedThread,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/state/conversations/history") {
-      const body = (await readJson(request)) as { threadId?: unknown };
-      if (typeof body.threadId !== "string" || !body.threadId) {
-        throw new LocalStateError("A conversation is required.", 400);
-      }
-      const projection = await state.inspect();
-      if (managedHost) assertManagedThread(projection as StateProjection, body.threadId);
-      const history = projectConversationHistory(projection as StateProjection, body.threadId);
-      if (!history) throw new LocalStateError("The conversation is unavailable.", 404);
-      sendJson(response, 200, history);
-      return true;
-    }
     if (
       await handleConversationForkRoute(route, request, response, {
         state,
@@ -828,52 +697,6 @@ async function handleApi(
         sendJson,
       })
     ) {
-      return true;
-    }
-    if (route === "/api/state/search") {
-      const body = (await readJson(request)) as { query?: unknown; archived?: unknown };
-      if (typeof body.query !== "string")
-        throw new LocalStateError("A search query is required.", 400);
-      if (
-        body.archived !== undefined &&
-        !["exclude", "include", "only"].includes(String(body.archived))
-      ) {
-        throw new LocalStateError("A valid archived conversation scope is required.", 400);
-      }
-      const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
-      const archived = body.archived ?? "exclude";
-      const projection = await state.inspect();
-      const visibleProjection = managedHost
-        ? filterManagedProjection(projection, managedHost)
-        : projection;
-      const projects = new Map(visibleProjection.projects.map((project) => [project.id, project]));
-      const threads = visibleProjection.threads
-        .filter((thread) => {
-          if (archived === "exclude" && thread.archivedAt) return false;
-          if (archived === "only" && !thread.archivedAt) return false;
-          const project = projects.get(thread.projectId);
-          return (
-            !query ||
-            thread.title.toLocaleLowerCase().includes(query) ||
-            thread.worktree.toLocaleLowerCase().includes(query) ||
-            project?.name.toLocaleLowerCase().includes(query)
-          );
-        })
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 50)
-        .map((thread) => ({
-          id: thread.id,
-          projectId: thread.projectId,
-          title: thread.title,
-          worktree: thread.worktree,
-          workspaceMode: thread.workspaceMode ?? "shared",
-          provider: thread.provider,
-          updatedAt: thread.updatedAt,
-          pinnedAt: thread.pinnedAt ?? null,
-          archivedAt: thread.archivedAt ?? null,
-          projectName: projects.get(thread.projectId)?.name ?? "Unknown project",
-        }));
-      sendJson(response, 200, { threads, bounded: true });
       return true;
     }
     if (
