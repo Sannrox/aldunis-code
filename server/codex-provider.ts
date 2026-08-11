@@ -32,6 +32,8 @@ const SUPPORTED_CODEX_MAJOR = 0;
  */
 const MIN_CODEX_MINOR = 80;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
+export const CODEX_IDLE_SESSION_TTL_MS = 5 * 60_000;
+export const MAX_IDLE_CODEX_SESSIONS = 8;
 const APPROVED_BROWSER_TOOLS = new Set([
   "browser_status",
   "browser_snapshot",
@@ -45,6 +47,17 @@ const APPROVED_BROWSER_TOOLS = new Set([
 
 type JsonRecord = Record<string, unknown>;
 type RpcId = string | number;
+type CodexIdleTimer = { unref(): void };
+
+export interface CodexCliAdapterOptions {
+  idleSessionTtlMs?: number;
+  maxIdleSessions?: number;
+  onSessionClosed?: (conversationId: string) => void;
+  timers?: {
+    setTimeout(callback: () => void, delayMs: number): CodexIdleTimer;
+    clearTimeout(handle: CodexIdleTimer): void;
+  };
+}
 
 interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
@@ -53,12 +66,14 @@ interface ActiveRun {
   initialized: boolean;
   conversationId: string;
   worktree: string;
+  browserMcpConfigured: boolean;
   currentRunId: string | null;
   threadId: string | null;
   turnId: string | null;
   fileChanges: Map<string, string[]>;
   activeToolCalls: Set<string>;
   pendingInputs: Map<string, { rpcId: RpcId; questionIds: string[] }>;
+  idleTimer: CodexIdleTimer | null;
 }
 
 export interface CodexModel {
@@ -586,7 +601,12 @@ export class CodexCliAdapter {
   constructor(
     private readonly executable = "codex",
     private readonly permissions = new PermissionBroker(),
+    private readonly options: CodexCliAdapterOptions = {},
   ) {}
+
+  get retainedIdleSessionCount(): number {
+    return [...this.#sessions.values()].filter((session) => session.currentRunId === null).length;
+  }
 
   #appServerArguments(version: string, browserMcp?: ProviderBrowserMcpConfiguration): string[] {
     return codexAppServerArguments(version, browserMcp);
@@ -838,8 +858,12 @@ export class CodexCliAdapter {
       !existing.spawnFailed &&
       existing.currentRunId === null &&
       existing.worktree === options.worktree &&
+      existing.browserMcpConfigured === Boolean(options.browserMcp) &&
       (!options.resumeSessionId || options.resumeSessionId === existing.threadId)
     ) {
+      this.#clearIdleTimer(existing);
+      this.#sessions.delete(options.conversationId);
+      this.#sessions.set(options.conversationId, existing);
       const id = randomUUID();
       existing.cancelled = false;
       existing.currentRunId = id;
@@ -849,9 +873,9 @@ export class CodexCliAdapter {
       this.#active.set(id, existing);
       return { id, events: this.#events(id, existing, options) };
     }
+    const displacedBrowserToken = existing?.browserMcpConfigured === true;
     if (existing) {
-      this.#sessions.delete(options.conversationId);
-      this.#terminate(existing.child);
+      this.#retireSession(existing, false);
     }
 
     let version: string;
@@ -862,6 +886,9 @@ export class CodexCliAdapter {
       });
       version = assertSupportedCodexVersion(result.stdout.trim());
     } catch {
+      if (displacedBrowserToken && !options.browserMcp) {
+        this.options.onSessionClosed?.(options.conversationId);
+      }
       throw new ProviderProtocolError("Codex CLI is not installed or could not be started.");
     }
     const id = randomUUID();
@@ -879,23 +906,30 @@ export class CodexCliAdapter {
       initialized: false,
       conversationId: options.conversationId,
       worktree: options.worktree,
+      browserMcpConfigured: Boolean(options.browserMcp),
       currentRunId: id,
       threadId: null,
       turnId: null,
       fileChanges: new Map(),
       activeToolCalls: new Set(),
       pendingInputs: new Map(),
+      idleTimer: null,
     };
     child.once("error", () => {
       active.spawnFailed = true;
     });
-    child.once("exit", () => {
+    child.once("close", () => {
+      this.#clearIdleTimer(active);
       if (this.#sessions.get(options.conversationId) === active) {
         this.#sessions.delete(options.conversationId);
+        if (active.browserMcpConfigured) this.options.onSessionClosed?.(options.conversationId);
       }
     });
     this.#active.set(id, active);
     this.#sessions.set(options.conversationId, active);
+    if (displacedBrowserToken && !active.browserMcpConfigured) {
+      this.options.onSessionClosed?.(options.conversationId);
+    }
     return { id, events: this.#events(id, active, options) };
   }
 
@@ -957,10 +991,53 @@ export class CodexCliAdapter {
   }
 
   close(): void {
-    for (const session of this.#sessions.values()) {
-      this.#terminate(session.child);
+    for (const session of [...this.#sessions.values()]) this.#retireSession(session);
+  }
+
+  #clearIdleTimer(active: ActiveRun): void {
+    if (!active.idleTimer) return;
+    const clear =
+      this.options.timers?.clearTimeout ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
+    clear(active.idleTimer);
+    active.idleTimer = null;
+  }
+
+  #retireSession(active: ActiveRun, notify = true): void {
+    const retained = this.#sessions.get(active.conversationId) === active;
+    this.#clearIdleTimer(active);
+    if (retained) this.#sessions.delete(active.conversationId);
+    this.#terminate(active.child);
+    if (retained && notify && active.browserMcpConfigured) {
+      this.options.onSessionClosed?.(active.conversationId);
     }
-    this.#sessions.clear();
+  }
+
+  #scheduleIdleRetirement(active: ActiveRun): void {
+    if (
+      this.#sessions.get(active.conversationId) !== active ||
+      active.currentRunId !== null ||
+      active.child.exitCode !== null ||
+      active.cancelled
+    ) {
+      return;
+    }
+    this.#clearIdleTimer(active);
+    this.#sessions.delete(active.conversationId);
+    this.#sessions.set(active.conversationId, active);
+    const schedule =
+      this.options.timers?.setTimeout ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+    active.idleTimer = schedule(() => {
+      active.idleTimer = null;
+      if (active.currentRunId === null) this.#retireSession(active);
+    }, this.options.idleSessionTtlMs ?? CODEX_IDLE_SESSION_TTL_MS);
+    active.idleTimer.unref();
+
+    const limit = this.options.maxIdleSessions ?? MAX_IDLE_CODEX_SESSIONS;
+    while (this.retainedIdleSessionCount > limit) {
+      const oldest = [...this.#sessions.values()].find((session) => session.currentRunId === null);
+      if (!oldest) break;
+      this.#retireSession(oldest);
+    }
   }
 
   #send(child: ChildProcessWithoutNullStreams, value: unknown): boolean {
@@ -1055,6 +1132,7 @@ export class CodexCliAdapter {
     }
     let protocolFailed = false;
     let terminalEmitted = false;
+    let completed = false;
     let resumeFallbackAttempted = false;
     const approvalTasks = new Set<Promise<void>>();
     try {
@@ -1361,6 +1439,7 @@ export class CodexCliAdapter {
             const turn = record(params?.turn);
             if (turn?.status === "completed" && active.threadId) {
               terminalEmitted = true;
+              completed = true;
               for (const settled of settleActiveToolCalls(active)) yield settled;
               yield { kind: "turn_completed", sessionId: active.threadId, costUsd: null };
               return;
@@ -1377,9 +1456,8 @@ export class CodexCliAdapter {
       } else {
         protocolFailed = true;
         if (this.#sessions.get(active.conversationId) === active) {
-          this.#sessions.delete(active.conversationId);
-        }
-        this.#terminate(active.child);
+          this.#retireSession(active);
+        } else this.#terminate(active.child);
         terminalEmitted = true;
         for (const settled of settleActiveToolCalls(active)) yield settled;
         yield error instanceof ProviderProtocolError
@@ -1396,7 +1474,10 @@ export class CodexCliAdapter {
       }
     } finally {
       this.#active.delete(id);
-      if (active.currentRunId === id) active.currentRunId = null;
+      if (active.currentRunId === id) {
+        active.currentRunId = null;
+        if (completed) this.#scheduleIdleRetirement(active);
+      }
       this.permissions.closeRun(id, active.cancelled ? "cancelled" : "provider_failed");
     }
     if (active.cancelled && !protocolFailed && !terminalEmitted) {

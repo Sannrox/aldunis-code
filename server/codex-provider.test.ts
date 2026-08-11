@@ -14,6 +14,34 @@ import {
 } from "./codex-provider.ts";
 import { ProviderProtocolError } from "./provider.ts";
 
+class FakeCodexTimers {
+  readonly pending = new Set<{ callback: () => void; unref(): void }>();
+
+  setTimeout = (callback: () => void) => {
+    const handle = { callback, unref() {} };
+    this.pending.add(handle);
+    return handle;
+  };
+
+  clearTimeout = (handle: { callback: () => void; unref(): void }) => {
+    this.pending.delete(handle);
+  };
+
+  fireNext(): void {
+    const handle = this.pending.values().next().value;
+    assert.ok(handle);
+    this.pending.delete(handle);
+    handle.callback();
+  }
+}
+
+const TEST_BROWSER_MCP = {
+  name: "aldunis_browser",
+  command: "/usr/bin/node",
+  args: ["/browser-mcp.mjs"],
+  environment: { ALDUNIS_BROWSER_TOKEN: "fixture-token" },
+};
+
 test("file-change approvals include move destinations", () => {
   assert.deepEqual(
     codexFileChangePaths({
@@ -405,7 +433,7 @@ test("Codex resumes fall back only for missing provider threads", () => {
   assert.equal(isRecoverableCodexResumeError({ message: "thread permission denied" }), false);
 });
 
-test("Codex keeps one app-server process alive across conversation turns", async () => {
+test("Codex reuses recent app-server sessions and bounds idle process lifetime", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-session-"));
   const executable = join(directory, "fake-codex");
   await writeFile(
@@ -435,7 +463,14 @@ if (process.argv.includes("--version")) {
 `,
   );
   await chmod(executable, 0o700);
-  const adapter = new CodexCliAdapter(executable);
+  const timers = new FakeCodexTimers();
+  const closed: string[] = [];
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    idleSessionTtlMs: 1_000,
+    maxIdleSessions: 1,
+    onSessionClosed: (conversationId) => closed.push(conversationId),
+    timers,
+  });
   try {
     const first = await adapter.start({
       repository: directory,
@@ -443,12 +478,15 @@ if (process.argv.includes("--version")) {
       conversationId: "conversation-1",
       prompt: "First",
       approvalUrl: "http://127.0.0.1:1/unused",
+      browserMcp: TEST_BROWSER_MCP,
       mode: "build",
     });
     const firstEvents = [];
     for await (const event of first.events) firstEvents.push(event);
     const session = firstEvents.find((event) => event.kind === "session_started");
     assert.equal(session?.kind, "session_started");
+    assert.equal(adapter.retainedIdleSessionCount, 1);
+    assert.equal(timers.pending.size, 1);
 
     const second = await adapter.start({
       repository: directory,
@@ -457,6 +495,7 @@ if (process.argv.includes("--version")) {
       prompt: "Second",
       approvalUrl: "http://127.0.0.1:1/unused",
       resumeSessionId: session?.kind === "session_started" ? session.sessionId : undefined,
+      browserMcp: TEST_BROWSER_MCP,
       mode: "build",
     });
     const secondEvents = [];
@@ -468,9 +507,145 @@ if (process.argv.includes("--version")) {
         costUsd: null,
       },
     ]);
+    assert.equal(adapter.retainedIdleSessionCount, 1);
+    assert.equal(timers.pending.size, 1);
+
+    timers.fireNext();
+    assert.equal(adapter.retainedIdleSessionCount, 0);
+    assert.deepEqual(closed, ["conversation-1"]);
+
+    const resumed = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-1",
+      prompt: "After idle expiry",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      resumeSessionId: session?.kind === "session_started" ? session.sessionId : undefined,
+      browserMcp: TEST_BROWSER_MCP,
+      mode: "build",
+    });
+    const resumedEvents = [];
+    for await (const event of resumed.events) resumedEvents.push(event);
+    const resumedSession = resumedEvents.find((event) => event.kind === "session_started");
+    assert.equal(resumedSession?.kind, "session_started");
+    if (session?.kind === "session_started" && resumedSession?.kind === "session_started") {
+      assert.notEqual(resumedSession.sessionId, session.sessionId);
+    }
+
+    const other = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-2",
+      prompt: "Other conversation",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      browserMcp: TEST_BROWSER_MCP,
+      mode: "build",
+    });
+    for await (const _event of other.events) {
+      // Drain the fixture turn.
+    }
+    assert.equal(adapter.retainedIdleSessionCount, 1);
+    assert.deepEqual(closed, ["conversation-1", "conversation-1"]);
+
+    const zeroLimitClosed: string[] = [];
+    const zeroLimitAdapter = new CodexCliAdapter(executable, undefined, {
+      maxIdleSessions: 0,
+      onSessionClosed: (conversationId) => zeroLimitClosed.push(conversationId),
+      timers: new FakeCodexTimers(),
+    });
+    try {
+      const zeroLimitRun = await zeroLimitAdapter.start({
+        repository: directory,
+        worktree: directory,
+        conversationId: "conversation-zero",
+        prompt: "Do not retain",
+        approvalUrl: "http://127.0.0.1:1/unused",
+        browserMcp: TEST_BROWSER_MCP,
+        mode: "build",
+      });
+      for await (const _event of zeroLimitRun.events) {
+        // Drain the fixture turn.
+      }
+      assert.equal(zeroLimitAdapter.retainedIdleSessionCount, 0);
+      assert.deepEqual(zeroLimitClosed, ["conversation-zero"]);
+    } finally {
+      zeroLimitAdapter.close();
+    }
+
+    const withoutBrowser = await adapter.start({
+      repository: directory,
+      worktree: directory,
+      conversationId: "conversation-2",
+      prompt: "Replace without browser MCP",
+      approvalUrl: "http://127.0.0.1:1/unused",
+      mode: "build",
+    });
+    for await (const _event of withoutBrowser.events) {
+      // Drain the replacement fixture turn.
+    }
+    assert.deepEqual(closed, ["conversation-1", "conversation-1", "conversation-2"]);
   } finally {
     adapter.close();
   }
+});
+
+test("Codex releases retained session state when app-server spawn fails", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-spawn-failure-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv.includes("--version")) {
+  fs.unlinkSync(__filename);
+  console.log("codex-cli 0.145.0");
+}
+`,
+  );
+  await chmod(executable, 0o700);
+  const closed: string[] = [];
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    onSessionClosed: (conversationId) => closed.push(conversationId),
+  });
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "conversation-spawn-failure",
+    prompt: "Fail to spawn",
+    approvalUrl: "http://127.0.0.1:1/unused",
+    browserMcp: TEST_BROWSER_MCP,
+    mode: "build",
+  });
+  const events = [];
+  for await (const event of run.events) events.push(event);
+  for (let attempt = 0; attempt < 20 && closed.length === 0; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(events.at(-1)?.kind, "failed");
+  assert.equal(adapter.retainedIdleSessionCount, 0);
+  assert.deepEqual(closed, ["conversation-spawn-failure"]);
+});
+
+test("Codex does not close a session before start transfers ownership", async () => {
+  const closed: string[] = [];
+  const adapter = new CodexCliAdapter("missing-codex-fixture", undefined, {
+    onSessionClosed: (conversationId) => closed.push(conversationId),
+  });
+  await assert.rejects(
+    () =>
+      adapter.start({
+        repository: "/repo",
+        worktree: "/repo",
+        conversationId: "conversation-not-started",
+        prompt: "Unavailable",
+        approvalUrl: "http://127.0.0.1:1/unused",
+        browserMcp: TEST_BROWSER_MCP,
+        mode: "build",
+      }),
+    /not installed or could not be started/,
+  );
+  assert.deepEqual(closed, []);
 });
 
 test("Codex session reuse cannot leak abandoned tool state into the next turn", async () => {
@@ -879,13 +1054,17 @@ if (process.argv.includes("--version")) {
 `,
   );
   await chmod(executable, 0o700);
-  const adapter = new CodexCliAdapter(executable);
+  const closed: string[] = [];
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    onSessionClosed: (conversationId) => closed.push(conversationId),
+  });
   const run = await adapter.start({
     repository: directory,
     worktree: directory,
     conversationId: "conversation-1",
     prompt: "Trigger a protocol mismatch",
     approvalUrl: "http://127.0.0.1:1/unused",
+    browserMcp: TEST_BROWSER_MCP,
     mode: "build",
   });
   const events = [];
@@ -900,6 +1079,7 @@ if (process.argv.includes("--version")) {
       message: "Codex app-server emitted an unsupported notification.",
     },
   ]);
+  assert.deepEqual(closed, ["conversation-1"]);
 });
 
 test("interrupted and failed Codex turns normalize to terminal events", () => {
