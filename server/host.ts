@@ -75,6 +75,7 @@ import {
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
+import { handlePreviewRoute } from "./preview-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -929,75 +930,15 @@ async function handleApi(
     ) {
       return true;
     }
-    if (route === "/api/previews/request") {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        origin?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        typeof body.origin !== "string"
-      ) {
-        throw new PreviewError("A repository, worktree, and loopback origin are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(
-        response,
-        200,
-        await previews.requestStart(context.root, context.worktree, body.origin),
-      );
+    if (
+      await handlePreviewRoute(route, request, response, {
+        previews,
+        selectWorktree: selectedWorktree,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    const previewDecision = route.match(/^\/api\/previews\/([0-9a-f-]+)\/decide$/);
-    if (previewDecision) {
-      const body = (await readJson(request)) as {
-        root?: unknown;
-        worktree?: unknown;
-        decision?: unknown;
-      };
-      if (
-        typeof body.root !== "string" ||
-        typeof body.worktree !== "string" ||
-        (body.decision !== "allow_once" && body.decision !== "deny")
-      ) {
-        throw new PreviewError("A scoped preview decision is required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(
-        response,
-        200,
-        previews.decide(
-          previewDecision[1],
-          { repository: context.root, worktree: context.worktree },
-          body.decision,
-        ),
-      );
-      return true;
-    }
-    const previewStatus = route.match(/^\/api\/previews\/([0-9a-f-]+)\/status$/);
-    if (previewStatus) {
-      sendJson(response, 200, previews.snapshot(previewStatus[1]));
-      return true;
-    }
-    const previewStop = route.match(/^\/api\/previews\/([0-9a-f-]+)\/stop$/);
-    if (previewStop) {
-      const body = (await readJson(request)) as { root?: unknown; worktree?: unknown };
-      if (typeof body.root !== "string" || typeof body.worktree !== "string") {
-        throw new PreviewError("A repository and worktree are required.");
-      }
-      const context = await selectedWorktree(body.root, body.worktree);
-      sendJson(
-        response,
-        200,
-        await previews.stop(previewStop[1], {
-          repository: context.root,
-          worktree: context.worktree,
-        }),
-      );
-      return true;
-    }
     const cancelMatch = route.match(/^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/);
     if (cancelMatch) {
       const acp = activeAcp.get(cancelMatch[1]);
