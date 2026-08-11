@@ -372,6 +372,10 @@
     {
       "name": "ConversationWorkspaceRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates repository admission and registration, managed catalogue projection, local directory browsing authority, and managed worktree preview, approval, creation, and removal ordering behind one internal dispatch interface without changing repository, filesystem, persistence, provider, or approval authority."
+    },
+    {
+      "name": "ChiseiProjectProjectionRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates Chisei project binding administration, request validation, server-owned namespace authority, bounded Action and observation projection reads, governance correlation ownership, and response mapping behind one internal dispatch interface without changing Chisei domain authority, persistence, credentials, or transport ownership."
     }
   ],
   "relations": [
@@ -450,6 +454,16 @@
       "description": "The local API dispatch module delegates Conversation workspace repository, directory, and worktree requests and request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "ConversationWorkspaceRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_chisei_project_projection_route_dispatch",
+      "description": "The local API dispatch module delegates Chisei project binding and bounded read requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ChiseiProjectProjectionRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -1115,6 +1129,18 @@
       "subject": "delegates_conversation_workspace_route_dispatch",
       "source": "Aldunis Code Conversation workspace route dispatch interface",
       "locator": "server/host.ts#handleApi; server/workspace-routes.ts#handleWorkspaceRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChiseiProjectProjectionRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#645",
+      "locator": "server/chisei-routes.ts#handleChiseiRoute; docs/decisions/chisei-project-projections.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_chisei_project_projection_route_dispatch",
+      "source": "Aldunis Code Chisei project projection route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/chisei-routes.ts#handleChiseiRoute",
       "confidence": 1.0
     },
     {

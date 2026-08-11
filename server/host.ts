@@ -99,6 +99,7 @@ import { handleProviderAdapterRoute } from "./provider-adapter-routes.ts";
 import { handleContextRoute, MAX_STAGE_IMAGE_BODY_BYTES } from "./context-routes.ts";
 import { handleCheckpointRoute } from "./checkpoint-routes.ts";
 import { handleWorkspaceRoute } from "./workspace-routes.ts";
+import { handleChiseiRoute } from "./chisei-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -790,142 +791,17 @@ async function handleApi(
       })
     )
       return true;
-    if (route === "/api/integrations/chisei/bind") {
-      if (remoteRequest || managedHost) {
-        throw new LocalStateError(
-          "This host cannot administer Chisei project bindings in the active mode.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as { projectId?: unknown; namespace?: unknown };
-      if (
-        typeof body.projectId !== "string" ||
-        (body.namespace !== null && typeof body.namespace !== "string")
-      ) {
-        throw new LocalStateError("A project and Chisei namespace are required.", 400);
-      }
-      const project = await state.bindProjectChiseiNamespace(
-        body.projectId,
-        body.namespace as string | null,
-      );
-      sendJson(response, 200, {
-        projectId: project.id,
-        chiseiNamespace: project.chiseiNamespace ?? null,
-      });
+    if (
+      await handleChiseiRoute(route, request, response, {
+        state,
+        chisei,
+        remoteRequest,
+        managed: Boolean(managedHost),
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/integrations/chisei/actions/list") {
-      const body = (await readJson(request)) as {
-        projectId?: unknown;
-        typeId?: unknown;
-        status?: unknown;
-        limit?: unknown;
-      };
-      if (
-        typeof body.projectId !== "string" ||
-        (body.typeId !== undefined && typeof body.typeId !== "string") ||
-        (body.status !== undefined && typeof body.status !== "string") ||
-        (body.limit !== undefined &&
-          (typeof body.limit !== "number" || !Number.isInteger(body.limit)))
-      ) {
-        throw new LocalStateError("A valid local project and bounded filters are required.", 400);
-      }
-      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
-      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
-      if (!project.chiseiNamespace) {
-        throw new ChiseiClientError(
-          "This project is not bound to a Chisei namespace.",
-          409,
-          "unconfigured",
-        );
-      }
-      sendJson(
-        response,
-        200,
-        await chisei.listActions(project.id, project.chiseiNamespace, {
-          typeId: body.typeId?.trim().slice(0, 200),
-          status: body.status?.trim().slice(0, 50),
-          limit: body.limit as number | undefined,
-        }),
-      );
-      return true;
-    }
-    if (route === "/api/integrations/chisei/actions/detail") {
-      const body = (await readJson(request)) as { projectId?: unknown; instanceId?: unknown };
-      if (
-        typeof body.projectId !== "string" ||
-        typeof body.instanceId !== "string" ||
-        !body.instanceId ||
-        body.instanceId.length > 200
-      ) {
-        throw new LocalStateError("A valid local project and Action id are required.", 400);
-      }
-      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
-      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
-      if (!project.chiseiNamespace) {
-        throw new ChiseiClientError(
-          "This project is not bound to a Chisei namespace.",
-          409,
-          "unconfigured",
-        );
-      }
-      sendJson(response, 200, await chisei.actionDetail(project.chiseiNamespace, body.instanceId));
-      return true;
-    }
-    if (route === "/api/integrations/chisei/observations/detail") {
-      const body = (await readJson(request)) as { projectId?: unknown; requestId?: unknown };
-      if (
-        typeof body.projectId !== "string" ||
-        typeof body.requestId !== "string" ||
-        !body.requestId ||
-        body.requestId.length > 512 ||
-        body.requestId.includes("\0")
-      ) {
-        throw new LocalStateError(
-          "A local project and bounded observation identity are required.",
-          400,
-        );
-      }
-      const project = (await state.inspect()).projects.find((item) => item.id === body.projectId);
-      if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
-      if (!project.chiseiNamespace) {
-        throw new ChiseiClientError(
-          "This project is not bound to a Chisei namespace.",
-          409,
-          "unconfigured",
-        );
-      }
-      const observation = await chisei.sampleObservation(project.chiseiNamespace, body.requestId);
-      if (!observation) {
-        throw new LocalStateError(
-          "The Chisei observation is unavailable on the read surface.",
-          404,
-        );
-      }
-      sendJson(response, 200, observation);
-      return true;
-    }
-    if (route === "/api/integrations/chisei/operations/detail") {
-      const body = (await readJson(request)) as {
-        projectId?: unknown;
-        correlationId?: unknown;
-      };
-      if (typeof body.projectId !== "string" || typeof body.correlationId !== "string") {
-        throw new LocalStateError("A project and governance correlation are required.", 400);
-      }
-      const projection = await state.inspect();
-      const correlation = projection.governanceCorrelations.find(
-        (item) => item.id === body.correlationId,
-      );
-      const thread = correlation
-        ? projection.threads.find((item) => item.id === correlation.threadId)
-        : null;
-      if (!correlation || !thread || thread.projectId !== body.projectId) {
-        throw new LocalStateError("The governance correlation is unavailable.", 404);
-      }
-      sendJson(response, 200, await chisei.operationReceipt(correlation.operationId));
-      return true;
-    }
     if (route === "/api/state/load") {
       // Preferences first so orchestration-disabled installs skip transcript scans.
       const { preferences: currentPreferences } = await preferences.load();
