@@ -22,12 +22,7 @@ import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { DeliveryBroker } from "./delivery.ts";
 import { ReleaseDeliveryBroker, ReleaseDeliveryStore } from "./release-delivery-workflow.ts";
 import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
-import {
-  canonicalizeRepositoryRoot,
-  deleteCheckpointReferences,
-  discoverWorktrees,
-  RepositoryError,
-} from "./repository.ts";
+import { canonicalizeRepositoryRoot, discoverWorktrees, RepositoryError } from "./repository.ts";
 import {
   LocalStateError,
   LocalStateStore,
@@ -79,6 +74,7 @@ import {
   filterManagedProjection,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
+import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
@@ -148,11 +144,6 @@ const requestBodies = new WeakMap<IncomingMessage, Buffer>();
 
 function checkpointWorktreeKey(projectId: string, worktree: string): string {
   return JSON.stringify([projectId, worktree]);
-}
-
-function projectHasActiveCheckpoint(projectId: string): boolean {
-  const prefix = `[${JSON.stringify(projectId)},`;
-  return [...activeCheckpointWorktrees].some((key) => key.startsWith(prefix));
 }
 
 export function assertLoopbackHost(host: string): void {
@@ -751,113 +742,19 @@ async function handleApi(
       })
     )
       return true;
-    if (route === "/api/state/projects/delete") {
-      const body = (await readJson(request)) as { projectId?: unknown };
-      if (typeof body.projectId !== "string") {
-        throw new RepositoryError("A project is required.");
-      }
-      await withDelegatedControlLock(async () => {
-        const projection = await state.inspect();
-        if (managedHost) {
-          assertManagedProject(projection, body.projectId as string);
-        }
-        if (
-          activeCheckpointProjects.has(body.projectId as string) ||
-          projectHasActiveCheckpoint(body.projectId as string)
-        ) {
-          throw new LocalStateError(
-            "Wait for the active turn to finish before deleting this project.",
-            409,
-          );
-        }
-        activeCheckpointProjects.add(body.projectId as string);
-        try {
-          const threadIds = new Set(
-            projection.threads
-              .filter((thread) => thread.projectId === body.projectId)
-              .map((thread) => thread.id),
-          );
-          const checkpoints = projection.checkpoints.filter((item) => threadIds.has(item.threadId));
-          for (const checkpoint of checkpoints) {
-            await state.saveCheckpoint({
-              ...checkpoint,
-              state: "unavailable",
-              message: "Checkpoint cleanup is pending project deletion.",
-            });
-          }
-          for (const checkpoint of checkpoints) {
-            if (checkpoint.gitDirectory) {
-              await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
-            }
-          }
-          await state.deleteProject(body.projectId as string);
-        } finally {
-          activeCheckpointProjects.delete(body.projectId as string);
-        }
-      });
-      sendJson(response, 200, { status: "deleted" });
+    if (
+      await handleStateMaintenanceRoute(route, request, response, {
+        state,
+        managed: Boolean(managedHost),
+        activeProjects: activeCheckpointProjects,
+        activeWorktrees: activeCheckpointWorktrees,
+        assertManagedProject,
+        withLock: withDelegatedControlLock,
+        readJson,
+        sendJson,
+      })
+    )
       return true;
-    }
-    if (route === "/api/state/retention") {
-      if (managedHost) {
-        throw new LocalStateError(
-          "Retention administration is unavailable in managed hosted mode.",
-          403,
-        );
-      }
-      const body = (await readJson(request)) as { olderThan?: unknown };
-      if (typeof body.olderThan !== "string" || Number.isNaN(Date.parse(body.olderThan))) {
-        throw new RepositoryError("A valid retention cutoff is required.");
-      }
-      await withDelegatedControlLock(async () => {
-        const cutoff = new Date(body.olderThan as string);
-        const projection = await state.inspect();
-        const expiredThreads = new Set(
-          projection.threads
-            .filter((thread) => new Date(thread.updatedAt) < cutoff)
-            .map((thread) => thread.id),
-        );
-        const expiredProjectIds = new Set(
-          projection.threads
-            .filter((thread) => expiredThreads.has(thread.id))
-            .map((thread) => thread.projectId),
-        );
-        if (
-          [...expiredProjectIds].some(
-            (projectId) =>
-              activeCheckpointProjects.has(projectId) || projectHasActiveCheckpoint(projectId),
-          )
-        ) {
-          throw new LocalStateError(
-            "Retention cannot run while an affected project has an active turn.",
-            409,
-          );
-        }
-        for (const projectId of expiredProjectIds) activeCheckpointProjects.add(projectId);
-        try {
-          const checkpoints = projection.checkpoints.filter((item) =>
-            expiredThreads.has(item.threadId),
-          );
-          for (const checkpoint of checkpoints) {
-            await state.saveCheckpoint({
-              ...checkpoint,
-              state: "unavailable",
-              message: "Checkpoint cleanup is pending retention.",
-            });
-          }
-          for (const checkpoint of checkpoints) {
-            if (checkpoint.gitDirectory) {
-              await deleteCheckpointReferences(checkpoint.gitDirectory, checkpoint.id);
-            }
-          }
-          await state.enforceRetention(cutoff);
-        } finally {
-          for (const projectId of expiredProjectIds) activeCheckpointProjects.delete(projectId);
-        }
-      });
-      sendJson(response, 200, { status: "compacted" });
-      return true;
-    }
     if (
       await handleCheckpointRoute(route, request, response, {
         state,
