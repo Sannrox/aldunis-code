@@ -392,6 +392,16 @@ export class SharedBrowserBroker {
     };
   }
 
+  /** Release transient provider configuration state when its run has ended. */
+  releaseProviderToken(conversationId: string): void {
+    this.#providerTokens.delete(conversationId);
+  }
+
+  /** Test and diagnostics: provider tokens retained outside active sessions. */
+  get retainedProviderTokenCount(): number {
+    return this.#providerTokens.size;
+  }
+
   async executeProvider(
     conversationIdInput: unknown,
     tokenInput: unknown,

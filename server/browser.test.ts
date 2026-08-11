@@ -215,6 +215,46 @@ test("shared browser preserves a pre-opened session token across close and reope
   );
 });
 
+test("shared browser releases provider-only tokens after a run", () => {
+  const broker = new SharedBrowserBroker(new FakeBrowserHost());
+  const configuration = broker.providerMcpConfiguration({
+    conversationId: "conversation-finished",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/usr/bin/node",
+    script: "/app/browser-mcp.mjs",
+  });
+  assert.equal(configuration.environment.ALDUNIS_BROWSER_TOKEN?.length, 36);
+  assert.equal(broker.retainedProviderTokenCount, 1);
+
+  broker.releaseProviderToken("conversation-finished");
+
+  assert.equal(broker.retainedProviderTokenCount, 0);
+});
+
+test("shared browser republishes an active session token after run cleanup", () => {
+  const broker = new SharedBrowserBroker(new FakeBrowserHost());
+  const session = broker.open("conversation-active", "http://127.0.0.1:4173");
+  const first = broker.providerMcpConfiguration({
+    conversationId: "conversation-active",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/usr/bin/node",
+    script: "/app/browser-mcp.mjs",
+  });
+  broker.releaseProviderToken("conversation-active");
+  assert.equal(broker.retainedProviderTokenCount, 0);
+
+  const next = broker.providerMcpConfiguration({
+    conversationId: "conversation-active",
+    endpoint: "http://127.0.0.1:4173/api/browser/tools",
+    command: "/usr/bin/node",
+    script: "/app/browser-mcp.mjs",
+  });
+
+  assert.equal(next.environment.ALDUNIS_BROWSER_TOKEN, first.environment.ALDUNIS_BROWSER_TOKEN);
+  assert.equal(session.conversationId, "conversation-active");
+  assert.equal(broker.retainedProviderTokenCount, 1);
+});
+
 test("shared browser replaces a failed session on the next open", async () => {
   const host = new FakeBrowserHost();
   const broker = new SharedBrowserBroker(host);

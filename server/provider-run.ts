@@ -659,6 +659,7 @@ export async function handleProviderRun(
     throw new LocalStateError("This worktree already has an active checkpoint capture.", 409);
   }
   activeCheckpointWorktrees.add(activeWorktreeKey);
+  let browserProviderConversationId: string | null = null;
   try {
     const nativeResumeClaim = nativeResumeInput
       ? await state.claimNativeShikigamiResume(
@@ -777,6 +778,7 @@ export async function handleProviderRun(
             script: browserMcpPath,
           })
         : undefined;
+    if (browserMcp) browserProviderConversationId = persisted.thread.id;
     const effectiveProviderPromptWithBrowser = browserMcp
       ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
       : effectiveProviderPrompt;
@@ -1123,6 +1125,9 @@ export async function handleProviderRun(
     activeAcp.delete(run.id);
     return true;
   } finally {
+    if (browserProviderConversationId) {
+      browser?.releaseProviderToken(browserProviderConversationId);
+    }
     activeCheckpointWorktrees.delete(activeWorktreeKey);
   }
 }
