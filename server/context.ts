@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { RepositoryError, constrainPath } from "./repository.ts";
@@ -34,6 +35,13 @@ export const COMPOSER_ATTACHMENT_DIR = "aldunis-code-composer-images";
 const MANAGED_STAGED_IMAGE_NAME = /^.+-[0-9a-f]{8}\.(gif|jpe?g|png|webp)$/i;
 const MAX_STAGED_IMAGES_PER_WORKTREE = 32;
 const MAX_STAGED_BYTES_PER_WORKTREE = 32 * 1024 * 1024;
+
+interface PreviewFileOperations {
+  readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
+  open(path: string, flags: string): Promise<Pick<FileHandle, "read" | "close">>;
+}
+
+const previewFileOperations: PreviewFileOperations = { readFile, open };
 
 function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
   if (mediaType === "image/png") {
@@ -580,22 +588,32 @@ export async function browseRepositoryFiles(
 export async function previewRepositoryFile(
   worktree: string,
   input: string,
+  signal?: AbortSignal,
+  fileOperations: PreviewFileOperations = previewFileOperations,
 ): Promise<RepositoryFilePreview> {
+  signal?.throwIfAborted();
   const path = relativeFilePath(worktree, input);
   assertNotSecretLike(path);
-  if (isLocalRuntimePath(path) && !(await isTrackedRepositoryPath(worktree, path)))
-    throw new RepositoryError(`${path} is local runtime state and cannot be previewed.`, 403);
+  if (isLocalRuntimePath(path)) {
+    const tracked = await isTrackedRepositoryPath(worktree, path);
+    signal?.throwIfAborted();
+    if (!tracked)
+      throw new RepositoryError(`${path} is local runtime state and cannot be previewed.`, 403);
+  }
   if (isHidden(path)) throw new RepositoryError("Hidden files are not available for preview.", 403);
   const direct = await lstat(join(worktree, path)).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT")
       throw new RepositoryError(`${path} is missing or was deleted.`, 404);
     throw new RepositoryError(`${path} is inaccessible.`, 403);
   });
+  signal?.throwIfAborted();
   if (direct.isSymbolicLink()) {
     throw new RepositoryError("Symlinks are not available for preview.", 403);
   }
   const canonical = await constrainPath(worktree, join(worktree, path));
+  signal?.throwIfAborted();
   const details = await stat(canonical);
+  signal?.throwIfAborted();
   if (!details.isFile()) throw new RepositoryError(`${path} is not a file.`);
   const mediaType = IMAGE_TYPES[extname(path).toLocaleLowerCase()] ?? null;
   if (mediaType) {
@@ -614,7 +632,8 @@ export async function previewRepositoryFile(
         attachable: false,
       };
     }
-    const bytes = await readFile(canonical);
+    const bytes = await fileOperations.readFile(canonical, { signal });
+    signal?.throwIfAborted();
     return {
       path,
       kind: "image",
@@ -629,11 +648,14 @@ export async function previewRepositoryFile(
       attachable: true,
     };
   }
-  const handle = await import("node:fs/promises").then(({ open }) => open(canonical, "r"));
+  signal?.throwIfAborted();
+  const handle = await fileOperations.open(canonical, "r");
   try {
+    signal?.throwIfAborted();
     const length = Math.min(details.size, MAX_PREVIEW_BYTES);
     const bytes = Buffer.alloc(length);
     await handle.read(bytes, 0, length, 0);
+    signal?.throwIfAborted();
     if (bytes.includes(0)) {
       return {
         path,

@@ -114,6 +114,73 @@ test("context module propagates browse cancellation through its interface", asyn
   assert.equal(signal?.aborted, true);
 });
 
+test("context module cancels a disconnected file preview and releases listeners", async () => {
+  const incoming = request();
+  const outgoing = response();
+  let signal: AbortSignal | undefined;
+  let writes = 0;
+  await assert.rejects(
+    handleContextRoute(
+      "/api/context/preview",
+      incoming,
+      outgoing,
+      context({
+        readJson: async () => ({ root: "/repo", worktree: "/repo/wt", path: "README.md" }),
+        selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+        operations: {
+          previewRepositoryFile: async (
+            _worktree: string,
+            _path: string,
+            receivedSignal?: AbortSignal,
+          ) => {
+            signal = receivedSignal;
+            outgoing.emit("close");
+            return { path: "README.md" };
+          },
+        },
+        sendJson: () => {
+          writes += 1;
+        },
+      }) as never,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(signal?.aborted, true);
+  assert.equal(writes, 0);
+  assert.equal(incoming.listenerCount("aborted"), 0);
+  assert.equal(outgoing.listenerCount("close"), 0);
+});
+
+test("context module stops a pre-aborted file preview before worktree selection", async () => {
+  const incoming = request();
+  incoming.aborted = true;
+  let selections = 0;
+  let previews = 0;
+  await assert.rejects(
+    handleContextRoute(
+      "/api/context/preview",
+      incoming,
+      response(),
+      context({
+        readJson: async () => ({ root: "/repo", worktree: "/repo/wt", path: "README.md" }),
+        selectWorktree: async () => {
+          selections += 1;
+          return { root: "/repo", worktree: "/repo/wt" };
+        },
+        operations: {
+          previewRepositoryFile: async () => {
+            previews += 1;
+            return { path: "README.md" };
+          },
+        },
+      }) as never,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(selections, 0);
+  assert.equal(previews, 0);
+});
+
 test("context module propagates unfinished package response cancellation", async () => {
   const incoming = request();
   const outgoing = response();
