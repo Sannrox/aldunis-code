@@ -338,6 +338,10 @@
       "description": "A single-use approval or input request whose authority remains bound to the originating delegated child. A parent may project and resolve it only as a beta-gated human control surface."
     },
     {
+      "name": "ProviderInputExpiryRegistry",
+      "description": "The host-owned registry of provider input deadline timers. It retains at most 32 live timers across all runs, permits replacement of an existing request at capacity, and releases admission on answer, expiry, or run teardown without becoming input authority."
+    },
+    {
       "name": "ChildInputCoordinationReceipt",
       "description": "A durable receipt proving which child input request was answered, its route, and optional coordinating parent. It stores an answer digest rather than provider-visible parent context."
     },
@@ -2197,6 +2201,12 @@
       "subject": "ChildBoundHumanRequest",
       "source": "Accepted delegated human control decision",
       "locator": "docs/decisions/delegated-human-control.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderInputExpiryRegistry",
+      "source": "GitHub Issue Sannrox/aldunis-code#821",
+      "locator": "server/provider-run.ts#ProviderInputExpiryTimers",
       "confidence": 1.0
     },
     {

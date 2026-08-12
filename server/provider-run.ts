@@ -43,6 +43,8 @@ type SelectedWorktree = { root: string; worktree: string };
 type DelegatedControlLock = <T>(operation: () => Promise<T>) => Promise<T>;
 type ProviderInputExpiryTimer = { unref(): void };
 
+export const MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS = 32;
+
 export class ProviderInputExpiryTimers {
   readonly #runs = new Map<string, Map<string, ProviderInputExpiryTimer>>();
 
@@ -58,6 +60,9 @@ export class ProviderInputExpiryTimers {
 
   schedule(runId: string, requestId: string, expiresAt: string, expire: () => void): void {
     this.clear(runId, requestId);
+    if (this.retainedTimerCount >= MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS) {
+      throw new ProviderProtocolError("Too many provider input requests are awaiting expiry.");
+    }
     const run = this.#runs.get(runId) ?? new Map<string, ProviderInputExpiryTimer>();
     const timer = this.timers.setTimeout(
       () => {
