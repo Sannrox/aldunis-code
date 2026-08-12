@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   RepositoryMetadata,
   ConversationSummary,
@@ -67,7 +74,7 @@ import {
 } from "../dialogs/delete-conversation-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import { delegatedConversationLabels } from "./delegated-conversation-labels";
-import { delegatedConversationAncestorIds } from "../../lib/delegated-conversation-graph";
+import { DelegatedHumanControlSessionModule } from "../../lib/delegated-human-control-session";
 import {
   BRANCH_PR_CLIENT_BATCH_LIMIT,
   startBranchPrStatusPolling,
@@ -151,14 +158,25 @@ export function DelegatedChildrenPanel({
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
-  const [selectedChildId, setSelectedChildId] = useState("");
   const [startOpen, setStartOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
-  const [inputBusyId, setInputBusyId] = useState<string | null>(null);
-  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
-  const [resolvedApprovalIds, setResolvedApprovalIds] = useState<Set<string>>(() => new Set());
-  const [error, setError] = useState<string | null>(null);
+  const refreshRef = useRef(onChanged);
+  refreshRef.current = onChanged;
+  const session = useMemo(
+    () =>
+      new DelegatedHumanControlSessionModule(parent.id, {
+        refresh: () => refreshRef.current(),
+      }),
+    [parent.id],
+  );
+  const {
+    selectedChildId,
+    busy,
+    approvalBusyId,
+    inputBusyId,
+    inputAnswers,
+    resolvedApprovalIds,
+    error,
+  } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const outcomeSummary = summarizeDelegatedOutcomes(parent.id, conversations, relationships);
   const approvalChildIds = new Set(
     approvals
@@ -176,93 +194,8 @@ export function DelegatedChildrenPanel({
   const runningCount = outcomeSummary.outcomes.filter(
     ({ child }) => child.status === "running" && !approvalChildIds.has(child.id),
   ).length;
-  const unavailableChildIds = new Set(relationships.map((item) => item.childThreadId));
-  const ancestorIds = delegatedConversationAncestorIds(relationships, parent.id);
-  const candidates = conversations.filter(
-    (item) =>
-      item.id !== parent.id &&
-      !item.archivedAt &&
-      !unavailableChildIds.has(item.id) &&
-      !ancestorIds.has(item.id),
-  );
+  const candidates = session.linkCandidates(conversations, relationships);
   const candidateLabels = delegatedConversationLabels(candidates);
-  const mutate = async (route: string, childThreadId: string) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(route, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ parentThreadId: parent.id, childThreadId }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Delegated conversation update failed.");
-      setSelectedChildId("");
-      await onChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Delegated conversation update failed.");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const decideApproval = async (
-    delegated: DelegatedApprovalProjection,
-    decision: "allow_once" | "deny",
-  ) => {
-    setApprovalBusyId(delegated.approval.id);
-    setError(null);
-    try {
-      const response = await fetch(`/api/provider/approvals/${delegated.approval.id}/decide`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          runId: delegated.approval.runId,
-          conversationId: delegated.approval.conversationId,
-          repository: delegated.approval.repository,
-          worktree: delegated.approval.worktree,
-          toolCallId: delegated.approval.toolCallId,
-          decision,
-          parentThreadId: parent.id,
-        }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Approval decision failed.");
-      setResolvedApprovalIds((current) => new Set(current).add(delegated.approval.id));
-      try {
-        await onChanged();
-      } catch {
-        setError("Approval resolved. Status refresh failed; reconnect to confirm child state.");
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Approval decision failed.");
-    } finally {
-      setApprovalBusyId(null);
-    }
-  };
-  const answerInput = async (delegated: DelegatedInputProjection) => {
-    const answer = (inputAnswers[delegated.request.id] ?? "").trim();
-    if (!answer) return;
-    setInputBusyId(delegated.request.id);
-    setError(null);
-    try {
-      const response = await fetch(`/api/provider/input-requests/${delegated.request.id}/respond`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          childThreadId: delegated.childThreadId,
-          parentThreadId: parent.id,
-          answer,
-        }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Child input response failed.");
-      await onChanged();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Child input response failed.");
-    } finally {
-      setInputBusyId(null);
-    }
-  };
   return (
     <>
       <section className="delegated-children" aria-labelledby={`delegated-title-${parent.id}`}>
@@ -297,7 +230,7 @@ export function DelegatedChildrenPanel({
               id={`delegated-child-${parent.id}`}
               value={selectedChildId}
               disabled={busy || candidates.length === 0}
-              onChange={(event) => setSelectedChildId(event.target.value)}
+              onChange={(event) => session.setSelectedChildId(event.target.value)}
             >
               <option value="">Link existing…</option>
               {candidates.map((candidate) => (
@@ -310,9 +243,7 @@ export function DelegatedChildrenPanel({
               type="button"
               size="sm"
               disabled={busy || !selectedChildId}
-              onClick={() =>
-                void mutate("/api/state/delegated-conversations/link", selectedChildId)
-              }
+              onClick={() => void session.execute({ kind: "link", childThreadId: selectedChildId })}
             >
               Link
             </Button>
@@ -328,21 +259,9 @@ export function DelegatedChildrenPanel({
         ) : (
           <ul className="delegated-list">
             {outcomeSummary.outcomes.map(({ relationship, child }) => {
-              const childApprovals = approvals.filter(
-                (item) =>
-                  item.parentThreadId === parent.id &&
-                  item.childThreadId === child.id &&
-                  !resolvedApprovalIds.has(item.approval.id),
-              );
-              const childInputs = inputs.filter(
-                (item) => item.parentThreadId === parent.id && item.childThreadId === child.id,
-              );
-              const status =
-                childApprovals.length > 0
-                  ? "pending_approval"
-                  : childInputs.length > 0
-                    ? "awaiting_input"
-                    : (child.status ?? "idle");
+              const childApprovals = session.pendingApprovalsForChild(approvals, child.id);
+              const childInputs = session.inputsForChild(inputs, child.id);
+              const status = session.childStatus(child, approvals, inputs);
               if (status === "completed") {
                 const outcome = outcomes.find((item) => item.childThreadId === child.id);
                 return (
@@ -373,7 +292,7 @@ export function DelegatedChildrenPanel({
                           size="sm"
                           disabled={busy}
                           onClick={() =>
-                            void mutate("/api/state/delegated-conversations/unlink", child.id)
+                            void session.execute({ kind: "unlink", childThreadId: child.id })
                           }
                         >
                           Detach
@@ -405,7 +324,7 @@ export function DelegatedChildrenPanel({
                     size="sm"
                     disabled={busy}
                     onClick={() =>
-                      void mutate("/api/state/delegated-conversations/unlink", child.id)
+                      void session.execute({ kind: "unlink", childThreadId: child.id })
                     }
                   >
                     Detach
@@ -464,7 +383,13 @@ export function DelegatedChildrenPanel({
                           type="button"
                           size="sm"
                           disabled={approvalBusyId === delegatedApproval.approval.id}
-                          onClick={() => void decideApproval(delegatedApproval, "deny")}
+                          onClick={() =>
+                            void session.execute({
+                              kind: "decide_approval",
+                              delegated: delegatedApproval,
+                              decision: "deny",
+                            })
+                          }
                         >
                           Deny
                         </Button>
@@ -473,7 +398,13 @@ export function DelegatedChildrenPanel({
                           variant="primary"
                           size="sm"
                           disabled={approvalBusyId === delegatedApproval.approval.id}
-                          onClick={() => void decideApproval(delegatedApproval, "allow_once")}
+                          onClick={() =>
+                            void session.execute({
+                              kind: "decide_approval",
+                              delegated: delegatedApproval,
+                              decision: "allow_once",
+                            })
+                          }
                         >
                           Allow once
                         </Button>
@@ -514,10 +445,7 @@ export function DelegatedChildrenPanel({
                                   key={choice.id}
                                   title={choice.description ?? undefined}
                                   onClick={() =>
-                                    setInputAnswers((current) => ({
-                                      ...current,
-                                      [delegatedInput.request.id]: choice.label,
-                                    }))
+                                    session.setInputAnswer(delegatedInput.request.id, choice.label)
                                   }
                                 >
                                   {choice.label}
@@ -534,10 +462,7 @@ export function DelegatedChildrenPanel({
                             readOnly={!delegatedInput.request.allowFreeForm}
                             value={inputAnswers[delegatedInput.request.id] ?? ""}
                             onChange={(event) =>
-                              setInputAnswers((current) => ({
-                                ...current,
-                                [delegatedInput.request.id]: event.target.value,
-                              }))
+                              session.setInputAnswer(delegatedInput.request.id, event.target.value)
                             }
                           />
                           <footer>
@@ -549,7 +474,12 @@ export function DelegatedChildrenPanel({
                                 inputBusyId === delegatedInput.request.id ||
                                 !(inputAnswers[delegatedInput.request.id] ?? "").trim()
                               }
-                              onClick={() => void answerInput(delegatedInput)}
+                              onClick={() =>
+                                void session.execute({
+                                  kind: "answer_input",
+                                  delegated: delegatedInput,
+                                })
+                              }
                             >
                               Send to {child.title}
                             </Button>
