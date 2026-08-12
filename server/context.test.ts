@@ -285,6 +285,57 @@ test("preview reports text, images, binary, truncation, missing, and symlinks ex
   await assert.rejects(() => previewRepositoryFile(root, "linked-preview.txt"), /Symlinks/);
 });
 
+test("preview rejects an already cancelled filesystem read", async () => {
+  const { root } = await fixture();
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    previewRepositoryFile(root, "image.png", controller.signal),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  await assert.rejects(
+    previewRepositoryFile(root, "src/main.ts", controller.signal),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+});
+
+test("preview forwards image cancellation and closes a cancelled text handle", async () => {
+  const { root } = await fixture();
+  const imageController = new AbortController();
+  let imageSignal: AbortSignal | undefined;
+  await assert.rejects(
+    previewRepositoryFile(root, "image.png", imageController.signal, {
+      readFile: async (_path, options) => {
+        imageSignal = options.signal;
+        imageController.abort();
+        throw imageController.signal.reason;
+      },
+      open: async () => assert.fail("image preview must not open a text handle"),
+    }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(imageSignal, imageController.signal);
+
+  const textController = new AbortController();
+  let closed = false;
+  await assert.rejects(
+    previewRepositoryFile(root, "src/main.ts", textController.signal, {
+      readFile: async () => assert.fail("text preview must use a bounded handle read"),
+      open: async () => ({
+        read: async () => {
+          textController.abort();
+          return { bytesRead: 0, buffer: Buffer.alloc(0) };
+        },
+        close: async () => {
+          closed = true;
+        },
+      }),
+    }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(closed, true);
+});
+
 test("text and supported images resolve into bounded local context", async () => {
   const { root } = await fixture();
   const attachments = await resolveContextAttachments(root, [

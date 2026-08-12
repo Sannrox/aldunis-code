@@ -129,22 +129,26 @@ export async function handleContextRoute(
   }
 
   if (route === "/api/context/preview") {
-    const body = (await context.readJson(request)) as {
-      root?: unknown;
-      worktree?: unknown;
-      path?: unknown;
-    };
-    const selection = repositorySelection(body);
-    if (typeof body.path !== "string") {
-      throw new RepositoryError(
-        "A repository, worktree, and repository-relative path are required.",
-      );
-    }
-    const selected = await context.selectWorktree(selection.root, selection.worktree);
-    context.sendJson(response, 200, {
-      preview: await operations.previewRepositoryFile(selected.worktree, body.path),
+    return await withRequestCancellation(request, response, async (signal) => {
+      const body = (await context.readJson(request)) as {
+        root?: unknown;
+        worktree?: unknown;
+        path?: unknown;
+      };
+      signal.throwIfAborted();
+      const selection = repositorySelection(body);
+      if (typeof body.path !== "string") {
+        throw new RepositoryError(
+          "A repository, worktree, and repository-relative path are required.",
+        );
+      }
+      const selected = await context.selectWorktree(selection.root, selection.worktree);
+      signal.throwIfAborted();
+      const preview = await operations.previewRepositoryFile(selected.worktree, body.path, signal);
+      signal.throwIfAborted();
+      context.sendJson(response, 200, { preview });
+      return true;
     });
-    return true;
   }
 
   if (route === "/api/context/stage-image") {
