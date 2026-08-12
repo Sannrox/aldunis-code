@@ -318,6 +318,10 @@
       "description": "The operator-owned allowlist of canonical Git repositories and discovered worktrees available to one managed hosted Code instance; symlink, URL, arbitrary path, and filesystem-mount escapes are rejected."
     },
     {
+      "name": "WorktreeDiscoveryCoordinator",
+      "description": "The host-owned repository adapter that reads the complete ordered Git worktree registry and classifies every entry exactly once through at most eight concurrent filesystem metadata and accessibility chains without changing worktree ownership or freshness."
+    },
+    {
       "name": "ManagedShikigamiProfile",
       "description": "The fixed managed Shikigami 1.0.5+ Build profile using plane model routing, fail-closed sekai-chisei governance, and an environment allowlist that excludes ambient provider, platform, source-control, proxy, and host credentials."
     },
@@ -2129,6 +2133,12 @@
       "subject": "ManagedRepositoryCatalogue",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#loadManagedHostConfiguration",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorktreeDiscoveryCoordinator",
+      "source": "Aldunis Code repository adapter and Issue #803",
+      "locator": "server/repository.ts#discoverWorktrees; server/repository.ts#classifyDiscoveredWorktrees; https://github.com/Sannrox/aldunis-code/issues/803",
       "confidence": 1.0
     },
     {

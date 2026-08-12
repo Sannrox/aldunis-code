@@ -17,6 +17,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const WORKTREE_CLASSIFICATION_CONCURRENCY = 8;
 
 export type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 
@@ -540,6 +541,46 @@ export async function classifyWorktree(path: string, detached: boolean): Promise
   return detached ? "detached" : "available";
 }
 
+interface DiscoveredWorktreeRecord {
+  [key: string]: string | true | undefined;
+  worktree: string | true;
+  HEAD?: string | true;
+  branch?: string | true;
+  detached?: string | true;
+}
+
+export async function classifyDiscoveredWorktrees(
+  records: DiscoveredWorktreeRecord[],
+  classifier: (path: string, detached: boolean) => Promise<WorktreeState> = classifyWorktree,
+): Promise<WorktreeMetadata[]> {
+  const worktrees = new Array<WorktreeMetadata>(records.length);
+  let nextIndex = 0;
+  const classifyNext = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= records.length) return;
+      const record = records[index];
+      const path = String(record.worktree);
+      const detached = record.detached === true;
+      worktrees[index] = {
+        path,
+        head: typeof record.HEAD === "string" ? record.HEAD : null,
+        branch:
+          typeof record.branch === "string" ? record.branch.replace(/^refs\/heads\//, "") : null,
+        state: await classifier(path, detached),
+      };
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(WORKTREE_CLASSIFICATION_CONCURRENCY, records.length) },
+      classifyNext,
+    ),
+  );
+  return worktrees;
+}
+
 export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[]> {
   const result = await execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain", "-z"], {
     encoding: "utf8",
@@ -547,8 +588,8 @@ export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[
     maxBuffer: 1024 * 1024,
   });
   const fields = result.stdout.split("\0").filter(Boolean);
-  const records: Array<Record<string, string | true>> = [];
-  let current: Record<string, string | true> | undefined;
+  const records: DiscoveredWorktreeRecord[] = [];
+  let current: DiscoveredWorktreeRecord | undefined;
 
   for (const field of fields) {
     const separator = field.indexOf(" ");
@@ -562,20 +603,10 @@ export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[
     }
   }
 
-  return Promise.all(
-    records.map(async (record) => {
-      const path = String(record.worktree);
-      const detached = record.detached === true;
-      return {
-        path,
-        head: typeof record.HEAD === "string" ? record.HEAD : null,
-        branch:
-          typeof record.branch === "string" ? record.branch.replace(/^refs\/heads\//, "") : null,
-        state: await classifyWorktree(path, detached),
-      };
-    }),
-  );
+  return classifyDiscoveredWorktrees(records);
 }
+
+export const WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY = WORKTREE_CLASSIFICATION_CONCURRENCY;
 
 export async function repositoryCommonDir(worktreePath: string): Promise<string> {
   const root = await canonicalizeRepositoryRoot(worktreePath);
