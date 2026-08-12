@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleReviewRoute } from "./review-routes.ts";
 import { RepositoryError } from "./repository.ts";
 import type { LocalStateStore, StateProjection } from "./state.ts";
 
-const request = {} as IncomingMessage;
-const response = {} as ServerResponse;
+const request = Object.assign(new EventEmitter(), { aborted: false }) as unknown as IncomingMessage;
+const response = Object.assign(new EventEmitter(), {
+  destroyed: false,
+  writableEnded: false,
+}) as unknown as ServerResponse;
 const unused = async () => {
   throw new Error("dependency must not be called");
 };
@@ -71,6 +75,42 @@ test("review route module lists changes through the selected worktree", async ()
 
   assert.equal(handled, true);
   assert.deepEqual(writes, [{ status: 200, value: { files } }]);
+});
+
+test("changed-file listing cancels disconnected requests and releases listeners", async () => {
+  const input = Object.assign(new EventEmitter(), {
+    aborted: false,
+  }) as unknown as IncomingMessage;
+  const output = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+  }) as unknown as ServerResponse;
+  let started = false;
+  const handling = handleReviewRoute(
+    "/api/changes",
+    input,
+    output,
+    context({
+      readJson: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+      selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+      changes: {
+        listChangedFiles: async (_worktree: string, signal: AbortSignal) => {
+          started = true;
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+          return [];
+        },
+        readFileDiff: unused,
+      },
+    }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started, true);
+  output.emit("close");
+  await assert.rejects(handling, (error: unknown) => (error as Error).name === "AbortError");
+  assert.equal(input.listenerCount("aborted"), 0);
+  assert.equal(output.listenerCount("close"), 0);
 });
 
 test("review route module rejects annotation creation after the diff identity changes", async () => {
