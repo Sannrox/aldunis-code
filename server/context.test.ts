@@ -7,6 +7,7 @@ import {
   mkdir,
   open,
   readdir,
+  realpath,
   rename,
   symlink,
   truncate,
@@ -46,6 +47,45 @@ test("bounded context-package reads reject an atomic replacement", async () => {
   await rename(replacement, source);
 
   assert.equal(await readBoundedContextPackageFile(source, admitted, MAX_IMAGE_BYTES), null);
+});
+
+test("stable image reads bound each cancellation interval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-image-read-cancel-"));
+  const source = join(root, "image.png");
+  await writeFile(source, Buffer.alloc(2 * 64 * 1024));
+  const canonical = await realpath(source);
+  const controller = new AbortController();
+  let maximumRead = 0;
+  let closed = false;
+  await assert.rejects(
+    readStableWorktreeImage(
+      canonical,
+      "image.png",
+      {
+        open: async (path, flags) => {
+          const handle = await open(path, flags);
+          return {
+            stat: handle.stat.bind(handle),
+            read: async (buffer, offset, length, position) => {
+              maximumRead = Math.max(maximumRead, length);
+              const result = await handle.read(buffer, offset, length, position);
+              controller.abort();
+              return result;
+            },
+            close: async () => {
+              closed = true;
+              await handle.close();
+            },
+          };
+        },
+        lstat,
+      },
+      controller.signal,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(maximumRead, 64 * 1024);
+  assert.equal(closed, true);
 });
 
 test("bounded context-package reads treat pathname disappearance as changed input", async () => {
@@ -485,14 +525,27 @@ test("preview forwards image cancellation and closes a cancelled text handle", a
   const imageController = new AbortController();
   let imageSignal: AbortSignal | undefined;
   await assert.rejects(
-    previewRepositoryFile(root, "image.png", imageController.signal, {
-      readFile: async (_path, options) => {
-        imageSignal = options.signal;
-        imageController.abort();
-        throw imageController.signal.reason;
+    previewRepositoryFile(
+      root,
+      "image.png",
+      imageController.signal,
+      { open },
+      {
+        open: async (path, flags) => {
+          imageSignal = imageController.signal;
+          const handle = await open(path, flags);
+          return {
+            stat: async () => {
+              imageController.abort();
+              return handle.stat();
+            },
+            read: handle.read.bind(handle),
+            close: handle.close.bind(handle),
+          };
+        },
+        lstat,
       },
-      open: async () => assert.fail("image preview must not open a text handle"),
-    }),
+    ),
     (error: unknown) => error instanceof Error && error.name === "AbortError",
   );
   assert.equal(imageSignal, imageController.signal);
@@ -501,7 +554,6 @@ test("preview forwards image cancellation and closes a cancelled text handle", a
   let closed = false;
   await assert.rejects(
     previewRepositoryFile(root, "src/main.ts", textController.signal, {
-      readFile: async () => assert.fail("text preview must use a bounded handle read"),
       open: async () => ({
         read: async () => {
           textController.abort();
@@ -515,6 +567,43 @@ test("preview forwards image cancellation and closes a cancelled text handle", a
     (error: unknown) => error instanceof Error && error.name === "AbortError",
   );
   assert.equal(closed, true);
+});
+
+test("image preview rejects an oversized atomic replacement before reading or encoding", async () => {
+  const { root } = await fixture();
+  const target = join(root, "image.png");
+  const replacement = join(root, "replacement.png");
+  await writeFile(replacement, Buffer.alloc(2 * MAX_IMAGE_BYTES));
+  let openedFlags = 0;
+  let reads = 0;
+  await assert.rejects(
+    previewRepositoryFile(
+      root,
+      "image.png",
+      undefined,
+      { open },
+      {
+        open: async (path, flags) => {
+          openedFlags = flags;
+          await rename(replacement, target);
+          const handle = await open(path, flags);
+          return {
+            stat: handle.stat.bind(handle),
+            read: async (...args: Parameters<typeof handle.read>) => {
+              reads += 1;
+              return handle.read(...args);
+            },
+            close: handle.close.bind(handle),
+          };
+        },
+        lstat,
+      },
+    ),
+    /exceeds the 2 MB image limit/,
+  );
+  assert.equal(reads, 0);
+  assert.equal((openedFlags & constants.O_NONBLOCK) !== 0, true);
+  assert.equal((openedFlags & constants.O_NOFOLLOW) !== 0, true);
 });
 
 test("text and supported images resolve into bounded local context", async () => {

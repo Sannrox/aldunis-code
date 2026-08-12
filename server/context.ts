@@ -13,6 +13,7 @@ const execFileAsync = promisify(execFile);
 export const MAX_CONTEXT_FILES = 8;
 export const MAX_TEXT_BYTES = 64 * 1024;
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const WORKTREE_IMAGE_READ_BUFFER_BYTES = 64 * 1024;
 export const MAX_TOTAL_TEXT_BYTES = 256 * 1024;
 export const MAX_CONTEXT_PACKAGE_FILES = 100;
 export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
@@ -44,7 +45,6 @@ export const MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES = 256;
 export const MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES = 16;
 
 interface PreviewFileOperations {
-  readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
   open(path: string, flags: string): Promise<Pick<FileHandle, "read" | "close">>;
 }
 
@@ -69,7 +69,7 @@ export interface RepositoryBrowseOperations {
   ): Promise<RepositoryFileResult>;
 }
 
-const previewFileOperations: PreviewFileOperations = { readFile, open };
+const previewFileOperations: PreviewFileOperations = { open };
 const worktreeImageFileOperations: WorktreeImageFileOperations = { open, lstat };
 const contextPackageFileOperations: ContextPackageFileOperations = { open, lstat };
 
@@ -145,12 +145,15 @@ export async function readStableWorktreeImage(
   path: string,
   displayPath: string,
   fileOperations: WorktreeImageFileOperations = worktreeImageFileOperations,
+  signal?: AbortSignal,
 ): Promise<Buffer | null> {
+  signal?.throwIfAborted();
   const handle = await fileOperations.open(
     path,
     constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
   );
   try {
+    signal?.throwIfAborted();
     const details = await handle.stat();
     if (!details.isFile()) return null;
     if (!Number.isSafeInteger(details.size) || details.size < 0) {
@@ -177,10 +180,17 @@ export async function readStableWorktreeImage(
     const bytes = Buffer.alloc(details.size);
     let offset = 0;
     while (offset < bytes.length) {
-      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        Math.min(WORKTREE_IMAGE_READ_BUFFER_BYTES, bytes.length - offset),
+        offset,
+      );
       if (bytesRead === 0) break;
       offset += bytesRead;
     }
+    signal?.throwIfAborted();
     const extra = Buffer.alloc(1);
     const [extraRead, after, pathname] = await Promise.all([
       handle.read(extra, 0, 1, offset),
@@ -861,6 +871,7 @@ export async function previewRepositoryFile(
   input: string,
   signal?: AbortSignal,
   fileOperations: PreviewFileOperations = previewFileOperations,
+  imageOperations: WorktreeImageFileOperations = worktreeImageFileOperations,
 ): Promise<RepositoryFilePreview> {
   signal?.throwIfAborted();
   const path = relativeFilePath(worktree, input);
@@ -903,7 +914,8 @@ export async function previewRepositoryFile(
         attachable: false,
       };
     }
-    const bytes = await fileOperations.readFile(canonical, { signal });
+    const bytes = await readStableWorktreeImage(canonical, path, imageOperations, signal);
+    if (!bytes) throw new RepositoryError(`${path} is not a regular image file.`, 409);
     signal?.throwIfAborted();
     return {
       path,
