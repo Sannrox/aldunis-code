@@ -159,7 +159,7 @@
     },
     {
       "name": "ProviderProfileDiscovery",
-      "description": "A profile-keyed provider readiness projection whose host store coalesces exact profile/kind probes, cancels obsolete subprocesses after committed profile mutations through bounded exact-child termination, and keeps executable, configuration, authentication, and model discovery aligned with the selected provider profile."
+      "description": "A profile-keyed provider readiness projection whose host store coalesces exact profile/kind probes within a fixed eight-probe subprocess bound, cancels obsolete subprocesses after committed profile mutations through bounded exact-child termination, and keeps executable, configuration, authentication, and model discovery aligned with the selected provider profile."
     },
     {
       "name": "ProviderProfileRouteDispatchModule",
@@ -1891,8 +1891,8 @@
     },
     {
       "subject": "ProviderProfileDiscovery",
-      "source": "Sannrox/aldunis-code Issues #738 and #779",
-      "locator": "server/profiles.ts#ClaudeProfileStore; src/types.ts:ProviderProfileDiscovery",
+      "source": "Sannrox/aldunis-code Issues #738, #779, and #817",
+      "locator": "server/profiles.ts#ClaudeProfileStore; src/types.ts:ProviderProfileDiscovery; https://github.com/Sannrox/aldunis-code/issues/817",
       "confidence": 1.0
     },
     {
