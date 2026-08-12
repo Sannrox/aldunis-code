@@ -145,13 +145,20 @@ test("adapter model probe admission bounds preparation, queueing, and cleanup", 
   assert.equal(active, MAX_ACTIVE_ADAPTER_MODEL_PROBES);
 
   let expiredStarted = false;
-  assert.equal(
-    await withAdapterModelProbeAdmission(20, async () => {
-      expiredStarted = true;
-      return "expired";
-    }),
-    null,
-  );
+  // Production hosts retain listener handles; keep this isolated test process
+  // alive while the admission queue's intentionally unref'ed deadline fires.
+  const expiryKeepAlive = setTimeout(() => {}, 1_000);
+  try {
+    assert.equal(
+      await withAdapterModelProbeAdmission(20, async () => {
+        expiredStarted = true;
+        return "expired";
+      }),
+      null,
+    );
+  } finally {
+    clearTimeout(expiryKeepAlive);
+  }
   assert.equal(expiredStarted, false);
 
   let queuedStarted = false;
