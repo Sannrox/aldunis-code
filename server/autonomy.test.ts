@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdtemp, open, readFile, rename, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -13,7 +14,11 @@ import {
   parseStandingOrder,
   type AutonomyRun,
 } from "./autonomy.ts";
-import { AutonomyEngine, AutonomyScheduler } from "./autonomy-engine.ts";
+import {
+  AutonomyEngine,
+  AutonomyScheduler,
+  readBoundedAutonomyTextFile,
+} from "./autonomy-engine.ts";
 import { LocalStateStore } from "./state.ts";
 
 const execFileAsync = promisify(execFile);
@@ -235,6 +240,32 @@ test("Autonomy repository scan rejects pre-aborted work before discovery", async
     });
   } finally {
     await cleanup();
+  }
+});
+
+test("Autonomy repository reads reject an atomic replacement without retaining it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-autonomy-read-"));
+  const source = join(root, "source.txt");
+  const replacement = join(root, "replacement.txt");
+  await writeFile(source, "small\n", "utf8");
+  await writeFile(replacement, "", "utf8");
+  await truncate(replacement, 128 * 1024 * 1024);
+  try {
+    assert.equal(
+      await readBoundedAutonomyTextFile(source, 512 * 1024, undefined, {
+        async open(path, flags) {
+          assert.equal((flags & constants.O_NONBLOCK) !== 0, true);
+          assert.equal((flags & constants.O_NOFOLLOW) !== 0, true);
+          const handle = await open(path, flags);
+          await rename(replacement, source);
+          return handle;
+        },
+        lstat,
+      }),
+      null,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

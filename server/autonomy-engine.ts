@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -44,6 +46,13 @@ const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_HOOK_COOLDOWN = 86_400;
 const AUTONOMY_CANCELLATION_DRAIN_MS = 1_000;
+
+export interface AutonomyScanFileOperations {
+  open(path: string, flags: number): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+  lstat(path: string): Promise<Stats>;
+}
+
+const autonomyScanFileOperations: AutonomyScanFileOperations = { open, lstat };
 
 class NonDrainingAutonomyTimeoutError extends AutonomyError {}
 
@@ -157,6 +166,66 @@ async function gitTrackedFiles(worktree: string, signal?: AbortSignal): Promise<
   }
 }
 
+function sameAutonomyScanFile(left: Stats, right: Stats): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export async function readBoundedAutonomyTextFile(
+  path: string,
+  maximum = MAX_FILE_BYTES,
+  signal?: AbortSignal,
+  operations: AutonomyScanFileOperations = autonomyScanFileOperations,
+): Promise<string | null> {
+  signal?.throwIfAborted();
+  if (!Number.isSafeInteger(maximum) || maximum < 0) return null;
+  const handle = await operations.open(
+    path,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+  );
+  try {
+    const admitted = await handle.stat();
+    signal?.throwIfAborted();
+    if (!admitted.isFile() || admitted.size > maximum) return null;
+    const content = Buffer.alloc(admitted.size);
+    let offset = 0;
+    while (offset < content.length) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(content, offset, content.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    const extraRead = await handle.read(extra, 0, 1, offset);
+    signal?.throwIfAborted();
+    const [finalHandle, finalPath] = await Promise.all([
+      handle.stat(),
+      operations.lstat(path).catch(() => null),
+    ]);
+    signal?.throwIfAborted();
+    if (
+      offset !== admitted.size ||
+      extraRead.bytesRead !== 0 ||
+      !finalPath ||
+      !sameAutonomyScanFile(admitted, finalHandle) ||
+      !sameAutonomyScanFile(finalHandle, finalPath)
+    ) {
+      return null;
+    }
+    if (content.includes(0)) return null;
+    return content.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readBoundedText(
   worktree: string,
   path: string,
@@ -165,14 +234,7 @@ async function readBoundedText(
   signal?.throwIfAborted();
   if (!isSafeRelativePath(worktree, path) || !shouldScanPath(path)) return null;
   try {
-    const details = await stat(join(worktree, path));
-    signal?.throwIfAborted();
-    if (!details.isFile() || details.size > MAX_FILE_BYTES) return null;
-    const content = await readFile(join(worktree, path), { signal });
-    signal?.throwIfAborted();
-    const boundedBuffer = content.subarray(0, MAX_FILE_BYTES);
-    if (boundedBuffer.includes(0)) return null;
-    return boundedBuffer.toString("utf8");
+    return await readBoundedAutonomyTextFile(join(worktree, path), MAX_FILE_BYTES, signal);
   } catch {
     signal?.throwIfAborted();
     return null;
