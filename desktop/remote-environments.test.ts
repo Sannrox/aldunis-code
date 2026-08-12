@@ -11,7 +11,9 @@ import {
   buildSshServerArguments,
   DEFAULT_REMOTE_BACKEND_PORT,
   DEFAULT_REMOTE_COMMAND,
+  MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS,
   normalizeRemoteEnvironmentInput,
+  RemoteEnvironmentManager,
   RemoteEnvironmentStore,
   assertSshRemoteDescriptor,
   terminateRemoteChild,
@@ -203,6 +205,163 @@ test("remote environment updates replace the record when pairing an existing end
     (await readFile(join(directory, "connections.v1.json"), "utf8")).includes("ZYXWV"),
     false,
   );
+});
+
+test("remote environment connection admission is bounded and recovers after disconnect", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-connection-capacity-"));
+  const store = new RemoteEnvironmentStore(join(directory, "connections.v1.json"));
+  const records = [];
+  for (let index = 0; index <= MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS; index += 1) {
+    records.push(
+      (
+        await store.save({
+          label: `Endpoint ${index}`,
+          transport: "endpoint",
+          endpoint: `https://code-${index}.example.test`,
+          pairingUrl: `https://code-${index}.example.test/#pair=abcdefghijklmnopqrstuvwxyz${index}0123456789_-`,
+        })
+      ).record,
+    );
+  }
+  const manager = new RemoteEnvironmentManager(store);
+
+  try {
+    for (const record of records.slice(0, MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS)) {
+      await manager.connect(
+        record.id,
+        `${record.endpoint}/#pair=abcdefghijklmnopqrstuvwxyz${records.indexOf(record)}0123456789_-`,
+      );
+    }
+    await assert.rejects(
+      () =>
+        manager.connect(
+          records[MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS]!.id,
+          `${records[MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS]!.endpoint}/#pair=abcdefghijklmnopqrstuvwxyz${MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS}0123456789_-`,
+        ),
+      /Too many remote environments/,
+    );
+
+    await manager.disconnect(records[0]!.id);
+    const admitted = await manager.connect(
+      records[MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS]!.id,
+      `${records[MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS]!.endpoint}/#pair=abcdefghijklmnopqrstuvwxyz${MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS}0123456789_-`,
+    );
+    assert.equal(admitted.id, records[MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS]!.id);
+  } finally {
+    await manager.close();
+  }
+});
+
+test("connecting environments count once after publishing active transport", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-overlap-capacity-"));
+  const store = new RemoteEnvironmentStore(join(directory, "connections.v1.json"));
+  const records = [];
+  for (let index = 0; index < 5; index += 1) {
+    records.push(
+      (
+        await store.save({
+          label: `Overlapping endpoint ${index}`,
+          transport: "endpoint",
+          endpoint: `https://overlap-${index}.example.test`,
+          pairingUrl: `https://overlap-${index}.example.test/#pair=abcdefghijklmnopqrstuvwxyz${index}0123456789_-`,
+        })
+      ).record,
+    );
+  }
+  const originalUpdateRuntime = store.updateRuntime.bind(store);
+  let releaseUpdates!: () => void;
+  const updatesReleased = new Promise<void>((resolve) => {
+    releaseUpdates = resolve;
+  });
+  context.mock.method(store, "updateRuntime", async (...args) => {
+    await updatesReleased;
+    return originalUpdateRuntime(...args);
+  });
+  const manager = new RemoteEnvironmentManager(store);
+  const connectRecord = (record: (typeof records)[number], index: number) =>
+    manager.connect(
+      record.id,
+      `${record.endpoint}/#pair=abcdefghijklmnopqrstuvwxyz${index}0123456789_-`,
+    );
+
+  const firstFour = records.slice(0, 4).map(connectRecord);
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const connected = (await manager.list()).filter((record) => record.connected).length;
+    if (connected === 4) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal((await manager.list()).filter((record) => record.connected).length, 4);
+  const fifth = connectRecord(records[4]!, 4);
+  let rejected = false;
+  void fifth.catch(() => {
+    rejected = true;
+  });
+  await Promise.resolve();
+  assert.equal(rejected, false);
+  releaseUpdates();
+  await Promise.all([...firstFour, fifth]);
+  await manager.close();
+});
+
+test("concurrent connection requests for one environment share admission", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-connection-coalesce-"));
+  const store = new RemoteEnvironmentStore(join(directory, "connections.v1.json"));
+  const saved = await store.save({
+    label: "Shared endpoint",
+    transport: "endpoint",
+    endpoint: "https://shared.example.test",
+    pairingUrl: "https://shared.example.test/#pair=abcdefghijklmnopqrstuvwxyz0123456789_-",
+  });
+  const originalList = store.list.bind(store);
+  let listCalls = 0;
+  context.mock.method(store, "list", async () => {
+    listCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return originalList();
+  });
+  const manager = new RemoteEnvironmentManager(store);
+  const pairingUrl = "https://shared.example.test/#pair=abcdefghijklmnopqrstuvwxyz0123456789_-";
+
+  try {
+    const first = manager.connect(saved.record.id, pairingUrl);
+    const second = manager.connect(saved.record.id, pairingUrl);
+    assert.equal(first, second);
+    await assert.rejects(
+      () => manager.connect(saved.record.id, pairingUrl, true),
+      /different connection request is already active/,
+    );
+    assert.deepEqual(await Promise.all([first, second]), [await first, await first]);
+    // One preflight read plus the store's pairing-state update read. A second
+    // connection execution would repeat both operations.
+    assert.equal(listCalls, 2);
+  } finally {
+    await manager.close();
+  }
+});
+
+test("disconnect keeps reconnect blocked until a connecting lifecycle is drained", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-disconnect-barrier-"));
+  const store = new RemoteEnvironmentStore(join(directory, "connections.v1.json"));
+  const saved = await store.save({
+    label: "Disconnecting endpoint",
+    transport: "endpoint",
+    endpoint: "https://disconnecting.example.test",
+    pairingUrl: "https://disconnecting.example.test/#pair=abcdefghijklmnopqrstuvwxyz0123456789_-",
+  });
+  const originalList = store.list.bind(store);
+  context.mock.method(store, "list", async () => {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    return originalList();
+  });
+  const manager = new RemoteEnvironmentManager(store);
+  const pairingUrl =
+    "https://disconnecting.example.test/#pair=abcdefghijklmnopqrstuvwxyz0123456789_-";
+
+  const connecting = manager.connect(saved.record.id, pairingUrl);
+  const disconnecting = manager.disconnect(saved.record.id);
+  await assert.rejects(() => manager.connect(saved.record.id, pairingUrl), /still disconnecting/);
+  await Promise.all([connecting, disconnecting]);
+  assert.equal((await manager.list()).find(({ id }) => id === saved.record.id)?.connected, false);
 });
 
 test("remote environment store rejects incompatible persisted state", async () => {
