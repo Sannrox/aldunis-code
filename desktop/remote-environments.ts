@@ -7,6 +7,7 @@ import { DEFAULT_SSH_REMOTE_PORT } from "../src/ports.ts";
 
 export const DEFAULT_REMOTE_BACKEND_PORT = DEFAULT_SSH_REMOTE_PORT;
 export const DEFAULT_REMOTE_COMMAND = "aldunis-code";
+export const MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS = 8;
 
 export type RemoteEnvironmentTransport = "endpoint" | "ssh";
 
@@ -56,6 +57,11 @@ interface ActiveConnection {
   remoteServer: ChildProcess | null;
   localUrl: string;
   cleanup?: () => void;
+}
+
+interface ConnectingEnvironment {
+  operationKey: string;
+  promise: Promise<RemoteConnectionTarget>;
 }
 
 function isValidPort(value: number): boolean {
@@ -570,6 +576,9 @@ export class RemoteEnvironmentStore {
 
 export class RemoteEnvironmentManager {
   readonly #active = new Map<string, ActiveConnection>();
+  readonly #connecting = new Map<string, ConnectingEnvironment>();
+  readonly #disconnecting = new Map<string, Promise<void>>();
+  #runtimeMutation: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly store: RemoteEnvironmentStore,
@@ -595,13 +604,47 @@ export class RemoteEnvironmentManager {
 
   async confirmPairing(id: string): Promise<void> {
     if (!this.#active.has(id)) throw new Error("The remote environment is no longer connected.");
-    await this.store.updateRuntime(id, { paired: true });
+    await this.#updateRuntime(id, { paired: true });
   }
 
-  async connect(
+  connect(
     id: string,
     pairingUrl: string | null = null,
     forcePair = false,
+  ): Promise<RemoteConnectionTarget> {
+    if (this.#disconnecting.has(id)) {
+      return Promise.reject(new Error("This remote environment is still disconnecting."));
+    }
+    const operationKey = JSON.stringify([pairingUrl, forcePair]);
+    const connecting = this.#connecting.get(id);
+    if (connecting) {
+      if (connecting.operationKey === operationKey) return connecting.promise;
+      return Promise.reject(
+        new Error("A different connection request is already active for this environment."),
+      );
+    }
+    const existing = this.#active.get(id);
+    if (existing && !pairingUrl) {
+      return Promise.resolve({ id, url: existing.localUrl, localUrl: existing.localUrl });
+    }
+    if (
+      !existing &&
+      new Set([...this.#active.keys(), ...this.#connecting.keys()]).size >=
+        MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS
+    ) {
+      return Promise.reject(new Error("Too many remote environments are already connected."));
+    }
+    const pending = this.#connect(id, pairingUrl, forcePair).finally(() => {
+      if (this.#connecting.get(id)?.promise === pending) this.#connecting.delete(id);
+    });
+    this.#connecting.set(id, { operationKey, promise: pending });
+    return pending;
+  }
+
+  async #connect(
+    id: string,
+    pairingUrl: string | null,
+    forcePair: boolean,
   ): Promise<RemoteConnectionTarget> {
     const records = await this.store.list();
     const record = records.find((environment) => environment.id === id);
@@ -609,7 +652,7 @@ export class RemoteEnvironmentManager {
     const existing = this.#active.get(id);
     if (existing) {
       if (pairingUrl) {
-        await this.store.updateRuntime(id, { paired: false });
+        await this.#updateRuntime(id, { paired: false });
         return { id, url: pairingUrl, localUrl: existing.localUrl };
       }
       return { id, url: existing.localUrl, localUrl: existing.localUrl };
@@ -623,7 +666,7 @@ export class RemoteEnvironmentManager {
         throw new Error("Provide a one-time pairing URL before connecting this endpoint.");
       this.#active.set(id, { tunnel: null, remoteServer: null, localUrl: record.endpoint });
       if (pairingUrl) {
-        await this.store.updateRuntime(id, { paired: false });
+        await this.#updateRuntime(id, { paired: false });
         return { id, url: pairingUrl, localUrl: null };
       }
       return { id, url: record.endpoint, localUrl: null };
@@ -688,9 +731,9 @@ export class RemoteEnvironmentManager {
         if (!url.startsWith(`${localUrl}/#pair=`)) {
           throw new Error("The remote host returned a pairing URL for another origin.");
         }
-        await this.store.updateRuntime(id, { paired: false, preferredLocalPort: localPort });
+        await this.#updateRuntime(id, { paired: false, preferredLocalPort: localPort });
       } else {
-        await this.store.updateRuntime(id, { preferredLocalPort: localPort });
+        await this.#updateRuntime(id, { preferredLocalPort: localPort });
       }
       if (this.#active.get(id) !== activeConnection)
         throw new Error("The SSH remote transport exited before it was ready.");
@@ -719,7 +762,26 @@ export class RemoteEnvironmentManager {
     }
   }
 
-  async disconnect(id: string): Promise<void> {
+  disconnect(id: string): Promise<void> {
+    const existing = this.#disconnecting.get(id);
+    if (existing) return existing;
+    const pending = this.#disconnect(id).finally(() => {
+      if (this.#disconnecting.get(id) === pending) this.#disconnecting.delete(id);
+    });
+    this.#disconnecting.set(id, pending);
+    return pending;
+  }
+
+  async #disconnect(id: string): Promise<void> {
+    const connecting = this.#connecting.get(id)?.promise;
+    await this.#disconnectActive(id);
+    if (connecting) {
+      await connecting.catch(() => undefined);
+      await this.#disconnectActive(id);
+    }
+  }
+
+  async #disconnectActive(id: string): Promise<void> {
     const active = this.#active.get(id);
     if (!active) return;
     this.#active.delete(id);
@@ -730,12 +792,29 @@ export class RemoteEnvironmentManager {
     ]);
   }
 
+  async #updateRuntime(
+    id: string,
+    values: Partial<Pick<RemoteEnvironmentRecord, "preferredLocalPort" | "paired">>,
+  ): Promise<void> {
+    const pending = this.#runtimeMutation.then(() => this.store.updateRuntime(id, values));
+    this.#runtimeMutation = pending.catch(() => undefined);
+    await pending;
+  }
+
   async remove(id: string): Promise<void> {
     await this.disconnect(id);
     await this.store.remove(id);
   }
 
   async close(): Promise<void> {
-    await Promise.all([...this.#active.keys()].map((id) => this.disconnect(id)));
+    await Promise.all(
+      [
+        ...new Set([
+          ...this.#active.keys(),
+          ...this.#connecting.keys(),
+          ...this.#disconnecting.keys(),
+        ]),
+      ].map((id) => this.disconnect(id)),
+    );
   }
 }
