@@ -1,5 +1,4 @@
 import process from "node:process";
-import { StringDecoder } from "node:string_decoder";
 
 const approvalUrl = process.env.ALDUNIS_APPROVAL_URL;
 const runId = process.env.ALDUNIS_PROVIDER_RUN_ID;
@@ -95,10 +94,8 @@ async function handle(message) {
 }
 
 async function processInput() {
-  const decoder = new StringDecoder("utf8");
   const active = new Set();
-  let buffer = "";
-  let pendingBytes = 0;
+  let buffer = Buffer.alloc(0);
 
   const dispatch = async (line) => {
     while (active.size >= MAX_ACTIVE_REQUESTS) await Promise.race(active);
@@ -108,28 +105,23 @@ async function processInput() {
 
   for await (const rawChunk of process.stdin) {
     const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-    pendingBytes += chunk.byteLength;
-    buffer += decoder.write(chunk);
+    buffer = Buffer.concat([buffer, chunk]);
 
-    let newline = buffer.indexOf("\n");
+    let newline = buffer.indexOf(0x0a);
     while (newline !== -1) {
-      const rawLine = buffer.slice(0, newline);
-      const lineBytes = Buffer.byteLength(rawLine, "utf8");
-      if (lineBytes > MAX_MESSAGE_BYTES) throw new Error("message exceeds the 1024 KiB limit");
-      pendingBytes -= lineBytes + 1;
-      buffer = buffer.slice(newline + 1);
-      const line = rawLine.trim();
+      if (newline > MAX_MESSAGE_BYTES) throw new Error("message exceeds the 1024 KiB limit");
+      const line = buffer.subarray(0, newline).toString("utf8").trim();
+      buffer = buffer.subarray(newline + 1);
       if (line) await dispatch(line);
-      newline = buffer.indexOf("\n");
+      newline = buffer.indexOf(0x0a);
     }
 
-    if (pendingBytes > MAX_MESSAGE_BYTES) {
+    if (buffer.byteLength > MAX_MESSAGE_BYTES) {
       throw new Error("message exceeds the 1024 KiB limit");
     }
   }
 
-  buffer += decoder.end();
-  if (buffer.trim()) throw new Error("incomplete JSON-RPC message");
+  if (buffer.toString("utf8").trim()) throw new Error("incomplete JSON-RPC message");
   await Promise.all(active);
 }
 

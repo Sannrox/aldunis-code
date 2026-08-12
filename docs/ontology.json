@@ -35,7 +35,7 @@
     },
     {
       "name": "PermissionMcpBoundary",
-      "description": "The Aldunis-owned Claude approval MCP child boundary that accepts provider JSON-RPC messages up to 1 MiB, decodes UTF-8 incrementally, and applies stdin backpressure while at most eight broker requests are active."
+      "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding and applies stdin backpressure while at most eight broker requests are active."
     },
     {
       "name": "ProviderControlRouteDispatchModule",
@@ -2045,6 +2045,12 @@
       "subject": "PermissionMcpBoundary",
       "source": "Aldunis Code Issue #897 bounded permission MCP input processing",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/897; server/permission-mcp.mjs",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PermissionMcpBoundary",
+      "source": "Aldunis Code Issue #907 raw-byte permission MCP request framing",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/907; server/permission-mcp.mjs#processInput",
       "confidence": 1.0
     },
     {

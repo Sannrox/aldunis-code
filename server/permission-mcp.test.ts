@@ -68,6 +68,23 @@ test("permission MCP rejects overflow before stdin ends", async () => {
   assert.match(completed.stderr, /message exceeds the 1024 KiB limit/);
 });
 
+test("permission MCP counts raw bytes after valid JSON with malformed UTF-8", async () => {
+  const { child, result } = spawnPermissionMcp();
+  child.stdin.write(
+    Buffer.concat([Buffer.from('{"value":"'), Buffer.from([0xff]), Buffer.from('"}\n')]),
+  );
+  child.stdin.write(Buffer.alloc(MAX_MESSAGE_BYTES + 1, 0x20));
+  const completed = await Promise.race([
+    result,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("permission MCP allowed malformed-byte credit")), 5_000),
+    ),
+  ]);
+
+  assert.equal(completed.code, 1);
+  assert.match(completed.stderr, /message exceeds the 1024 KiB limit/);
+});
+
 test("permission MCP bounds concurrent broker requests", async () => {
   let active = 0;
   let maximumActive = 0;
