@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { MAX_PENDING_APPROVAL_PLANS, retainBoundedPendingPlan } from "./pending-plan-retention.ts";
 import {
@@ -35,6 +35,7 @@ export type {
 
 const PLAN_TTL_MS = 5 * 60_000;
 const MAX_SESSIONS = 50;
+export const MAX_RELEASE_DELIVERY_STORE_BYTES = 16 * 1024 * 1024;
 const MAX_OUTPUT = 256 * 1024;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$/;
@@ -172,6 +173,50 @@ interface ReleaseInspection {
 interface PersistedReleaseSessions {
   schema: "aldunis.release-delivery-sessions/v1";
   sessions: ReleaseDeliverySession[];
+}
+
+export interface ReleaseDeliveryStoreOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{ size: number }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const releaseDeliveryStoreOperations: ReleaseDeliveryStoreOperations = {
+  open: (path) => open(path, "r"),
+};
+
+async function readReleaseDeliveryStore(
+  path: string,
+  operations: ReleaseDeliveryStoreOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  try {
+    const details = await handle.stat();
+    if (details.size > MAX_RELEASE_DELIVERY_STORE_BYTES) {
+      throw new RepositoryError("Local release-delivery history exceeds its size limit.", 500);
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new RepositoryError("Local release-delivery history changed while being read.", 500);
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 function sha256(value: string): string {
@@ -974,16 +1019,20 @@ export class ReleaseDeliveryStore {
   readonly #path: string;
   #writeQueue = Promise.resolve();
 
-  constructor(readonly directory: string) {
+  constructor(
+    readonly directory: string,
+    readonly operations: ReleaseDeliveryStoreOperations = releaseDeliveryStoreOperations,
+  ) {
     this.#path = join(directory, "release-deliveries.v1.json");
   }
 
   async load(): Promise<ReleaseDeliverySession[]> {
     let bytes: string;
     try {
-      bytes = await readFile(this.#path, "utf8");
+      bytes = await readReleaseDeliveryStore(this.#path, this.operations);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (error instanceof RepositoryError) throw error;
       throw new RepositoryError("Local release-delivery history could not be read.", 500);
     }
     try {
@@ -1009,16 +1058,17 @@ export class ReleaseDeliveryStore {
       const next = [session, ...sessions.filter((item) => item.id !== session.id)]
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
         .slice(0, MAX_SESSIONS);
+      const serialized = JSON.stringify({
+        schema: "aldunis.release-delivery-sessions/v1",
+        sessions: next,
+      } satisfies PersistedReleaseSessions);
+      if (Buffer.byteLength(serialized) > MAX_RELEASE_DELIVERY_STORE_BYTES) {
+        throw new RepositoryError("Local release-delivery history exceeds its size limit.", 500);
+      }
       const temporary = join(this.directory, `.release-deliveries-${randomUUID()}.tmp`);
       const handle = await open(temporary, "wx", 0o600);
       try {
-        await handle.writeFile(
-          JSON.stringify({
-            schema: "aldunis.release-delivery-sessions/v1",
-            sessions: next,
-          } satisfies PersistedReleaseSessions),
-          "utf8",
-        );
+        await handle.writeFile(serialized, "utf8");
         await handle.sync();
       } finally {
         await handle.close();

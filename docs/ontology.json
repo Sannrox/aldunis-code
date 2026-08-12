@@ -367,7 +367,7 @@
     },
     {
       "name": "CapabilityLinkedDeliverySession",
-      "description": "A durable Aldunis Code coordination ledger for one clean committed candidate. It advances only through previewed Chisei and Tenkai handoffs and never becomes governance or delivery authority."
+      "description": "A durable Aldunis Code coordination ledger for one clean committed candidate, retained within a 50-session and 16 MiB local-store bound. It advances only through previewed Chisei and Tenkai handoffs and never becomes governance or delivery authority."
     },
     {
       "name": "LocalDeliveryCandidate",
@@ -2351,8 +2351,8 @@
     },
     {
       "subject": "CapabilityLinkedDeliverySession",
-      "source": "GitHub Issue Sannrox/aldunis-code#332",
-      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession",
+      "source": "GitHub Issues Sannrox/aldunis-code#332 and Sannrox/aldunis-code#855",
+      "locator": "src/contracts/release-delivery.ts#ReleaseDeliverySession; server/release-delivery-workflow.ts#ReleaseDeliverySession; https://github.com/Sannrox/aldunis-code/issues/855",
       "confidence": 1.0
     },
     {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  MAX_RELEASE_DELIVERY_STORE_BYTES,
   ReleaseDeliveryBroker,
   ReleaseDeliveryStore,
   type ReleaseCommandRunner,
@@ -496,6 +497,54 @@ test("release-delivery broker evicts the oldest abandoned preview at capacity", 
   );
   const prepared = await broker.execute(newest.id, "project-1", root, root, "team/widget");
   assert.equal(prepared.state, "candidate_ready");
+});
+
+test("release-delivery storage rejects oversized history before reading content", async () => {
+  let reads = 0;
+  let closed = false;
+  const store = new ReleaseDeliveryStore("/state", {
+    async open() {
+      return {
+        async stat() {
+          return { size: MAX_RELEASE_DELIVERY_STORE_BYTES + 1 };
+        },
+        async read() {
+          reads += 1;
+          return { bytesRead: 0 };
+        },
+        async close() {
+          closed = true;
+        },
+      };
+    },
+  });
+
+  await assert.rejects(() => store.load(), /release-delivery history exceeds its size limit/);
+  assert.equal(reads, 0);
+  assert.equal(closed, true);
+});
+
+test("release-delivery storage rejects history that changes while being read", async () => {
+  let reads = 0;
+  const store = new ReleaseDeliveryStore("/state", {
+    async open() {
+      return {
+        async stat() {
+          return { size: 2 };
+        },
+        async read(buffer, offset) {
+          reads += 1;
+          buffer[offset] = reads === 1 ? 0x7b : 0x78;
+          if (reads === 1) buffer[offset + 1] = 0x7d;
+          return { bytesRead: reads === 1 ? 2 : 1 };
+        },
+        async close() {},
+      };
+    },
+  });
+
+  await assert.rejects(() => store.load(), /release-delivery history changed while being read/);
+  assert.equal(reads, 2);
 });
 
 test("the staged workflow resumes after restart and exports a complete correlation receipt", async () => {
