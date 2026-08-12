@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, mkdir, readdir, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -15,6 +15,7 @@ import {
   MAX_IMAGE_BYTES,
   MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
+  readBoundedContextPackageFile,
   resolveContextAttachments,
   resolveWorktreeImagePath,
   searchRepositoryFiles,
@@ -22,6 +23,49 @@ import {
   stageWorktreeImageCopy,
 } from "./context.ts";
 import { isComposerAttachmentPath } from "./local-runtime.ts";
+
+test("bounded context-package reads reject an atomic replacement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-context-package-read-"));
+  const source = join(root, "source.txt");
+  const replacement = join(root, "replacement.txt");
+  await writeFile(source, "small");
+  const admitted = await lstat(source);
+  await writeFile(replacement, Buffer.alloc(3 * 1024 * 1024, 0x61));
+  await rename(replacement, source);
+
+  assert.equal(await readBoundedContextPackageFile(source, admitted, MAX_IMAGE_BYTES), null);
+});
+
+test("bounded context-package reads treat pathname disappearance as changed input", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-context-package-read-"));
+  const source = join(root, "source.txt");
+  const content = Buffer.from("small");
+  await writeFile(source, content);
+  const admitted = await lstat(source);
+  let reads = 0;
+
+  assert.equal(
+    await readBoundedContextPackageFile(source, admitted, MAX_IMAGE_BYTES, undefined, {
+      async open() {
+        return {
+          async stat() {
+            return admitted;
+          },
+          async read(buffer: Buffer, offset: number) {
+            reads += 1;
+            if (reads === 1) content.copy(buffer, offset);
+            return { bytesRead: reads === 1 ? content.length : 0, buffer };
+          },
+          async close() {},
+        };
+      },
+      async lstat() {
+        throw Object.assign(new Error("gone"), { code: "ENOENT" });
+      },
+    }),
+    null,
+  );
+});
 
 async function fixture() {
   const parent = await mkdtemp(join(tmpdir(), "aldunis-context-"));
