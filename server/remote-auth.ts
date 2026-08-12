@@ -16,6 +16,9 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const PROOF_CLOCK_SKEW_MS = 60_000;
 const REPLAY_TTL_MS = 2 * PROOF_CLOCK_SKEW_MS;
 export const MAX_REMOTE_PROOF_REPLAY_ENTRIES = 10_000;
+export const MAX_LIVE_PAIRING_GRANTS = 32;
+export const MAX_ACTIVE_REMOTE_SESSIONS = 64;
+export const MAX_RETAINED_TERMINAL_REMOTE_SESSIONS = 32;
 
 interface PairingGrant {
   id: string;
@@ -40,6 +43,43 @@ interface RemoteAuthState {
   hostId: string;
   pairingGrants: PairingGrant[];
   sessions: RemoteSession[];
+}
+
+function pruneRemoteAuthState(
+  state: RemoteAuthState,
+  now: number,
+  terminalSessionLimit: number,
+): void {
+  state.pairingGrants = state.pairingGrants.filter(
+    (grant) => grant.usedAt === null && Date.parse(grant.expiresAt) > now,
+  );
+  const terminalSessions = state.sessions.filter(
+    (session) => session.revokedAt !== null || Date.parse(session.expiresAt) <= now,
+  );
+  const terminalIds = new Set(
+    (terminalSessionLimit > 0
+      ? terminalSessions
+          .sort((left, right) => {
+            const byTerminalTime = (left.revokedAt ?? left.expiresAt).localeCompare(
+              right.revokedAt ?? right.expiresAt,
+            );
+            return byTerminalTime || left.id.localeCompare(right.id);
+          })
+          .slice(-terminalSessionLimit)
+      : []
+    ).map((session) => session.id),
+  );
+  state.sessions = state.sessions.filter(
+    (session) =>
+      (session.revokedAt === null && Date.parse(session.expiresAt) > now) ||
+      terminalIds.has(session.id),
+  );
+}
+
+function activeRemoteSessionCount(state: RemoteAuthState, now: number): number {
+  return state.sessions.filter(
+    (session) => session.revokedAt === null && Date.parse(session.expiresAt) > now,
+  ).length;
 }
 
 export interface PairingResult {
@@ -140,6 +180,10 @@ export class RemoteAuth {
   readonly #path: string;
   readonly #lockPath: string;
   readonly #allowLoopbackHttp: boolean;
+  readonly #now: () => number;
+  readonly #maxPairingGrants: number;
+  readonly #maxActiveSessions: number;
+  readonly #maxTerminalSessions: number;
   #state: RemoteAuthState | null = null;
   #writeQueue: Promise<void> = Promise.resolve();
   #mutationQueue: Promise<void> = Promise.resolve();
@@ -147,11 +191,26 @@ export class RemoteAuth {
 
   constructor(
     readonly directory: string,
-    options: { allowLoopbackHttp?: boolean } = {},
+    options: {
+      allowLoopbackHttp?: boolean;
+      now?: () => number;
+      maxPairingGrants?: number;
+      maxActiveSessions?: number;
+      maxTerminalSessions?: number;
+    } = {},
   ) {
     this.#path = join(directory, "remote-auth.v1.json");
     this.#lockPath = join(directory, "remote-auth.v1.lock");
     this.#allowLoopbackHttp = options.allowLoopbackHttp === true;
+    this.#now = options.now ?? Date.now;
+    this.#maxPairingGrants = options.maxPairingGrants ?? MAX_LIVE_PAIRING_GRANTS;
+    this.#maxActiveSessions = options.maxActiveSessions ?? MAX_ACTIVE_REMOTE_SESSIONS;
+    this.#maxTerminalSessions =
+      options.maxTerminalSessions ?? MAX_RETAINED_TERMINAL_REMOTE_SESSIONS;
+  }
+
+  #prune(state: RemoteAuthState): void {
+    pruneRemoteAuthState(state, this.#now(), this.#maxTerminalSessions);
   }
 
   async #load(): Promise<RemoteAuthState> {
@@ -234,12 +293,17 @@ export class RemoteAuth {
 
   async issuePairing(): Promise<{ id: string; credential: string; expiresAt: string }> {
     return this.#mutate((state) => {
+      this.#prune(state);
+      if (state.pairingGrants.length >= this.#maxPairingGrants) {
+        throw new RemoteAuthError("Too many pairing credentials are already active.", 429);
+      }
+      const now = this.#now();
       const credential = randomBytes(32).toString("base64url");
       const grant: PairingGrant = {
         id: randomUUID(),
         digest: digest(credential),
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + PAIRING_TTL_MS).toISOString(),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + PAIRING_TTL_MS).toISOString(),
         usedAt: null,
       };
       state.pairingGrants.push(grant);
@@ -261,22 +325,28 @@ export class RemoteAuth {
       throw new RemoteAuthError("A complete device pairing request is required.", 400);
     }
     return this.#mutate((state) => {
+      this.#prune(state);
       const presented = digest(input.credential as string);
-      const grant = state.pairingGrants.find((candidate) =>
+      const grantIndex = state.pairingGrants.findIndex((candidate) =>
         equalDigest(candidate.digest, presented),
       );
-      if (!grant || grant.usedAt || Date.parse(grant.expiresAt) <= Date.now()) {
+      const grant = state.pairingGrants[grantIndex];
+      if (!grant) {
         throw new RemoteAuthError("The pairing credential is invalid, expired, or already used.");
       }
-      grant.usedAt = new Date().toISOString();
+      const now = this.#now();
+      if (activeRemoteSessionCount(state, now) >= this.#maxActiveSessions) {
+        throw new RemoteAuthError("Too many remote sessions are already active.", 429);
+      }
+      state.pairingGrants.splice(grantIndex, 1);
       const token = randomBytes(32).toString("base64url");
       const session: RemoteSession = {
         id: randomUUID(),
         tokenDigest: digest(token),
         label: (input.label as string).trim().slice(0, 80),
         publicKey: input.publicKey as JsonWebKey,
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+        createdAt: new Date(now).toISOString(),
+        expiresAt: new Date(now + SESSION_TTL_MS).toISOString(),
         revokedAt: null,
       };
       state.sessions.push(session);
@@ -384,20 +454,25 @@ export class RemoteAuth {
   async listSessions(): Promise<
     Array<Pick<RemoteSession, "id" | "label" | "createdAt" | "expiresAt" | "revokedAt">>
   > {
-    return (await this.#load()).sessions.map(({ id, label, createdAt, expiresAt, revokedAt }) => ({
-      id,
-      label,
-      createdAt,
-      expiresAt,
-      revokedAt,
-    }));
+    return this.#mutate((state) => {
+      this.#prune(state);
+      return state.sessions.map(({ id, label, createdAt, expiresAt, revokedAt }) => ({
+        id,
+        label,
+        createdAt,
+        expiresAt,
+        revokedAt,
+      }));
+    });
   }
 
   async revoke(sessionId: string): Promise<boolean> {
     return this.#mutate((state) => {
+      this.#prune(state);
       const session = state.sessions.find((candidate) => candidate.id === sessionId);
       if (!session || session.revokedAt) return false;
-      session.revokedAt = new Date().toISOString();
+      session.revokedAt = new Date(this.#now()).toISOString();
+      this.#prune(state);
       return true;
     });
   }
