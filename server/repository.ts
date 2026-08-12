@@ -581,6 +581,29 @@ export async function classifyDiscoveredWorktrees(
   return worktrees;
 }
 
+export async function canonicalizeDiscoveredWorktreePaths(
+  worktrees: ReadonlyArray<Pick<WorktreeMetadata, "path">>,
+  canonicalize: (path: string) => Promise<string> = realpath,
+): Promise<Set<string>> {
+  const canonicalPaths = new Array<string | null>(worktrees.length);
+  let nextIndex = 0;
+  const canonicalizeNext = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= worktrees.length) return;
+      canonicalPaths[index] = await canonicalize(worktrees[index].path).catch(() => null);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(WORKTREE_CLASSIFICATION_CONCURRENCY, worktrees.length) },
+      canonicalizeNext,
+    ),
+  );
+  return new Set(canonicalPaths.filter((path): path is string => path !== null));
+}
+
 export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[]> {
   const result = await execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain", "-z"], {
     encoding: "utf8",

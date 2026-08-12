@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canonicalizeDiscoveredWorktreePaths,
   classifyDiscoveredWorktrees,
   WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY,
 } from "./repository.ts";
@@ -54,4 +55,47 @@ test("worktree discovery bounds classification and preserves Git order", async (
       index === count - 1 ? "detached" : "available",
     ]),
   );
+});
+
+test("worktree membership bounds canonicalization and omits failed paths", async () => {
+  const count = WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY * 3;
+  const worktrees = Array.from({ length: count }, (_, index) => ({ path: `/worktrees/${index}` }));
+  const releases: Array<() => void> = [];
+  const calls = new Map<string, number>();
+  let active = 0;
+  let maximumActive = 0;
+  let initialPoolStarted!: () => void;
+  const initialPool = new Promise<void>((resolve) => {
+    initialPoolStarted = resolve;
+  });
+  const canonicalized = canonicalizeDiscoveredWorktreePaths(worktrees, async (path) => {
+    calls.set(path, (calls.get(path) ?? 0) + 1);
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    if (active === WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY) initialPoolStarted();
+    await new Promise<void>((resolve) => releases.push(resolve));
+    active -= 1;
+    const index = Number(path.split("/").at(-1));
+    if (index === 5) throw new Error("missing worktree");
+    return index < 2 ? "/canonical/shared" : `/canonical/${index}`;
+  });
+
+  await initialPool;
+  assert.equal(calls.size, WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY);
+  while (releases.length > 0) releases.pop()!();
+  const releaseRemaining = setInterval(() => {
+    while (releases.length > 0) releases.pop()!();
+  }, 0);
+  const result = await canonicalized.finally(() => clearInterval(releaseRemaining));
+
+  assert.equal(maximumActive, WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY);
+  assert.equal(calls.size, count);
+  assert.equal(
+    [...calls.values()].every((value) => value === 1),
+    true,
+  );
+  assert.equal(result.size, count - 2);
+  assert.equal(result.has("/canonical/shared"), true);
+  assert.equal(result.has("/canonical/5"), false);
+  assert.equal(result.has(`/canonical/${count - 1}`), true);
 });
