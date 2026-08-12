@@ -395,7 +395,7 @@
     },
     {
       "name": "LocalDeliveryCandidate",
-      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition; ordered source and bounded Tenkai-manifest blobs stream through idle-bounded Git batch children, artifact and lock files stream through one fixed-size buffer with stable identity checks, and Tenkai and package manifest inspection is limited to 256 KiB each while preserving accepted digests."
+      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition; ordered source blobs stream through an idle-bounded Git batch child with at most 256 parsed tree entries retained for protocol work, bounded Tenkai-manifest blobs use an idle-bounded Git batch child, artifact and lock files stream through one fixed-size buffer with stable identity checks, and Tenkai and package manifest inspection is limited to 256 KiB each while preserving accepted digests."
     },
     {
       "name": "ChiseiGovernedEvaluationReference",
@@ -2533,6 +2533,12 @@
       "subject": "LocalDeliveryCandidate",
       "source": "Aldunis Code Issue #873 batch source-tree digest implementation",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/873; server/release-candidate.ts#sourceTreeDigest",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalDeliveryCandidate",
+      "source": "Aldunis Code Issue #928 bounded source-tree digest memory",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/928; server/release-candidate.ts#sourceTreeDigest; server/release-candidate.ts#hashSourceTreeBlobs",
       "confidence": 1.0
     },
     {
