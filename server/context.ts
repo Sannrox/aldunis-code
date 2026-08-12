@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import type { Stats } from "node:fs";
-import { lstat, mkdir, open, opendir, readFile, stat, writeFile } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, mkdir, open, opendir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -49,7 +49,8 @@ interface PreviewFileOperations {
 }
 
 interface WorktreeImageFileOperations {
-  open(path: string, flags: string): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+  open(path: string, flags: number): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+  lstat(path: string): Promise<Stats>;
 }
 
 interface ContextPackageFileOperations {
@@ -68,7 +69,7 @@ export interface RepositoryBrowseOperations {
 }
 
 const previewFileOperations: PreviewFileOperations = { readFile, open };
-const worktreeImageFileOperations: WorktreeImageFileOperations = { open };
+const worktreeImageFileOperations: WorktreeImageFileOperations = { open, lstat };
 const contextPackageFileOperations: ContextPackageFileOperations = { open, lstat };
 
 function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
@@ -125,6 +126,79 @@ function sameContextFile(left: Stats, right: Stats): boolean {
     left.mtimeMs === right.mtimeMs &&
     left.ctimeMs === right.ctimeMs
   );
+}
+
+function sameWorktreeImageFile(left: Stats, right: Stats): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export async function readStableWorktreeImage(
+  path: string,
+  displayPath: string,
+  fileOperations: WorktreeImageFileOperations = worktreeImageFileOperations,
+): Promise<Buffer | null> {
+  const handle = await fileOperations.open(
+    path,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+  );
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) return null;
+    if (!Number.isSafeInteger(details.size) || details.size < 0) {
+      throw new RepositoryError(`${displayPath} has an unsupported image size.`, 413);
+    }
+    if (details.size > MAX_IMAGE_BYTES) {
+      throw new RepositoryError(
+        `${displayPath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
+        413,
+      );
+    }
+    const [openedPath, openedCanonical] = await Promise.all([
+      fileOperations.lstat(path).catch(() => null),
+      realpath(path).catch(() => null),
+    ]);
+    if (
+      !openedPath ||
+      !openedCanonical ||
+      resolve(openedCanonical) !== resolve(path) ||
+      !sameWorktreeImageFile(details, openedPath)
+    ) {
+      throw new RepositoryError(`${displayPath} changed while it was opened.`, 409);
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    const [extraRead, after, pathname] = await Promise.all([
+      handle.read(extra, 0, 1, offset),
+      handle.stat(),
+      fileOperations.lstat(path).catch(() => null),
+    ]);
+    if (
+      offset !== details.size ||
+      extraRead.bytesRead !== 0 ||
+      !pathname ||
+      !sameWorktreeImageFile(details, after) ||
+      !sameWorktreeImageFile(after, pathname)
+    ) {
+      throw new RepositoryError(`${displayPath} changed while it was read.`, 409);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Read one admitted package file without retaining beyond the remaining package budget. */
@@ -1092,6 +1166,7 @@ async function ensureComposerAttachmentIgnore(rootAttachmentDir: string): Promis
 export async function resolveWorktreeImagePath(
   worktree: string,
   absolutePath: string,
+  fileOperations: WorktreeImageFileOperations = worktreeImageFileOperations,
 ): Promise<{ path: string; mediaType: string; size: number } | null> {
   if (!absolutePath || absolutePath.includes("\0") || !isAbsolute(absolutePath)) return null;
   const normalizedWorktree = resolve(worktree);
@@ -1124,7 +1199,8 @@ export async function resolveWorktreeImagePath(
   }
   // Ensure the path still canonicalizes inside the worktree (symlink races).
   const canonical = await constrainPath(worktree, candidate);
-  const bytes = await readFile(canonical);
+  const bytes = await readStableWorktreeImage(canonical, relativePath, fileOperations);
+  if (!bytes) return null;
   if (!matchesImageSignature(bytes, mediaType)) {
     throw new RepositoryError("Image data does not match the declared image type.", 415);
   }
@@ -1164,34 +1240,8 @@ export async function stageWorktreeImageCopy(
   const mediaType = IMAGE_TYPES[extname(relativePath).toLocaleLowerCase()];
   if (!mediaType) return null;
   const canonical = await constrainPath(worktree, candidate);
-  const handle = await fileOperations.open(canonical, "r");
-  let bytes: Buffer;
-  try {
-    const details = await handle.stat();
-    if (!details.isFile()) return null;
-    if (!Number.isSafeInteger(details.size) || details.size < 0) {
-      throw new RepositoryError(`${relativePath} has an unsupported image size.`, 413);
-    }
-    if (details.size > MAX_IMAGE_BYTES) {
-      throw new RepositoryError(
-        `${relativePath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
-        413,
-      );
-    }
-    bytes = Buffer.alloc(details.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-    }
-    const extra = Buffer.alloc(1);
-    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
-      throw new RepositoryError(`${relativePath} changed while it was read.`, 409);
-    }
-  } finally {
-    await handle.close();
-  }
+  const bytes = await readStableWorktreeImage(canonical, relativePath, fileOperations);
+  if (!bytes) return null;
   if (!matchesImageSignature(bytes, mediaType)) {
     throw new RepositoryError("Image data does not match the declared image type.", 415);
   }

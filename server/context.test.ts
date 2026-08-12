@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { lstat, mkdtemp, mkdir, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  lstat,
+  mkdtemp,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,6 +27,7 @@ import {
   MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
   readBoundedContextPackageFile,
+  readStableWorktreeImage,
   resolveContextAttachments,
   resolveWorktreeImagePath,
   searchRepositoryFiles,
@@ -978,6 +990,64 @@ test("resolveWorktreeImagePath pins in-tree images and rejects escapes", async (
   assert.equal(await resolveWorktreeImagePath(root, join(root, "src/main.ts")), null);
 });
 
+test("resolveWorktreeImagePath rejects an atomic replacement without retaining it", async () => {
+  const { root } = await fixture();
+  const path = join(root, "image.png");
+  const replacement = join(root, "replacement.png");
+  await writeFile(replacement, "");
+  await truncate(replacement, 128 * 1024 * 1024);
+
+  await assert.rejects(
+    () =>
+      resolveWorktreeImagePath(root, path, {
+        async open(candidate, flags) {
+          assert.equal((flags & constants.O_NONBLOCK) !== 0, true);
+          assert.equal((flags & constants.O_NOFOLLOW) !== 0, true);
+          const handle = await open(candidate, flags);
+          await rename(replacement, path);
+          return handle;
+        },
+        lstat,
+      }),
+    /changed while it was opened/,
+  );
+});
+
+test("stable worktree image reads reject an ancestor symlink before reading", async () => {
+  const { parent, root } = await fixture();
+  const directory = join(root, "images");
+  const moved = join(root, "images-moved");
+  const outside = join(parent, "outside-images");
+  const path = join(directory, "image.png");
+  await mkdir(directory);
+  await mkdir(outside);
+  await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  await writeFile(join(outside, "image.png"), Buffer.alloc(1024));
+  let reads = 0;
+
+  await assert.rejects(
+    () =>
+      readStableWorktreeImage(path, "images/image.png", {
+        async open(candidate, flags) {
+          await rename(directory, moved);
+          await symlink(outside, directory);
+          const handle = await open(candidate, flags);
+          return {
+            stat: handle.stat.bind(handle),
+            async read(...args: Parameters<typeof handle.read>) {
+              reads += 1;
+              return handle.read(...args);
+            },
+            close: handle.close.bind(handle),
+          };
+        },
+        lstat,
+      }),
+    /changed while it was opened/,
+  );
+  assert.equal(reads, 0);
+});
+
 test("stageWorktreeImageCopy rejects descriptor oversize before reading", async () => {
   const { root } = await fixture();
   const path = join(root, "image.png");
@@ -1008,6 +1078,7 @@ test("stageWorktreeImageCopy rejects descriptor oversize before reading", async 
               },
             };
           },
+          lstat,
         },
       ),
     /exceeds the 2 MB image limit/,
@@ -1036,6 +1107,7 @@ test("stageWorktreeImageCopy rejects growth beyond admitted descriptor size", as
   const path = join(root, "image.png");
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   await writeFile(path, png);
+  const admitted = await lstat(path);
   let reads = 0;
 
   await assert.rejects(
@@ -1048,9 +1120,7 @@ test("stageWorktreeImageCopy rejects growth beyond admitted descriptor size", as
           async open() {
             return {
               async stat() {
-                return { isFile: () => true, size: png.length } as Awaited<
-                  ReturnType<import("node:fs/promises").FileHandle["stat"]>
-                >;
+                return admitted;
               },
               async read(buffer: Buffer, offset: number, length: number) {
                 reads += 1;
@@ -1060,6 +1130,7 @@ test("stageWorktreeImageCopy rejects growth beyond admitted descriptor size", as
               async close() {},
             };
           },
+          lstat,
         },
       ),
     /changed while it was read/,
