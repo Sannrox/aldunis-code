@@ -275,6 +275,7 @@ async function isOversized(
   path: string,
   deleted: boolean,
   previousPath: string | null,
+  untracked: boolean,
   signal?: AbortSignal,
 ): Promise<boolean> {
   signal?.throwIfAborted();
@@ -288,17 +289,19 @@ async function isOversized(
       // The status may change between discovery and inspection.
     }
   }
-  try {
-    const result = await git(
-      worktree,
-      ["cat-file", "-s", `HEAD:${previousPath ?? path}`],
-      undefined,
-      signal,
-    );
-    size = Math.max(size, Number(result.stdout.trim()) || 0);
-  } catch {
-    signal?.throwIfAborted();
-    // Added files do not have a HEAD object.
+  if (!untracked || previousPath) {
+    try {
+      const result = await git(
+        worktree,
+        ["cat-file", "-s", `HEAD:${previousPath ?? path}`],
+        undefined,
+        signal,
+      );
+      size = Math.max(size, Number(result.stdout.trim()) || 0);
+    } catch {
+      signal?.throwIfAborted();
+      // The status may change between discovery and inspection.
+    }
   }
   return size > MAX_DIFF_BYTES;
 }
@@ -789,6 +792,7 @@ export async function listChangedFiles(
         path,
         initial === "deleted",
         previousPath,
+        code === "??",
         signal,
       );
       let untrackedContent: Buffer | null | undefined;
