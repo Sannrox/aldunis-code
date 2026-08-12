@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, open, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -18,6 +18,8 @@ const execFileAsync = promisify(execFile);
 const REGISTRY_SCHEMA_VERSION = 1;
 const PLAN_TTL_MS = 5 * 60_000;
 export const WORKTREE_PLAN_LIMIT = 64;
+export const MAX_MANAGED_WORKTREE_REGISTRY_BYTES = 16 * 1024 * 1024;
+export const MAX_REMOVED_MANAGED_WORKTREE_RECORDS = 256;
 
 export type ManagedWorktreeRecovery = "available" | "moved" | "missing" | "inaccessible";
 
@@ -38,6 +40,23 @@ export interface ManagedWorktreeRegistry {
   schemaVersion: 1;
   records: ManagedWorktreeRecord[];
 }
+
+export interface ManagedWorktreeStoreOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{ size: number }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const managedWorktreeStoreOperations: ManagedWorktreeStoreOperations = {
+  open: (path) => open(path, "r"),
+};
 
 export interface WorktreeView extends WorktreeMetadata {
   ownership: "aldunis" | "user";
@@ -303,37 +322,73 @@ async function validateRepositoryForCreation(
 export class ManagedWorktreeStore {
   readonly #path: string;
 
-  constructor(readonly directory: string) {
+  constructor(
+    readonly directory: string,
+    readonly operations: ManagedWorktreeStoreOperations = managedWorktreeStoreOperations,
+  ) {
     this.#path = join(directory, "worktrees.v1.json");
   }
 
   async load(): Promise<ManagedWorktreeRegistry> {
+    let handle: Awaited<ReturnType<ManagedWorktreeStoreOperations["open"]>>;
     try {
-      return parseRegistry(JSON.parse(await readFile(this.#path, "utf8")));
+      handle = await this.operations.open(this.#path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { schemaVersion: REGISTRY_SCHEMA_VERSION, records: [] };
       }
+      throw new RepositoryError("Managed worktree history is corrupt.", 409);
+    }
+    try {
+      const details = await handle.stat();
+      if (details.size > MAX_MANAGED_WORKTREE_REGISTRY_BYTES) {
+        throw new RepositoryError("Managed worktree history exceeds its size limit.", 409);
+      }
+      const bytes = Buffer.alloc(details.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+        if (bytesRead === 0) break;
+        offset += bytesRead;
+      }
+      const extra = Buffer.alloc(1);
+      if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+        throw new RepositoryError("Managed worktree history changed while being read.", 409);
+      }
+      return parseRegistry(JSON.parse(bytes.toString("utf8")));
+    } catch (error) {
       if (error instanceof RepositoryError) throw error;
       throw new RepositoryError("Managed worktree history is corrupt.", 409);
+    } finally {
+      await handle.close();
     }
   }
 
   async save(records: ManagedWorktreeRecord[]): Promise<void> {
+    const newestRemovedIds = new Set(
+      records
+        .filter((record) => record.removedAt !== null)
+        .sort((left, right) => right.removedAt!.localeCompare(left.removedAt!))
+        .slice(0, MAX_REMOVED_MANAGED_WORKTREE_RECORDS)
+        .map((record) => record.id),
+    );
+    const retained = records.filter(
+      (record) => record.removedAt === null || newestRemovedIds.has(record.id),
+    );
+    const serialized = `${JSON.stringify(
+      {
+        schemaVersion: REGISTRY_SCHEMA_VERSION,
+        records: retained,
+      },
+      null,
+      2,
+    )}\n`;
+    if (Buffer.byteLength(serialized) > MAX_MANAGED_WORKTREE_REGISTRY_BYTES) {
+      throw new RepositoryError("Managed worktree history exceeds its size limit.", 409);
+    }
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.${randomUUID()}.tmp`;
-    await writeFile(
-      temporary,
-      `${JSON.stringify(
-        {
-          schemaVersion: REGISTRY_SCHEMA_VERSION,
-          records,
-        },
-        null,
-        2,
-      )}\n`,
-      { encoding: "utf8", mode: 0o600, flag: "wx" },
-    );
+    await writeFile(temporary, serialized, { encoding: "utf8", mode: 0o600, flag: "wx" });
     await rename(temporary, this.#path);
   }
 }

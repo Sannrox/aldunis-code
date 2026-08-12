@@ -304,6 +304,10 @@
       "description": "A short-lived, single-use approval bound to the exact managed checkout inspected during preview. Branch, HEAD, Git administrative directory, filesystem identity, and nanosecond change times must still match before removal."
     },
     {
+      "name": "ManagedWorktreeOwnershipRegistry",
+      "description": "The Code-owned local registry of managed-worktree ownership and removal recovery state, persisted within 16 MiB while retaining every live or pending-removal record and only the newest 256 fully removed records. It never grants repository or filesystem authority beyond the records it preserves."
+    },
+    {
       "name": "ManagedHostedWorkbench",
       "description": "The explicit single-tenant Aldunis Code hosted mode that starts only with trusted gateway assertion configuration, a canonical repository catalogue, and a fixed fail-closed Shikigami Build profile; it never falls back to loopback or paired remote authority.",
       "properties": [
@@ -2183,6 +2187,12 @@
       "subject": "ManagedWorktreeRemovalApproval",
       "source": "Aldunis Code managed worktree contract",
       "locator": "server/worktrees.ts#WorktreeRemovalPlan",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedWorktreeOwnershipRegistry",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#861",
+      "locator": "server/worktrees.ts#ManagedWorktreeStore; docs/local-data.md; https://github.com/Sannrox/aldunis-code/issues/861",
       "confidence": 1.0
     },
     {
