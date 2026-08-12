@@ -103,7 +103,7 @@
     },
     {
       "name": "ConversationAutomation",
-      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation while preserving the conversation, worktree, provider, and explicit approval boundaries."
+      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation through concurrency-bounded scheduled provider-run admission while preserving the conversation, worktree, provider, and explicit approval boundaries."
     },
     {
       "name": "ConversationAutomationFire",
@@ -1761,7 +1761,7 @@
     },
     {
       "subject": "ConversationAutomation",
-      "source": "GitHub Issue Sannrox/aldunis-code#448",
+      "source": "GitHub Issues Sannrox/aldunis-code#448 and #795",
       "locator": "server/automations.ts#Automation; docs/automations.md",
       "confidence": 1.0
     },
