@@ -471,7 +471,7 @@
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates checkpoint preview, file-diff, and rewind route recognition, canonical worktree selection, checkpoint identity and Git state validation, active-turn exclusion, rewind ordering, checkpoint persistence, and response mapping behind one internal dispatch interface without changing repository, filesystem, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates checkpoint preview, file-diff, and rewind route recognition, canonical worktree selection, checkpoint identity and Git state validation, active-turn exclusion, fixed-buffer temporary-index transfer into the exclusive Git lock, rewind ordering, checkpoint persistence, and response mapping behind one internal dispatch interface without changing repository, filesystem, provider, or approval authority."
     },
     {
       "name": "ConversationWorkspaceRouteDispatchModule",
@@ -1639,6 +1639,12 @@
       "subject": "CheckpointRewindRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#637",
       "locator": "server/checkpoint-routes.ts#handleCheckpointRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CheckpointRewindRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#916",
+      "locator": "server/repository.ts#copyIndexIntoLock; server/repository.ts#rewindCheckpoint",
       "confidence": 1.0
     },
     {
