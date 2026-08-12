@@ -1,24 +1,37 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdtemp, mkdir, open, rename, truncate, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  MAX_RELEASE_PACKAGE_MANIFEST_BYTES,
   type ArtifactFileOperations,
   consumeGitBlobBatch,
   deliveryCandidateIdentity,
   hashArtifactFile,
+  hashReleaseLockFile,
   prepareReleaseCandidate,
+  readReleasePackageManifest,
   sourceTreeDigest,
 } from "./release-candidate.ts";
 
 const execFileAsync = promisify(execFile);
 
-function sha256(value: string): string {
+function sha256(value: Buffer | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
@@ -86,10 +99,71 @@ test("candidate preparation binds committed source, manifest, artifacts, and npm
   assert.equal(candidate.document.repository.id, "https://example.invalid/acme/widget.git");
   assert.equal(candidate.document.commit.algorithm, "sha1");
   assert.equal(candidate.document.artifacts[0]?.location_class, "local");
+  assert.equal(
+    candidate.build.definitionDigest,
+    "sha256:5ffafe0e42ae8bb0d67c09f1bf5ff583cf8abca8e983ea4e859d4329e4a366f7",
+  );
   assert.deepEqual(
     candidate.build.commands.map((command) => command.args),
     [["ci", "--ignore-scripts", "--no-audit", "--no-fund"], ["run", "build"], ["test"]],
   );
+});
+
+test("release build inputs preserve lock digests and bound package manifest reads", async () => {
+  const root = await fixture();
+  const lockPath = join(root, "package-lock.json");
+  const lock = await readFile(lockPath);
+
+  assert.equal(await hashReleaseLockFile(lockPath), `sha256:${sha256(lock)}`);
+  assert.match(await readReleasePackageManifest(join(root, "package.json")), /"widget"/);
+
+  await writeFile(
+    join(root, "package.json"),
+    Buffer.alloc(MAX_RELEASE_PACKAGE_MANIFEST_BYTES + 1, 0x20),
+  );
+  await execFileAsync("git", ["-C", root, "add", "package.json"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "oversize package manifest"]);
+  await assert.rejects(
+    () => prepareReleaseCandidate(root, root, "tenkai.toml"),
+    /package\.json must be at most 256 KiB/,
+  );
+});
+
+test("release lock hashing fails closed on concurrent replacement", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-release-lock-replacement-"));
+  const path = join(root, "package-lock.json");
+  await writeFile(path, "original");
+  let closed = false;
+  const operations: ArtifactFileOperations = {
+    lstat: (candidate) => lstat(candidate, { bigint: true }),
+    open: async (candidate) => {
+      const handle = await open(candidate, "r");
+      let replaced = false;
+      return {
+        close: async () => {
+          closed = true;
+          await handle.close();
+        },
+        read: async (buffer, offset, length, position) => {
+          const result = await handle.read(buffer, offset, length, position);
+          if (!replaced) {
+            replaced = true;
+            const next = `${candidate}.next`;
+            await writeFile(next, "replacement");
+            await rename(next, candidate);
+          }
+          return { bytesRead: result.bytesRead };
+        },
+        stat: () => handle.stat({ bigint: true }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => hashReleaseLockFile(path, operations),
+    /package-lock\.json changed while it was hashed/,
+  );
+  assert.equal(closed, true);
 });
 
 test("artifact identity uses committed executable modes instead of ambient permissions", async () => {

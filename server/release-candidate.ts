@@ -18,6 +18,7 @@ const GIT_BATCH_IDLE_TIMEOUT_MS = 20_000;
 const MAX_GIT_BATCH_HEADER_BYTES = 256;
 const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
 const ARTIFACT_FILE_READ_BUFFER_BYTES = 256 * 1024;
+export const MAX_RELEASE_PACKAGE_MANIFEST_BYTES = 256 * 1024;
 
 export interface ReleaseArtifactDescriptor {
   media_type: string;
@@ -518,10 +519,17 @@ function sameArtifactFile(left: BigIntStats, right: BigIntStats): boolean {
   );
 }
 
-export async function hashArtifactFile(
-  hash: ReturnType<typeof createHash>,
+interface StableFileMessages {
+  changed: string;
+  close: string;
+}
+
+async function consumeStableFile(
   path: string,
-  operations: ArtifactFileOperations = artifactFileOperations,
+  operations: ArtifactFileOperations,
+  messages: StableFileMessages,
+  consumeSize: (size: number) => void,
+  consumeChunk: (chunk: Buffer) => void,
 ): Promise<number> {
   let handle: ArtifactFileHandle | null = null;
   try {
@@ -533,30 +541,30 @@ export async function hashArtifactFile(
       !sameArtifactFile(initial, initialPath) ||
       initial.size > BigInt(Number.MAX_SAFE_INTEGER)
     ) {
-      throw new Error("unstable artifact file");
+      throw new Error("unstable file");
     }
     const size = Number(initial.size);
-    hash.update(length64(size, true));
+    consumeSize(size);
     const buffer = Buffer.allocUnsafe(ARTIFACT_FILE_READ_BUFFER_BYTES);
     let position = 0;
     while (position < size) {
       const requested = Math.min(buffer.length, size - position);
       const { bytesRead } = await handle.read(buffer, 0, requested, position);
-      if (bytesRead === 0) throw new Error("truncated artifact file");
-      hash.update(buffer.subarray(0, bytesRead));
+      if (bytesRead === 0) throw new Error("truncated file");
+      consumeChunk(buffer.subarray(0, bytesRead));
       position += bytesRead;
     }
     const final = await handle.stat();
     const finalPath = await operations.lstat(path);
     if (!sameArtifactFile(initial, final) || !sameArtifactFile(initial, finalPath)) {
-      throw new Error("changed artifact file");
+      throw new Error("changed file");
     }
     const completedHandle = handle;
     handle = null;
     try {
       await completedHandle.close();
     } catch {
-      throw new RepositoryError("A Tenkai artifact input could not be closed after hashing.", 409);
+      throw new RepositoryError(messages.close, 409);
     }
     return size;
   } catch (error) {
@@ -568,8 +576,68 @@ export async function hashArtifactFile(
       }
     }
     if (error instanceof RepositoryError) throw error;
-    throw new RepositoryError("A Tenkai artifact input changed while it was hashed.", 409);
+    throw new RepositoryError(messages.changed, 409);
   }
+}
+
+export async function hashArtifactFile(
+  hash: ReturnType<typeof createHash>,
+  path: string,
+  operations: ArtifactFileOperations = artifactFileOperations,
+): Promise<number> {
+  return consumeStableFile(
+    path,
+    operations,
+    {
+      changed: "A Tenkai artifact input changed while it was hashed.",
+      close: "A Tenkai artifact input could not be closed after hashing.",
+    },
+    (size) => hash.update(length64(size, true)),
+    (chunk) => hash.update(chunk),
+  );
+}
+
+export async function hashReleaseLockFile(
+  path: string,
+  operations: ArtifactFileOperations = artifactFileOperations,
+): Promise<string> {
+  const hash = createHash("sha256");
+  await consumeStableFile(
+    path,
+    operations,
+    {
+      changed: "The root package-lock.json changed while it was hashed.",
+      close: "The root package-lock.json could not be closed after hashing.",
+    },
+    () => undefined,
+    (chunk) => hash.update(chunk),
+  );
+  return `sha256:${hash.digest("hex")}`;
+}
+
+export async function readReleasePackageManifest(
+  path: string,
+  operations: ArtifactFileOperations = artifactFileOperations,
+): Promise<string> {
+  const chunks: Buffer[] = [];
+  await consumeStableFile(
+    path,
+    operations,
+    {
+      changed: "The root package.json changed while it was read.",
+      close: "The root package.json could not be closed after reading.",
+    },
+    (size) => {
+      if (size > MAX_RELEASE_PACKAGE_MANIFEST_BYTES) {
+        throw new RepositoryError(
+          `The root package.json must be at most ${MAX_RELEASE_PACKAGE_MANIFEST_BYTES / 1024} KiB.`,
+          409,
+        );
+      }
+    },
+    (chunk) => chunks.push(Buffer.from(chunk)),
+  );
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 async function committedArtifactMode(
@@ -666,7 +734,8 @@ async function buildDefinition(worktree: string): Promise<PreparedReleaseCandida
   const packagePath = resolve(worktree, "package.json");
   await assertCommittedPath(worktree, "package.json", "The root package.json");
   await assertCommittedPath(worktree, "package-lock.json", "The root package-lock.json");
-  const raw = await readFile(packagePath, "utf8").catch(() => {
+  const raw = await readReleasePackageManifest(packagePath).catch((error: unknown) => {
+    if (error instanceof RepositoryError) throw error;
     throw new RepositoryError("Version 1 delivery requires a committed root package.json.", 409);
   });
   let value: unknown;
@@ -692,13 +761,16 @@ async function buildDefinition(worktree: string): Promise<PreparedReleaseCandida
     "The npm test script",
     2_000,
   );
-  const lock = await readFile(resolve(worktree, "package-lock.json")).catch(() => null);
-  if (!lock)
-    throw new RepositoryError("Version 1 delivery requires a committed package-lock.json.", 409);
+  const lockDigest = await hashReleaseLockFile(resolve(worktree, "package-lock.json")).catch(
+    (error: unknown) => {
+      if (error instanceof RepositoryError) throw error;
+      throw new RepositoryError("Version 1 delivery requires a committed package-lock.json.", 409);
+    },
+  );
   const definition = {
     schema: "aldunis.build-definition/v1",
     adapter: "npm",
-    lock_digest: sha256(lock),
+    lock_digest: lockDigest,
     install: {
       executable: "npm",
       args: ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
