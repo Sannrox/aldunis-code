@@ -4,6 +4,7 @@ import {
   admitProviderRun,
   createProviderRunSink,
   handleProviderRun,
+  MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS,
   ProviderInputExpiryTimers,
   shouldReleaseBrowserProviderToken,
   type ProviderRunModuleContext,
@@ -61,6 +62,38 @@ test("provider input expiry timers release on answer, replacement, firing, and r
   expiry.clearRun("run-1");
   assert.equal(expiry.retainedTimerCount, 0);
   assert.equal(timers.pending.size, 0);
+});
+
+test("provider input expiry timers bound admission and recover capacity", () => {
+  const timers = new FakeInputTimers();
+  const expiry = new ProviderInputExpiryTimers(timers);
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  for (let index = 0; index < MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS; index += 1) {
+    expiry.schedule(`run-${index % 2}`, `input-${index}`, expiresAt, () => {});
+  }
+  assert.equal(expiry.retainedTimerCount, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
+  assert.equal(timers.pending.size, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
+
+  const replaced = [...timers.pending][0]!;
+  expiry.schedule("run-0", "input-0", expiresAt, () => {});
+  assert.equal(timers.pending.has(replaced), false);
+  assert.equal(expiry.retainedTimerCount, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
+  assert.throws(
+    () => expiry.schedule("run-overflow", "input-overflow", expiresAt, () => {}),
+    /Too many provider input requests are awaiting expiry/,
+  );
+  assert.equal(timers.pending.size, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
+
+  assert.equal(expiry.clear("run-1", "input-1"), true);
+  expiry.schedule("run-recovered", "input-recovered", expiresAt, () => {});
+  assert.equal(expiry.retainedTimerCount, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
+
+  const active = [...timers.pending][0]!;
+  timers.fire(active);
+  assert.equal(expiry.retainedTimerCount, MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS - 1);
+  expiry.schedule("run-fired", "input-fired", expiresAt, () => {});
+  expiry.clearRun("run-0");
+  assert.ok(expiry.retainedTimerCount < MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS);
 });
 
 test("browser provider token release follows accepted Codex session ownership", () => {
