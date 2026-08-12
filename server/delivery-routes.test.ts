@@ -142,6 +142,89 @@ test("release execution propagates request cancellation through the dispatch int
   assert.equal(observedAbort, true);
 });
 
+test("release inspection cancels disconnected work and releases lifecycle listeners", async () => {
+  const currentRequest = new EventEmitter() as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
+  const root = process.cwd();
+  let observedSignal: AbortSignal | undefined;
+
+  await assert.rejects(
+    handleDeliveryRoute(
+      "/api/release-delivery/inspect",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ root, worktree: root, projectId: "project-1" }),
+        selectWorktree: async () => ({ root, worktree: root }),
+        state: {
+          inspect: async () => ({ projects: [{ id: "project-1", root }] }),
+        } as unknown as LocalStateStore,
+        releaseDelivery: {
+          inspect: async (_project, _root, _worktree, signal) => {
+            observedSignal = signal;
+            currentResponse.emit("close");
+            signal?.throwIfAborted();
+            return {};
+          },
+          plan: unused,
+          execute: unused,
+          receipt: unused,
+        } as unknown as ReleaseDeliveryBroker,
+      }),
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(observedSignal?.aborted, true);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
+});
+
+test("release inspection stops project validation after request cancellation", async () => {
+  const currentRequest = new EventEmitter() as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
+  const root = process.cwd();
+  let inspections = 0;
+
+  await assert.rejects(
+    handleDeliveryRoute(
+      "/api/release-delivery/inspect",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ root, worktree: root, projectId: "project-1" }),
+        selectWorktree: async () => ({ root, worktree: root }),
+        state: {
+          inspect: async () => {
+            currentRequest.emit("aborted");
+            return { projects: [{ id: "project-1", root }] };
+          },
+        } as unknown as LocalStateStore,
+        releaseDelivery: {
+          inspect: async () => {
+            inspections += 1;
+            return {};
+          },
+          plan: unused,
+          execute: unused,
+          receipt: unused,
+        } as unknown as ReleaseDeliveryBroker,
+      }),
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(inspections, 0);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
+});
+
 test("PR status batch cancels disconnected work and releases lifecycle listeners", async () => {
   const currentRequest = new EventEmitter() as IncomingMessage;
   const currentResponse = Object.assign(new EventEmitter(), {

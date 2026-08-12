@@ -443,11 +443,15 @@
     },
     {
       "name": "DeliveryRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, request-lifetime-cancelled and concurrency-bounded pull-request projection, release-project correlation, cancellation lifetime, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
     },
     {
       "name": "BranchPrStatusPollingCoordinator",
       "description": "A renderer and host-coordinated best-effort pull-request status projection that polls only while visible, aborts obsolete lookup sets through HTTP and exact Git or GitHub children, stops later client batches after cancellation, and admits at most four concurrent worktree inspections per server batch without changing repository or delivery authority."
+    },
+    {
+      "name": "ReleaseDeliveryInspectionCoordinator",
+      "description": "A renderer and loopback-host coordinated read projection for one selected repository context that aborts superseded or disconnected inspection through project validation, local session loading, and the exact Tenkai environment child while preserving Tenkai terminal-outcome authority and best-effort unavailable semantics."
     },
     {
       "name": "CrossProviderConversationForkRouteDispatchModule",
@@ -2451,6 +2455,12 @@
       "subject": "BranchPrStatusPollingCoordinator",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#785",
       "locator": "src/lib/branch-pr-status.ts; src/features/code/workbench.tsx; server/delivery-routes.ts; server/branch-pr.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ReleaseDeliveryInspectionCoordinator",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#787",
+      "locator": "src/features/shell/tenkai-delivery.tsx#TenkaiDeliveryPanel; server/delivery-routes.ts#handleDeliveryRoute; server/release-delivery-workflow.ts#ReleaseDeliveryBroker.inspect",
       "confidence": 1.0
     },
     {

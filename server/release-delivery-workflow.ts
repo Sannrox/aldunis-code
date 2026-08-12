@@ -1061,13 +1061,16 @@ export class ReleaseDeliveryBroker {
     projectId: string,
     repository: string,
     worktree: string,
+    signal?: AbortSignal,
   ): Promise<ReleaseDeliveryInspection> {
+    signal?.throwIfAborted();
     const localSessions = (await this.store.load()).filter(
       (item) =>
         item.projectId === projectId &&
         item.repository === repository &&
         item.worktree === worktree,
     );
+    signal?.throwIfAborted();
     const sessions = localSessions.map(publicSession);
     return {
       configuration: {
@@ -1078,14 +1081,16 @@ export class ReleaseDeliveryBroker {
         localOnly: true,
       },
       sessions,
-      terminalOutcomes: await this.#inspectTerminalOutcomes(worktree, localSessions),
+      terminalOutcomes: await this.#inspectTerminalOutcomes(worktree, localSessions, signal),
     };
   }
 
   async #inspectTerminalOutcomes(
     worktree: string,
     sessions: ReleaseDeliverySession[],
+    signal?: AbortSignal,
   ): Promise<TenkaiTerminalOutcomeInspection> {
+    signal?.throwIfAborted();
     if (!this.env.ALDUNIS_TENKAI_DATABASE?.trim()) {
       return {
         authority: "tenkai",
@@ -1095,7 +1100,7 @@ export class ReleaseDeliveryBroker {
       };
     }
     try {
-      const environment = await this.#inspectEnvironment(worktree);
+      const environment = await this.#inspectEnvironment(worktree, signal);
       return {
         authority: "tenkai",
         state: "live",
@@ -1103,6 +1108,7 @@ export class ReleaseDeliveryBroker {
         warning: null,
       };
     } catch {
+      signal?.throwIfAborted();
       return {
         authority: "tenkai",
         state: "unknown",
@@ -1534,10 +1540,12 @@ export class ReleaseDeliveryBroker {
     timeout: number,
     signal?: AbortSignal,
   ): Promise<CommandResult> {
+    signal?.throwIfAborted();
     await mkdir(join(this.store.directory, "release-tool-home"), {
       recursive: true,
       mode: 0o700,
     });
+    signal?.throwIfAborted();
     const result = await this.runner(executable, args, {
       cwd,
       timeout,
