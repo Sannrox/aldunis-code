@@ -319,7 +319,7 @@
     },
     {
       "name": "WorktreeDiscoveryCoordinator",
-      "description": "The host-owned repository adapter that reads the complete ordered Git worktree registry, classifies every entry exactly once, and projects deduplicated canonical membership for default local selection through at most eight concurrent filesystem chains without changing worktree ownership, authority, or freshness."
+      "description": "The host-owned repository adapter that reads the complete ordered Git worktree registry, classifies every entry exactly once, and projects deduplicated canonical membership for default local and enterprise-managed selection through at most eight concurrent filesystem chains without changing worktree ownership, authority, or freshness."
     },
     {
       "name": "ManagedShikigamiProfile",
@@ -2137,8 +2137,8 @@
     },
     {
       "subject": "WorktreeDiscoveryCoordinator",
-      "source": "Aldunis Code repository adapter and Issues #803 and #807",
-      "locator": "server/repository.ts#discoverWorktrees; server/repository.ts#classifyDiscoveredWorktrees; server/repository.ts#canonicalizeDiscoveredWorktreePaths; https://github.com/Sannrox/aldunis-code/issues/803; https://github.com/Sannrox/aldunis-code/issues/807",
+      "source": "Aldunis Code repository adapter and Issues #803, #807, and #809",
+      "locator": "server/repository.ts#discoverWorktrees; server/repository.ts#classifyDiscoveredWorktrees; server/repository.ts#canonicalizeDiscoveredWorktreePaths; server/managed-host.ts#ManagedHost.selectWorktree; https://github.com/Sannrox/aldunis-code/issues/803; https://github.com/Sannrox/aldunis-code/issues/807; https://github.com/Sannrox/aldunis-code/issues/809",
       "confidence": 1.0
     },
     {

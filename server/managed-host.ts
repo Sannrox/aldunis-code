@@ -7,7 +7,12 @@ import {
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { IncomingMessage } from "node:http";
-import { canonicalizeRepositoryRoot, discoverWorktrees, RepositoryError } from "./repository.ts";
+import {
+  canonicalizeDiscoveredWorktreePaths,
+  canonicalizeRepositoryRoot,
+  discoverWorktrees,
+  RepositoryError,
+} from "./repository.ts";
 
 const ASSERTION_HEADER = "x-aldunis-code-assertion";
 const REQUIRED_SCOPE = "code:workbench";
@@ -494,9 +499,7 @@ export class ManagedHost {
         throw new RepositoryError("Managed worktrees cannot cross filesystem mounts.", 403);
       }
       const worktrees = await discoverWorktrees(root);
-      const allowed = new Set(
-        await Promise.all(worktrees.map(async (item) => realpath(item.path).catch(() => null))),
-      );
+      const allowed = await canonicalizeDiscoveredWorktreePaths(worktrees);
       if (!allowed.has(worktree)) {
         throw new RepositoryError("Select a discovered worktree from the managed repository.", 403);
       }
