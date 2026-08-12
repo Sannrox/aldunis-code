@@ -7,8 +7,8 @@
  * Config path is argv[2]: JSON { approvalUrl, runId, token, mutatingTools }.
  * Exit 0 allow / non-mutating; exit 1 deny or broker failure.
  */
-import { readFileSync } from "node:fs";
 import process from "node:process";
+import { readPermissionHookConfig } from "./permission-hook-config.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 1024 * 1024;
 
@@ -20,9 +20,9 @@ if (!configPath) {
 
 let config;
 try {
-  config = JSON.parse(readFileSync(configPath, "utf8"));
-} catch (error) {
-  process.stderr.write(`shikigami permission hook: invalid config: ${error}\n`);
+  config = JSON.parse(readPermissionHookConfig(configPath));
+} catch {
+  process.stderr.write("shikigami permission hook: invalid or unsafe config\n");
   process.exit(1);
 }
 

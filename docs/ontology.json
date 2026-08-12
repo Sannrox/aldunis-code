@@ -207,7 +207,7 @@
     },
     {
       "name": "ShikigamiPermissionHookBoundary",
-      "description": "The Aldunis-owned pre-tool hook boundary that accepts at most 1 MiB of provider-supplied JSON before parsing and delegates mutating Shikigami operations to the existing fail-closed PermissionBroker approval contract."
+      "description": "The Aldunis-owned pre-tool hook boundary that loads its generated permission gate from a stable regular file of at most 64 KiB, accepts at most 1 MiB of provider-supplied JSON before parsing, and delegates mutating Shikigami operations to the existing fail-closed PermissionBroker approval contract."
     },
     {
       "name": "ShikigamiParkedRunResume",
@@ -2009,6 +2009,12 @@
       "subject": "ShikigamiPermissionHookBoundary",
       "source": "Aldunis Code Issue #895 bounded permission-hook input",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/895; server/shikigami-permission-hook.mjs",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiPermissionHookBoundary",
+      "source": "Aldunis Code Issue #899 bounded permission-gate loading",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/899; server/permission-hook-config.mjs; server/shikigami-permission-hook.mjs",
       "confidence": 1.0
     },
     {
