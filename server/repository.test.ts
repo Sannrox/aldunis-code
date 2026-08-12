@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +22,7 @@ import {
   classifyWorktree,
   collapseProjectsByRepository,
   constrainPath,
+  copyIndexIntoLock,
   deleteCheckpointReferences,
   rewindCheckpoint,
 } from "./repository.ts";
@@ -20,16 +31,40 @@ import { assertLoopbackHost } from "./host.ts";
 
 const execFileAsync = promisify(execFile);
 
+test("checkpoint index copies stream exact bytes through partial writes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-index-copy-"));
+  const source = join(root, "source-index");
+  const destinationPath = join(root, "index.lock");
+  const content = Buffer.alloc(1024 * 1024 + 17, 0x5a);
+  await writeFile(source, content);
+  const destination = await open(destinationPath, "w");
+  try {
+    const copied = await copyIndexIntoLock(source, {
+      write: (buffer, offset, length, position) =>
+        destination.write(buffer, offset, Math.min(length, 31), position),
+    });
+    assert.equal(copied, content.length);
+  } finally {
+    await destination.close();
+  }
+  assert.deepEqual(await readFile(destinationPath), content);
+});
+
 async function gitFixture(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "aldunis-code-checkpoint-"));
   await execFileAsync("git", ["init", "-q", root]);
   await writeFile(join(root, "tracked.txt"), "baseline\n");
   await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
   await execFileAsync("git", [
-    "-C", root,
-    "-c", "user.name=Fixture",
-    "-c", "user.email=fixture@example.invalid",
-    "commit", "-qm", "baseline",
+    "-C",
+    root,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "baseline",
   ]);
   return root;
 }
@@ -84,7 +119,16 @@ test("worktree state covers available, detached, missing, and inaccessible paths
 test("collapsed projects retain the project record that owns each worktree root", async () => {
   const root = await gitFixture();
   const sibling = join(await mkdtemp(join(tmpdir(), "aldunis-code-member-roots-")), "worktree");
-  await execFileAsync("git", ["-C", root, "worktree", "add", "-q", "-b", "fixture-worktree", sibling]);
+  await execFileAsync("git", [
+    "-C",
+    root,
+    "worktree",
+    "add",
+    "-q",
+    "-b",
+    "fixture-worktree",
+    sibling,
+  ]);
 
   const [project] = await collapseProjectsByRepository([
     {
@@ -111,21 +155,47 @@ test("stable checkpoint identities produce diffs and rewind only the exact works
   await writeFile(join(root, "tracked.txt"), "completed\n");
   await writeFile(join(root, "created.txt"), "agent output\n");
   await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
-  const completed = await captureCheckpoint(root, true, checkpointReference("abc-123", "completed"));
+  const completed = await captureCheckpoint(
+    root,
+    true,
+    checkpointReference("abc-123", "completed"),
+  );
 
   assert.notEqual(completed.identity, baseline.identity);
   assert.equal((await captureCheckpoint(root, true)).identity, completed.identity);
   assert.deepEqual(
-    (await checkpointDiff(root, baseline.identity, completed.identity)).map((file) => [file.path, file.state]),
-    [["created.txt", "added"], ["tracked.txt", "modified"]],
+    (await checkpointDiff(root, baseline.identity, completed.identity)).map((file) => [
+      file.path,
+      file.state,
+    ]),
+    [
+      ["created.txt", "added"],
+      ["tracked.txt", "modified"],
+    ],
   );
 
   assert.equal(
-    (await execFileAsync("git", ["-C", root, "cat-file", "-t", checkpointReference("abc-123", "completed")])).stdout.trim(),
+    (
+      await execFileAsync("git", [
+        "-C",
+        root,
+        "cat-file",
+        "-t",
+        checkpointReference("abc-123", "completed"),
+      ])
+    ).stdout.trim(),
     "tree",
   );
   assert.equal(
-    (await execFileAsync("git", ["-C", root, "cat-file", "-t", `${checkpointReference("abc-123", "completed")}-index`])).stdout.trim(),
+    (
+      await execFileAsync("git", [
+        "-C",
+        root,
+        "cat-file",
+        "-t",
+        `${checkpointReference("abc-123", "completed")}-index`,
+      ])
+    ).stdout.trim(),
     "tree",
   );
   await rewindCheckpoint(
@@ -138,14 +208,19 @@ test("stable checkpoint identities produce diffs and rewind only the exact works
   );
   assert.equal(await readFile(join(root, "tracked.txt"), "utf8"), "baseline\n");
   await assert.rejects(() => readFile(join(root, "created.txt"), "utf8"), /ENOENT/);
-  assert.equal((await execFileAsync("git", ["-C", root, "diff", "--cached", "--name-only"])).stdout, "");
+  assert.equal(
+    (await execFileAsync("git", ["-C", root, "diff", "--cached", "--name-only"])).stdout,
+    "",
+  );
   await deleteCheckpointReferences(completed.gitDirectory, "abc-123");
-  await assert.rejects(() => execFileAsync("git", [
-    "--git-dir",
-    completed.gitDirectory,
-    "show-ref",
-    checkpointReference("abc-123", "completed"),
-  ]));
+  await assert.rejects(() =>
+    execFileAsync("git", [
+      "--git-dir",
+      completed.gitDirectory,
+      "show-ref",
+      checkpointReference("abc-123", "completed"),
+    ]),
+  );
 });
 
 test("checkpoint file diffs stay bound to the completed turn after later workspace edits", async () => {
@@ -179,14 +254,15 @@ test("checkpoint capture and rewind fail safely for unrelated or concurrent work
   const completed = await captureCheckpoint(concurrent, true);
   await writeFile(join(concurrent, "tracked.txt"), "changed concurrently\n");
   await assert.rejects(
-    () => rewindCheckpoint(
-      concurrent,
-      completed.identity,
-      completed.indexIdentity,
-      completed.head,
-      baseline.identity,
-      baseline.indexIdentity,
-    ),
+    () =>
+      rewindCheckpoint(
+        concurrent,
+        completed.identity,
+        completed.indexIdentity,
+        completed.head,
+        baseline.identity,
+        baseline.indexIdentity,
+      ),
     /changed after this rewind/,
   );
 
@@ -203,15 +279,27 @@ test("checkpoint capture ignores gitignored paths and refuses filtered/embedded 
   await writeFile(join(ignored, "node_modules", "pkg", "index.js"), "module.exports = 1\n");
   await execFileAsync("git", ["-C", ignored, "add", ".gitignore"]);
   await execFileAsync("git", [
-    "-C", ignored,
-    "-c", "user.name=Fixture",
-    "-c", "user.email=fixture@example.invalid",
-    "commit", "-qm", "ignore local file",
+    "-C",
+    ignored,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "ignore local file",
   ]);
   // Ordinary ignored trees must not block checkpoints; they stay out of the snapshot.
   const baseline = await captureCheckpoint(ignored, false);
   assert.match(baseline.identity, /^[0-9a-f]{40}$/);
-  const tree = await execFileAsync("git", ["-C", ignored, "ls-tree", "-r", "--name-only", baseline.identity]);
+  const tree = await execFileAsync("git", [
+    "-C",
+    ignored,
+    "ls-tree",
+    "-r",
+    "--name-only",
+    baseline.identity,
+  ]);
   assert.equal(tree.stdout.includes("private.env"), false);
   assert.equal(tree.stdout.includes("node_modules"), false);
 
@@ -219,10 +307,15 @@ test("checkpoint capture ignores gitignored paths and refuses filtered/embedded 
   await writeFile(join(filtered, ".gitattributes"), "generated.bin filter=fixture\n");
   await execFileAsync("git", ["-C", filtered, "add", ".gitattributes"]);
   await execFileAsync("git", [
-    "-C", filtered,
-    "-c", "user.name=Fixture",
-    "-c", "user.email=fixture@example.invalid",
-    "commit", "-qm", "mark filtered path",
+    "-C",
+    filtered,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "mark filtered path",
   ]);
   await writeFile(join(filtered, "generated.bin"), "untracked generated content\n");
   await assert.rejects(() => captureCheckpoint(filtered, true), /Git filters/);
@@ -241,14 +334,16 @@ test("rewind refuses a locked Git index before changing workspace files", async 
   const completed = await captureCheckpoint(root, true);
   await writeFile(join(root, ".git", "index.lock"), "concurrent git operation\n", { flag: "wx" });
   try {
-    await assert.rejects(() => rewindCheckpoint(
-      root,
-      completed.identity,
-      completed.indexIdentity,
-      completed.head,
-      baseline.identity,
-      baseline.indexIdentity,
-    ));
+    await assert.rejects(() =>
+      rewindCheckpoint(
+        root,
+        completed.identity,
+        completed.indexIdentity,
+        completed.head,
+        baseline.identity,
+        baseline.indexIdentity,
+      ),
+    );
     assert.equal(await readFile(join(root, "tracked.txt"), "utf8"), "completed\n");
   } finally {
     await rm(join(root, ".git", "index.lock"), { force: true });
@@ -263,10 +358,15 @@ test("rewind preserves non-UTF-8 tracked file bytes", async () => {
   await writeFile(binaryLikePath, baselineBytes);
   await execFileAsync("git", ["-C", root, "add", "legacy.txt"]);
   await execFileAsync("git", [
-    "-C", root,
-    "-c", "user.name=Fixture",
-    "-c", "user.email=fixture@example.invalid",
-    "commit", "-qm", "add legacy text",
+    "-C",
+    root,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "add legacy text",
   ]);
   const baseline = await captureCheckpoint(root, false);
   await writeFile(binaryLikePath, completedBytes);

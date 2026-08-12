@@ -4,13 +4,13 @@ import {
   lstat,
   mkdtemp,
   open,
-  readFile,
   realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const WORKTREE_CLASSIFICATION_CONCURRENCY = 8;
+const INDEX_COPY_BUFFER_BYTES = 256 * 1024;
 
 export type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 
@@ -114,6 +115,62 @@ async function gitBuffer(
     return result.stdout;
   } catch {
     throw new RepositoryError("The workspace checkpoint operation could not be completed.", 409);
+  }
+}
+
+/** Copy a generated Git index into an already-exclusive lock without retaining the whole file. */
+export async function copyIndexIntoLock(
+  sourcePath: string,
+  destination: Pick<FileHandle, "write">,
+): Promise<number> {
+  const source = await open(sourcePath, "r");
+  try {
+    const before = await source.stat();
+    if (!before.isFile())
+      throw new RepositoryError("The checkpoint index is not a regular file.", 409);
+    const buffer = Buffer.allocUnsafe(INDEX_COPY_BUFFER_BYTES);
+    let position = 0;
+    while (position < before.size) {
+      const { bytesRead } = await source.read(
+        buffer,
+        0,
+        Math.min(buffer.length, before.size - position),
+        position,
+      );
+      if (bytesRead === 0) {
+        throw new RepositoryError("The checkpoint index changed while it was copied.", 409);
+      }
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destination.write(
+          buffer,
+          written,
+          bytesRead - written,
+          position + written,
+        );
+        if (result.bytesWritten === 0) {
+          throw new RepositoryError("The checkpoint index lock could not be written.", 409);
+        }
+        written += result.bytesWritten;
+      }
+      position += bytesRead;
+    }
+    if ((await source.read(buffer, 0, 1, before.size)).bytesRead !== 0) {
+      throw new RepositoryError("The checkpoint index changed while it was copied.", 409);
+    }
+    const after = await source.stat();
+    if (
+      after.size !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    ) {
+      throw new RepositoryError("The checkpoint index changed while it was copied.", 409);
+    }
+    return position;
+  } finally {
+    await source.close();
   }
 }
 
@@ -397,7 +454,7 @@ export async function rewindCheckpoint(
     const indexLock = await open(indexLockPath, "wx", 0o600);
     indexLockCreated = true;
     try {
-      await indexLock.writeFile(await readFile(targetIndexPath));
+      await copyIndexIntoLock(targetIndexPath, indexLock);
       await indexLock.sync();
     } finally {
       await indexLock.close();
