@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rename, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -74,6 +83,39 @@ test("changed-file listing stops before and during abandoned work", async () => 
   const listing = listChangedFiles(root, active.signal);
   setTimeout(() => active.abort(), 10);
   await assert.rejects(listing, (error: unknown) => (error as Error).name === "AbortError");
+});
+
+test("untracked-only listings skip rename snapshot candidate probes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-untracked-changes-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await writeFile(join(root, "untracked.txt"), "content\n");
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    assert.deepEqual(await listChangedFiles(root), [
+      {
+        path: "untracked.txt",
+        previousPath: null,
+        state: "added",
+        additions: 1,
+        deletions: 0,
+      },
+    ]);
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+
+  const events = await readFile(trace, "utf8");
+  const attributeChecks = events
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start" && event.argv?.includes("check-attr"));
+  assert.equal(attributeChecks.length, 0);
 });
 
 test("untracked local runtime state stays out of changed files", async () => {

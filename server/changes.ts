@@ -404,6 +404,7 @@ async function pairExactRenames(
   signal?: AbortSignal,
 ): Promise<void> {
   const deleted = entries.filter((entry) => entry.initial === "deleted");
+  if (deleted.length === 0) return;
   const candidates = entries
     .filter((entry) => entry.code === "??" && candidatePredicate(entry))
     .slice(0, MAX_RENAME_CANDIDATES);
@@ -745,22 +746,27 @@ export async function listChangedFiles(
     ...entries.filter((entry) => entry.initial === "deleted").map((entry) => entry.path),
     ...entries.flatMap((entry) => (entry.previousPath ? [entry.previousPath] : [])),
   ];
-  const addPaths = await boundedSnapshotPaths(
-    worktree,
-    [
-      ...entries
-        .filter((entry) => entry.code === "??" && !isHiddenReviewPath(entry.path))
-        .map((entry) => entry.path),
-      ...entries.flatMap((entry) =>
-        entry.previousPath && !isHiddenReviewPath(entry.path) ? [entry.path] : [],
-      ),
-    ],
-    undefined,
-    signal,
+  const hasDeletedPath = entries.some((entry) => entry.initial === "deleted");
+  const hasRenderableRename = entries.some(
+    (entry) => entry.previousPath !== null && !entry.nonRenderable,
   );
-  const needsSnapshot =
-    entries.some((entry) => entry.previousPath !== null && !entry.nonRenderable) ||
-    (entries.some((entry) => entry.initial === "deleted") && addPaths.length > 0);
+  const addPaths =
+    hasDeletedPath || hasRenderableRename
+      ? await boundedSnapshotPaths(
+          worktree,
+          [
+            ...entries
+              .filter((entry) => entry.code === "??" && !isHiddenReviewPath(entry.path))
+              .map((entry) => entry.path),
+            ...entries.flatMap((entry) =>
+              entry.previousPath && !isHiddenReviewPath(entry.path) ? [entry.path] : [],
+            ),
+          ],
+          undefined,
+          signal,
+        )
+      : [];
+  const needsSnapshot = hasRenderableRename || (hasDeletedPath && addPaths.length > 0);
   const snapshot = needsSnapshot
     ? await createWorktreeSnapshot(worktree, removePaths, addPaths, signal)
     : null;
