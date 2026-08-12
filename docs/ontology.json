@@ -467,7 +467,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search, concurrency-bounded browse inspection, file-preview, and context-package cancellation, descriptor-pinned image copying and cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search, concurrency-bounded browse inspection, file-preview, and context-package cancellation, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -1627,6 +1627,12 @@
       "subject": "ConversationContextRouteDispatchModule",
       "source": "Aldunis Code Issue #905 bounded worktree image copy reads",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/905; server/context.ts#stageWorktreeImageCopy",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationContextRouteDispatchModule",
+      "source": "Aldunis Code Issue #922 bounded direct worktree image reads",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/922; server/context.ts#readStableWorktreeImage; server/context.ts#resolveWorktreeImagePath",
       "confidence": 1.0
     },
     {
