@@ -110,12 +110,13 @@ test("untracked-only listings skip rename snapshot candidate probes", async () =
   }
 
   const events = await readFile(trace, "utf8");
-  const attributeChecks = events
+  const gitStarts = events
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
-    .filter((event) => event.event === "start" && event.argv?.includes("check-attr"));
-  assert.equal(attributeChecks.length, 0);
+    .filter((event) => event.event === "start");
+  assert.equal(gitStarts.filter((event) => event.argv?.includes("check-attr")).length, 0);
+  assert.equal(gitStarts.filter((event) => event.argv?.includes("cat-file")).length, 0);
 });
 
 test("untracked local runtime state stays out of changed files", async () => {
