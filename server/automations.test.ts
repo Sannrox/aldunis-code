@@ -9,6 +9,7 @@ import {
   assertValidCron,
   cronMatchesUtc,
   isScheduleDue,
+  MAX_ACTIVE_SCHEDULED_AUTOMATIONS,
   MIN_INTERVAL_SECONDS,
   type Automation,
   type AutomationFire,
@@ -395,6 +396,130 @@ test("tick fires multiple due automations without waiting serially", async () =>
   releaseA();
   await tick;
   assert.ok(order.includes(`end:${a.id}`));
+});
+
+test("scheduled automation execution bounds provider-run concurrency", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-concurrency-"));
+  const store = new AutomationStore(directory);
+  const total = MAX_ACTIVE_SCHEDULED_AUTOMATIONS + 4;
+  const automations: Automation[] = [];
+  for (let index = 0; index < total; index += 1) {
+    automations.push(
+      await store.create({
+        name: `Scheduled ${index}`,
+        threadId: `thread-${index}`,
+        prompt: `run ${index}`,
+        schedule: { kind: "interval", seconds: 60 },
+      }),
+    );
+  }
+  let now = new Date("2026-06-01T00:00:00.000Z");
+  let active = 0;
+  let maximumActive = 0;
+  const started: string[] = [];
+  let releaseFirstWave!: () => void;
+  const firstWaveReleased = new Promise<void>((resolve) => {
+    releaseFirstWave = resolve;
+  });
+  let confirmCapacityReached!: () => void;
+  const capacityReached = new Promise<void>((resolve) => {
+    confirmCapacityReached = resolve;
+  });
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async (automation) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      started.push(automation.id);
+      if (started.length === MAX_ACTIVE_SCHEDULED_AUTOMATIONS) confirmCapacityReached();
+      if (started.length <= MAX_ACTIVE_SCHEDULED_AUTOMATIONS) await firstWaveReleased;
+      active -= 1;
+    },
+    now: () => now,
+  });
+  await scheduler.tick();
+  now = new Date("2026-06-01T00:02:00.000Z");
+  const tick = scheduler.tick();
+  await capacityReached;
+  assert.equal(started.length, MAX_ACTIVE_SCHEDULED_AUTOMATIONS);
+  assert.equal(active, MAX_ACTIVE_SCHEDULED_AUTOMATIONS);
+  releaseFirstWave();
+  await tick;
+  assert.equal(maximumActive, MAX_ACTIVE_SCHEDULED_AUTOMATIONS);
+  assert.deepEqual(
+    started,
+    automations.map(({ id }) => id),
+  );
+  assert.equal(new Set(started).size, total);
+});
+
+test("scheduled automation workers drain queued items after execution failures", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-automations-failure-drain-"));
+  const store = new AutomationStore(directory);
+  const total = MAX_ACTIVE_SCHEDULED_AUTOMATIONS + 4;
+  const automations: Automation[] = [];
+  for (let index = 0; index < total; index += 1) {
+    automations.push(
+      await store.create({
+        name: `Failure ${index}`,
+        threadId: `failure-thread-${index}`,
+        prompt: `run ${index}`,
+        schedule: { kind: "interval", seconds: 60 },
+      }),
+    );
+  }
+  const firstWave = new Set(
+    automations.slice(0, MAX_ACTIVE_SCHEDULED_AUTOMATIONS).map(({ id }) => id),
+  );
+  const attempted: string[] = [];
+  const infrastructureFailure = new Error("fire store unavailable");
+  const completedFire = (automationId: string): AutomationFire => ({
+    schemaVersion: 2,
+    id: `fire-${automationId}`,
+    automationId,
+    key: "existing",
+    kind: "scheduled",
+    scheduledAt: "2026-06-01T00:01:00.000Z",
+    requestedAt: "2026-06-01T00:02:00.000Z",
+    turnId: null,
+    providerRunId: null,
+    status: "completed",
+    error: null,
+    retryOf: null,
+    createdAt: "2026-06-01T00:01:00.000Z",
+    updatedAt: "2026-06-01T00:01:00.000Z",
+  });
+  let now = new Date("2026-06-01T00:00:00.000Z");
+  const scheduler = new AutomationScheduler(store, {
+    isThreadBusy: async () => false,
+    fire: async () => {
+      throw new Error("Existing fires must not launch providers.");
+    },
+    fireStore: {
+      get: async (automationId) => {
+        attempted.push(automationId);
+        if (firstWave.has(automationId)) throw infrastructureFailure;
+        return completedFire(automationId);
+      },
+      recordSkippedBusy: async () => {
+        throw new Error("Unexpected skipped fire.");
+      },
+      claim: async () => {
+        throw new Error("Unexpected fire claim.");
+      },
+      finish: async () => {
+        throw new Error("Unexpected fire finish.");
+      },
+    },
+    now: () => now,
+  });
+  await scheduler.tick();
+  now = new Date("2026-06-01T00:02:00.000Z");
+  await assert.rejects(scheduler.tick(), infrastructureFailure);
+  assert.deepEqual(
+    attempted,
+    automations.map(({ id }) => id),
+  );
 });
 
 test("runNow fires immediately and can report errors", async () => {

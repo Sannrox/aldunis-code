@@ -9,6 +9,7 @@ import type { InteractionMode } from "./provider.ts";
 
 export const AUTOMATIONS_SCHEMA_VERSION = 1 as const;
 export const MIN_INTERVAL_SECONDS = 60;
+export const MAX_ACTIVE_SCHEDULED_AUTOMATIONS = 4;
 
 export type AutomationSchedule =
   { kind: "interval"; seconds: number } | { kind: "cron"; expression: string };
@@ -677,9 +678,22 @@ export class AutomationScheduler {
         claimedThreads.add(automation.threadId);
         due.push({ automation, input });
       }
+      let nextDueIndex = 0;
+      const failures: unknown[] = [];
+      const executeNext = async (): Promise<void> => {
+        while (nextDueIndex < due.length) {
+          const { automation, input } = due[nextDueIndex++];
+          try {
+            await this.#execute(automation, input, now, true);
+          } catch (error) {
+            failures.push(error);
+          }
+        }
+      };
       await Promise.all(
-        due.map(({ automation, input }) => this.#execute(automation, input, now, true)),
+        Array.from({ length: Math.min(MAX_ACTIVE_SCHEDULED_AUTOMATIONS, due.length) }, executeNext),
       );
+      if (failures.length > 0) throw failures[0];
     } finally {
       this.#running = false;
     }
