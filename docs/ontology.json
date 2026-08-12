@@ -155,7 +155,7 @@
     },
     {
       "name": "MaintenanceGardener",
-      "description": "The built-in read-only AutonomyFlow that checks repository availability, scans bounded maintenance signals, ranks findings, and produces an operator report without changing source or launching a provider turn."
+      "description": "The built-in read-only AutonomyFlow that checks repository availability, scans bounded maintenance signals through descriptor-pinned stable regular-file reads of at most 512 KiB each, ranks findings, and produces an operator report without changing source or launching a provider turn."
     },
     {
       "name": "ProviderDiscovery",
@@ -1985,8 +1985,8 @@
     },
     {
       "subject": "MaintenanceGardener",
-      "source": "Aldunis Code autonomy stack",
-      "locator": "server/autonomy.ts#NIGHTLY_GARDENER_FLOW_ID; src/features/dialogs/autonomy-dialog.tsx",
+      "source": "Aldunis Code autonomy stack and Issue #920",
+      "locator": "server/autonomy.ts#NIGHTLY_GARDENER_FLOW_ID; server/autonomy-engine.ts#readBoundedAutonomyTextFile; src/features/dialogs/autonomy-dialog.tsx; https://github.com/Sannrox/aldunis-code/issues/920",
       "confidence": 1.0
     },
     {
