@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -359,6 +359,7 @@ test("profile deletion invalidates a late probe result", async () => {
     `#!/usr/bin/env node
 const fs = require("node:fs");
 fs.writeFileSync(${JSON.stringify(started)}, "started");
+process.on("SIGTERM", () => {});
 const waiting = setInterval(() => {
   if (!fs.existsSync(${JSON.stringify(release)})) return;
   clearInterval(waiting);
@@ -390,7 +391,6 @@ const waiting = setInterval(() => {
   }
 
   await store.delete(saved.id);
-  await writeFile(release, "release");
   await invalidated;
 
   assert.equal(store.activeProbeCount, 0);
@@ -409,6 +409,7 @@ test("profile save invalidates a late probe result", async () => {
 const fs = require("node:fs");
 fs.appendFileSync(${JSON.stringify(calls)}, "call\\n");
 fs.writeFileSync(${JSON.stringify(started)}, "started");
+process.on("SIGTERM", () => {});
 const waiting = setInterval(() => {
   if (!fs.existsSync(${JSON.stringify(release)})) return;
   clearInterval(waiting);
@@ -450,8 +451,8 @@ const waiting = setInterval(() => {
     store.refresh(saved.id, "availability"),
   ];
   await save;
-  await writeFile(release, "release");
   await invalidated;
+  await writeFile(release, "release");
   const [refreshed, duplicate] = await Promise.all(postSaveRefreshes);
 
   const current = (await store.list()).find((profile) => profile.id === saved.id)!;
@@ -463,6 +464,61 @@ const waiting = setInterval(() => {
   assert.equal(current.probes.availability.state, "ready");
   assert.equal(store.activeProbeCount, 0);
   assert.equal(store.retainedProbeProfileCount, 1);
+});
+
+test("failed profile mutations do not cancel valid probes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-profiles-"));
+  const executable = join(directory, "mutation-failure-provider");
+  const started = join(directory, "started");
+  const release = join(directory, "release");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(started)}, "started");
+process.on("SIGTERM", () => {});
+const waiting = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(release)})) return;
+  clearInterval(waiting);
+  console.log("provider 1.0.0");
+}, 10);
+`,
+  );
+  await chmod(executable, 0o700);
+  const store = new ClaudeProfileStore(directory);
+  const saved = await store.save({
+    name: "Unchanged",
+    binaryPath: executable,
+    provider: "adapter:test",
+  });
+  const refresh = store.refresh(saved.id, "availability");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (
+      await readFile(started, "utf8").then(
+        () => true,
+        () => false,
+      )
+    )
+      break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  const profilesPath = join(directory, "claude-profiles.v1.json");
+  await rm(profilesPath);
+  await mkdir(profilesPath);
+  await assert.rejects(
+    store.save({
+      id: saved.id,
+      name: "Rejected",
+      binaryPath: executable,
+      provider: "adapter:test",
+    }),
+  );
+  await writeFile(release, "release");
+  const result = await refresh;
+
+  assert.equal(result.probes.availability.state, "ready");
+  assert.equal(store.activeProbeCount, 0);
 });
 
 test("plain-text negative authentication status is not treated as authenticated", async () => {

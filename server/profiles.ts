@@ -3,11 +3,36 @@ import { randomUUID } from "node:crypto";
 import { access, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { terminateProviderChild } from "./provider-process.ts";
 import { defaultStateDirectory } from "./state.ts";
 
-const execFileAsync = promisify(execFile);
 const PROFILE_SCHEMA_VERSION = 1;
+const PROFILE_PROBE_TERMINATION_GRACE_MS = 1_000;
+
+function execProfileProbe(
+  executable: string,
+  args: string[],
+  options: { environment: NodeJS.ProcessEnv; signal: AbortSignal; timeoutMs: number },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      executable,
+      args,
+      { env: options.environment, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        clearTimeout(timeout);
+        options.signal.removeEventListener("abort", abort);
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      },
+    );
+    const abort = () => terminateProviderChild(child, PROFILE_PROBE_TERMINATION_GRACE_MS);
+    const timeout = setTimeout(abort, options.timeoutMs);
+    timeout.unref();
+    options.signal.addEventListener("abort", abort, { once: true });
+    if (options.signal.aborted) abort();
+  });
+}
 /**
  * Claude model ids accepted on the wire. Full T3-style slugs are preferred in the UI;
  * short aliases and "default" remain for legacy threads/clients.
@@ -136,6 +161,7 @@ export interface ClaudeProfileSnapshot extends ClaudeProfile {
 interface ActiveProfileProbe {
   profileId: string;
   invalidated: boolean;
+  controller: AbortController;
   awaitedMutations: Set<object>;
   promise: Promise<ClaudeProfileSnapshot>;
 }
@@ -320,6 +346,7 @@ export class ClaudeProfileStore {
     for (const active of this.#runningProbes) {
       if (active.profileId === id && !active.awaitedMutations.has(committedMutation)) {
         active.invalidated = true;
+        active.controller.abort();
       }
     }
   }
@@ -613,6 +640,7 @@ export class ClaudeProfileStore {
     const active = {
       profileId: id,
       invalidated: false,
+      controller: new AbortController(),
       awaitedMutations: new Set(this.#pendingProfileMutations.get(id) ?? []),
     } as ActiveProfileProbe;
     const operation = this.#refresh(id, kind, active).finally(() => {
@@ -652,10 +680,10 @@ export class ClaudeProfileStore {
             : runtime.profile.provider === "shikigami"
               ? ["version"]
               : ["--version"];
-        await execFileAsync(runtime.executable, args, {
-          env: runtime.environment,
-          timeout: 5_000,
-          encoding: "utf8",
+        await execProfileProbe(runtime.executable, args, {
+          environment: runtime.environment,
+          signal: active.controller.signal,
+          timeoutMs: 5_000,
         });
         probes.availability = {
           state: "ready",
@@ -669,10 +697,10 @@ export class ClaudeProfileStore {
             : runtime.profile.provider === "shikigami"
               ? ["version"]
               : ["--version"];
-        const result = await execFileAsync(runtime.executable, args, {
-          env: runtime.environment,
-          timeout: 5_000,
-          encoding: "utf8",
+        const result = await execProfileProbe(runtime.executable, args, {
+          environment: runtime.environment,
+          signal: active.controller.signal,
+          timeoutMs: 5_000,
         });
         probes.version = {
           state: "ready",
@@ -688,10 +716,10 @@ export class ClaudeProfileStore {
             authenticated: true,
           };
         } else {
-          const result = await execFileAsync(runtime.executable, ["auth", "status", "--json"], {
-            env: runtime.environment,
-            timeout: 8_000,
-            encoding: "utf8",
+          const result = await execProfileProbe(runtime.executable, ["auth", "status", "--json"], {
+            environment: runtime.environment,
+            signal: active.controller.signal,
+            timeoutMs: 8_000,
           });
           const normalizedStatus = result.stdout.toLowerCase();
           let authenticated =
