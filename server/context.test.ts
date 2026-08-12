@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   assembleContextPackage,
   browseRepositoryFiles,
+  COMPOSER_ATTACHMENT_DIR,
   composePrompt,
   MAX_ACTIVE_BROWSE_INSPECTIONS,
   MAX_CONTEXT_FILES,
+  MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
   resolveContextAttachments,
   resolveWorktreeImagePath,
@@ -758,6 +760,66 @@ test("stageComposerImage writes bounded attachable images under aldunis-code-com
         data: Buffer.alloc(2 * 1024 * 1024 + 1, 1).toString("base64"),
       }),
     /at most 2 MB/,
+  );
+});
+
+test("stageComposerImage bounds staging-tree inspection before writing", async () => {
+  const { root } = await fixture();
+  const staging = join(root, COMPOSER_ATTACHMENT_DIR);
+  await mkdir(staging);
+  await writeFile(join(staging, ".gitignore"), "*\n");
+  await Promise.all(
+    Array.from({ length: MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES }, (_, index) =>
+      mkdir(join(staging, index.toString(16).padStart(8, "0"))),
+    ),
+  );
+  const before = await readdir(staging);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: png.toString("base64"),
+        name: "bounded.png",
+        conversationId: "shared",
+      }),
+    /too many entries to inspect/,
+  );
+  assert.deepEqual(await readdir(staging), before);
+});
+
+test("stageComposerImage retains the existing image quota within the inspection bound", async () => {
+  const { root } = await fixture();
+  const staging = join(root, COMPOSER_ATTACHMENT_DIR);
+  await mkdir(staging);
+  await writeFile(join(staging, ".gitignore"), "*\n");
+  await Promise.all(
+    Array.from({ length: 31 }, async (_, index) => {
+      const scope = join(staging, index.toString(16).padStart(8, "0"));
+      await mkdir(scope);
+      await writeFile(join(scope, `image-${index.toString(16).padStart(8, "0")}.png`), "image");
+    }),
+  );
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  await assert.doesNotReject(() =>
+    stageComposerImage(root, {
+      mediaType: "image/png",
+      data: png.toString("base64"),
+      name: "last.png",
+      conversationId: "shared",
+    }),
+  );
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: png.toString("base64"),
+        name: "overflow.png",
+        conversationId: "shared",
+      }),
+    /staging is full/,
   );
 });
 

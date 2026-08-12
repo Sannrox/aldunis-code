@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readFile, stat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -36,6 +36,7 @@ export const COMPOSER_ATTACHMENT_DIR = "aldunis-code-composer-images";
 const MANAGED_STAGED_IMAGE_NAME = /^.+-[0-9a-f]{8}\.(gif|jpe?g|png|webp)$/i;
 const MAX_STAGED_IMAGES_PER_WORKTREE = 32;
 const MAX_STAGED_BYTES_PER_WORKTREE = 32 * 1024 * 1024;
+export const MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES = 256;
 
 interface PreviewFileOperations {
   readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
@@ -793,9 +794,16 @@ export async function stageComposerImage(
     const canonicalRoot = await constrainPath(worktree, rootAttachmentDir);
     await ensureComposerAttachmentIgnore(canonicalRoot);
     const directory = join(canonicalRoot, scope);
+    const existingDirectory = await lstat(directory).catch(() => null);
+    if (existingDirectory?.isSymbolicLink()) {
+      throw new RepositoryError("Composer attachment path cannot be a symlink.", 403);
+    }
+    if (existingDirectory && !existingDirectory.isDirectory()) {
+      throw new RepositoryError("Composer attachment path is not a directory.", 409);
+    }
+    await enforceComposerAttachmentQuota(canonicalRoot, bytes.length, existingDirectory ? 0 : 1);
     await ensureDirectory(directory);
     const canonicalDirectory = await constrainPath(worktree, directory);
-    await enforceComposerAttachmentQuota(canonicalRoot, bytes.length);
     const canonical = join(canonicalDirectory, fileName);
     await writeFile(canonical, bytes, { flag: "wx" });
     return { path: relativePath, mediaType, size: bytes.length };
@@ -804,14 +812,28 @@ export async function stageComposerImage(
 
 async function listManagedStagedImages(
   rootAttachmentDir: string,
+  maxInspectedEntries: number,
 ): Promise<Array<{ path: string; size: number; mtimeMs: number }>> {
-  const scopes = await readdir(rootAttachmentDir, { withFileTypes: true }).catch(() => []);
   const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
-  for (const scope of scopes) {
+  let inspected = 0;
+  const inspect = () => {
+    inspected += 1;
+    if (inspected > maxInspectedEntries) {
+      throw new RepositoryError(
+        `Composer image staging contains too many entries to inspect (max ${MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES}). Remove older staged images and try again.`,
+        413,
+      );
+    }
+  };
+  const scopes = await opendir(rootAttachmentDir);
+  for await (const scope of scopes) {
+    inspect();
     if (!scope.isDirectory()) continue;
     const scopeDir = join(rootAttachmentDir, scope.name);
-    const entries = await readdir(scopeDir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
+    const entries = await opendir(scopeDir).catch(() => null);
+    if (!entries) continue;
+    for await (const entry of entries) {
+      inspect();
       if (!entry.isFile() || !MANAGED_STAGED_IMAGE_NAME.test(entry.name)) continue;
       const path = join(scopeDir, entry.name);
       const details = await stat(path).catch(() => null);
@@ -826,8 +848,12 @@ async function listManagedStagedImages(
 async function enforceComposerAttachmentQuota(
   rootAttachmentDir: string,
   incomingBytes: number,
+  incomingEntries: number,
 ): Promise<void> {
-  const files = await listManagedStagedImages(rootAttachmentDir);
+  const files = await listManagedStagedImages(
+    rootAttachmentDir,
+    MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES - incomingEntries,
+  );
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0) + incomingBytes;
   if (
     files.length >= MAX_STAGED_IMAGES_PER_WORKTREE ||
