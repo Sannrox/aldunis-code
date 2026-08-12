@@ -74,6 +74,10 @@ seconds as an explicitly stale fallback.
   raw whole-file content, a complete line array, and all parsed envelopes are
   not retained. The rare intact-fork recovery path verifies the file identity,
   rereads it to renumber physical append order, and atomically replaces it.
+- Compaction, deletion, retention, and repair rewrites coalesce legacy
+  assistant chunks in linear time and serialize through a 256 KiB buffer;
+  neither a complete serialized-line array nor a joined history string is
+  retained before the atomic replacement.
 - The workbench list projection (`POST /api/state/load`) returns lifecycle
   metadata only (threads, turns, statuses, sessions, delegated projections).
   Transcript bodies (messages, tool activities, plans, context receipts) load

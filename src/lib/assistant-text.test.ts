@@ -7,10 +7,7 @@ test("joinAssistantTextChunks concatenates streaming tokens without separators",
     joinAssistantTextChunks(["I'll", " check", " the", " project"]),
     "I'll check the project",
   );
-  assert.equal(
-    joinAssistantTextChunks([" sh", "ik", "ig", "ami"]),
-    " shikigami",
-  );
+  assert.equal(joinAssistantTextChunks([" sh", "ik", "ig", "ami"]), " shikigami");
   assert.equal(
     joinAssistantTextChunks(["shikigami", "\n\n", "There", " is"]),
     "shikigami\n\nThere is",
@@ -23,14 +20,19 @@ test("joinAssistantTextChunks preserves whitespace-only frames", () => {
 });
 
 test("joinAssistantTextChunks inserts a break before bare markdown blocks", () => {
-  assert.equal(
-    joinAssistantTextChunks(["steps", ".", "##", " Install"]),
-    "steps.\n## Install",
-  );
+  assert.equal(joinAssistantTextChunks(["steps", ".", "##", " Install"]), "steps.\n## Install");
   assert.equal(
     joinAssistantTextChunks(["vars.", "\n\n", "###", " Requirements"]),
     "vars.\n\n### Requirements",
   );
   // Mid-word tokens must not gain a break.
   assert.equal(joinAssistantTextChunks(["TO", "ML"]), "TOML");
+});
+
+test("joinAssistantTextChunks joins many chunks without changing their content", () => {
+  const chunks = Array.from({ length: 2_000 }, (_, index) => `${index % 10}`.repeat(1_024));
+  const joined = joinAssistantTextChunks(chunks);
+
+  assert.equal(joined.length, 2_048_000);
+  assert.equal(joined, chunks.join(""));
 });

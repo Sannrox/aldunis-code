@@ -42,6 +42,7 @@ export const LOCAL_STATE_SCHEMA_VERSION = 2;
 /** Schema versions accepted when loading on-disk history. */
 const SUPPORTED_LOCAL_STATE_SCHEMA_VERSIONS = new Set([1, LOCAL_STATE_SCHEMA_VERSION]);
 export const MAX_THREADS_PER_PROJECT = 200;
+export const MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES = 256 * 1024;
 
 export interface Project {
   schemaVersion: 2;
@@ -775,13 +776,11 @@ function compareTranscriptOrder(
  * them. Preserves user messages and assistant segments split by tools.
  * Used when rewriting history so older token-per-event logs shrink.
  */
-export function coalesceConsecutiveAssistantMessages(
-  messages: Message[],
-  activities: Activity[],
-): Message[] {
-  if (messages.length <= 1) return messages.map((message) => ({ ...message }));
-  type Item = { kind: "message"; message: Message } | { kind: "activity"; activity: Activity };
-  const items: Item[] = [
+type TranscriptItem =
+  { kind: "message"; message: Message } | { kind: "activity"; activity: Activity };
+
+function orderedTranscriptItems(messages: Message[], activities: Activity[]): TranscriptItem[] {
+  return [
     ...messages.map((message) => ({ kind: "message" as const, message })),
     ...activities.map((activity) => ({ kind: "activity" as const, activity })),
   ].sort((left, right) => {
@@ -789,15 +788,42 @@ export function coalesceConsecutiveAssistantMessages(
     const rightItem = right.kind === "message" ? right.message : right.activity;
     return compareTranscriptOrder(leftItem, rightItem);
   });
+}
+
+function coalescedAssistantMessageCount(messages: Message[], activities: Activity[]): number {
+  let count = 0;
+  let openTurnId: string | null = null;
+  for (const item of orderedTranscriptItems(messages, activities)) {
+    if (item.kind === "activity") {
+      openTurnId = null;
+    } else if (item.message.role !== "assistant") {
+      count += 1;
+      openTurnId = null;
+    } else if (openTurnId !== item.message.turnId) {
+      count += 1;
+      openTurnId = item.message.turnId;
+    }
+  }
+  return count;
+}
+
+export function coalesceConsecutiveAssistantMessages(
+  messages: Message[],
+  activities: Activity[],
+): Message[] {
+  if (messages.length <= 1) return messages.map((message) => ({ ...message }));
   const coalesced: Message[] = [];
   let open: Message | null = null;
+  let openTextParts: string[] = [];
   const closeOpen = () => {
     if (open) {
+      open.text = joinAssistantTextChunks(openTextParts);
       coalesced.push(open);
       open = null;
+      openTextParts = [];
     }
   };
-  for (const item of items) {
+  for (const item of orderedTranscriptItems(messages, activities)) {
     if (item.kind === "activity") {
       closeOpen();
       continue;
@@ -809,17 +835,15 @@ export function coalesceConsecutiveAssistantMessages(
       continue;
     }
     if (open && open.turnId === message.turnId) {
-      open = {
-        ...open,
-        text: joinAssistantTextChunks([open.text, message.text]),
-        // Keep the earliest sequence so intervening activities remain after the
-        // segment start when history is rebuilt.
-        eventSequence: open.eventSequence ?? message.eventSequence,
-      };
+      openTextParts.push(message.text);
+      // Keep the earliest sequence so intervening activities remain after the
+      // segment start when history is rebuilt.
+      open.eventSequence ??= message.eventSequence;
       continue;
     }
     closeOpen();
     open = { ...message };
+    openTextParts = [message.text];
   }
   closeOpen();
   return coalesced;
@@ -1140,6 +1164,39 @@ function sameEventHistoryFile(
   );
 }
 
+interface EventHistoryWriteHandle {
+  writeFile(data: string, encoding: "utf8"): Promise<void>;
+}
+
+export async function writeEventHistory(
+  handle: EventHistoryWriteHandle,
+  envelopes: EventEnvelope[],
+  maxBufferBytes = MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES,
+): Promise<void> {
+  let buffered: string[] = [];
+  let bufferedBytes = 0;
+  const flush = async () => {
+    if (buffered.length === 0) return;
+    await handle.writeFile(buffered.join(""), "utf8");
+    buffered = [];
+    bufferedBytes = 0;
+  };
+  for (const envelope of envelopes) {
+    const serialized = JSON.stringify(envelope);
+    const lineBytes = Buffer.byteLength(serialized, "utf8") + 1;
+    if (lineBytes > maxBufferBytes) {
+      await flush();
+      await handle.writeFile(serialized, "utf8");
+      await handle.writeFile("\n", "utf8");
+      continue;
+    }
+    if (bufferedBytes + lineBytes > maxBufferBytes) await flush();
+    buffered.push(`${serialized}\n`);
+    bufferedBytes += lineBytes;
+  }
+  await flush();
+}
+
 export function defaultStateDirectory(): string {
   const configured = process.env.ALDUNIS_CODE_STATE_DIR;
   if (configured) return configured;
@@ -1252,15 +1309,14 @@ export class LocalStateStore {
 
   async #replaceHistory(envelopes: EventEnvelope[]): Promise<void> {
     const temporary = join(this.directory, `.events-${randomUUID()}.tmp`);
-    const handle = await open(temporary, "wx", 0o600);
     try {
-      const lines = envelopes.map((envelope) => JSON.stringify(envelope));
-      await handle.writeFile(lines.length ? `${lines.join("\n")}\n` : "", "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    try {
+      const handle = await open(temporary, "wx", 0o600);
+      try {
+        await writeEventHistory(handle, envelopes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       await rename(temporary, this.#eventPath);
       const directoryHandle = await open(dirname(this.#eventPath), "r");
       try {
@@ -1454,10 +1510,10 @@ export class LocalStateStore {
     await this.#flushAllOpenAssistants();
     await this.#ensureLoaded();
     const before = this.#projection.messages.length;
-    const after = coalesceConsecutiveAssistantMessages(
+    const after = coalescedAssistantMessageCount(
       this.#projection.messages,
       this.#projection.activities,
-    ).length;
+    );
     if (after >= before) return null;
     await this.#compact((projection) => {
       projection.messages = coalesceConsecutiveAssistantMessages(
