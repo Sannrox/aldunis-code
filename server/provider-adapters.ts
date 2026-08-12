@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, open, opendir, readFile, rename, rm, stat } from "node:fs/promises";
+import { access, mkdir, open, opendir, rename, rm, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join, normalize, parse, resolve, sep } from "node:path";
 import { lock } from "proper-lockfile";
 
@@ -10,6 +10,7 @@ export const MAX_DURABLE_PROVIDER_ADAPTERS = 64;
 export const MAX_PROVIDER_ADAPTER_DIRECTORY_ENTRIES = 256;
 const ALDUNIS_VERSION = "0.1.0";
 const MAX_MANIFEST_BYTES = 64 * 1024;
+export const MAX_PROVIDER_ADAPTER_RECORD_BYTES = MAX_MANIFEST_BYTES * 3;
 const ADAPTER_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$/;
 const VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -60,6 +61,73 @@ export class ProviderAdapterError extends Error {
     readonly status = 400,
   ) {
     super(message);
+  }
+}
+
+export interface ProviderAdapterRecordFileOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{
+      size: number;
+      dev: number | bigint;
+      ino: number | bigint;
+      mtimeMs: number;
+      ctimeMs: number;
+      isFile(): boolean;
+    }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const providerAdapterRecordFileOperations: ProviderAdapterRecordFileOperations = {
+  open: (path) => open(path, "r"),
+};
+
+export async function readProviderAdapterRecordFile(
+  path: string,
+  operations: ProviderAdapterRecordFileOperations = providerAdapterRecordFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) {
+      throw new ProviderAdapterError("Stored adapter metadata is not a file.", 500);
+    }
+    if (details.size > MAX_PROVIDER_ADAPTER_RECORD_BYTES) {
+      throw new ProviderAdapterError("Stored adapter metadata is oversized.");
+    }
+    if (!Number.isSafeInteger(details.size) || details.size < 0) {
+      throw new ProviderAdapterError("Stored adapter metadata has an invalid size.", 500);
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    const grew = (await handle.read(extra, 0, 1, offset)).bytesRead > 0;
+    const current = await handle.stat();
+    if (
+      grew ||
+      offset !== details.size ||
+      current.size !== details.size ||
+      current.dev !== details.dev ||
+      current.ino !== details.ino ||
+      current.mtimeMs !== details.mtimeMs ||
+      current.ctimeMs !== details.ctimeMs
+    ) {
+      throw new ProviderAdapterError("Stored adapter metadata changed while being read.", 500);
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
   }
 }
 
@@ -660,9 +728,7 @@ export class ProviderAdapterStore {
   }
 
   async #read(id: string): Promise<AdapterRecord> {
-    const raw = await readFile(this.#path(id), "utf8");
-    if (Buffer.byteLength(raw) > MAX_MANIFEST_BYTES * 3)
-      throw new ProviderAdapterError("Stored adapter metadata is oversized.");
+    const raw = await readProviderAdapterRecordFile(this.#path(id));
     const value = JSON.parse(raw) as AdapterRecord;
     if (value?.schemaVersion !== 1 || !value.current)
       throw new ProviderAdapterError("Stored adapter metadata is corrupt.", 500);
@@ -695,9 +761,13 @@ export class ProviderAdapterStore {
   async #write(id: string, value: AdapterRecord): Promise<void> {
     await mkdir(this.#directory, { recursive: true, mode: 0o700 });
     const temporary = join(this.#directory, `.${safeId(id)}-${randomUUID()}.tmp`);
+    const serialized = `${JSON.stringify(value, null, 2)}\n`;
+    if (Buffer.byteLength(serialized) > MAX_PROVIDER_ADAPTER_RECORD_BYTES) {
+      throw new ProviderAdapterError("Stored adapter metadata is oversized.");
+    }
     const handle = await open(temporary, "wx", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+      await handle.writeFile(serialized, "utf8");
       await handle.sync();
     } finally {
       await handle.close();

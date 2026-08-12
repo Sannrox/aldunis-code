@@ -6,10 +6,12 @@ import test from "node:test";
 import {
   adapterDigest,
   MAX_DURABLE_PROVIDER_ADAPTERS,
+  MAX_PROVIDER_ADAPTER_RECORD_BYTES,
   MAX_PROVIDER_ADAPTER_DIRECTORY_ENTRIES,
   parseProviderAdapterManifest,
   ProviderAdapterError,
   ProviderAdapterStore,
+  readProviderAdapterRecordFile,
   type ProviderAdapterManifest,
 } from "./provider-adapters.ts";
 
@@ -36,6 +38,104 @@ function input(id: string, version = "1.0.0") {
 test("production provider adapter inventory exposes a finite bound", () => {
   assert.equal(MAX_DURABLE_PROVIDER_ADAPTERS, 64);
   assert.equal(MAX_PROVIDER_ADAPTER_DIRECTORY_ENTRIES, 256);
+  assert.equal(MAX_PROVIDER_ADAPTER_RECORD_BYTES, 192 * 1024);
+});
+
+test("oversized adapter records are rejected before reading file content", async () => {
+  let reads = 0;
+  let closed = false;
+  await assert.rejects(
+    () =>
+      readProviderAdapterRecordFile("/state/provider-adapters/large.agent.json", {
+        async open() {
+          return {
+            async stat() {
+              return {
+                size: MAX_PROVIDER_ADAPTER_RECORD_BYTES + 1,
+                dev: 1,
+                ino: 2,
+                mtimeMs: 3,
+                ctimeMs: 4,
+                isFile: () => true,
+              };
+            },
+            async read() {
+              reads += 1;
+              return { bytesRead: 0 };
+            },
+            async close() {
+              closed = true;
+            },
+          };
+        },
+      }),
+    /metadata is oversized/,
+  );
+  assert.equal(reads, 0);
+  assert.equal(closed, true);
+});
+
+test("adapter record reads fail closed when the file grows", async () => {
+  let reads = 0;
+  await assert.rejects(
+    () =>
+      readProviderAdapterRecordFile("/state/provider-adapters/growing.agent.json", {
+        async open() {
+          return {
+            async stat() {
+              return {
+                size: 2,
+                dev: 1,
+                ino: 2,
+                mtimeMs: 3,
+                ctimeMs: 4,
+                isFile: () => true,
+              };
+            },
+            async read(buffer, offset) {
+              reads += 1;
+              buffer[offset] = reads === 1 ? 0x7b : 0x78;
+              if (reads === 1) buffer[offset + 1] = 0x7d;
+              return { bytesRead: reads === 1 ? 2 : 1 };
+            },
+            async close() {},
+          };
+        },
+      }),
+    /changed while being read/,
+  );
+  assert.equal(reads, 2);
+});
+
+test("adapter record reads fail closed when the file shrinks", async () => {
+  await assert.rejects(
+    () =>
+      readProviderAdapterRecordFile("/state/provider-adapters/shrinking.agent.json", {
+        async open() {
+          return {
+            async stat() {
+              return {
+                size: 2,
+                dev: 1,
+                ino: 2,
+                mtimeMs: 3,
+                ctimeMs: 4,
+                isFile: () => true,
+              };
+            },
+            async read(buffer, offset) {
+              if (offset === 0) {
+                buffer[offset] = 0x7b;
+                return { bytesRead: 1 };
+              }
+              return { bytesRead: 0 };
+            },
+            async close() {},
+          };
+        },
+      }),
+    /changed while being read/,
+  );
 });
 
 test("adapter inventory rejects overflow and retains lifecycle recovery", async () => {
