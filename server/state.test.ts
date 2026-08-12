@@ -877,19 +877,22 @@ test("concurrent first loads share one initialization and keep append order", as
   const holdRead = new Promise<void>((resolve) => {
     releaseRead = resolve;
   });
+  let markWaiting!: () => void;
+  const sawWaiting = new Promise<void>((resolve) => {
+    markWaiting = resolve;
+  });
   let waiting = 0;
   const store = new LocalStateStore(directory, {
     holdHistoryRead: async () => {
       waiting += 1;
+      markWaiting();
       await holdRead;
     },
   });
 
   const firstLoad = store.load();
   const secondLoad = store.inspect();
-  for (let attempt = 0; attempt < 20 && waiting < 1; attempt += 1) {
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  await sawWaiting;
   assert.equal(waiting, 1);
   releaseRead();
   await firstLoad;
