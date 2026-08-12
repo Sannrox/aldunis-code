@@ -47,6 +47,7 @@ import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
+import { WakeStreamCoordinator } from "./wake-stream.ts";
 import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.ts";
@@ -466,34 +467,36 @@ async function handleApi(
         "x-content-type-options": "nosniff",
       });
       response.write(": connected\n\n");
-      const unsubscribe = wake.subscribe((event) => {
-        if (response.writableEnded) return;
-        if (!managedHost) {
-          response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
-          return;
-        }
-        // Membership filter only; inspect avoids cloning full history per wake.
-        void state
-          .inspect()
-          .then((projection) => {
-            if (response.writableEnded) return;
-            const visible = filterManagedProjection(projection as StateProjection, managedHost);
-            if (!visible.threads.some((thread) => thread.id === event.threadId)) return;
-            response.write(`event: thread_status\ndata: ${JSON.stringify(event)}\n\n`);
+      const stream = managedHost
+        ? new WakeStreamCoordinator<Readonly<StateProjection>>({
+            response,
+            // Membership projection is serialized once per burst and inspect
+            // avoids cloning full history for each managed wake stream.
+            loadProjection: () => state.inspect(),
+            selectEvents: (projection, events) => {
+              const visible = filterManagedProjection(projection as StateProjection, managedHost);
+              const threadIds = new Set(visible.threads.map((thread) => thread.id));
+              return events.filter((event) => threadIds.has(event.threadId));
+            },
           })
-          .catch(() => undefined);
-      });
+        : new WakeStreamCoordinator({ response });
+      const unsubscribe = wake.subscribe((event) => stream.publish(event));
       const heartbeat = setInterval(() => {
-        if (response.writableEnded) return;
-        response.write(": heartbeat\n\n");
+        stream.heartbeat();
       }, 30_000);
       heartbeat.unref();
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        request.off("close", cleanup);
+        response.off("close", cleanup);
         clearInterval(heartbeat);
         unsubscribe();
+        stream.close();
       };
-      request.on("close", cleanup);
-      response.on("close", cleanup);
+      request.once("close", cleanup);
+      response.once("close", cleanup);
       return true;
     }
     if (route === "/api/host/capabilities") {

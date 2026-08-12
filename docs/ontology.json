@@ -10,6 +10,10 @@
       "description": "The local Aldunis Code HTTP host that composes repository, provider, approval, persistence, automation, projection, and presentation modules while preserving loopback and authenticated managed-mode authority."
     },
     {
+      "name": "WakeStreamCoordinator",
+      "description": "A request-scoped Aldunis Code host module that bounds thread-status invalidation buffering, honors HTTP writable backpressure, retains only the latest transition per bounded thread set, serializes managed visibility projection once per burst, and releases queued work and drain listeners on disconnect."
+    },
+    {
       "name": "LocalApiDispatchModule",
       "description": "An internal deep module that hides local host route selection, authorization-sensitive request handling, dependency coordination, response normalization, and failure mapping behind one request-dispatch interface."
     },
@@ -481,6 +485,16 @@
       "cardinality": {
         "min": 1,
         "max": 1
+      }
+    },
+    {
+      "name": "coordinates_wake_stream_delivery",
+      "description": "The local host delegates state-event invalidation buffering, managed visibility batching, response backpressure, and disconnect cleanup to one request-scoped coordinator without changing persistence, tenant, provider, or renderer authority.",
+      "domain": "AldunisLocalHost",
+      "range": "WakeStreamCoordinator",
+      "cardinality": {
+        "min": 0,
+        "max": null
       }
     },
     {
@@ -2489,6 +2503,18 @@
       "subject": "ProviderProcessTerminationCoordinator",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#744 and #762",
       "locator": "server/provider-process.ts; server/codex-provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WakeStreamCoordinator",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#767",
+      "locator": "server/wake-stream.ts; server/host.ts#/api/state/events",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_wake_stream_delivery",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#767",
+      "locator": "server/host.ts#/api/state/events; server/wake-stream.ts",
       "confidence": 1.0
     },
     {
