@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  stat,
+  truncate,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +21,9 @@ import {
   acpNotificationEvents,
   acpPromptRequest,
   acpReadTextFile,
+  MAX_ACP_FS_READ_BYTES,
+  readAcpTextFile,
+  type AcpTextFileOperations,
   acpSessionRequest,
   isOptionalGrokNotification,
   isOptionalKiroNotification,
@@ -53,63 +67,106 @@ test("adapter manifests reject unknown fields, traversal, interpreters, and inco
     /stable lowercase dotted identifier/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({ executable: { names: ["node"], arguments: ["-e"] } })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({ executable: { names: ["node"], arguments: ["-e"] } }),
+      ),
     /generic interpreter/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({ executable: { names: ["python3.12"], arguments: ["-c"] } })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({ executable: { names: ["python3.12"], arguments: ["-c"] } }),
+      ),
     /generic interpreter/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({ executable: { names: ["busybox"], arguments: ["sh"] } })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({ executable: { names: ["busybox"], arguments: ["sh"] } }),
+      ),
     /generic interpreter/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      executable: { names: ["git"], arguments: ["-c", "alias.run=!echo compromised", "run"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          executable: { names: ["git"], arguments: ["-c", "alias.run=!echo compromised", "run"] },
+        }),
+      ),
     /generic interpreter/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      executable: { names: ["example-agent"], arguments: ["--eval=code"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          executable: { names: ["example-agent"], arguments: ["--eval=code"] },
+        }),
+      ),
     /option flags only/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      executable: { names: ["example-agent"], arguments: ["../script"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          executable: { names: ["example-agent"], arguments: ["../script"] },
+        }),
+      ),
     /option flags only/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      executable: { names: ["rm"], arguments: ["-rf", "src"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          executable: { names: ["rm"], arguments: ["-rf", "src"] },
+        }),
+      ),
     /option flags only/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      protocol: { kind: "acp", minimumVersion: 2, maximumVersion: 2 } as never,
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          protocol: { kind: "acp", minimumVersion: 2, maximumVersion: 2 } as never,
+        }),
+      ),
     /unsupported protocol/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      presentation: { name: "Example", description: "Invalid URL", website: "::not-a-url" },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          presentation: { name: "Example", description: "Invalid URL", website: "::not-a-url" },
+        }),
+      ),
     /valid HTTPS URL/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      capabilities: { tools: true, images: false, browserObservation: false, sessionResume: false },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          capabilities: {
+            tools: true,
+            images: false,
+            browserObservation: false,
+            sessionResume: false,
+          },
+        }),
+      ),
     /resumable multi-turn sessions/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      capabilities: { tools: true, images: true, browserObservation: false, sessionResume: true },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          capabilities: {
+            tools: true,
+            images: true,
+            browserObservation: false,
+            sessionResume: true,
+          },
+        }),
+      ),
     /do not support normalized image content/,
   );
   assert.throws(
@@ -143,9 +200,13 @@ test("adapter digest is canonical and changes with reviewed authority inputs", (
   assert.equal(adapterDigest(parsed), adapterDigest(reordered));
   assert.notEqual(
     adapterDigest(parsed),
-    adapterDigest(parseProviderAdapterManifest(manifest({
-      capabilities: { ...parsed.capabilities, tools: false },
-    }))),
+    adapterDigest(
+      parseProviderAdapterManifest(
+        manifest({
+          capabilities: { ...parsed.capabilities, tools: false },
+        }),
+      ),
+    ),
   );
 });
 
@@ -153,29 +214,38 @@ test("adapter store installs atomically, blocks duplicates and downgrades, and r
   const directory = await mkdtemp(join(tmpdir(), "aldunis-adapters-"));
   const store = new ProviderAdapterStore(directory);
   const first = parseProviderAdapterManifest(manifest());
-  const input = { source: "file:///tmp/example-adapter.json", digest: adapterDigest(first), manifest: first };
+  const input = {
+    source: "file:///tmp/example-adapter.json",
+    digest: adapterDigest(first),
+    manifest: first,
+  };
   const installed = await store.install(input);
   assert.equal(installed.enabled, true);
-  await assert.rejects(store.install(input), (error: unknown) => (
-    error instanceof ProviderAdapterError && error.status === 409
-  ));
+  await assert.rejects(
+    store.install(input),
+    (error: unknown) => error instanceof ProviderAdapterError && error.status === 409,
+  );
 
   const lower = parseProviderAdapterManifest(manifest({ version: "0.9.0" }));
   await assert.rejects(
     store.update({ ...input, digest: adapterDigest(lower), manifest: lower }),
     /increase the semantic version/,
   );
-  const second = parseProviderAdapterManifest(manifest({
-    version: "1.1.0",
-    capabilities: { ...first.capabilities, tools: false },
-  }));
+  const second = parseProviderAdapterManifest(
+    manifest({
+      version: "1.1.0",
+      capabilities: { ...first.capabilities, tools: false },
+    }),
+  );
   await store.setEnabled(first.id, false);
   await store.update({ ...input, digest: adapterDigest(second), manifest: second });
   assert.equal((await store.get(first.id))?.current.enabled, false);
   assert.equal((await store.version(`adapter:${first.id}@${first.version}`))?.enabled, false);
   assert.equal((await store.rollback(first.id)).manifest.version, "1.0.0");
   assert.equal((await store.setEnabled(first.id, true)).enabled, true);
-  const stored = JSON.parse(await readFile(join(directory, "provider-adapters", `${first.id}.json`), "utf8")) as {
+  const stored = JSON.parse(
+    await readFile(join(directory, "provider-adapters", `${first.id}.json`), "utf8"),
+  ) as {
     current: { manifest: ProviderAdapterManifest };
   };
   assert.equal(stored.current.manifest.version, "1.0.0");
@@ -255,35 +325,47 @@ test("adapter update ordering compares arbitrarily large version identifiers exa
     digest: adapterDigest(first),
     manifest: first,
   });
-  const lower = parseProviderAdapterManifest(manifest({ version: "90071992547409929.999999999999999999.0" }));
-  await assert.rejects(store.update({
-    source: "https://example.com/adapter.json",
-    digest: adapterDigest(lower),
-    manifest: lower,
-  }), /increase the semantic version/);
+  const lower = parseProviderAdapterManifest(
+    manifest({ version: "90071992547409929.999999999999999999.0" }),
+  );
+  await assert.rejects(
+    store.update({
+      source: "https://example.com/adapter.json",
+      digest: adapterDigest(lower),
+      manifest: lower,
+    }),
+    /increase the semantic version/,
+  );
 });
 
 test("adapter inspection fails closed on digest mismatch", () => {
   const directory = join(tmpdir(), "unused-adapter-state");
   const store = new ProviderAdapterStore(directory);
   assert.throws(
-    () => store.inspect({
-      source: "https://example.com/adapter.json",
-      digest: "sha256:deadbeef",
-      manifest: manifest(),
-    }),
+    () =>
+      store.inspect({
+        source: "https://example.com/adapter.json",
+        digest: "sha256:deadbeef",
+        manifest: manifest(),
+      }),
     /digest does not match/,
   );
   assert.throws(
-    () => store.inspect({ source: "not-a-url", digest: adapterDigest(manifest()), manifest: manifest() }),
+    () =>
+      store.inspect({
+        source: "not-a-url",
+        digest: adapterDigest(manifest()),
+        manifest: manifest(),
+      }),
     /valid HTTPS or local file URL/,
   );
   assert.throws(
-    () => store.inspect({
-      source: "https://token@example.com/adapter.json?signature=secret",
-      digest: adapterDigest(manifest()),
-      manifest: manifest(),
-    }),
+    () =>
+      store.inspect({
+        source: "https://token@example.com/adapter.json?signature=secret",
+        digest: adapterDigest(manifest()),
+        manifest: manifest(),
+      }),
     /HTTPS or local file URL/,
   );
 });
@@ -302,9 +384,7 @@ test("selected provider paths must be executable files", async () => {
     installedAt: new Date().toISOString(),
     manifest: parsed,
   };
-  await assert.rejects(
-    new ProviderAdapterStore(directory).resolveExecutable(installed, path),
-  );
+  await assert.rejects(new ProviderAdapterStore(directory).resolveExecutable(installed, path));
 });
 
 test("adapter versions accept SemVer build metadata", () => {
@@ -315,161 +395,213 @@ test("adapter versions accept SemVer build metadata", () => {
 });
 
 test("ACP normalization accepts known updates and rejects unknown protocol messages", () => {
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "hello" },
-      },
-    },
-  }), [{ kind: "assistant_text", text: "hello" }]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_thought_chunk",
-        content: { type: "text", text: "private thought" },
-      },
-    },
-  }), [{ kind: "thinking", text: "private thought" }]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-1",
-        status: "failed",
-      },
-    },
-  }), [{ kind: "tool_finished", toolCallId: "tool-1", failed: true }]);
-  // Grok Build emits metadata-only tool_call_update frames without status.
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-2",
-        kind: "read",
-        title: "Read package.json",
-      },
-    },
-  }), []);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-3",
-        status: "Success",
-      },
-    },
-  }), [{ kind: "tool_finished", toolCallId: "tool-3", failed: false }]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "tool_call_update",
-        toolCallId: "tool-4",
-        status: "running",
-      },
-    },
-  }), []);
-  assert.throws(
-    () => normalizeAcpNotification({
+  assert.deepEqual(
+    normalizeAcpNotification({
       method: "session/update",
-      params: { update: { sessionUpdate: "host_extension" } },
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "hello" },
+        },
+      },
     }),
+    [{ kind: "assistant_text", text: "hello" }],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "private thought" },
+        },
+      },
+    }),
+    [{ kind: "thinking", text: "private thought" }],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          status: "failed",
+        },
+      },
+    }),
+    [{ kind: "tool_finished", toolCallId: "tool-1", failed: true }],
+  );
+  // Grok Build emits metadata-only tool_call_update frames without status.
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-2",
+          kind: "read",
+          title: "Read package.json",
+        },
+      },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-3",
+          status: "Success",
+        },
+      },
+    }),
+    [{ kind: "tool_finished", toolCallId: "tool-3", failed: false }],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-4",
+          status: "running",
+        },
+      },
+    }),
+    [],
+  );
+  assert.throws(
+    () =>
+      normalizeAcpNotification({
+        method: "session/update",
+        params: { update: { sessionUpdate: "host_extension" } },
+      }),
     /Unsupported ACP session update/,
   );
 });
 
 test("ACP inline image content becomes an ephemeral browser observation", () => {
   const data = Buffer.from("acp browser frame", "utf8").toString("base64");
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: {
-          type: "image",
-          data,
-          mimeType: "image/jpeg",
-          title: "Agent page",
-          url: "http://localhost:3000/page?secret=removed",
+  assert.deepEqual(
+    normalizeAcpNotification(
+      {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "image",
+              data,
+              mimeType: "image/jpeg",
+              title: "Agent page",
+              url: "http://localhost:3000/page?secret=removed",
+            },
+          },
         },
       },
-    },
-  }, "adapter:dev.fixture@1.2.3", true), [{
-    kind: "browser_observation",
-    provider: "adapter:dev.fixture@1.2.3",
-    observationId: "agent-message:0",
-    imageData: `data:image/jpeg;base64,${data}`,
-    mediaType: "image/jpeg",
-    title: "Agent page",
-    url: "http://localhost:3000/page",
-  }]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: {
-          type: "image",
-          data,
-          mimeType: "image/jpeg",
+      "adapter:dev.fixture@1.2.3",
+      true,
+    ),
+    [
+      {
+        kind: "browser_observation",
+        provider: "adapter:dev.fixture@1.2.3",
+        observationId: "agent-message:0",
+        imageData: `data:image/jpeg;base64,${data}`,
+        mediaType: "image/jpeg",
+        title: "Agent page",
+        url: "http://localhost:3000/page",
+      },
+    ],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification(
+      {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "image",
+              data,
+              mimeType: "image/jpeg",
+            },
+          },
         },
       },
-    },
-  }, "adapter:dev.fixture@1.2.3", true, "run-1:8"), [{
-    kind: "browser_observation",
-    provider: "adapter:dev.fixture@1.2.3",
-    observationId: "agent-message:run-1:8:0",
-    imageData: `data:image/jpeg;base64,${data}`,
-    mediaType: "image/jpeg",
-  }]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: [
-          { type: "text", text: "The page says " },
-          { type: "image", data, mimeType: "image/jpeg" },
-        ],
+      "adapter:dev.fixture@1.2.3",
+      true,
+      "run-1:8",
+    ),
+    [
+      {
+        kind: "browser_observation",
+        provider: "adapter:dev.fixture@1.2.3",
+        observationId: "agent-message:run-1:8:0",
+        imageData: `data:image/jpeg;base64,${data}`,
+        mediaType: "image/jpeg",
       },
-    },
-  }, "adapter:dev.fixture@1.2.3", true), [
-    { kind: "assistant_text", text: "The page says " },
-    {
-      kind: "browser_observation",
-      provider: "adapter:dev.fixture@1.2.3",
-      observationId: "agent-message:1",
-      imageData: `data:image/jpeg;base64,${data}`,
-      mediaType: "image/jpeg",
-    },
-  ]);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "tool_call_update",
+    ],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification(
+      {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: [
+              { type: "text", text: "The page says " },
+              { type: "image", data, mimeType: "image/jpeg" },
+            ],
+          },
+        },
+      },
+      "adapter:dev.fixture@1.2.3",
+      true,
+    ),
+    [
+      { kind: "assistant_text", text: "The page says " },
+      {
+        kind: "browser_observation",
+        provider: "adapter:dev.fixture@1.2.3",
+        observationId: "agent-message:1",
+        imageData: `data:image/jpeg;base64,${data}`,
+        mediaType: "image/jpeg",
+      },
+    ],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification(
+      {
+        method: "session/update",
+        params: {
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "browser-1",
+            status: "completed",
+            content: [{ type: "content", content: { type: "image", data, mimeType: "image/png" } }],
+          },
+        },
+      },
+      "adapter:dev.fixture@1.2.3",
+      true,
+    ),
+    [
+      {
+        kind: "browser_observation",
+        provider: "adapter:dev.fixture@1.2.3",
+        observationId: "tool:browser-1:0",
+        imageData: `data:image/png;base64,${data}`,
+        mediaType: "image/png",
         toolCallId: "browser-1",
-        status: "completed",
-        content: [{ type: "content", content: { type: "image", data, mimeType: "image/png" } }],
       },
-    },
-  }, "adapter:dev.fixture@1.2.3", true), [
-    {
-      kind: "browser_observation",
-      provider: "adapter:dev.fixture@1.2.3",
-      observationId: "tool:browser-1:0",
-      imageData: `data:image/png;base64,${data}`,
-      mediaType: "image/png",
-      toolCallId: "browser-1",
-    },
-    { kind: "tool_finished", toolCallId: "browser-1", failed: false },
-  ]);
+      { kind: "tool_finished", toolCallId: "browser-1", failed: false },
+    ],
+  );
 });
 
 test("ACP selected models are session-advertised before set_model", () => {
@@ -487,38 +619,53 @@ test("ACP selected models are session-advertised before set_model", () => {
 });
 
 test("ACP plans preserve adapter provenance and map only reported statuses", () => {
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "plan",
-        entries: [
-          { content: "Inspect", status: "completed", priority: "high" },
-          { content: "Implement", status: "in_progress" },
-          { content: "Decide" },
-        ],
+  assert.deepEqual(
+    normalizeAcpNotification(
+      {
+        method: "session/update",
+        params: {
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              { content: "Inspect", status: "completed", priority: "high" },
+              { content: "Implement", status: "in_progress" },
+              { content: "Decide" },
+            ],
+          },
+        },
       },
-    },
-  }, "adapter:dev.fixture@1.2.3"), [{
-    kind: "plan_updated",
-    artifact: {
-      id: "session:session-1",
-      provider: "adapter:dev.fixture@1.2.3",
-      steps: [
-        { content: "Inspect", status: "completed" },
-        { content: "Implement", status: "active" },
-        { content: "Decide", status: "neutral" },
-      ],
-    },
-  }]);
-  assert.throws(() => normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      sessionId: "session-1",
-      update: { sessionUpdate: "plan", entries: [{ content: "Nope", status: "guessed" }] },
-    },
-  }, "adapter:dev.fixture@1.2.3"), /Unsupported ACP plan status/);
+      "adapter:dev.fixture@1.2.3",
+    ),
+    [
+      {
+        kind: "plan_updated",
+        artifact: {
+          id: "session:session-1",
+          provider: "adapter:dev.fixture@1.2.3",
+          steps: [
+            { content: "Inspect", status: "completed" },
+            { content: "Implement", status: "active" },
+            { content: "Decide", status: "neutral" },
+          ],
+        },
+      },
+    ],
+  );
+  assert.throws(
+    () =>
+      normalizeAcpNotification(
+        {
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: { sessionUpdate: "plan", entries: [{ content: "Nope", status: "guessed" }] },
+          },
+        },
+        "adapter:dev.fixture@1.2.3",
+      ),
+    /Unsupported ACP plan status/,
+  );
 });
 
 test("the shipped Kiro adapter is declarative, direct-only, and schema-valid", async () => {
@@ -573,27 +720,39 @@ test("the shipped OpenCode adapter is declarative, direct-only, and schema-valid
 });
 
 test("Kiro optional notifications are capability-isolated from core ACP events", () => {
-  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
-    jsonrpc: "2.0",
-    method: "_kiro.dev/compaction/status",
-    params: { status: "started" },
-  }), true);
-  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
-    jsonrpc: "2.0",
-    id: 7,
-    method: "_kiro.dev/commands/options",
-    params: {},
-  }), false);
-  assert.equal(isOptionalKiroNotification("dev.kiro.cli", {
-    jsonrpc: "2.0",
-    method: "unknown/extension",
-    params: {},
-  }), false);
-  assert.equal(isOptionalKiroNotification("example.acp-agent", {
-    jsonrpc: "2.0",
-    method: "_kiro.dev/compaction/status",
-    params: { status: "started" },
-  }), false);
+  assert.equal(
+    isOptionalKiroNotification("dev.kiro.cli", {
+      jsonrpc: "2.0",
+      method: "_kiro.dev/compaction/status",
+      params: { status: "started" },
+    }),
+    true,
+  );
+  assert.equal(
+    isOptionalKiroNotification("dev.kiro.cli", {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "_kiro.dev/commands/options",
+      params: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionalKiroNotification("dev.kiro.cli", {
+      jsonrpc: "2.0",
+      method: "unknown/extension",
+      params: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionalKiroNotification("example.acp-agent", {
+      jsonrpc: "2.0",
+      method: "_kiro.dev/compaction/status",
+      params: { status: "started" },
+    }),
+    false,
+  );
 });
 
 test("the shipped Grok Build adapter is declarative, direct-only, and schema-valid", async () => {
@@ -627,32 +786,47 @@ test("the shipped Grok Build adapter is declarative, direct-only, and schema-val
 });
 
 test("Grok optional notifications are capability-isolated from core ACP events", () => {
-  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
-    jsonrpc: "2.0",
-    method: "_x.ai/mcp/servers_updated",
-    params: { mcpServers: [] },
-  }), true);
-  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
-    jsonrpc: "2.0",
-    method: "_x.ai/session/prompt_complete",
-    params: { sessionId: "s1" },
-  }), true);
-  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
-    jsonrpc: "2.0",
-    id: 4,
-    method: "_x.ai/mcp/servers_updated",
-    params: {},
-  }), false);
-  assert.equal(isOptionalGrokNotification("dev.xai.grok-build", {
-    jsonrpc: "2.0",
-    method: "session/update",
-    params: {},
-  }), false);
-  assert.equal(isOptionalGrokNotification("dev.kiro.cli", {
-    jsonrpc: "2.0",
-    method: "_x.ai/mcp/servers_updated",
-    params: {},
-  }), false);
+  assert.equal(
+    isOptionalGrokNotification("dev.xai.grok-build", {
+      jsonrpc: "2.0",
+      method: "_x.ai/mcp/servers_updated",
+      params: { mcpServers: [] },
+    }),
+    true,
+  );
+  assert.equal(
+    isOptionalGrokNotification("dev.xai.grok-build", {
+      jsonrpc: "2.0",
+      method: "_x.ai/session/prompt_complete",
+      params: { sessionId: "s1" },
+    }),
+    true,
+  );
+  assert.equal(
+    isOptionalGrokNotification("dev.xai.grok-build", {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "_x.ai/mcp/servers_updated",
+      params: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionalGrokNotification("dev.xai.grok-build", {
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {},
+    }),
+    false,
+  );
+  assert.equal(
+    isOptionalGrokNotification("dev.kiro.cli", {
+      jsonrpc: "2.0",
+      method: "_x.ai/mcp/servers_updated",
+      params: {},
+    }),
+    false,
+  );
 });
 
 test("ACP fs/read_text_file is worktree-bounded and supports line windows", async () => {
@@ -666,80 +840,225 @@ test("ACP fs/read_text_file is worktree-bounded and supports line windows", asyn
     () => acpReadTextFile(root, { path: join(root, "..", "outside.txt") }),
     /escapes the conversation worktree|not readable/,
   );
+  await assert.rejects(() => acpReadTextFile(root, { path: root }), /not a regular file/);
+});
+
+test("ACP text-file reads reject oversize before content allocation", async () => {
+  let opened = false;
+  const identity = {
+    size: BigInt(MAX_ACP_FS_READ_BYTES + 1),
+    dev: 1n,
+    ino: 2n,
+    mode: 0o100600n,
+    mtimeNs: 3n,
+    ctimeNs: 4n,
+    isFile: () => true,
+  };
+  const operations: AcpTextFileOperations = {
+    lstat: async () => identity,
+    open: async () => {
+      opened = true;
+      throw new Error("must not open");
+    },
+  };
+
+  await assert.rejects(
+    () => readAcpTextFile("oversized.txt", operations),
+    /exceeds the host read size limit/,
+  );
+  assert.equal(opened, false);
+});
+
+test("ACP text-file reads close and reject concurrent changes", async () => {
+  const mutations = {
+    shrink: async (path: string) => truncate(path, 1),
+    growth: async (path: string) => writeFile(path, "more", { flag: "a" }),
+    mutation: async (path: string) => writeFile(path, "changed!"),
+    replacement: async (path: string) => {
+      const next = `${path}.next`;
+      await writeFile(next, "replace");
+      await rename(next, path);
+    },
+    disappearance: async (path: string) => unlink(path),
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const directory = await mkdtemp(join(tmpdir(), `aldunis-acp-read-${name}-`));
+    const path = join(directory, "input.txt");
+    await writeFile(path, "original");
+    let closed = false;
+    let mutated = false;
+    const operations: AcpTextFileOperations = {
+      lstat: (candidate) => stat(candidate, { bigint: true }),
+      open: async (candidate) => {
+        const handle = await open(candidate, "r");
+        return {
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+          read: async (buffer, offset, length, position) => {
+            const result = await handle.read(buffer, offset, length, position);
+            if (!mutated) {
+              mutated = true;
+              await mutate(candidate);
+            }
+            return { bytesRead: result.bytesRead };
+          },
+          stat: () => handle.stat({ bigint: true }),
+        };
+      },
+    };
+
+    await assert.rejects(() => readAcpTextFile(path, operations));
+    assert.equal(closed, true, `${name} must close the ACP text handle`);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("ACP text-file reads reject short reads and close failures", async () => {
+  const identity = {
+    size: 1n,
+    dev: 1n,
+    ino: 2n,
+    mode: 0o100600n,
+    mtimeNs: 3n,
+    ctimeNs: 4n,
+    isFile: () => true,
+  };
+  let shortClosed = false;
+  await assert.rejects(
+    () =>
+      readAcpTextFile("short.txt", {
+        lstat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async () => ({ bytesRead: 0 }),
+          close: async () => {
+            shortClosed = true;
+          },
+        }),
+      }),
+    /changed while being read/,
+  );
+  assert.equal(shortClosed, true);
+
+  await assert.rejects(
+    () =>
+      readAcpTextFile("close.txt", {
+        lstat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async (buffer, offset, length, position) => {
+            if (position >= Number(identity.size)) return { bytesRead: 0 };
+            buffer.fill(0, offset, offset + length);
+            return { bytesRead: length };
+          },
+          close: async () => {
+            throw new Error("sensitive close detail");
+          },
+        }),
+      }),
+    /could not be closed/,
+  );
 });
 
 test("Grok user message echoes normalize as informational without wire exposure", () => {
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "user_message_chunk",
-        content: { type: "text", text: "echoed prompt" },
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "echoed prompt" },
+        },
       },
-    },
-  }), []);
-  assert.deepEqual(normalizeAcpNotification({
-    method: "session/update",
-    params: {
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "pong" },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      method: "session/update",
+      params: {
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "pong" },
+        },
       },
-    },
-  }), [{ kind: "assistant_text", text: "pong" }]);
+    }),
+    [{ kind: "assistant_text", text: "pong" }],
+  );
 });
 
 test("unreviewed positional launch arguments remain rejected outside Kiro and Grok", () => {
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      executable: { names: ["example-agent"], arguments: ["agent", "stdio"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          executable: { names: ["example-agent"], arguments: ["agent", "stdio"] },
+        }),
+      ),
     /option flags only/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      id: "dev.xai.grok-build",
-      executable: { names: ["grok", "grok.exe"], arguments: ["agent", "serve"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          id: "dev.xai.grok-build",
+          executable: { names: ["grok", "grok.exe"], arguments: ["agent", "serve"] },
+        }),
+      ),
     /option flags only/,
   );
   assert.throws(
-    () => parseProviderAdapterManifest(manifest({
-      id: "dev.xai.grok-build",
-      executable: { names: ["grok", "grok.exe"], arguments: ["agent"] },
-    })),
+    () =>
+      parseProviderAdapterManifest(
+        manifest({
+          id: "dev.xai.grok-build",
+          executable: { names: ["grok", "grok.exe"], arguments: ["agent"] },
+        }),
+      ),
     /option flags only/,
   );
 });
 
 test("Kiro session notifications normalize without exposing the wire shape", () => {
-  assert.deepEqual(normalizeAcpNotification({
-    jsonrpc: "2.0",
-    method: "session/notification",
-    params: {
-      sessionId: "kiro-session",
-      update: {
-        type: "AgentMessageChunk",
-        content: { type: "text", text: "hello from Kiro" },
+  assert.deepEqual(
+    normalizeAcpNotification({
+      jsonrpc: "2.0",
+      method: "session/notification",
+      params: {
+        sessionId: "kiro-session",
+        update: {
+          type: "AgentMessageChunk",
+          content: { type: "text", text: "hello from Kiro" },
+        },
       },
-    },
-  }), [{ kind: "assistant_text", text: "hello from Kiro" }]);
-  assert.deepEqual(normalizeAcpNotification({
-    jsonrpc: "2.0",
-    method: "session/notification",
-    params: {
-      sessionId: "kiro-session",
-      update: { type: "TurnEnd" },
-    },
-  }), []);
-  assert.throws(() => normalizeAcpNotification({
-    jsonrpc: "2.0",
-    method: "session/notification",
-    params: {
-      sessionId: "kiro-session",
-      update: { type: "UnknownKiroUpdate" },
-    },
-  }), /malformed session update/);
+    }),
+    [{ kind: "assistant_text", text: "hello from Kiro" }],
+  );
+  assert.deepEqual(
+    normalizeAcpNotification({
+      jsonrpc: "2.0",
+      method: "session/notification",
+      params: {
+        sessionId: "kiro-session",
+        update: { type: "TurnEnd" },
+      },
+    }),
+    [],
+  );
+  assert.throws(
+    () =>
+      normalizeAcpNotification({
+        jsonrpc: "2.0",
+        method: "session/notification",
+        params: {
+          sessionId: "kiro-session",
+          update: { type: "UnknownKiroUpdate" },
+        },
+      }),
+    /malformed session update/,
+  );
 });
 
 test("ACP session load keeps the persisted ID and suppresses validated history replay", () => {
@@ -755,19 +1074,25 @@ test("ACP session load keeps the persisted ID and suppresses validated history r
     },
   };
   assert.deepEqual(acpNotificationEvents(replay, true), []);
-  assert.deepEqual(
-    acpNotificationEvents(replay, false),
-    [{ kind: "assistant_text", text: "prior Kiro answer" }],
-  );
+  assert.deepEqual(acpNotificationEvents(replay, false), [
+    { kind: "assistant_text", text: "prior Kiro answer" },
+  ]);
   assert.throws(
-    () => acpNotificationEvents({
-      ...replay,
-      params: { sessionId: "kiro-session", update: { type: "UnknownKiroUpdate" } },
-    }, true),
+    () =>
+      acpNotificationEvents(
+        {
+          ...replay,
+          params: { sessionId: "kiro-session", update: { type: "UnknownKiroUpdate" } },
+        },
+        true,
+      ),
     /malformed session update/,
   );
   assert.equal(acpLoadedSessionId({}, "kiro-session"), "kiro-session");
-  assert.equal(acpLoadedSessionId({ sessionId: "loaded-session" }, "kiro-session"), "loaded-session");
+  assert.equal(
+    acpLoadedSessionId({ sessionId: "loaded-session" }, "kiro-session"),
+    "loaded-session",
+  );
   assert.throws(() => acpLoadedSessionId({}, undefined), /missing session ID/);
 });
 
@@ -782,31 +1107,39 @@ test("Kiro prompts use the standard ACP prompt field exercised by the CLI", () =
 });
 
 test("ACP echoes opaque allow-once IDs and resumes only when both sides support it", () => {
-  assert.equal(acpAllowOnceOption([
-    { optionId: "deny-generated-7", kind: "reject_once" },
-    { optionId: "permit-generated-8", kind: "allow_once" },
-  ]), "permit-generated-8");
+  assert.equal(
+    acpAllowOnceOption([
+      { optionId: "deny-generated-7", kind: "reject_once" },
+      { optionId: "permit-generated-8", kind: "allow_once" },
+    ]),
+    "permit-generated-8",
+  );
   assert.equal(acpAllowOnceOption([{ optionId: "always", kind: "allow_always" }]), null);
   assert.equal(acpSessionRequest("session-1", true, true, "/worktree").method, "session/load");
   assert.equal(acpSessionRequest("session-1", false, true, "/worktree"), null);
   assert.equal(acpSessionRequest("session-1", true, false, "/worktree"), null);
-  assert.deepEqual(acpSessionRequest(undefined, false, false, "/worktree", {
-    name: "aldunis_browser",
-    command: "/usr/bin/node",
-    args: ["/app/browser-mcp.mjs"],
-    environment: { ALDUNIS_BROWSER_TOKEN: "token" },
-  }), {
-    method: "session/new",
-    params: {
-      cwd: "/worktree",
-      mcpServers: [{
-        name: "aldunis_browser",
-        command: "/usr/bin/node",
-        args: ["/app/browser-mcp.mjs"],
-        env: [{ name: "ALDUNIS_BROWSER_TOKEN", value: "token" }],
-      }],
+  assert.deepEqual(
+    acpSessionRequest(undefined, false, false, "/worktree", {
+      name: "aldunis_browser",
+      command: "/usr/bin/node",
+      args: ["/app/browser-mcp.mjs"],
+      environment: { ALDUNIS_BROWSER_TOKEN: "token" },
+    }),
+    {
+      method: "session/new",
+      params: {
+        cwd: "/worktree",
+        mcpServers: [
+          {
+            name: "aldunis_browser",
+            command: "/usr/bin/node",
+            args: ["/app/browser-mcp.mjs"],
+            env: [{ name: "ALDUNIS_BROWSER_TOKEN", value: "token" }],
+          },
+        ],
+      },
     },
-  });
+  );
   assert.deepEqual(acpSessionRequest(undefined, false, false, "/worktree"), {
     method: "session/new",
     params: { cwd: "/worktree", mcpServers: [] },
