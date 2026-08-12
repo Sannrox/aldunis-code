@@ -6,6 +6,7 @@ import {
   BRANCH_PR_REFRESH_INTERVAL_MS,
   chunkWorktreeRoots,
   indexBranchPrResults,
+  loadBranchPrLookupResults,
   prStatusAriaLabel,
   prStatusLabel,
   startBranchPrStatusPolling,
@@ -187,6 +188,90 @@ test("PR status polling queues a visibility refresh behind an active batch", asy
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(refreshes, 2);
   dispose();
+});
+
+test("PR status polling aborts active work while hidden and on disposal", async () => {
+  let visibilityState: DocumentVisibilityState = "visible";
+  let visibilityListener: (() => void) | undefined;
+  let begin: (() => void) | undefined;
+  const signals: AbortSignal[] = [];
+  const dispose = startBranchPrStatusPolling(
+    async (signal) => {
+      signals.push(signal);
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    },
+    {
+      get visibilityState() {
+        return visibilityState;
+      },
+      addEventListener: (_type, listener) => {
+        visibilityListener = listener;
+      },
+      removeEventListener: (_type, listener) => {
+        if (visibilityListener === listener) visibilityListener = undefined;
+      },
+    },
+    {
+      setTimeout: (callback) => {
+        begin = callback;
+        return 1;
+      },
+      clearTimeout: () => {
+        begin = undefined;
+      },
+      setInterval: () => 2,
+      clearInterval: () => undefined,
+    },
+  );
+
+  begin?.();
+  assert.equal(signals.length, 1);
+  visibilityState = "hidden";
+  visibilityListener?.();
+  assert.equal(signals[0]?.aborted, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  visibilityState = "visible";
+  visibilityListener?.();
+  assert.equal(signals.length, 2);
+  dispose();
+  assert.equal(signals[1]?.aborted, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(signals.length, 2);
+});
+
+test("cancelled PR status loading stops before the next HTTP batch", async () => {
+  const controller = new AbortController();
+  const requests: Array<{ body: string; signal: AbortSignal | null }> = [];
+  const items = Array.from({ length: BRANCH_PR_CLIENT_BATCH_LIMIT + 1 }, (_, index) => ({
+    root: "/repo",
+    worktree: `/wt/${index}`,
+  }));
+
+  await assert.rejects(
+    loadBranchPrLookupResults(items, controller.signal, async (_input, init) => {
+      requests.push({
+        body: String(init?.body),
+        signal: init?.signal instanceof AbortSignal ? init.signal : null,
+      });
+      controller.abort();
+      return new Response(JSON.stringify({ results: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]?.signal, controller.signal);
+  assert.equal(
+    (JSON.parse(requests[0]?.body ?? "{}") as { items?: unknown[] }).items?.length,
+    BRANCH_PR_CLIENT_BATCH_LIMIT,
+  );
 });
 
 test("index and unique helpers prepare batch sidebar lookups", () => {

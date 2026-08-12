@@ -10,7 +10,6 @@ import type {
   DelegatedConversationOutcomeProjection,
   DelegatedConversationRelationship,
   ManagedAccount,
-  BranchPrLookupResult,
   BranchPrStatus,
 } from "../../types";
 import {
@@ -72,8 +71,8 @@ import { delegatedConversationAncestorIds } from "../../lib/delegated-conversati
 import {
   BRANCH_PR_CLIENT_BATCH_LIMIT,
   startBranchPrStatusPolling,
-  chunkWorktreeRoots,
   indexBranchPrResults,
+  loadBranchPrLookupResults,
   uniqueWorktreeRoots,
 } from "../../lib/branch-pr-status";
 
@@ -1157,41 +1156,24 @@ export function CodeWorkbench({
     return JSON.stringify(items);
   }, [listedConversations, projects]);
   useEffect(() => {
-    let cancelled = false;
     const items = JSON.parse(prStatusLookupKey) as Array<{ root: string; worktree: string }>;
     if (items.length === 0) {
       setPrStatusByWorktree(new Map());
       return;
     }
-    const refresh = async () => {
+    const refresh = async (signal: AbortSignal) => {
       try {
-        const results: BranchPrLookupResult[] = [];
-        for (const batch of chunkWorktreeRoots(items, BRANCH_PR_CLIENT_BATCH_LIMIT)) {
-          const response = await fetch("/api/delivery/pr-status/batch", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ items: batch }),
-          });
-          if (!response.ok) continue;
-          const body = (await response.json()) as {
-            results?: BranchPrLookupResult[];
-            error?: string;
-          };
-          if (Array.isArray(body.results)) results.push(...body.results);
-        }
-        if (cancelled) return;
+        const results = await loadBranchPrLookupResults(items, signal);
         setPrStatusByWorktree(indexBranchPrResults(results));
       } catch {
+        if (signal.aborted) return;
         // Soft-fail: missing gh or network issues leave rows without PR chrome.
       }
     };
     // Restore can settle the lookup key a few times, so the initial visible
     // batch stays debounced. Hidden windows do not need GitHub row chrome.
     const stopPolling = startBranchPrStatusPolling(refresh, document);
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
+    return stopPolling;
   }, [prStatusLookupKey]);
   const worktreeLimit = managedWorktreeLimitPreference;
   const lifecycleControl = new ConversationLifecycleControl(refreshStateProjection);

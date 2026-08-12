@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import test from "node:test";
 import {
   BRANCH_PR_BATCH_LIMIT,
+  BRANCH_PR_BATCH_CONCURRENCY,
   BRANCH_PR_CACHE_LIMIT,
   BRANCH_PR_CACHE_TTL_MS,
   BranchPrResultCache,
+  type BranchPrExec,
   clearBranchPrCache,
+  inspectBranchPr,
+  inspectBranchPrBatch,
   normalizeBranchPrState,
   parseBranchPrPayload,
 } from "./branch-pr.ts";
@@ -93,4 +98,81 @@ test("branch PR cache purges expired entries across unrelated keys", () => {
   assert.equal(cache.size, 1);
   assert.equal(cache.get(first.worktree, 1_000 + BRANCH_PR_CACHE_TTL_MS), null);
   assert.ok(cache.get(second.worktree, 1_000 + BRANCH_PR_CACHE_TTL_MS));
+});
+
+test("branch PR batch bounds subprocess fan-out and retains input order", async () => {
+  clearBranchPrCache();
+  let active = 0;
+  let maximumActive = 0;
+  const execute: BranchPrExec = async (command, _args, options) => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise<void>((resolve) => setTimeout(resolve, 2));
+    active -= 1;
+    if (command === "git") return { stdout: `codex/${options.cwd}\n` };
+    return {
+      stdout: JSON.stringify({
+        number: Number(options.cwd.replace("/wt/", "")) + 1,
+        title: options.cwd,
+        state: "OPEN",
+        url: `https://github.com/org/repo/pull/${Number(options.cwd.replace("/wt/", "")) + 1}`,
+      }),
+    };
+  };
+  const worktrees = Array.from({ length: 12 }, (_, index) => `/wt/${index}`);
+
+  const results = await inspectBranchPrBatch(worktrees, undefined, execute);
+
+  assert.ok(maximumActive <= BRANCH_PR_BATCH_CONCURRENCY);
+  assert.deepEqual(
+    results.map((result) => result.worktree),
+    worktrees,
+  );
+});
+
+test("branch PR cancellation terminates the exact child and is not cached", async () => {
+  clearBranchPrCache();
+  const controller = new AbortController();
+  let childClose: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
+  const execute: BranchPrExec = (_command, _args, options) =>
+    new Promise<{ stdout: string }>((resolve, reject) => {
+      const child = execFile(
+        process.execPath,
+        ["-e", "setInterval(() => undefined, 1000)"],
+        options,
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve({ stdout });
+        },
+      );
+      childClose = new Promise((resolveClose) => {
+        child.once("close", (code, signal) => resolveClose({ code, signal }));
+      });
+    });
+  const pending = inspectBranchPr(process.cwd(), controller.signal, execute);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.ok(childClose);
+  assert.deepEqual(await childClose, { code: null, signal: "SIGTERM" });
+
+  let retryCalls = 0;
+  const retry: BranchPrExec = async (command) => {
+    retryCalls += 1;
+    return command === "git"
+      ? { stdout: "codex/retry\n" }
+      : {
+          stdout: JSON.stringify({
+            number: 1,
+            title: "Retry",
+            state: "OPEN",
+            url: "https://github.com/org/repo/pull/1",
+          }),
+        };
+  };
+  assert.equal((await inspectBranchPr(process.cwd(), undefined, retry)).pr?.number, 1);
+  assert.equal(retryCalls, 2);
 });

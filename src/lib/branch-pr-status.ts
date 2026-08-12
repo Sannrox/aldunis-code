@@ -25,6 +25,33 @@ export const BRANCH_PR_CLIENT_BATCH_LIMIT = 24;
 export const BRANCH_PR_INITIAL_REFRESH_DELAY_MS = 250;
 export const BRANCH_PR_REFRESH_INTERVAL_MS = 60_000;
 
+type BranchPrStatusRequest = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export async function loadBranchPrLookupResults(
+  items: ReadonlyArray<{ root: string; worktree: string }>,
+  signal: AbortSignal,
+  request: BranchPrStatusRequest = globalThis.fetch,
+): Promise<BranchPrLookupResult[]> {
+  const results: BranchPrLookupResult[] = [];
+  for (const batch of chunkWorktreeRoots(items, BRANCH_PR_CLIENT_BATCH_LIMIT)) {
+    signal.throwIfAborted();
+    const response = await request("/api/delivery/pr-status/batch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: batch }),
+      signal,
+    });
+    if (!response.ok) continue;
+    const body = (await response.json()) as {
+      results?: BranchPrLookupResult[];
+      error?: string;
+    };
+    if (Array.isArray(body.results)) results.push(...body.results);
+  }
+  signal.throwIfAborted();
+  return results;
+}
+
 interface PollingVisibility {
   readonly visibilityState: DocumentVisibilityState;
   addEventListener(type: "visibilitychange", listener: () => void): void;
@@ -50,7 +77,7 @@ const browserPollingTimers: PollingTimers = {
  * tick never starts a second Git/GitHub inspection while one is in flight.
  */
 export function startBranchPrStatusPolling(
-  refresh: () => Promise<void>,
+  refresh: (signal: AbortSignal) => Promise<void>,
   visibility: PollingVisibility,
   timers: PollingTimers = browserPollingTimers,
 ): () => void {
@@ -59,6 +86,7 @@ export function startBranchPrStatusPolling(
   let inFlight = false;
   let refreshAfterFlight = false;
   let disposed = false;
+  let activeController: AbortController | undefined;
 
   const stopTimers = () => {
     if (initialRefresh !== undefined) timers.clearTimeout(initialRefresh);
@@ -73,9 +101,12 @@ export function startBranchPrStatusPolling(
       return;
     }
     inFlight = true;
+    const controller = new AbortController();
+    activeController = controller;
     try {
-      await refresh();
+      await refresh(controller.signal);
     } finally {
+      if (activeController === controller) activeController = undefined;
       inFlight = false;
       if (refreshAfterFlight) {
         refreshAfterFlight = false;
@@ -85,6 +116,7 @@ export function startBranchPrStatusPolling(
   };
   const start = (immediate: boolean) => {
     stopTimers();
+    activeController?.abort();
     if (disposed || visibility.visibilityState !== "visible") {
       refreshAfterFlight = false;
       return;
@@ -100,6 +132,9 @@ export function startBranchPrStatusPolling(
   return () => {
     disposed = true;
     stopTimers();
+    activeController?.abort();
+    activeController = undefined;
+    refreshAfterFlight = false;
     visibility.removeEventListener("visibilitychange", onVisibilityChange);
   };
 }
