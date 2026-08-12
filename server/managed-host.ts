@@ -4,8 +4,18 @@ import {
   verify as verifySignature,
   type KeyObject,
 } from "node:crypto";
-import { lstat, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import {
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  lstat,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 import {
   canonicalizeDiscoveredWorktreePaths,
@@ -19,6 +29,9 @@ const REQUIRED_SCOPE = "code:workbench";
 const MAX_ASSERTION_TTL_SECONDS = 300;
 const CLOCK_SKEW_SECONDS = 60;
 const MAX_REPLAY_ENTRIES = 10_000;
+const MAX_REPLAY_STATE_BYTES = 2 * 1024 * 1024;
+const REPLAY_STATE_FILE = "managed-assertion-replay.v1.json";
+const REPLAY_LOCK_FILE = "managed-assertion-replay.v1.lock";
 const DEFAULT_MANAGED_DISPLAY_NAME = "Enterprise user";
 const RESERVED_MANAGED_RUNTIME_ENVIRONMENT_KEYS = new Set([
   "PATH",
@@ -32,6 +45,16 @@ const RESERVED_MANAGED_RUNTIME_ENVIRONMENT_KEYS = new Set([
   "SHIKIGAMI_CONFIG",
   "SHIKIGAMI_STATE",
 ]);
+
+interface ManagedAssertionReplayState {
+  schemaVersion: 1;
+  entries: Record<string, number>;
+}
+
+/** Durable single-use JTI store shared across ManagedHost process lifetimes. */
+export interface ManagedAssertionReplayStore {
+  consume(jti: string, expiresAtUnixSeconds: number, nowUnixSeconds: number): Promise<void>;
+}
 
 export interface ManagedRepository {
   id: string;
@@ -376,17 +399,172 @@ export async function loadManagedHostConfiguration(
   };
 }
 
+function emptyReplayState(): ManagedAssertionReplayState {
+  return { schemaVersion: 1, entries: {} };
+}
+
+function pruneReplayEntries(state: ManagedAssertionReplayState, nowUnixSeconds: number): void {
+  for (const [jti, expiresAt] of Object.entries(state.entries)) {
+    if (expiresAt <= nowUnixSeconds) delete state.entries[jti];
+  }
+}
+
+/**
+ * On-disk JTI replay protection for managed assertions. Survives process
+ * restart and coordinates concurrent host processes that share the state
+ * directory via an exclusive lock file.
+ */
+export class FileManagedAssertionReplayStore implements ManagedAssertionReplayStore {
+  readonly #path: string;
+  readonly #lockPath: string;
+  #mutationQueue: Promise<void> = Promise.resolve();
+
+  constructor(readonly directory: string) {
+    this.#path = join(directory, REPLAY_STATE_FILE);
+    this.#lockPath = join(directory, REPLAY_LOCK_FILE);
+  }
+
+  async #load(): Promise<ManagedAssertionReplayState> {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    let raw: string;
+    try {
+      raw = await readFile(this.#path, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyReplayState();
+      throw new ManagedHostError("Managed assertion replay state is unreadable.", 500);
+    }
+    if (Buffer.byteLength(raw, "utf8") > MAX_REPLAY_STATE_BYTES) {
+      throw new ManagedHostError("Managed assertion replay state exceeds the supported size.", 500);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new ManagedHostError("Managed assertion replay state is corrupt or incompatible.", 500);
+    }
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed) ||
+      (parsed as ManagedAssertionReplayState).schemaVersion !== 1 ||
+      typeof (parsed as ManagedAssertionReplayState).entries !== "object" ||
+      (parsed as ManagedAssertionReplayState).entries === null ||
+      Array.isArray((parsed as ManagedAssertionReplayState).entries)
+    ) {
+      throw new ManagedHostError("Managed assertion replay state is corrupt or incompatible.", 500);
+    }
+    const entries = (parsed as ManagedAssertionReplayState).entries;
+    for (const [jti, expiresAt] of Object.entries(entries)) {
+      if (
+        typeof jti !== "string" ||
+        !jti ||
+        typeof expiresAt !== "number" ||
+        !Number.isFinite(expiresAt)
+      ) {
+        throw new ManagedHostError(
+          "Managed assertion replay state is corrupt or incompatible.",
+          500,
+        );
+      }
+    }
+    return { schemaVersion: 1, entries: { ...entries } };
+  }
+
+  async #save(state: ManagedAssertionReplayState): Promise<void> {
+    const serialized = `${JSON.stringify(state)}\n`;
+    if (Buffer.byteLength(serialized, "utf8") > MAX_REPLAY_STATE_BYTES) {
+      throw new ManagedHostError("Managed assertion replay state exceeds the supported size.", 500);
+    }
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    const temporary = `${this.#path}.tmp`;
+    await writeFile(temporary, serialized, { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, this.#path);
+  }
+
+  async #withLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.#mutationQueue;
+    let release = () => undefined;
+    this.#mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    let lock: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          lock = await open(this.#lockPath, "wx", 0o600);
+          await lock.writeFile(`${process.pid}\n${new Date().toISOString()}\n`);
+          break;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          try {
+            const lockState = await stat(this.#lockPath);
+            if (Date.now() - lockState.mtimeMs > 30_000) {
+              await rm(this.#lockPath, { force: true });
+              continue;
+            }
+          } catch (stateError) {
+            if ((stateError as NodeJS.ErrnoException).code !== "ENOENT") throw stateError;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }
+      if (!lock) {
+        throw new ManagedHostError("Managed assertion replay protection is busy.", 503);
+      }
+      return await operation();
+    } finally {
+      if (lock) {
+        await lock.close().catch(() => undefined);
+        await rm(this.#lockPath, { force: true }).catch(() => undefined);
+      }
+      release();
+    }
+  }
+
+  async consume(jti: string, expiresAtUnixSeconds: number, nowUnixSeconds: number): Promise<void> {
+    await this.#withLock(async () => {
+      const state = await this.#load();
+      pruneReplayEntries(state, nowUnixSeconds);
+      const existing = state.entries[jti];
+      if (existing !== undefined && existing > nowUnixSeconds) {
+        throw new ManagedHostError("Managed assertion was already used.", 401);
+      }
+      if (Object.keys(state.entries).length >= MAX_REPLAY_ENTRIES) {
+        throw new ManagedHostError("Managed assertion replay protection is at capacity.", 503);
+      }
+      state.entries[jti] = expiresAtUnixSeconds;
+      await this.#save(state);
+    });
+  }
+}
+
 export class ManagedHost {
-  readonly #replayed = new Map<string, number>();
+  readonly #replayStore: ManagedAssertionReplayStore;
   readonly #repositoriesById: ReadonlyMap<string, ManagedRepository>;
   readonly #repositoriesByRoot: ReadonlyMap<string, ManagedRepository>;
   readonly #now: () => number;
 
   constructor(
     readonly configuration: ManagedHostConfiguration,
-    now: () => number = () => Date.now(),
+    options: {
+      now?: () => number;
+      replayDirectory?: string;
+      replayStore?: ManagedAssertionReplayStore;
+    } = {},
   ) {
-    this.#now = now;
+    this.#now = options.now ?? (() => Date.now());
+    if (options.replayStore) {
+      this.#replayStore = options.replayStore;
+    } else if (options.replayDirectory) {
+      this.#replayStore = new FileManagedAssertionReplayStore(options.replayDirectory);
+    } else {
+      throw new ManagedHostError(
+        "Managed hosted mode requires a durable assertion replay directory.",
+        500,
+      );
+    }
     this.#repositoriesById = new Map(configuration.repositories.map((repo) => [repo.id, repo]));
     this.#repositoriesByRoot = new Map(configuration.repositories.map((repo) => [repo.root, repo]));
   }
@@ -572,27 +750,19 @@ export class ManagedHost {
     }
     const jti = stringClaim(claims.jti, "jti");
     if (jti.length > 200) throw new ManagedHostError("Managed assertion identity is too long.");
-    for (const [key, expiresAt] of this.#replayed) {
-      if (expiresAt <= now) this.#replayed.delete(key);
-    }
-    if (this.#replayed.has(jti))
-      throw new ManagedHostError("Managed assertion was already used.", 401);
-    if (this.#replayed.size >= MAX_REPLAY_ENTRIES) {
-      throw new ManagedHostError("Managed assertion replay protection is at capacity.", 503);
-    }
-    const expectedMethod = claims.method;
-    if (expectedMethod !== undefined && expectedMethod !== request.method) {
+    const expectedMethod = stringClaim(claims.method, "method");
+    if (expectedMethod !== (request.method ?? "")) {
       throw new ManagedHostError("Managed assertion method binding does not match the request.");
     }
-    const expectedPath = claims.path;
-    if (expectedPath !== undefined && expectedPath !== requestPath(request)) {
+    const expectedPath = stringClaim(claims.path, "path");
+    if (expectedPath !== requestPath(request)) {
       throw new ManagedHostError("Managed assertion path binding does not match the request.");
     }
-    const expectedBody = claims.body_sha256;
-    if (expectedBody !== undefined && expectedBody !== bodyDigest(body)) {
+    const expectedBody = stringClaim(claims.body_sha256, "body_sha256");
+    if (expectedBody !== bodyDigest(body)) {
       throw new ManagedHostError("Managed assertion body binding does not match the request.");
     }
-    this.#replayed.set(jti, exp + CLOCK_SKEW_SECONDS);
+    await this.#replayStore.consume(jti, exp + CLOCK_SKEW_SECONDS, now);
     const displayName =
       optionalClaimString(claims.name, "name") ??
       optionalClaimString(claims.display_name, "display_name") ??
