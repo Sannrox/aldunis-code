@@ -43,7 +43,7 @@
     },
     {
       "name": "RemoteAccessRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates remote administration, device pairing, and descriptor route recognition, local-control and managed-host admission, configured-origin readiness, pairing-link derivation, request validation, and response mapping behind one internal dispatch interface while RemoteAuth retains credential, proof, session, and persistence authority."
+      "description": "A deep server-side Aldunis Code module that concentrates remote administration, device pairing, and descriptor route recognition, local-control and managed-host admission, configured-origin readiness, pairing-link derivation, request validation, and response mapping behind one internal dispatch interface while RemoteAuth retains credential, proof, and persistence authority within fixed live-grant, active-session, terminal-history, and proof-replay bounds."
     },
     {
       "name": "DesktopRemoteEnvironmentManager",
@@ -1619,8 +1619,8 @@
     },
     {
       "subject": "RemoteAccessRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#672",
-      "locator": "server/remote-access-routes.ts#handleRemoteAccessRoute",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#672 and #835",
+      "locator": "server/remote-access-routes.ts#handleRemoteAccessRoute; server/remote-auth.ts#RemoteAuth",
       "confidence": 1.0
     },
     {
