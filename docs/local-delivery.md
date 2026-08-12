@@ -60,8 +60,10 @@ has a single-use five-minute preview:
 1. **Prepare candidate** checks the committed tree, computes the accepted
    `aldunis.delivery-candidate/v1` digest, and streams the ordered Git blobs
    through one idle-bounded `git cat-file --batch` subprocess without changing
-   the canonical path, mode, or content framing. It then installs the exact
-   committed lockfile with `npm ci --ignore-scripts` and runs the
+   the canonical path, mode, or content framing. Artifact-tree files use one
+   fixed-size read buffer and fail closed if identity, size, or metadata changes
+   while hashing. Code then installs the exact committed lockfile with
+   `npm ci --ignore-scripts` and runs the
    repository-declared `npm run build` and `npm test`. All three commands run
    in one detached checkout of the exact reviewed commit; package scripts are
    restored from that commit before execution.
