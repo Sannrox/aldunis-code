@@ -515,7 +515,7 @@
     },
     {
       "name": "LocalEventHistoryProjectionStore",
-      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection without retaining complete raw history or parsed-envelope arrays, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
+      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection through replay-local identity indexes without retaining complete raw history, parsed-envelope arrays, or permanent duplicate indexes, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
     },
     {
       "name": "ApplicationShellBootstrapModule",

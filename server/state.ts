@@ -739,6 +739,39 @@ function replaceById<T extends { id: string }>(items: T[], value: T): void {
   else items[index] = value;
 }
 
+type ReplayIndexes = Map<unknown[], Map<string, number>>;
+
+function replayIndex<T extends { id: string }>(
+  items: T[],
+  indexes: ReplayIndexes,
+): Map<string, number> {
+  let index = indexes.get(items);
+  if (!index) {
+    index = new Map(items.map((item, itemIndex) => [item.id, itemIndex]));
+    indexes.set(items, index);
+  }
+  return index;
+}
+
+function replaceByIdDuringReplay<T extends { id: string }>(
+  items: T[],
+  value: T,
+  indexes?: ReplayIndexes,
+): void {
+  if (!indexes) {
+    replaceById(items, value);
+    return;
+  }
+  const index = replayIndex(items, indexes);
+  const existing = index.get(value.id);
+  if (existing === undefined) {
+    index.set(value.id, items.length);
+    items.push(value);
+  } else {
+    items[existing] = value;
+  }
+}
+
 /**
  * ACP streams (Grok, Kiro, …) historically persisted many tiny assistant_text
  * rows. For fork transfer and the exact-messages review list, join consecutive
@@ -936,32 +969,59 @@ function buildForkPreview(source: Thread, projection: StateProjection) {
   };
 }
 
-function applyEvent(projection: StateProjection, envelope: EventEnvelope): void {
+function applyEvent(
+  projection: StateProjection,
+  envelope: EventEnvelope,
+  replayIndexes?: ReplayIndexes,
+): void {
   if (envelope.sequence !== projection.sequence + 1) {
     throw new LocalStateError(
       `Local history is not ordered at event ${envelope.sequence}; expected ${projection.sequence + 1}.`,
     );
   }
   const event = envelope.event;
-  if (event.type === "project_saved") replaceById(projection.projects, event.project);
-  else if (event.type === "thread_saved") replaceById(projection.threads, event.thread);
-  else if (event.type === "turn_saved") replaceById(projection.turns, event.turn);
+  if (event.type === "project_saved")
+    replaceByIdDuringReplay(projection.projects, event.project, replayIndexes);
+  else if (event.type === "thread_saved")
+    replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
+  else if (event.type === "turn_saved")
+    replaceByIdDuringReplay(projection.turns, event.turn, replayIndexes);
   else if (event.type === "message_saved") {
-    replaceById(projection.messages, { ...event.message, eventSequence: envelope.sequence });
+    replaceByIdDuringReplay(
+      projection.messages,
+      { ...event.message, eventSequence: envelope.sequence },
+      replayIndexes,
+    );
   } else if (event.type === "activity_saved") {
-    replaceById(projection.activities, { ...event.activity, eventSequence: envelope.sequence });
+    replaceByIdDuringReplay(
+      projection.activities,
+      { ...event.activity, eventSequence: envelope.sequence },
+      replayIndexes,
+    );
   } else if (event.type === "plan_saved") {
-    const existing = projection.plans.find((plan) => plan.id === event.plan.id);
-    replaceById(projection.plans, {
-      ...event.plan,
-      eventSequence: existing?.eventSequence ?? envelope.sequence,
-    });
+    const existingIndex = replayIndexes
+      ? replayIndex(projection.plans, replayIndexes).get(event.plan.id)
+      : undefined;
+    const existing = replayIndexes
+      ? existingIndex === undefined
+        ? undefined
+        : projection.plans[existingIndex]
+      : projection.plans.find((plan) => plan.id === event.plan.id);
+    replaceByIdDuringReplay(
+      projection.plans,
+      { ...event.plan, eventSequence: existing?.eventSequence ?? envelope.sequence },
+      replayIndexes,
+    );
   } else if (event.type === "context_receipt_saved") {
-    replaceById(projection.contextReceipts, event.contextReceipt);
+    replaceByIdDuringReplay(projection.contextReceipts, event.contextReceipt, replayIndexes);
   } else if (event.type === "usage_receipt_saved") {
-    replaceById(projection.usageReceipts, event.usageReceipt);
+    replaceByIdDuringReplay(projection.usageReceipts, event.usageReceipt, replayIndexes);
   } else if (event.type === "governance_correlation_saved") {
-    replaceById(projection.governanceCorrelations, event.governanceCorrelation);
+    replaceByIdDuringReplay(
+      projection.governanceCorrelations,
+      event.governanceCorrelation,
+      replayIndexes,
+    );
   } else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
       (item) =>
@@ -971,11 +1031,11 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     if (index === -1) projection.providerSessions.push(event.providerSession);
     else projection.providerSessions[index] = event.providerSession;
   } else if (event.type === "checkpoint_saved") {
-    replaceById(projection.checkpoints, event.checkpoint);
+    replaceByIdDuringReplay(projection.checkpoints, event.checkpoint, replayIndexes);
   } else if (event.type === "annotation_saved") {
-    replaceById(projection.annotations, event.annotation);
+    replaceByIdDuringReplay(projection.annotations, event.annotation, replayIndexes);
   } else if (event.type === "file_review_saved") {
-    replaceById(projection.fileReviews, event.fileReview);
+    replaceByIdDuringReplay(projection.fileReviews, event.fileReview, replayIndexes);
   } else if (event.type === "conversation_deletion_saved") {
     const index = projection.conversationDeletions.findIndex(
       (item) => item.threadId === event.conversationDeletion.threadId,
@@ -983,30 +1043,34 @@ function applyEvent(projection: StateProjection, envelope: EventEnvelope): void 
     if (index === -1) projection.conversationDeletions.push(event.conversationDeletion);
     else projection.conversationDeletions[index] = event.conversationDeletion;
   } else if (event.type === "fork_created") {
-    replaceById(projection.threads, event.thread);
-    replaceById(projection.forks, event.fork);
+    replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
+    replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
   } else if (event.type === "fork_saved") {
-    replaceById(projection.forks, event.fork);
+    replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
   } else if (event.type === "delegated_relationship_saved") {
-    replaceById(projection.delegatedRelationships, event.delegatedRelationship);
+    replaceByIdDuringReplay(
+      projection.delegatedRelationships,
+      event.delegatedRelationship,
+      replayIndexes,
+    );
   } else if (event.type === "input_request_saved") {
-    replaceById(projection.inputRequests, event.inputRequest);
+    replaceByIdDuringReplay(projection.inputRequests, event.inputRequest, replayIndexes);
   } else if (event.type === "input_receipt_saved") {
-    replaceById(projection.inputReceipts, event.inputReceipt);
+    replaceByIdDuringReplay(projection.inputReceipts, event.inputReceipt, replayIndexes);
   } else if (event.type === "automation_fire_saved") {
-    replaceById(projection.automationFires, event.automationFire);
+    replaceByIdDuringReplay(projection.automationFires, event.automationFire, replayIndexes);
   } else if (event.type === "autonomy_run_saved") {
-    replaceById(projection.autonomyRuns, event.autonomyRun);
+    replaceByIdDuringReplay(projection.autonomyRuns, event.autonomyRun, replayIndexes);
   } else if (event.type === "autonomy_task_saved") {
-    replaceById(projection.autonomyTasks, event.autonomyTask);
+    replaceByIdDuringReplay(projection.autonomyTasks, event.autonomyTask, replayIndexes);
   } else if (event.type === "autonomy_flow_saved") {
-    replaceById(projection.autonomyFlows, event.autonomyFlow);
+    replaceByIdDuringReplay(projection.autonomyFlows, event.autonomyFlow, replayIndexes);
   } else if (event.type === "heartbeat_monitor_saved") {
-    replaceById(projection.heartbeatMonitors, event.heartbeatMonitor);
+    replaceByIdDuringReplay(projection.heartbeatMonitors, event.heartbeatMonitor, replayIndexes);
   } else if (event.type === "standing_order_saved") {
-    replaceById(projection.standingOrders, event.standingOrder);
+    replaceByIdDuringReplay(projection.standingOrders, event.standingOrder, replayIndexes);
   } else if (event.type === "autonomy_hook_saved") {
-    replaceById(projection.autonomyHooks, event.autonomyHook);
+    replaceByIdDuringReplay(projection.autonomyHooks, event.autonomyHook, replayIndexes);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
@@ -1306,6 +1370,7 @@ export class LocalStateStore {
       let maximumSequence = 0;
       let firstMismatch: { actual: number; expected: number } | null = null;
       let forkSequences: Set<number> | null = null;
+      const replayIndexes: ReplayIndexes = new Map();
       for await (const envelope of streamEventEnvelopes(handle)) {
         parsedCount += 1;
         maximumSequence = Math.max(maximumSequence, envelope.sequence);
@@ -1317,7 +1382,7 @@ export class LocalStateStore {
           }
         }
         if (forkSequences) forkSequences.add(envelope.sequence);
-        if (!firstMismatch) applyEvent(projection, envelope);
+        if (!firstMismatch) applyEvent(projection, envelope, replayIndexes);
       }
       if (!firstMismatch) {
         return { envelopes: [], projection, repaired: false, sourceIdentity };
@@ -1339,6 +1404,7 @@ export class LocalStateStore {
       }
       projection = emptyProjection();
       const envelopes: EventEnvelope[] = [];
+      const repairIndexes: ReplayIndexes = new Map();
       const repairHandle = await open(this.#eventPath, "r");
       try {
         const repairIdentity = await repairHandle.stat();
@@ -1351,7 +1417,7 @@ export class LocalStateStore {
         for await (const parsed of streamEventEnvelopes(repairHandle)) {
           const envelope = { ...parsed, sequence: envelopes.length + 1 };
           envelopes.push(envelope);
-          applyEvent(projection, envelope);
+          applyEvent(projection, envelope, repairIndexes);
         }
         if (!sameEventHistoryFile(sourceIdentity, await stat(this.#eventPath))) {
           throw new LocalStateError("Local history changed while it was being repaired.");
