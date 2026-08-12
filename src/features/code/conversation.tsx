@@ -59,6 +59,7 @@ import {
 } from "../../lib/provider-readiness";
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import { initialConversationRunState, reduceConversationRun } from "../../lib/conversation-run";
+import { ConversationTurnSessionModule } from "../../lib/conversation-turn-session";
 import { ContextWindowMeter } from "./context-window-meter";
 import {
   clearComposerDraft,
@@ -280,6 +281,8 @@ const NEW_CONVERSATION_WORKSPACE_COPY: Record<
     detail: "The selected provider creates and owns the workspace when this adapter supports it.",
   },
 };
+
+const conversationTurnSession = new ConversationTurnSessionModule();
 
 export function formatHostLabel(hostname: string | undefined): string {
   return !hostname ||
@@ -1928,7 +1931,6 @@ export function Conversation({
     let activeTurnId: string | null = null;
     let createdThreadId: string | null = null;
     const draftKeyAtSend = activeDraftKey;
-    let runAccepted = false;
     const safeLocalStorage = (): Storage | null => {
       try {
         return typeof window !== "undefined" ? window.localStorage : null;
@@ -1936,90 +1938,64 @@ export function Conversation({
         return null;
       }
     };
-    try {
-      const response = await fetch("/api/provider/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: runRepository.root,
-          worktree: runWorktree.path,
-          prompt: value,
-          mode: turnMode,
-          conversationId,
-          projectId: runRepository.projectId,
-          threadId: threadId ?? undefined,
-          resumeSessionId: turnProvider === "shikigami" ? undefined : (sessionId ?? undefined),
-          contextPins,
-          profileId: managedMode
-            ? null
-            : provider === "claude-code" || provider === "shikigami"
-              ? profileId
-              : null,
-          model: turnModel,
-          provider: turnProvider,
-          workspaceMode,
-          reasoningEffort:
-            !managedMode &&
-            (provider === "codex-cli" ||
-              (typeof provider === "string" && provider.startsWith("adapter:"))) &&
-            turnModel !== "default"
-              ? reasoningEffort
-              : undefined,
-          elementReferences: sentElementReferences.map(
-            ({ screenshot: _screenshot, ...reference }) => reference,
-          ),
-        }),
-      });
-      createdThreadId = response.headers.get("x-thread-id");
-      if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? `${providerName} could not start.`);
-      }
-      // Clear stash only after the host accepted the run.
-      runAccepted = true;
-      if (promptOverride === undefined && draftKeyAtSend) {
-        clearComposerDraft(safeLocalStorage(), draftKeyAtSend);
-      }
-      const activeRunId = response.headers.get("x-provider-run-id");
-      setRunId(activeRunId);
-      setThreadId(createdThreadId);
-      activeTurnId = response.headers.get("x-turn-id");
-      if (activeTurnId && createdThreadId) {
-        void loadFreshConversationHistory(createdThreadId)
-          .then((value) => {
-            const projection = value as { contextReceipts?: ContextReceipt[] };
-            const receipt = projection.contextReceipts?.find(
-              (item) => item.turnId === activeTurnId,
-            );
-            if (receipt) setCurrentContextReceipt(receipt);
-          })
-          .catch(() => undefined);
-      }
-      dispatchConversationRun({ type: "stream_opened", epoch: runEpoch });
-      if (!response.body) throw new Error(`${providerName} returned no event stream.`);
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const result = await reader.read();
-        buffer += decoder.decode(result.value, { stream: !result.done });
-        let newline = buffer.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (line) {
-            const event = JSON.parse(line) as ProviderEvent;
-            dispatchConversationRun({
-              type: "provider_event",
-              epoch: runEpoch,
-              event,
-              occurredAt: new Date().toISOString(),
-            });
-          }
-          newline = buffer.indexOf("\n");
+    const result = await conversationTurnSession.start({
+      body: {
+        root: runRepository.root,
+        worktree: runWorktree.path,
+        prompt: value,
+        mode: turnMode,
+        conversationId,
+        projectId: runRepository.projectId,
+        threadId: threadId ?? undefined,
+        resumeSessionId: turnProvider === "shikigami" ? undefined : (sessionId ?? undefined),
+        contextPins,
+        profileId: managedMode
+          ? null
+          : provider === "claude-code" || provider === "shikigami"
+            ? profileId
+            : null,
+        model: turnModel,
+        provider: turnProvider,
+        workspaceMode,
+        reasoningEffort:
+          !managedMode &&
+          (provider === "codex-cli" ||
+            (typeof provider === "string" && provider.startsWith("adapter:"))) &&
+          turnModel !== "default"
+            ? reasoningEffort
+            : undefined,
+        elementReferences: sentElementReferences.map(
+          ({ screenshot: _screenshot, ...reference }) => reference,
+        ),
+      },
+      epoch: runEpoch,
+      providerName,
+      dispatch: dispatchConversationRun,
+      onAccepted: async (ids) => {
+        // Clear stash only after the host accepted the run.
+        if (promptOverride === undefined && draftKeyAtSend) {
+          clearComposerDraft(safeLocalStorage(), draftKeyAtSend);
         }
-        if (result.done) break;
-      }
+        setRunId(ids.runId);
+        setThreadId(ids.threadId);
+        createdThreadId = ids.threadId;
+        activeTurnId = ids.turnId;
+        if (ids.turnId && ids.threadId) {
+          void loadFreshConversationHistory(ids.threadId)
+            .then((value) => {
+              const projection = value as { contextReceipts?: ContextReceipt[] };
+              const receipt = projection.contextReceipts?.find(
+                (item) => item.turnId === ids.turnId,
+              );
+              if (receipt) setCurrentContextReceipt(receipt);
+            })
+            .catch(() => undefined);
+        }
+      },
+    });
+    createdThreadId = result.threadId ?? createdThreadId;
+    activeTurnId = result.turnId ?? activeTurnId;
+    if (result.status === "completed") {
       if (activeTurnId && createdThreadId) {
         try {
           const projection = (await loadFreshConversationHistory(createdThreadId)) as {
@@ -2032,29 +2008,22 @@ export function Conversation({
           // Checkpoint is optional after a completed turn.
         }
       }
-    } catch (error) {
+    } else {
       if (promptOverride === undefined) {
         setElementReferences(sentElementReferences);
       }
       // Restore unsent text only when the host never accepted the run (avoid
       // re-offering a prompt the provider may already be executing).
-      if (promptOverride === undefined && !runAccepted) {
+      if (promptOverride === undefined && !result.accepted) {
         setDraft(value);
         if (draftKeyAtSend) {
           saveComposerDraft(safeLocalStorage(), draftKeyAtSend, value);
         }
       }
-      dispatchConversationRun({
-        type: "transport_failed",
-        epoch: runEpoch,
-        message: error instanceof Error ? error.message : `${providerName} failed.`,
-        occurredAt: new Date().toISOString(),
-      });
-    } finally {
-      setRunId(null);
-      const availableThreadId = createdThreadId ?? conversation?.id;
-      if (availableThreadId) onConversationAvailable?.(availableThreadId);
     }
+    setRunId(null);
+    const availableThreadId = createdThreadId ?? conversation?.id;
+    if (availableThreadId) onConversationAvailable?.(availableThreadId);
   };
   useEffect(() => {
     if (!workspaceApprovalPending || !preparedWorkspaceRepository) return;
@@ -2125,70 +2094,28 @@ export function Conversation({
   };
   const cancel = async () => {
     if (!runId) return;
-    dispatchConversationRun({ type: "cancel_requested" });
-    try {
-      const response = await fetch(`/api/provider/runs/${runId}/cancel`, { method: "POST" });
-      if (!response.ok) throw new Error("The provider run could not be cancelled.");
-    } catch (error) {
-      dispatchConversationRun({
-        type: "transport_failed",
-        epoch: conversationRun.epoch,
-        message: error instanceof Error ? error.message : "Cancellation failed.",
-        occurredAt: new Date().toISOString(),
-      });
-    }
+    await conversationTurnSession.cancel(runId, conversationRun.epoch, dispatchConversationRun);
   };
   const decideApproval = async (
     approval: Extract<ProviderEvent, { kind: "approval_pending" }>,
     decision: "allow_once" | "deny",
   ) => {
-    try {
-      const response = await fetch(`/api/provider/approvals/${approval.id}/decide`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          runId: approval.runId,
-          conversationId: approval.conversationId,
-          repository: approval.repository,
-          worktree: approval.worktree,
-          toolCallId: approval.toolCallId,
-          decision,
-        }),
-      });
-      const body = (await response.json()) as typeof approval | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Approval decision failed.");
-      dispatchConversationRun({
-        type: "approval_decided",
-        id: approval.id,
-        state: (body as typeof approval).state,
-      });
-    } catch (error) {
-      dispatchConversationRun({
-        type: "interaction_failed",
-        message: error instanceof Error ? error.message : "Approval decision failed.",
-      });
-    }
+    await conversationTurnSession.decideApproval(approval, decision, dispatchConversationRun);
   };
   const answerInput = async (input: Extract<ProviderEvent, { kind: "input_requested" }>) => {
     const answer = (inputAnswers[input.id] ?? "").trim();
     if (!answer || !threadId) return;
     setInputBusyId(input.id);
     try {
-      const response = await fetch(`/api/provider/input-requests/${input.id}/respond`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ childThreadId: threadId, answer }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Input response failed.");
-      dispatchConversationRun({ type: "input_answered", id: input.id });
+      const answered = await conversationTurnSession.answerInput(
+        input,
+        answer,
+        threadId,
+        dispatchConversationRun,
+      );
+      if (!answered) return;
       setHistoryRefreshSignal((current) => current + 1);
       conversationAvailableCallback.current?.(threadId);
-    } catch (error) {
-      dispatchConversationRun({
-        type: "interaction_failed",
-        message: error instanceof Error ? error.message : "Input response failed.",
-      });
     } finally {
       setInputBusyId(null);
     }
