@@ -146,6 +146,10 @@
       "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, models, and profile-specific Shikigami discovery through one authorized-worktree interface; managed mode exposes only its fixed Shikigami model."
     },
     {
+      "name": "RendererProviderDiscoveryCoordinator",
+      "description": "The Aldunis Code renderer module that coalesces same-context provider discovery and sibling listeners for one exact global invalidation event, retains a bounded settled-context LRU, admits at most eight distinct active requests plus 32 deadline-bound FIFO waiters, aborts obsolete generations on every distinct invalidation, and prevents stale late settlement from publishing into either current cache or pane state without changing host provider authority."
+    },
+    {
       "name": "ProviderRunReadiness",
       "description": "The pure Aldunis Code UI eligibility module that interprets provider discovery, selected profiles, and managed constraints through one checking, blocked, or ready interface while leaving launch and model authorization to the host."
     },
@@ -495,6 +499,16 @@
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "loads_bounded_provider_discovery",
+      "description": "The renderer provider-discovery coordinator consumes host-owned provider projections through bounded, cancellable, generation-safe request work without acquiring provider, model, credential, filesystem, or persistence authority.",
+      "domain": "RendererProviderDiscoveryCoordinator",
+      "range": "ProviderDiscovery",
+      "cardinality": {
+        "min": 0,
+        "max": 1
       }
     },
     {
@@ -2503,6 +2517,18 @@
       "subject": "ProviderProcessTerminationCoordinator",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#744 and #762",
       "locator": "server/provider-process.ts; server/codex-provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RendererProviderDiscoveryCoordinator",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#713 and #769",
+      "locator": "src/lib/provider-discovery-cache.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "loads_bounded_provider_discovery",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#769",
+      "locator": "src/lib/provider-discovery-cache.ts; server/provider-discovery.ts",
       "confidence": 1.0
     },
     {

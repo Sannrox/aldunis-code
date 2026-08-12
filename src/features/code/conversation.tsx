@@ -125,7 +125,7 @@ import {
   peekProviderCapabilitiesCache,
 } from "../../lib/provider-capabilities-cache";
 import {
-  invalidateProviderDiscoveryCache,
+  invalidateProviderDiscoveryCacheForEvent,
   loadProviderDiscovery,
   peekProviderDiscoveryCache,
   providerDiscoveryTimedOut,
@@ -726,17 +726,20 @@ export function Conversation({
     }).reasoningEffort;
   });
   const legacyReasoningDefaultRef = useRef<string | null>(null);
+  const providerDiscoveryLoadRef = useRef(0);
   const loadProviders = useCallback(
-    (force = false, showPending = force) => {
-      if (force) {
-        invalidateProviderDiscoveryCache();
-      }
+    (showPending = false) => {
+      const loadId = ++providerDiscoveryLoadRef.current;
       if (showPending) {
         setProvidersLoaded(false);
       }
       void loadProviderDiscovery(providerDiscoveryContext)
-        .then((list) => setProviders(list))
-        .finally(() => setProvidersLoaded(true));
+        .then((list) => {
+          if (providerDiscoveryLoadRef.current === loadId) setProviders(list);
+        })
+        .finally(() => {
+          if (providerDiscoveryLoadRef.current === loadId) setProvidersLoaded(true);
+        });
     },
     [providerDiscoveryContext],
   );
@@ -751,15 +754,22 @@ export function Conversation({
     // (invalidate) is reserved for explicit retries and adapter package changes.
     let delayed: ReturnType<typeof setTimeout> | undefined;
     if (waitingForRepositoryRestore) {
-      delayed = setTimeout(() => loadProviders(false, true), 2_000);
+      delayed = setTimeout(() => loadProviders(true), 2_000);
     } else {
-      loadProviders(false, true);
+      loadProviders(true);
     }
-    const onAdaptersChanged = () => loadProviders(true);
-    const onProviderRetry = () => loadProviders(true, true);
+    const onAdaptersChanged = (event: Event) => {
+      invalidateProviderDiscoveryCacheForEvent(event);
+      loadProviders();
+    };
+    const onProviderRetry = (event: Event) => {
+      invalidateProviderDiscoveryCacheForEvent(event);
+      loadProviders(true);
+    };
     window.addEventListener("aldunis:adapters-changed", onAdaptersChanged);
     window.addEventListener("aldunis:providers-retry", onProviderRetry);
     return () => {
+      providerDiscoveryLoadRef.current += 1;
       if (delayed) clearTimeout(delayed);
       window.removeEventListener("aldunis:adapters-changed", onAdaptersChanged);
       window.removeEventListener("aldunis:providers-retry", onProviderRetry);
@@ -2375,7 +2385,6 @@ export function Conversation({
                     variant="primary"
                     size="lg"
                     onClick={() => {
-                      invalidateProviderDiscoveryCache();
                       window.dispatchEvent(new Event("aldunis:providers-retry"));
                     }}
                   >
