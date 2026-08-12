@@ -502,6 +502,10 @@
       "description": "A deep server-side Aldunis Code module that concentrates destructive local-state maintenance route recognition, request validation, managed-host admission, affected-project exclusion, checkpoint invalidation, Git reference cleanup, persistence ordering, lock release, and response mapping behind one internal dispatch interface without deleting conversation worktrees or changing filesystem, persistence, provider, permission, tenant, or product authority."
     },
     {
+      "name": "LocalEventHistoryProjectionStore",
+      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that streams ordered envelopes directly into one live projection without retaining complete raw history or parsed-envelope arrays, while preserving physical-line corruption evidence and verified two-pass intact-fork repair."
+    },
+    {
       "name": "ApplicationShellBootstrapModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates application-shell boot, project request coalescing and freshness, repository-open consequences, managed-aware restoration ordering, failure recovery, and lifecycle cancellation behind one interface while the local host retains repository and filesystem authority."
     },
@@ -2641,6 +2645,12 @@
       "subject": "LocalStateMaintenanceRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#665",
       "locator": "server/state-maintenance-routes.ts#handleStateMaintenanceRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalEventHistoryProjectionStore",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#869",
+      "locator": "server/state.ts#LocalStateStore; server/state.ts#streamEventEnvelopes; https://github.com/Sannrox/aldunis-code/issues/869",
       "confidence": 1.0
     },
     {

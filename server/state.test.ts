@@ -851,6 +851,20 @@ test("forward sequence gaps still fail visibly without rewriting history", async
   assert.equal(await readFile(eventPath, "utf8"), `${missing.join("\n")}\n`);
 });
 
+test("extreme sequence gaps fail without scanning the numeric range", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const eventPath = join(directory, "events.v1.jsonl");
+  const envelope = JSON.parse((await readFile(eventPath, "utf8")).trim());
+  envelope.sequence = Number.MAX_SAFE_INTEGER;
+  await writeFile(eventPath, `${JSON.stringify(envelope)}\n`, "utf8");
+
+  await assert.rejects(
+    () => new LocalStateStore(directory).load(),
+    /not ordered at event 9007199254740991; expected 1/,
+  );
+});
+
 test("new conversations stop at the bounded per-project retention limit", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -980,6 +994,16 @@ test("corruption and incompatible schemas fail visibly without discarding histor
     () => new LocalStateStore(incompatible.directory).load(),
     (error: unknown) =>
       error instanceof LocalStateError && /incompatible schema/.test(error.message),
+  );
+});
+
+test("streamed history reports physical corruption lines across blank records", async () => {
+  const { directory } = await fixtureStore();
+  await writeFile(join(directory, "events.v1.jsonl"), '\n\n{"schemaVersion":1', "utf8");
+
+  await assert.rejects(
+    () => new LocalStateStore(directory).load(),
+    (error: unknown) => error instanceof LocalStateError && /corrupt at line 3/.test(error.message),
   );
 });
 
