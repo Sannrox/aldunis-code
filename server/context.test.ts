@@ -12,12 +12,14 @@ import {
   MAX_ACTIVE_BROWSE_INSPECTIONS,
   MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES,
   MAX_CONTEXT_FILES,
+  MAX_IMAGE_BYTES,
   MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
   resolveContextAttachments,
   resolveWorktreeImagePath,
   searchRepositoryFiles,
   stageComposerImage,
+  stageWorktreeImageCopy,
 } from "./context.ts";
 import { isComposerAttachmentPath } from "./local-runtime.ts";
 
@@ -930,4 +932,92 @@ test("resolveWorktreeImagePath pins in-tree images and rejects escapes", async (
   await writeFile(join(parent, "outside.png"), Buffer.from([137, 80, 78, 71]));
   assert.equal(await resolveWorktreeImagePath(root, join(parent, "outside.png")), null);
   assert.equal(await resolveWorktreeImagePath(root, join(root, "src/main.ts")), null);
+});
+
+test("stageWorktreeImageCopy rejects descriptor oversize before reading", async () => {
+  const { root } = await fixture();
+  const path = join(root, "image.png");
+  await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  let reads = 0;
+  let closes = 0;
+
+  await assert.rejects(
+    () =>
+      stageWorktreeImageCopy(
+        root,
+        path,
+        {},
+        {
+          async open() {
+            return {
+              async stat() {
+                return { isFile: () => true, size: MAX_IMAGE_BYTES + 1 } as Awaited<
+                  ReturnType<import("node:fs/promises").FileHandle["stat"]>
+                >;
+              },
+              async read() {
+                reads += 1;
+                return { bytesRead: 0, buffer: Buffer.alloc(0) };
+              },
+              async close() {
+                closes += 1;
+              },
+            };
+          },
+        },
+      ),
+    /exceeds the 2 MB image limit/,
+  );
+
+  assert.equal(reads, 0);
+  assert.equal(closes, 1);
+});
+
+test("stageWorktreeImageCopy accepts an exact-limit image", async () => {
+  const { root } = await fixture();
+  const path = join(root, "exact.png");
+  const png = Buffer.alloc(MAX_IMAGE_BYTES);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png);
+  await writeFile(path, png);
+
+  const staged = await stageWorktreeImageCopy(root, path);
+
+  assert.equal(staged?.size, MAX_IMAGE_BYTES);
+  assert.equal(staged?.mediaType, "image/png");
+  assert.match(staged?.path ?? "", /aldunis-code-composer-images\/shared\/exact-/);
+});
+
+test("stageWorktreeImageCopy rejects growth beyond admitted descriptor size", async () => {
+  const { root } = await fixture();
+  const path = join(root, "image.png");
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  await writeFile(path, png);
+  let reads = 0;
+
+  await assert.rejects(
+    () =>
+      stageWorktreeImageCopy(
+        root,
+        path,
+        {},
+        {
+          async open() {
+            return {
+              async stat() {
+                return { isFile: () => true, size: png.length } as Awaited<
+                  ReturnType<import("node:fs/promises").FileHandle["stat"]>
+                >;
+              },
+              async read(buffer: Buffer, offset: number, length: number) {
+                reads += 1;
+                if (reads === 1) png.copy(buffer, offset, 0, length);
+                return { bytesRead: reads === 1 ? length : 1, buffer };
+              },
+              async close() {},
+            };
+          },
+        },
+      ),
+    /changed while it was read/,
+  );
 });

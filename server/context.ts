@@ -46,6 +46,10 @@ interface PreviewFileOperations {
   open(path: string, flags: string): Promise<Pick<FileHandle, "read" | "close">>;
 }
 
+interface WorktreeImageFileOperations {
+  open(path: string, flags: string): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+}
+
 export interface RepositoryBrowseOperations {
   readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
   inspectRepositoryFile(
@@ -57,6 +61,7 @@ export interface RepositoryBrowseOperations {
 }
 
 const previewFileOperations: PreviewFileOperations = { readFile, open };
+const worktreeImageFileOperations: WorktreeImageFileOperations = { open };
 
 function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
   if (mediaType === "image/png") {
@@ -1065,6 +1070,7 @@ export async function stageWorktreeImageCopy(
   worktree: string,
   absolutePath: string,
   options: { conversationId?: string } = {},
+  fileOperations: WorktreeImageFileOperations = worktreeImageFileOperations,
 ): Promise<{ path: string; mediaType: string; size: number } | null> {
   if (!absolutePath || absolutePath.includes("\0") || !isAbsolute(absolutePath)) return null;
   const normalizedWorktree = resolve(worktree);
@@ -1084,12 +1090,33 @@ export async function stageWorktreeImageCopy(
   const mediaType = IMAGE_TYPES[extname(relativePath).toLocaleLowerCase()];
   if (!mediaType) return null;
   const canonical = await constrainPath(worktree, candidate);
-  const bytes = await readFile(canonical);
-  if (bytes.length > MAX_IMAGE_BYTES) {
-    throw new RepositoryError(
-      `${relativePath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
-      413,
-    );
+  const handle = await fileOperations.open(canonical, "r");
+  let bytes: Buffer;
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) return null;
+    if (!Number.isSafeInteger(details.size) || details.size < 0) {
+      throw new RepositoryError(`${relativePath} has an unsupported image size.`, 413);
+    }
+    if (details.size > MAX_IMAGE_BYTES) {
+      throw new RepositoryError(
+        `${relativePath} exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB image limit.`,
+        413,
+      );
+    }
+    bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new RepositoryError(`${relativePath} changed while it was read.`, 409);
+    }
+  } finally {
+    await handle.close();
   }
   if (!matchesImageSignature(bytes, mediaType)) {
     throw new RepositoryError("Image data does not match the declared image type.", 415);
