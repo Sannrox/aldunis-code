@@ -43,6 +43,58 @@ const MIN_PATCH_FOR_RESUME = 5;
 const MODEL_CATALOG_MIN_PATCH = 5;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const RUN_TIMEOUT_MS = 30 * 60_000;
+
+export interface ShikigamiCloseTimer {
+  unref(): void;
+}
+
+export interface ShikigamiCloseTimers {
+  setTimeout(callback: () => void, delayMs: number): ShikigamiCloseTimer;
+  clearTimeout(timer: ShikigamiCloseTimer): void;
+}
+
+const defaultCloseTimers: ShikigamiCloseTimers = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (timer) => clearTimeout(timer as NodeJS.Timeout),
+};
+
+export function waitForShikigamiChildClose(
+  child: ChildProcessWithoutNullStreams,
+  terminate: (child: ChildProcessWithoutNullStreams) => void,
+  waitMs = 2_000,
+  timers: ShikigamiCloseTimers = defaultCloseTimers,
+): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ShikigamiCloseTimer | null = null;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      child.off("close", done);
+      if (timer) timers.clearTimeout(timer);
+      timer = null;
+      resolve();
+    };
+    child.once("close", done);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      done();
+      return;
+    }
+    timer = timers.setTimeout(
+      () => {
+        timer = null;
+        try {
+          terminate(child);
+        } finally {
+          done();
+        }
+      },
+      Math.max(0, waitMs),
+    );
+    timer.unref();
+  });
+}
 const MODEL_CATALOG_TIMEOUT_MS = 15_000;
 const EVENT_PREFIX = "[shikigami] ";
 /** Cap matches shikigami hook timeout_ms max (120s). */
@@ -1211,18 +1263,7 @@ export class ShikigamiAdapter {
         }
       }
 
-      await new Promise<void>((resolve) => {
-        if (active.child.exitCode !== null || active.child.signalCode !== null) {
-          resolve();
-          return;
-        }
-        const done = () => resolve();
-        active.child.once("close", done);
-        setTimeout(() => {
-          this.#terminate(active.child);
-          done();
-        }, 2_000).unref();
-      });
+      await waitForShikigamiChildClose(active.child, (child) => this.#terminate(child));
 
       if (active.spawnFailed) {
         if (!sawTerminal && !pendingTerminal) {
