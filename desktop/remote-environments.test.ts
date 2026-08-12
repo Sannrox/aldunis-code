@@ -331,9 +331,9 @@ test("concurrent connection requests for one environment share admission", async
       /different connection request is already active/,
     );
     assert.deepEqual(await Promise.all([first, second]), [await first, await first]);
-    // One preflight read plus the store's pairing-state update read. A second
-    // connection execution would repeat both operations.
-    assert.equal(listCalls, 2);
+    // One public preflight read. Runtime mutation reloads the complete recovery
+    // inventory internally so it cannot truncate a legacy overflow.
+    assert.equal(listCalls, 1);
   } finally {
     await manager.close();
   }
