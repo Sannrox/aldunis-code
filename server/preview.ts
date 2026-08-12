@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 
@@ -28,6 +28,7 @@ const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 /** Keep terminal snapshots long enough for the 1s status poller to observe them. */
 const TERMINAL_RETAIN_MS = 60_000;
 export const MAX_RETAINED_PREVIEW_SESSIONS = 8;
+export const MAX_PREVIEW_PACKAGE_MANIFEST_BYTES = 256 * 1024;
 const STOP_GRACE_MS = 3_000;
 const STOP_FORCE_MS = 2_000;
 
@@ -186,6 +187,69 @@ export class PreviewError extends Error {
   }
 }
 
+export interface PreviewManifestOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{
+      size: number;
+      dev: number | bigint;
+      ino: number | bigint;
+      mtimeMs: number;
+      ctimeMs: number;
+    }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const previewManifestOperations: PreviewManifestOperations = {
+  open: (path) => open(path, "r"),
+};
+
+export async function readPreviewPackageManifest(
+  path: string,
+  operations: PreviewManifestOperations = previewManifestOperations,
+): Promise<unknown> {
+  const handle = await operations.open(path);
+  try {
+    const details = await handle.stat();
+    if (details.size > MAX_PREVIEW_PACKAGE_MANIFEST_BYTES) {
+      throw new PreviewError(
+        `Preview package.json must be at most ${MAX_PREVIEW_PACKAGE_MANIFEST_BYTES / 1024} KiB.`,
+        413,
+      );
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (result.bytesRead === 0) break;
+      offset += result.bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    const grew = (await handle.read(extra, 0, 1, offset)).bytesRead > 0;
+    const current = await handle.stat();
+    if (
+      grew ||
+      offset !== details.size ||
+      current.size !== details.size ||
+      current.dev !== details.dev ||
+      current.ino !== details.ino ||
+      current.mtimeMs !== details.mtimeMs ||
+      current.ctimeMs !== details.ctimeMs
+    ) {
+      throw new PreviewError("Preview package.json changed while it was being read.", 409);
+    }
+    return JSON.parse(bytes.subarray(0, offset).toString("utf8")) as unknown;
+  } finally {
+    await handle.close();
+  }
+}
+
 export function assertPreviewOrigin(value: string): string {
   let url: URL;
   try {
@@ -207,8 +271,9 @@ export function assertPreviewOrigin(value: string): string {
 async function developmentCommand(worktree: string): Promise<{ command: string; args: string[] }> {
   let value: unknown;
   try {
-    value = JSON.parse(await readFile(join(worktree, "package.json"), "utf8"));
-  } catch {
+    value = await readPreviewPackageManifest(join(worktree, "package.json"));
+  } catch (error) {
+    if (error instanceof PreviewError) throw error;
     throw new PreviewError("The selected worktree has no readable package.json.", 404);
   }
   const scripts =

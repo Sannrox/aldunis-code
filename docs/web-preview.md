@@ -1,6 +1,8 @@
 # Constrained web preview
 
-The preview starts only a selected worktree's declared `npm run dev` script.
+The preview reads at most 256 KiB from the selected worktree's `package.json`
+and starts only its declared `npm run dev` script. Oversized or changing
+manifests fail before approval or process creation.
 The local host spawns `npm` directly without a shell after one scoped approval.
 On POSIX the process is placed in its own process group so stop and host
 shutdown can terminate npm and its descendants (for example Vite) together;
