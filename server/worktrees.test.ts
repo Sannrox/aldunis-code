@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import { openRepository } from "./repository.ts";
 import {
   hasStagedChanges,
+  MAX_MANAGED_WORKTREE_REGISTRY_BYTES,
+  MAX_REMOVED_MANAGED_WORKTREE_RECORDS,
   ManagedWorktreeStore,
   retainBoundedWorktreePlan,
   WORKTREE_PLAN_LIMIT,
@@ -17,6 +19,94 @@ import {
 } from "./worktrees.ts";
 
 const execFileAsync = promisify(execFile);
+
+function managedRecord(id: string, removedAt: string | null): ManagedWorktreeRecord {
+  return {
+    schemaVersion: 1,
+    id,
+    repository: "/repo",
+    path: `/worktrees/${id}`,
+    branch: `codex/${id}`,
+    baseRevision: "a".repeat(40),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastUsedAt: "2026-01-01T00:00:00.000Z",
+    removalPendingAt: null,
+    removedAt,
+  };
+}
+
+test("managed worktree storage rejects oversized history before reading content", async () => {
+  let reads = 0;
+  let closed = false;
+  const store = new ManagedWorktreeStore("/state", {
+    async open() {
+      return {
+        async stat() {
+          return { size: MAX_MANAGED_WORKTREE_REGISTRY_BYTES + 1 };
+        },
+        async read() {
+          reads += 1;
+          return { bytesRead: 0 };
+        },
+        async close() {
+          closed = true;
+        },
+      };
+    },
+  });
+
+  await assert.rejects(() => store.load(), /history exceeds its size limit/);
+  assert.equal(reads, 0);
+  assert.equal(closed, true);
+});
+
+test("managed worktree storage retains protected ownership and bounds removed history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-retention-"));
+  try {
+    const store = new ManagedWorktreeStore(directory);
+    const active = managedRecord("active", null);
+    const pending = {
+      ...managedRecord("pending", null),
+      removalPendingAt: "2026-02-01T00:00:00.000Z",
+    };
+    const removed = Array.from({ length: MAX_REMOVED_MANAGED_WORKTREE_RECORDS + 2 }, (_, index) =>
+      managedRecord(`removed-${index}`, new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()),
+    );
+    await store.save([active, ...removed, pending]);
+    const records = (await store.load()).records;
+    assert.equal(records.length, MAX_REMOVED_MANAGED_WORKTREE_RECORDS + 2);
+    assert.ok(records.some((record) => record.id === active.id));
+    assert.ok(records.some((record) => record.id === pending.id));
+    assert.equal(
+      records.some((record) => record.id === "removed-0"),
+      false,
+    );
+    assert.equal(
+      records.some((record) => record.id === "removed-1"),
+      false,
+    );
+    assert.ok(records.some((record) => record.id === `removed-${removed.length - 1}`));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("managed worktree storage leaves prior state intact when protected records exceed bytes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-size-"));
+  try {
+    const store = new ManagedWorktreeStore(directory);
+    const baseline = managedRecord("baseline", null);
+    await store.save([baseline]);
+    const oversized = {
+      ...managedRecord("oversized", null),
+      path: `/worktrees/${"x".repeat(MAX_MANAGED_WORKTREE_REGISTRY_BYTES)}`,
+    };
+    await assert.rejects(() => store.save([oversized]), /history exceeds its size limit/);
+    assert.deepEqual((await store.load()).records, [baseline]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 function creationPlan(id: string, expiresAt: string): WorktreePlan {
   return {
