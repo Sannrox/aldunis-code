@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -18,11 +18,19 @@ function base64url(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
+function bodyDigest(body: Buffer): string {
+  return createHash("sha256").update(body).digest("base64url");
+}
+
 function assertion(
   privateKey: ReturnType<typeof generateKeyPairSync>["privateKey"],
   overrides: Record<string, unknown> = {},
+  binding: { method?: string; path?: string; body?: Buffer } = {},
 ): string {
   const now = Math.floor(Date.now() / 1000);
+  const method = binding.method ?? "POST";
+  const path = binding.path ?? "/api/host/capabilities";
+  const body = binding.body ?? Buffer.from("{}", "utf8");
   const header = base64url({ alg: "EdDSA", typ: "JWT", kid: "managed-test" });
   const claims = {
     iss: "https://aldunis.test",
@@ -36,6 +44,9 @@ function assertion(
     iat: now,
     exp: now + 60,
     jti: randomUUID(),
+    method,
+    path,
+    body_sha256: bodyDigest(body),
     ...overrides,
   };
   const payload = `${header}.${base64url(claims)}`;
@@ -87,79 +98,175 @@ function configuration(
   };
 }
 
-test("managed assertions fail closed for missing, altered, wrong-audience, and replayed context", async () => {
-  const keys = generateKeyPairSync("ed25519");
-  const root = await realpath(process.cwd());
-  const managed = new ManagedHost(configuration(keys.publicKey, root));
-  const body = Buffer.from("{}", "utf8");
-  const valid = assertion(keys.privateKey);
+async function withReplayDirectory<T>(run: (replayDirectory: string) => Promise<T>): Promise<T> {
+  const replayDirectory = await mkdtemp(join(tmpdir(), "aldunis-managed-replay-"));
+  try {
+    return await run(replayDirectory);
+  } finally {
+    await rm(replayDirectory, { recursive: true, force: true });
+  }
+}
 
-  await assert.rejects(() => managed.verify(request("/api/host/capabilities"), body), /required/);
-  await managed.verify(request("/api/host/capabilities", "POST", valid), body);
-  await assert.rejects(
-    () => managed.verify(request("/api/host/capabilities", "POST", valid), body),
-    /already used/,
-  );
-  await assert.rejects(
-    () =>
-      managed.verify(
-        request(
-          "/api/host/capabilities",
-          "POST",
-          assertion(keys.privateKey, { aud: "wrong-audience" }),
+test("managed assertions fail closed for missing, altered, wrong-audience, and replayed context", async () => {
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const root = await realpath(process.cwd());
+    const managed = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    const body = Buffer.from("{}", "utf8");
+    const valid = assertion(keys.privateKey);
+
+    await assert.rejects(() => managed.verify(request("/api/host/capabilities"), body), /required/);
+    await managed.verify(request("/api/host/capabilities", "POST", valid), body);
+    await assert.rejects(
+      () => managed.verify(request("/api/host/capabilities", "POST", valid), body),
+      /already used/,
+    );
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request(
+            "/api/host/capabilities",
+            "POST",
+            assertion(keys.privateKey, { aud: "wrong-audience" }),
+          ),
+          body,
         ),
-        body,
-      ),
-    /issuer or audience/,
-  );
-  const altered = assertion(keys.privateKey, { tenant_id: "tenant-tampered" });
-  await assert.rejects(
-    () => managed.verify(request("/api/host/capabilities", "POST", altered), body),
-    /tenant/,
-  );
-  const wrongKey = generateKeyPairSync("ed25519");
-  await assert.rejects(
-    () =>
-      managed.verify(
-        request("/api/host/capabilities", "POST", assertion(wrongKey.privateKey)),
-        body,
-      ),
-    /signature/,
-  );
+      /issuer or audience/,
+    );
+    const altered = assertion(keys.privateKey, { tenant_id: "tenant-tampered" });
+    await assert.rejects(
+      () => managed.verify(request("/api/host/capabilities", "POST", altered), body),
+      /tenant/,
+    );
+    const wrongKey = generateKeyPairSync("ed25519");
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request("/api/host/capabilities", "POST", assertion(wrongKey.privateKey)),
+          body,
+        ),
+      /signature/,
+    );
+  });
+});
+
+test("managed assertion JTI replay fails closed after verifier restart against the same store", async () => {
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const root = await realpath(process.cwd());
+    const body = Buffer.from("{}", "utf8");
+    const token = assertion(keys.privateKey);
+    const first = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    await first.verify(request("/api/host/capabilities", "POST", token), body);
+
+    const restarted = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    await assert.rejects(
+      () => restarted.verify(request("/api/host/capabilities", "POST", token), body),
+      /already used/,
+    );
+  });
+});
+
+test("managed assertions reject missing request bindings on protected routes", async () => {
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const root = await realpath(process.cwd());
+    const managed = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    const body = Buffer.from("{}", "utf8");
+
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request(
+            "/api/host/capabilities",
+            "POST",
+            assertion(keys.privateKey, {
+              method: undefined,
+              path: undefined,
+              body_sha256: undefined,
+            }),
+          ),
+          body,
+        ),
+      /missing method/,
+    );
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request(
+            "/api/state/history",
+            "POST",
+            assertion(keys.privateKey, { path: undefined }, { path: "/api/state/history" }),
+          ),
+          body,
+        ),
+      /missing path/,
+    );
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request(
+            "/api/host/capabilities",
+            "POST",
+            assertion(keys.privateKey, { body_sha256: undefined }),
+          ),
+          body,
+        ),
+      /missing body_sha256/,
+    );
+    await assert.rejects(
+      () =>
+        managed.verify(
+          request(
+            "/api/approvals/respond",
+            "POST",
+            assertion(
+              keys.privateKey,
+              {},
+              { path: "/api/host/capabilities", body: Buffer.from('{"ok":true}', "utf8") },
+            ),
+          ),
+          Buffer.from('{"ok":true}', "utf8"),
+        ),
+      /path binding/,
+    );
+  });
 });
 
 test("managed verification returns a bounded account projection from signed claims", async () => {
-  const keys = generateKeyPairSync("ed25519");
-  const root = await realpath(process.cwd());
-  const managed = new ManagedHost(configuration(keys.publicKey, root));
-  const sessionExp = Math.floor(Date.now() / 1000) + 3_600;
-  const identity = await managed.verify(
-    request(
-      "/api/host/capabilities",
-      "POST",
-      assertion(keys.privateKey, {
-        name: "Ada Lovelace",
-        roles: ["developer", "reviewer"],
-        session_exp: sessionExp,
-      }),
-    ),
-    Buffer.from("{}", "utf8"),
-  );
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const root = await realpath(process.cwd());
+    const managed = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    const sessionExp = Math.floor(Date.now() / 1000) + 3_600;
+    const identity = await managed.verify(
+      request(
+        "/api/host/capabilities",
+        "POST",
+        assertion(keys.privateKey, {
+          name: "Ada Lovelace",
+          roles: ["developer", "reviewer"],
+          session_exp: sessionExp,
+        }),
+      ),
+      Buffer.from("{}", "utf8"),
+    );
 
-  assert.equal(identity.displayName, "Ada Lovelace");
-  assert.equal(identity.tenantId, "tenant-test");
-  assert.deepEqual(identity.roles, ["developer", "reviewer"]);
-  assert.deepEqual(identity.scopes, ["code:workbench"]);
-  assert.equal(identity.sessionExpiresAt, new Date(sessionExp * 1000).toISOString());
-  assert.equal(identity.logoutUrl, "https://aldunis.test/logout");
+    assert.equal(identity.displayName, "Ada Lovelace");
+    assert.equal(identity.tenantId, "tenant-test");
+    assert.deepEqual(identity.roles, ["developer", "reviewer"]);
+    assert.deepEqual(identity.scopes, ["code:workbench"]);
+    assert.equal(identity.sessionExpiresAt, new Date(sessionExp * 1000).toISOString());
+    assert.equal(identity.logoutUrl, "https://aldunis.test/logout");
 
-  const account = (
-    managed.capabilities(identity) as {
-      account?: Record<string, unknown> | null;
-    }
-  ).account;
-  assert.equal(account?.displayName, "Ada Lovelace");
-  assert.equal("subject" in (account ?? {}), false);
+    const account = (
+      managed.capabilities(identity) as {
+        account?: Record<string, unknown> | null;
+      }
+    ).account;
+    assert.equal(account?.displayName, "Ada Lovelace");
+    assert.equal("subject" in (account ?? {}), false);
+  });
 });
 
 test("managed startup configuration is required and Shikigami runtime excludes ambient credentials", async () => {
@@ -168,54 +275,63 @@ test("managed startup configuration is required and Shikigami runtime excludes a
     /ALDUNIS_MANAGED_ASSERTION_ISSUER is required/,
   );
 
-  const keys = generateKeyPairSync("ed25519");
-  const managed = new ManagedHost(configuration(keys.publicKey, await realpath(process.cwd())));
-  const capabilities = managed.capabilities() as {
-    repositories: Array<Record<string, unknown>>;
-    provider: Record<string, unknown>;
-  };
-  assert.deepEqual(capabilities.repositories, [{ id: "code", name: "Aldunis Code" }]);
-  assert.equal("root" in capabilities.repositories[0]!, false);
-  assert.equal(capabilities.provider.modelAdapter, "plane");
-  assert.equal(capabilities.provider.governanceAdapter, "sekai-chisei");
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const managed = new ManagedHost(configuration(keys.publicKey, await realpath(process.cwd())), {
+      replayDirectory,
+    });
+    const capabilities = managed.capabilities() as {
+      repositories: Array<Record<string, unknown>>;
+      provider: Record<string, unknown>;
+    };
+    assert.deepEqual(capabilities.repositories, [{ id: "code", name: "Aldunis Code" }]);
+    assert.equal("root" in capabilities.repositories[0]!, false);
+    assert.equal(capabilities.provider.modelAdapter, "plane");
+    assert.equal(capabilities.provider.governanceAdapter, "sekai-chisei");
 
-  const root = await realpath(process.cwd());
-  const validConfiguration = configuration(keys.publicKey, root);
-  const replacedIdentity = new ManagedHost({
-    ...validConfiguration,
-    repositories: [
+    const root = await realpath(process.cwd());
+    const validConfiguration = configuration(keys.publicKey, root);
+    const replacedIdentity = new ManagedHost(
       {
-        ...validConfiguration.repositories[0]!,
-        device: 0,
-        inode: 0,
+        ...validConfiguration,
+        repositories: [
+          {
+            ...validConfiguration.repositories[0]!,
+            device: 0,
+            inode: 0,
+          },
+        ],
       },
-    ],
+      { replayDirectory },
+    );
+    await assert.rejects(
+      () => replacedIdentity.selectWorktree(root, root),
+      /filesystem identity changed/,
+    );
   });
-  await assert.rejects(
-    () => replacedIdentity.selectWorktree(root, root),
-    /filesystem identity changed/,
-  );
 });
 
 test("managed worktree selection uses discovered canonical membership", async () => {
-  const keys = generateKeyPairSync("ed25519");
-  const root = await realpath(process.cwd());
-  const managed = new ManagedHost(configuration(keys.publicKey, root));
-  const outside = await mkdtemp(join(root, ".aldunis-managed-unregistered-worktree-"));
+  await withReplayDirectory(async (replayDirectory) => {
+    const keys = generateKeyPairSync("ed25519");
+    const root = await realpath(process.cwd());
+    const managed = new ManagedHost(configuration(keys.publicKey, root), { replayDirectory });
+    const outside = await mkdtemp(join(root, ".aldunis-managed-unregistered-worktree-"));
 
-  try {
-    assert.deepEqual(await managed.selectWorktree(root, root), {
-      root,
-      worktree: root,
-      repositoryId: "code",
-    });
-    await assert.rejects(
-      () => managed.selectWorktree(root, outside),
-      /Select a discovered worktree from the managed repository/,
-    );
-  } finally {
-    await rm(outside, { recursive: true, force: true });
-  }
+    try {
+      assert.deepEqual(await managed.selectWorktree(root, root), {
+        root,
+        worktree: root,
+        repositoryId: "code",
+      });
+      await assert.rejects(
+        () => managed.selectWorktree(root, outside),
+        /Select a discovered worktree from the managed repository/,
+      );
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 test("managed HTTP routes require gateway assertions and reject local control overrides", async () => {
@@ -223,24 +339,29 @@ test("managed HTTP routes require gateway assertions and reject local control ov
   const state = new LocalStateStore(directory);
   const keys = generateKeyPairSync("ed25519");
   const root = await realpath(process.cwd());
-  const managed = new ManagedHost(configuration(keys.publicKey, root));
+  const managed = new ManagedHost(configuration(keys.publicKey, root), {
+    replayDirectory: directory,
+  });
   const server = createLocalHost({ dist: directory, state, managedHost: managed });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}`;
-  const post = async (
-    route: string,
-    body: Record<string, unknown>,
-    token = assertion(keys.privateKey),
-  ) =>
-    fetch(`${url}${route}`, {
+  const post = async (route: string, body: Record<string, unknown>) => {
+    const serialized = JSON.stringify(body);
+    const token = assertion(
+      keys.privateKey,
+      {},
+      { method: "POST", path: route, body: Buffer.from(serialized, "utf8") },
+    );
+    return fetch(`${url}${route}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-aldunis-code-assertion": token,
       },
-      body: JSON.stringify(body),
+      body: serialized,
     });
+  };
   try {
     const descriptor = await fetch(`${url}/api/remote/descriptor`, {
       method: "POST",
@@ -256,6 +377,21 @@ test("managed HTTP routes require gateway assertions and reject local control ov
       body: "{}",
     });
     assert.equal(missing.status, 401);
+
+    const unbound = await fetch(`${url}/api/host/capabilities`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-aldunis-code-assertion": assertion(keys.privateKey, {
+          method: undefined,
+          path: undefined,
+          body_sha256: undefined,
+        }),
+      },
+      body: "{}",
+    });
+    assert.equal(unbound.status, 401);
+    assert.match((await unbound.json()).error as string, /missing method/);
 
     const capabilities = await post("/api/host/capabilities", {});
     assert.equal(capabilities.status, 200);
@@ -328,5 +464,6 @@ test("managed HTTP routes require gateway assertions and reject local control ov
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    await rm(directory, { recursive: true, force: true });
   }
 });
