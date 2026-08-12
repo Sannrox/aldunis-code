@@ -33,6 +33,7 @@ const MAX_REPLAY_STATE_BYTES = 2 * 1024 * 1024;
 const REPLAY_STATE_FILE = "managed-assertion-replay.v1.json";
 const REPLAY_LOCK_FILE = "managed-assertion-replay.v1.lock";
 const DEFAULT_MANAGED_DISPLAY_NAME = "Enterprise user";
+export const MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES = 64 * 1024;
 const RESERVED_MANAGED_RUNTIME_ENVIRONMENT_KEYS = new Set([
   "PATH",
   "HOME",
@@ -280,8 +281,109 @@ function parseRepositoryCatalogue(raw: string): Array<{ id: string; name: string
   });
 }
 
+interface ManagedPublicKeyFileIdentity {
+  size: number;
+  dev: number;
+  ino: number;
+  mode: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
+interface ManagedPublicKeyReadHandle {
+  stat(): Promise<ManagedPublicKeyFileIdentity>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface ManagedPublicKeyFileOperations {
+  open(path: string): Promise<ManagedPublicKeyReadHandle>;
+  stat(path: string): Promise<ManagedPublicKeyFileIdentity>;
+}
+
+const managedPublicKeyFileOperations: ManagedPublicKeyFileOperations = {
+  open: (path) => open(path, "r"),
+  stat,
+};
+
+function sameManagedPublicKeyFile(
+  left: ManagedPublicKeyFileIdentity,
+  right: ManagedPublicKeyFileIdentity,
+): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export async function readManagedPublicKeyFile(
+  path: string,
+  operations: ManagedPublicKeyFileOperations = managedPublicKeyFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  let closed = false;
+  try {
+    const initial = await handle.stat();
+    const initialPath = await operations.stat(path);
+    if (!sameManagedPublicKeyFile(initial, initialPath)) {
+      throw new Error("Managed assertion public key changed while being read.");
+    }
+    if (
+      !Number.isSafeInteger(initial.size) ||
+      initial.size < 0 ||
+      initial.size > MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES
+    ) {
+      throw new Error("Managed assertion public key exceeds the supported size.");
+    }
+    const bytes = Buffer.alloc(initial.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) {
+        throw new Error("Managed assertion public key changed while being read.");
+      }
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if ((await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new Error("Managed assertion public key changed while being read.");
+    }
+    const final = await handle.stat();
+    const finalPath = await operations.stat(path);
+    if (
+      !sameManagedPublicKeyFile(initial, final) ||
+      !sameManagedPublicKeyFile(initial, finalPath)
+    ) {
+      throw new Error("Managed assertion public key changed while being read.");
+    }
+    try {
+      await handle.close();
+      closed = true;
+    } catch {
+      throw new Error("Managed assertion public key could not be closed.");
+    }
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (!closed) await handle.close().catch(() => undefined);
+    throw error;
+  }
+}
+
 async function readPublicKey(env: NodeJS.ProcessEnv): Promise<KeyObject> {
-  const inline = env.ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_PEM?.trim();
+  const rawInline = env.ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_PEM;
+  if (rawInline && Buffer.byteLength(rawInline, "utf8") > MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES) {
+    throw new ManagedHostError("Managed assertion public key is invalid or unreadable.", 500);
+  }
+  const inline = rawInline?.trim();
   const file = env.ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_FILE?.trim();
   if (Boolean(inline) === Boolean(file)) {
     throw new ManagedHostError(
@@ -290,7 +392,7 @@ async function readPublicKey(env: NodeJS.ProcessEnv): Promise<KeyObject> {
     );
   }
   try {
-    const pem = inline ?? (await readFile(file!, "utf8"));
+    const pem = inline ?? (await readManagedPublicKeyFile(file!));
     const key = createPublicKey(pem);
     if (key.asymmetricKeyType !== "ed25519") {
       throw new Error("Managed assertions require an Ed25519 public key.");

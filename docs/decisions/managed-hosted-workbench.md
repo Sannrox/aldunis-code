@@ -20,7 +20,10 @@ Implement Option A: a gateway-issued, short-lived, EdDSA-signed managed
 assertion selects a fixed Code host profile. The managed host:
 
 1. starts only when issuer, audience, tenant, instance, assertion public key,
-   repository catalogue, and complete Shikigami configuration are present;
+   repository catalogue, and complete Shikigami configuration are present.
+   The assertion public key is exactly one inline or file-backed Ed25519 PEM,
+   limited to 64 KiB. File-backed keys are read through one descriptor and
+   rejected if their identity, size, or timestamps change during the read;
 2. accepts only `x-aldunis-code-assertion` assertions with the configured
    issuer/audience/tenant/instance, `code:workbench` scope, `managed` mode,
    `aldunis-code-managed` profile, valid lifetime of at most five minutes, and

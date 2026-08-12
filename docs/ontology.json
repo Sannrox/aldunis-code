@@ -313,7 +313,7 @@
     },
     {
       "name": "ManagedHostedWorkbench",
-      "description": "The explicit single-tenant Aldunis Code hosted mode that starts only with trusted gateway assertion configuration, a canonical repository catalogue, and a fixed fail-closed Shikigami Build profile; it never falls back to loopback or paired remote authority.",
+      "description": "The explicit single-tenant Aldunis Code hosted mode that starts only with trusted gateway assertion configuration, including an inline or stable file-backed assertion public key bounded to 64 KiB, a canonical repository catalogue, and a fixed fail-closed Shikigami Build profile; it never falls back to loopback or paired remote authority.",
       "properties": [
         {
           "name": "mode",
@@ -2231,6 +2231,12 @@
       "subject": "ManagedHostedWorkbench",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts; Issue #438",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedHostedWorkbench",
+      "source": "Aldunis Code Issue #880 bounded managed assertion public-key loading",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/880; server/managed-host.ts#readManagedPublicKeyFile",
       "confidence": 1.0
     },
     {

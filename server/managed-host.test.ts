@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  open,
+  realpath,
+  rename,
+  rm,
+  stat,
+  truncate,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -9,7 +19,10 @@ import test from "node:test";
 import { createLocalHost } from "./host.ts";
 import {
   loadManagedHostConfiguration,
+  MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES,
   ManagedHost,
+  readManagedPublicKeyFile,
+  type ManagedPublicKeyFileOperations,
   type ManagedHostConfiguration,
 } from "./managed-host.ts";
 import { LocalStateStore } from "./state.ts";
@@ -105,6 +118,23 @@ async function withReplayDirectory<T>(run: (replayDirectory: string) => Promise<
   } finally {
     await rm(replayDirectory, { recursive: true, force: true });
   }
+}
+
+function managedEnvironment(root: string, publicKeyPem: string): NodeJS.ProcessEnv {
+  return {
+    ALDUNIS_MANAGED_ASSERTION_ISSUER: "https://aldunis.test",
+    ALDUNIS_MANAGED_ASSERTION_AUDIENCE: "aldunis-code-managed",
+    ALDUNIS_MANAGED_TENANT_ID: "tenant-test",
+    ALDUNIS_MANAGED_INSTANCE_ID: "code-instance-test",
+    ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_PEM: publicKeyPem,
+    ALDUNIS_MANAGED_REPOSITORIES_JSON: JSON.stringify([{ id: "code", name: "Aldunis Code", root }]),
+    ALDUNIS_MANAGED_SHIKIGAMI_EXECUTABLE: process.execPath,
+    ALDUNIS_MANAGED_SHIKIGAMI_MODEL: "operator-approved-model",
+    ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT: "https://chisei.internal",
+    ALDUNIS_MANAGED_SHIKIGAMI_PRINCIPAL: "service:aldunis-code-managed",
+    ALDUNIS_MANAGED_SHIKIGAMI_NAMESPACE: "tenant-test/code",
+    SEKAI_TOKEN: "test-token",
+  };
 }
 
 test("managed assertions fail closed for missing, altered, wrong-audience, and replayed context", async () => {
@@ -309,6 +339,159 @@ test("managed startup configuration is required and Shikigami runtime excludes a
       /filesystem identity changed/,
     );
   });
+});
+
+test("managed assertion public-key loading bounds inline and file-backed input", async () => {
+  const root = await realpath(process.cwd());
+  const pem = generateKeyPairSync("ed25519").publicKey.export({
+    type: "spki",
+    format: "pem",
+  });
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-managed-key-"));
+  const path = join(directory, "assertion.pem");
+  await writeFile(path, pem);
+
+  const fileEnvironment = managedEnvironment(root, "");
+  delete fileEnvironment.ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_PEM;
+  fileEnvironment.ALDUNIS_MANAGED_ASSERTION_PUBLIC_KEY_FILE = path;
+  const loaded = await loadManagedHostConfiguration(fileEnvironment);
+  assert.equal(loaded.publicKey.asymmetricKeyType, "ed25519");
+
+  const oversized = managedEnvironment(
+    root,
+    "a".repeat(MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES + 1),
+  );
+  await assert.rejects(
+    () => loadManagedHostConfiguration(oversized),
+    (error: Error) =>
+      error.message === "Managed assertion public key is invalid or unreadable." &&
+      !error.message.includes("a".repeat(32)),
+  );
+  const whitespaceOversized = managedEnvironment(
+    root,
+    `${" ".repeat(MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES)}${pem}`,
+  );
+  await assert.rejects(
+    () => loadManagedHostConfiguration(whitespaceOversized),
+    /Managed assertion public key is invalid or unreadable/,
+  );
+});
+
+test("managed assertion public-key files reject oversize before content allocation", async () => {
+  let read = false;
+  let closed = false;
+  const identity = {
+    size: MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES + 1,
+    dev: 1,
+    ino: 2,
+    mode: 0o100600,
+    mtimeMs: 3,
+    ctimeMs: 4,
+  };
+  const operations: ManagedPublicKeyFileOperations = {
+    stat: async () => identity,
+    open: async () => ({
+      stat: async () => identity,
+      read: async () => {
+        read = true;
+        return { bytesRead: 0 };
+      },
+      close: async () => {
+        closed = true;
+      },
+    }),
+  };
+
+  await assert.rejects(
+    () => readManagedPublicKeyFile("fixture.pem", operations),
+    /exceeds the supported size/,
+  );
+  assert.equal(read, false);
+  assert.equal(closed, true);
+});
+
+test("managed assertion public-key files close and reject concurrent changes", async () => {
+  const mutations = {
+    shrink: async (path: string) => truncate(path, 1),
+    growth: async (path: string) => writeFile(path, "more", { flag: "a" }),
+    mutation: async (path: string) => writeFile(path, "changed!"),
+    replacement: async (path: string) => {
+      const next = `${path}.next`;
+      await writeFile(next, "replace");
+      await rename(next, path);
+    },
+    disappearance: async (path: string) => unlink(path),
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const directory = await mkdtemp(join(tmpdir(), `aldunis-managed-key-${name}-`));
+    const path = join(directory, "assertion.pem");
+    await writeFile(path, "original");
+    let closed = false;
+    let mutated = false;
+    const operations: ManagedPublicKeyFileOperations = {
+      stat,
+      open: async (candidate) => {
+        const handle = await open(candidate, "r");
+        return {
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+          read: async (buffer, offset, length, position) => {
+            const result = await handle.read(buffer, offset, length, position);
+            if (!mutated) {
+              mutated = true;
+              await mutate(candidate);
+            }
+            return { bytesRead: result.bytesRead };
+          },
+          stat: () => handle.stat(),
+        };
+      },
+    };
+
+    await assert.rejects(() => readManagedPublicKeyFile(path, operations));
+    assert.equal(closed, true, `${name} must close the public-key handle`);
+  }
+});
+
+test("managed assertion public-key files reject short reads and close failures", async () => {
+  const identity = { size: 1, dev: 1, ino: 2, mode: 0o100600, mtimeMs: 3, ctimeMs: 4 };
+  let shortClosed = false;
+  await assert.rejects(
+    () =>
+      readManagedPublicKeyFile("short.pem", {
+        stat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async () => ({ bytesRead: 0 }),
+          close: async () => {
+            shortClosed = true;
+          },
+        }),
+      }),
+    /changed while being read/,
+  );
+  assert.equal(shortClosed, true);
+
+  await assert.rejects(
+    () =>
+      readManagedPublicKeyFile("close.pem", {
+        stat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async (buffer, offset, length, position) => {
+            if (position >= identity.size) return { bytesRead: 0 };
+            buffer.fill(0, offset, offset + length);
+            return { bytesRead: length };
+          },
+          close: async () => {
+            throw new Error("sensitive close detail");
+          },
+        }),
+      }),
+    /could not be closed/,
+  );
 });
 
 test("managed worktree selection uses discovered canonical membership", async () => {
