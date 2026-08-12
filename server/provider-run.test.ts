@@ -5,7 +5,9 @@ import {
   createProviderRunSink,
   handleProviderRun,
   MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS,
+  MAX_ACTIVE_PROVIDER_RUNS,
   ProviderInputExpiryTimers,
+  ProviderRunAdmission,
   shouldReleaseBrowserProviderToken,
   type ProviderRunModuleContext,
   type ProviderRunOutput,
@@ -102,6 +104,28 @@ test("browser provider token release follows accepted Codex session ownership", 
   assert.equal(shouldReleaseBrowserProviderToken("claude-code", false), true);
 });
 
+test("provider run admission bounds host-wide execution and releases idempotently", () => {
+  const admission = new ProviderRunAdmission();
+  const releases = Array.from({ length: MAX_ACTIVE_PROVIDER_RUNS }, () => admission.acquire());
+  assert.equal(admission.retainedLeaseCount, MAX_ACTIVE_PROVIDER_RUNS);
+  assert.throws(
+    () => admission.acquire(),
+    (error: unknown) =>
+      error instanceof RepositoryError &&
+      error.status === 429 &&
+      error.message === "Too many provider runs are active.",
+  );
+  assert.equal(admission.retainedLeaseCount, MAX_ACTIVE_PROVIDER_RUNS);
+
+  releases[0]!();
+  releases[0]!();
+  const recovered = admission.acquire();
+  assert.equal(admission.retainedLeaseCount, MAX_ACTIVE_PROVIDER_RUNS);
+  recovered();
+  for (const release of releases.slice(1)) release();
+  assert.equal(admission.retainedLeaseCount, 0);
+});
+
 function moduleContext(
   overrides: Partial<ProviderRunModuleContext> = {},
 ): ProviderRunModuleContext {
@@ -110,6 +134,7 @@ function moduleContext(
     remoteRequest: false,
     activeCheckpointProjects: new Set(),
     activeCheckpointWorktrees: new Set(),
+    providerRunAdmission: new ProviderRunAdmission(),
     inputExpiryTimers: new ProviderInputExpiryTimers(),
     checkpointWorktreeKey: (projectId, worktree) => JSON.stringify([projectId, worktree]),
     selectedWorktree: async (root, worktree) => ({ root, worktree }),
@@ -118,11 +143,13 @@ function moduleContext(
 }
 
 test("run admission rejects incomplete input before touching provider dependencies", async () => {
+  const providerRunAdmission = new ProviderRunAdmission();
   await assert.rejects(
     handleProviderRun(
       { body: { root: "/repo", worktree: "/repo", prompt: "Inspect" } },
       output,
       moduleContext({
+        providerRunAdmission,
         selectedWorktree: async () => {
           throw new Error("workspace selection must not run");
         },
@@ -133,6 +160,42 @@ test("run admission rejects incomplete input before touching provider dependenci
       error.status === 400 &&
       error.message.includes("interaction mode, provider, and model"),
   );
+  assert.equal(providerRunAdmission.retainedLeaseCount, 0);
+});
+
+test("provider run overflow fails before workspace or local execution work", async () => {
+  const providerRunAdmission = new ProviderRunAdmission();
+  const releases = Array.from({ length: MAX_ACTIVE_PROVIDER_RUNS }, () =>
+    providerRunAdmission.acquire(),
+  );
+  let selected = false;
+  await assert.rejects(
+    handleProviderRun(
+      {
+        body: {
+          root: "/repo",
+          worktree: "/repo",
+          prompt: "Inspect",
+          conversationId: "conversation-1",
+          mode: "ask",
+          provider: "codex-cli",
+          model: "gpt-5.6",
+        },
+      },
+      output,
+      moduleContext({
+        providerRunAdmission,
+        selectedWorktree: async (root, worktree) => {
+          selected = true;
+          return { root, worktree };
+        },
+      }),
+    ),
+    (error: unknown) => error instanceof RepositoryError && error.status === 429,
+  );
+  assert.equal(selected, false);
+  assert.equal(providerRunAdmission.retainedLeaseCount, MAX_ACTIVE_PROVIDER_RUNS);
+  for (const release of releases) release();
 });
 
 test("typed admission reports the same rejection to acceptance and completion callers", async () => {

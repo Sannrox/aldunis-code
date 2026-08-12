@@ -61,6 +61,7 @@ import {
   admitProviderRun,
   createProviderRunSink,
   ProviderInputExpiryTimers,
+  ProviderRunAdmission,
   type ProviderRunModuleContext,
 } from "./provider-run.ts";
 import { handleBrowserRoute } from "./browser-routes.ts";
@@ -341,6 +342,7 @@ interface LocalApiDispatchContext {
   adapters: ProviderAdapterStore;
   providerDiscovery: ProviderDiscovery;
   activeAcp: Map<string, AcpProviderAdapter>;
+  providerRunAdmission: ProviderRunAdmission;
   inputExpiryTimers: ProviderInputExpiryTimers;
   wake: WakeBroker;
   withDelegatedControlLock: DelegatedControlLock;
@@ -383,6 +385,7 @@ async function handleApi(
     adapters,
     providerDiscovery,
     activeAcp,
+    providerRunAdmission,
     inputExpiryTimers,
     wake,
     withDelegatedControlLock,
@@ -728,6 +731,8 @@ async function handleApi(
             worktrees,
             adapters,
             activeAcp,
+            providerRunAdmission,
+            inputExpiryTimers,
             wake,
             withDelegatedControlLock,
             internalApprovalUrl,
@@ -953,6 +958,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   const releaseDelivery = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state.directory));
   const browser = browserHost ? new SharedBrowserBroker(browserHost) : null;
   const provider = new ClaudeCodeAdapter("claude", permissions);
+  const providerRunAdmission = new ProviderRunAdmission();
   const inputExpiryTimers = new ProviderInputExpiryTimers();
   const codex = new CodexCliAdapter("codex", permissions, {
     onSessionClosed: (conversationId) => browser?.releaseProviderToken(conversationId),
@@ -1056,6 +1062,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     worktrees,
     adapters,
     activeAcp,
+    providerRunAdmission,
     inputExpiryTimers,
     wake,
     withDelegatedControlLock,
@@ -1261,6 +1268,8 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         adapters,
         providerDiscovery,
         activeAcp,
+        providerRunAdmission,
+        inputExpiryTimers,
         wake,
         withDelegatedControlLock,
         runChildFollowUp,
