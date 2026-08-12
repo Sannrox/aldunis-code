@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, open, readFile, readdir, realpath, stat } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
@@ -16,6 +17,7 @@ const CANDIDATE_DOMAIN = Buffer.from("ALDUNIS-DELIVERY-CANDIDATE-V1\0", "ascii")
 const GIT_BATCH_IDLE_TIMEOUT_MS = 20_000;
 const MAX_GIT_BATCH_HEADER_BYTES = 256;
 const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
+const ARTIFACT_FILE_READ_BUFFER_BYTES = 256 * 1024;
 
 export interface ReleaseArtifactDescriptor {
   media_type: string;
@@ -465,16 +467,109 @@ async function hashArtifactPath(
       hashBytes(hash, Buffer.from("dir"));
       size += await hashArtifactPath(hash, worktree, root, child);
     } else if (metadata.isFile()) {
-      const bytes = await readFile(child);
       hashBytes(hash, Buffer.from("file"));
-      hash.update(length64(bytes.length, true));
-      hash.update(bytes);
-      size += bytes.length;
+      size += await hashArtifactFile(hash, child);
     } else {
       throw new RepositoryError("Tenkai artifact inputs contain an unsupported entry.", 409);
     }
   }
   return size;
+}
+
+export interface ArtifactFileHandle {
+  close(): Promise<void>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  stat(): Promise<BigIntStats>;
+}
+
+export interface ArtifactFileOperations {
+  open(path: string): Promise<ArtifactFileHandle>;
+  lstat(path: string): Promise<BigIntStats>;
+}
+
+const artifactFileOperations: ArtifactFileOperations = {
+  open: async (path) => {
+    const handle = await open(path, "r");
+    return {
+      close: () => handle.close(),
+      read: async (buffer, offset, length, position) => {
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return { bytesRead };
+      },
+      stat: () => handle.stat({ bigint: true }),
+    };
+  },
+  lstat: (path) => lstat(path, { bigint: true }),
+};
+
+function sameArtifactFile(left: BigIntStats, right: BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+export async function hashArtifactFile(
+  hash: ReturnType<typeof createHash>,
+  path: string,
+  operations: ArtifactFileOperations = artifactFileOperations,
+): Promise<number> {
+  let handle: ArtifactFileHandle | null = null;
+  try {
+    handle = await operations.open(path);
+    const initial = await handle.stat();
+    const initialPath = await operations.lstat(path);
+    if (
+      !initial.isFile() ||
+      !sameArtifactFile(initial, initialPath) ||
+      initial.size > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new Error("unstable artifact file");
+    }
+    const size = Number(initial.size);
+    hash.update(length64(size, true));
+    const buffer = Buffer.allocUnsafe(ARTIFACT_FILE_READ_BUFFER_BYTES);
+    let position = 0;
+    while (position < size) {
+      const requested = Math.min(buffer.length, size - position);
+      const { bytesRead } = await handle.read(buffer, 0, requested, position);
+      if (bytesRead === 0) throw new Error("truncated artifact file");
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    const final = await handle.stat();
+    const finalPath = await operations.lstat(path);
+    if (!sameArtifactFile(initial, final) || !sameArtifactFile(initial, finalPath)) {
+      throw new Error("changed artifact file");
+    }
+    const completedHandle = handle;
+    handle = null;
+    try {
+      await completedHandle.close();
+    } catch {
+      throw new RepositoryError("A Tenkai artifact input could not be closed after hashing.", 409);
+    }
+    return size;
+  } catch (error) {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // Cleanup must not replace the primary file-stability failure.
+      }
+    }
+    if (error instanceof RepositoryError) throw error;
+    throw new RepositoryError("A Tenkai artifact input changed while it was hashed.", 409);
+  }
 }
 
 async function committedArtifactMode(
@@ -558,10 +653,8 @@ async function artifactDigest(
       hashBytes(hash, Buffer.from("dir"));
       size += await hashArtifactPath(hash, canonicalWorktree, canonicalWorkdir, path);
     } else if (metadata.isFile()) {
-      const bytes = await readFile(path);
       hashBytes(hash, Buffer.from("file"));
-      hashBytes(hash, bytes);
-      size += bytes.length;
+      size += await hashArtifactFile(hash, path);
     } else {
       throw new RepositoryError("A Tenkai deploy input has an unsupported type.", 409);
     }

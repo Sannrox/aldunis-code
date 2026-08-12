@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, open, rename, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  type ArtifactFileOperations,
   consumeGitBlobBatch,
   deliveryCandidateIdentity,
+  hashArtifactFile,
   prepareReleaseCandidate,
   sourceTreeDigest,
 } from "./release-candidate.ts";
@@ -259,4 +261,96 @@ test("Git blob batch parsing fails closed on malformed or incomplete framing", a
       /Git batch/,
     );
   }
+});
+
+test("artifact file hashing preserves length framing without retaining the file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-artifact-stream-"));
+  const path = join(root, "payload.bin");
+  const content = Buffer.concat([Buffer.alloc(300_000, 0x61), Buffer.from("tail")]);
+  await writeFile(path, content);
+  const hash = createHash("sha256");
+
+  assert.equal(await hashArtifactFile(hash, path), content.length);
+
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64LE(BigInt(content.length));
+  assert.equal(
+    hash.digest("hex"),
+    createHash("sha256").update(length).update(content).digest("hex"),
+  );
+});
+
+test("artifact file hashing closes its handle and rejects concurrent file changes", async () => {
+  const mutations = {
+    shrink: async (path: string) => truncate(path, 1),
+    growth: async (path: string) => writeFile(path, "more", { flag: "a" }),
+    mutation: async (path: string) => writeFile(path, "changed!"),
+    replacement: async (path: string) => {
+      const next = `${path}.next`;
+      await writeFile(next, "replace");
+      await rename(next, path);
+    },
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const root = await mkdtemp(join(tmpdir(), `aldunis-artifact-${name}-`));
+    const path = join(root, "payload.bin");
+    await writeFile(path, "original");
+    let closed = false;
+    let mutated = false;
+    const operations: ArtifactFileOperations = {
+      lstat: (candidate) => lstat(candidate, { bigint: true }),
+      open: async (candidate) => {
+        const handle = await open(candidate, "r");
+        return {
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+          read: async (buffer, offset, length, position) => {
+            const { bytesRead } = await handle.read(buffer, offset, length, position);
+            if (!mutated) {
+              mutated = true;
+              await mutate(candidate);
+            }
+            return { bytesRead };
+          },
+          stat: () => handle.stat({ bigint: true }),
+        };
+      },
+    };
+
+    await assert.rejects(
+      () => hashArtifactFile(createHash("sha256"), path, operations),
+      /changed while it was hashed/,
+    );
+    assert.equal(closed, true, `${name} must close the artifact handle`);
+  }
+});
+
+test("artifact file hashing fails closed when its file handle cannot close", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-artifact-close-"));
+  const path = join(root, "payload.bin");
+  await writeFile(path, "payload");
+  const operations: ArtifactFileOperations = {
+    lstat: (candidate) => lstat(candidate, { bigint: true }),
+    open: async (candidate) => {
+      const handle = await open(candidate, "r");
+      return {
+        close: async () => {
+          await handle.close();
+          throw new Error("fixture close failure");
+        },
+        read: async (buffer, offset, length, position) => {
+          const { bytesRead } = await handle.read(buffer, offset, length, position);
+          return { bytesRead };
+        },
+        stat: () => handle.stat({ bigint: true }),
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => hashArtifactFile(createHash("sha256"), path, operations),
+    /could not be closed/,
+  );
 });
