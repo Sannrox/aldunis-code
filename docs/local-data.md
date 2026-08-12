@@ -26,15 +26,15 @@ host processes. Operators may remove
 
 Typical contents (names may evolve; do not commit these files):
 
-| File / area                  | Purpose                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------ |
-| `events.v1.jsonl`            | Append-only conversation and autonomy history log                              |
-| `preferences.v1.json`        | Theme, density, worktree limit, shortcuts, display flags, open-scroll mode     |
-| `automations.v1.json`        | Scheduled automations                                                          |
-| `release-deliveries.v1.json` | Candidate/build digests and opaque Chisei/Tenkai correlation references        |
-| Profile / secret store       | Provider profile metadata (all providers + adapters) + env secrets             |
-| Provider adapter metadata    | Installed declarative adapters                                                 |
-| Shikigami run dirs           | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related) |
+| File / area                  | Purpose                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `events.v1.jsonl`            | Append-only conversation and autonomy history log                                         |
+| `preferences.v1.json`        | Theme, density, worktree limit, shortcuts, display flags, open-scroll mode                |
+| `automations.v1.json`        | Scheduled automations                                                                     |
+| `release-deliveries.v1.json` | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references |
+| Profile / secret store       | Provider profile metadata (all providers + adapters) + env secrets                        |
+| Provider adapter metadata    | Installed declarative adapters                                                            |
+| Shikigami run dirs           | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related)            |
 
 File modes are restricted (owner-only where applicable). History mutations are
 locked across local host processes. If an older concurrent-host race left intact

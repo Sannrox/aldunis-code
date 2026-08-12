@@ -103,8 +103,9 @@ not an operating-system sandbox.
 ## Recovery and restart
 
 The session ledger survives host restart in
-`release-deliveries.v1.json`. It contains candidate/build digests and opaque
-Chisei/Tenkai references, not source, command output, credentials, signed
+`release-deliveries.v1.json`. The host reads and writes at most 16 MiB. It
+contains candidate/build digests and opaque Chisei/Tenkai references, not
+source, command output, credentials, signed
 assertions, approval envelopes, or raw logs.
 
 If source, manifest, artifact inputs, package scripts, or the lockfile changes,
