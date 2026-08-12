@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { lstat, open, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import type { BigIntStats } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { finished } from "node:stream/promises";
@@ -19,6 +19,7 @@ const MAX_GIT_BATCH_HEADER_BYTES = 256;
 const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
 const ARTIFACT_FILE_READ_BUFFER_BYTES = 256 * 1024;
 export const MAX_RELEASE_PACKAGE_MANIFEST_BYTES = 256 * 1024;
+export const MAX_RELEASE_MANIFEST_BYTES = 256 * 1024;
 
 export interface ReleaseArtifactDescriptor {
   media_type: string;
@@ -229,11 +230,18 @@ class GitBatchReader {
 
 type SourceTreeBlob = { oid: string };
 
+interface GitBlobBatchOptions {
+  maximumBytes?: number;
+  consumeChunk?: (chunk: Buffer) => void;
+  oversized?: () => never;
+}
+
 export async function consumeGitBlobBatch(
   stream: AsyncIterable<Buffer | string>,
   entries: SourceTreeBlob[],
   consume: (digest: Buffer) => void,
   onActivity: () => void = () => undefined,
+  options: GitBlobBatchOptions = {},
 ): Promise<void> {
   const reader = new GitBatchReader(stream, onActivity);
   for (const entry of entries) {
@@ -243,8 +251,15 @@ export async function consumeGitBlobBatch(
     if (!match || match[1] !== entry.oid || !Number.isSafeInteger(size)) {
       throw new Error("Git batch output does not match the requested blob.");
     }
+    if (options.maximumBytes !== undefined && size > options.maximumBytes) {
+      options.oversized?.();
+      throw new Error("Git batch object exceeds its admitted size.");
+    }
     const blobHash = createHash("sha256");
-    await reader.bytes(size, (chunk) => blobHash.update(chunk));
+    await reader.bytes(size, (chunk) => {
+      blobHash.update(chunk);
+      options.consumeChunk?.(chunk);
+    });
     await reader.separator();
     consume(blobHash.digest());
   }
@@ -255,6 +270,7 @@ async function hashSourceTreeBlobs(
   worktree: string,
   entries: SourceTreeBlob[],
   consume: (digest: Buffer) => void,
+  options: GitBlobBatchOptions = {},
 ): Promise<void> {
   const child = spawn("git", ["-C", worktree, "cat-file", "--batch"], {
     env: {
@@ -305,17 +321,20 @@ async function hashSourceTreeBlobs(
   try {
     await Promise.all([
       writeRequests,
-      consumeGitBlobBatch(child.stdout, entries, consume, resetIdleTimer),
+      consumeGitBlobBatch(child.stdout, entries, consume, resetIdleTimer, options),
     ]);
     const outcome = await exit;
     const errorText = await stderr;
     if (timedOut || outcome.error || outcome.code !== 0) {
       throw new Error(errorText || outcome.error?.message || "Git batch process failed.");
     }
-  } catch {
+  } catch (error) {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.stdin.destroy();
+    child.stdout.destroy();
     await exit;
     await stderr;
+    if (error instanceof RepositoryError) throw error;
     throw new RepositoryError("The committed repository state could not be inspected.", 409);
   } finally {
     clearTimeout(timer);
@@ -615,29 +634,79 @@ export async function hashReleaseLockFile(
   return `sha256:${hash.digest("hex")}`;
 }
 
-export async function readReleasePackageManifest(
+async function readBoundedStableFile(
   path: string,
-  operations: ArtifactFileOperations = artifactFileOperations,
-): Promise<string> {
+  maximum: number,
+  label: string,
+  operations: ArtifactFileOperations,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   await consumeStableFile(
     path,
     operations,
     {
-      changed: "The root package.json changed while it was read.",
-      close: "The root package.json could not be closed after reading.",
+      changed: `${label} changed while it was read.`,
+      close: `${label} could not be closed after reading.`,
     },
     (size) => {
-      if (size > MAX_RELEASE_PACKAGE_MANIFEST_BYTES) {
-        throw new RepositoryError(
-          `The root package.json must be at most ${MAX_RELEASE_PACKAGE_MANIFEST_BYTES / 1024} KiB.`,
-          409,
-        );
+      if (size > maximum) {
+        throw new RepositoryError(`${label} must be at most ${maximum / 1024} KiB.`, 409);
       }
     },
     (chunk) => chunks.push(Buffer.from(chunk)),
   );
-  return Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+export async function readReleasePackageManifest(
+  path: string,
+  operations: ArtifactFileOperations = artifactFileOperations,
+): Promise<string> {
+  return (
+    await readBoundedStableFile(
+      path,
+      MAX_RELEASE_PACKAGE_MANIFEST_BYTES,
+      "The root package.json",
+      operations,
+    )
+  ).toString("utf8");
+}
+
+export async function readCommittedReleaseManifest(
+  worktree: string,
+  path: string,
+): Promise<Buffer> {
+  const tree = (await git(worktree, ["ls-tree", "-z", "--full-tree", "HEAD", "--", path], "buffer"))
+    .stdout as Buffer;
+  const tab = tree.indexOf(0x09);
+  const metadata = tree.subarray(0, tab).toString("ascii").split(" ");
+  const listedPath = tree
+    .subarray(tab + 1, tree.length - (tree.at(-1) === 0 ? 1 : 0))
+    .toString("utf8");
+  if (
+    tab < 0 ||
+    metadata.length !== 3 ||
+    metadata[1] !== "blob" ||
+    !["100644", "100755"].includes(metadata[0]) ||
+    listedPath !== path
+  ) {
+    throw new RepositoryError(
+      "The selected Tenkai manifest must be a committed regular file.",
+      409,
+    );
+  }
+  const chunks: Buffer[] = [];
+  await hashSourceTreeBlobs(worktree, [{ oid: metadata[2] }], () => undefined, {
+    maximumBytes: MAX_RELEASE_MANIFEST_BYTES,
+    consumeChunk: (chunk) => chunks.push(Buffer.from(chunk)),
+    oversized: () => {
+      throw new RepositoryError(
+        `The selected Tenkai manifest must be at most ${MAX_RELEASE_MANIFEST_BYTES / 1024} KiB.`,
+        409,
+      );
+    },
+  });
+  return Buffer.concat(chunks);
 }
 
 async function committedArtifactMode(
@@ -818,19 +887,21 @@ export async function prepareReleaseCandidate(
   await git(worktree, ["merge-base", "--is-ancestor", head, "HEAD"]);
   const relativeManifest = safeRelativePath(manifestPath, "The Tenkai manifest path");
   const canonicalWorktree = await realpath(worktree);
-  const manifestAbsolute = await realpath(resolve(canonicalWorktree, relativeManifest)).catch(
-    () => {
-      throw new RepositoryError("The selected Tenkai manifest is unavailable.", 404);
-    },
-  );
-  if (!within(canonicalWorktree, manifestAbsolute) || !(await stat(manifestAbsolute)).isFile()) {
+  const selectedManifest = resolve(canonicalWorktree, relativeManifest);
+  const manifestMetadata = await lstat(selectedManifest).catch(() => {
+    throw new RepositoryError("The selected Tenkai manifest is unavailable.", 404);
+  });
+  const manifestAbsolute = await realpath(selectedManifest).catch(() => {
+    throw new RepositoryError("The selected Tenkai manifest is unavailable.", 404);
+  });
+  if (!within(canonicalWorktree, manifestAbsolute) || !manifestMetadata.isFile()) {
     throw new RepositoryError(
       "The Tenkai manifest must be a regular file inside the selected worktree.",
       403,
     );
   }
   await assertCommittedPath(worktree, relativeManifest, "The Tenkai manifest");
-  const manifestBytes = await readFile(manifestAbsolute);
+  const manifestBytes = await readCommittedReleaseManifest(worktree, relativeManifest);
   let manifest: TOML.JsonMap;
   try {
     manifest = TOML.parse(manifestBytes.toString("utf8"));
