@@ -6,7 +6,10 @@ import { ChiseiClientError } from "./chisei-client.ts";
 import { handleChiseiRoute } from "./chisei-routes.ts";
 import { LocalStateError } from "./state.ts";
 
-const response = {} as ServerResponse;
+const response = Object.assign(new EventEmitter(), {
+  writableEnded: false,
+  destroyed: false,
+}) as ServerResponse;
 const unused = async () => {
   throw new Error("dependency must not be called");
 };
@@ -119,13 +122,82 @@ test("Chisei Action list derives namespace and bounds optional filters", async (
       sendJson: () => undefined,
     }) as never,
   );
-  assert.deepEqual(calls, [
-    [
-      "project-1",
-      "team/project",
-      { typeId: longType.slice(0, 200), status: longStatus.slice(0, 50), limit: 25 },
-    ],
-  ]);
+  assert.equal(calls.length, 1);
+  const [projectId, namespace, filters, signal] = calls[0] as unknown[];
+  assert.equal(projectId, "project-1");
+  assert.equal(namespace, "team/project");
+  assert.deepEqual(filters, {
+    typeId: longType.slice(0, 200),
+    status: longStatus.slice(0, 50),
+    limit: 25,
+  });
+  assert.ok(signal instanceof AbortSignal);
+});
+
+test("Chisei reads cancel disconnected SDK work and release lifecycle listeners", async () => {
+  const currentRequest = new EventEmitter() as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
+  let observedSignal: AbortSignal | undefined;
+
+  await assert.rejects(
+    handleChiseiRoute(
+      "/api/integrations/chisei/actions/detail",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ projectId: "project-1", instanceId: "action-1" }),
+        state: { inspect: async () => projection(), bindProjectChiseiNamespace: unused },
+        chisei: {
+          actionDetail: async (_namespace: string, _instanceId: string, signal: AbortSignal) => {
+            observedSignal = signal;
+            currentResponse.emit("close");
+            signal.throwIfAborted();
+          },
+        },
+      }) as never,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(observedSignal?.aborted, true);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
+});
+
+test("Chisei reads reject a disconnect observed before lifecycle registration", async () => {
+  const currentRequest = Object.assign(new EventEmitter(), {
+    aborted: true,
+  }) as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
+  let reads = 0;
+
+  await assert.rejects(
+    handleChiseiRoute(
+      "/api/integrations/chisei/actions/list",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ projectId: "project-1" }),
+        state: { inspect: async () => projection(), bindProjectChiseiNamespace: unused },
+        chisei: {
+          listActions: async () => {
+            reads += 1;
+          },
+        },
+      }) as never,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(reads, 0);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
 });
 
 test("Chisei reads reject missing projects and unbound namespaces", async () => {

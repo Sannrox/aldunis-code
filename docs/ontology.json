@@ -435,7 +435,11 @@
     },
     {
       "name": "ChiseiProjectProjectionRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates Chisei project binding administration, request validation, server-owned namespace authority, bounded Action and observation projection reads, governance correlation ownership, and response mapping behind one internal dispatch interface without changing Chisei domain authority, persistence, credentials, or transport ownership."
+      "description": "A deep server-side Aldunis Code module that concentrates Chisei project binding administration, request validation, server-owned namespace authority, request-lifetime-cancelled Action, receipt, and observation projection reads, governance correlation ownership, and response mapping behind one internal dispatch interface without changing Chisei domain authority, persistence, credentials, or transport ownership."
+    },
+    {
+      "name": "ChiseiProjectionReadCoordinator",
+      "description": "A renderer, loopback-route, and SDK coordinated read lifetime for one selected project, Action, correlation, or observation that aborts obsolete HTTP work and each exact Chisei unary RPC while preserving local binding and Chisei governance authority."
     },
     {
       "name": "DelegatedHumanControlRouteDispatchModule",
@@ -1531,6 +1535,12 @@
       "subject": "ChiseiProjectProjectionRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#645",
       "locator": "server/chisei-routes.ts#handleChiseiRoute; docs/decisions/chisei-project-projections.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChiseiProjectionReadCoordinator",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#789",
+      "locator": "src/features/shell/domain-page.tsx#ChiseiActionsPanel; src/features/shell/tenkai-delivery.tsx#TenkaiDeliveryPanel; server/chisei-routes.ts#handleChiseiRoute; server/chisei-client.ts#ChiseiProjectionClient",
       "confidence": 1.0
     },
     {

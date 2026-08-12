@@ -9,7 +9,8 @@ const productPages = {
   sekai: {
     eyebrow: "Knowledge plane",
     title: "Trace what the system knows.",
-    summary: "Evidence, provenance, artifacts, and lineage — projected once a Sekai contract is attached.",
+    summary:
+      "Evidence, provenance, artifacts, and lineage — projected once a Sekai contract is attached.",
     items: ["Knowledge", "Evidence", "Provenance", "Artifacts", "Explorer"],
     icon: "spark" as IconName,
     integration: "projected" as const,
@@ -19,7 +20,8 @@ const productPages = {
   chisei: {
     eyebrow: "Governance plane",
     title: "Make every decision inspectable.",
-    summary: "Policies, budgets, model routing, usage, and audit remain governed by Sekai Chisei contracts.",
+    summary:
+      "Policies, budgets, model routing, usage, and audit remain governed by Sekai Chisei contracts.",
     items: ["Operations", "Policies", "Budgets", "Models", "Routing", "Usage", "Audit"],
     icon: "shield" as IconName,
     integration: "projected" as const,
@@ -29,7 +31,8 @@ const productPages = {
   tenkai: {
     eyebrow: "Delivery plane",
     title: "Ship with a way back.",
-    summary: "Releases, environments, deployments, rollback, and recovery remain authoritative in Tenkai.",
+    summary:
+      "Releases, environments, deployments, rollback, and recovery remain authoritative in Tenkai.",
     items: ["Releases", "Channels", "Environments", "Plans", "Approvals", "Runs", "Recovery"],
     icon: "rocket" as IconName,
     integration: "embedded" as const,
@@ -78,34 +81,40 @@ function ChiseiActionsPanel({
   correlationId: string | null;
 }) {
   const selectedProject = useMemo(() => {
-    const matched = projects.find((project) => (
-      project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? "")
-    ));
-    return matched ?? (selectedProjectId === null ? projects[0] ?? null : null);
+    const matched = projects.find(
+      (project) =>
+        project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? ""),
+    );
+    return matched ?? (selectedProjectId === null ? (projects[0] ?? null) : null);
   }, [projects, selectedProjectId]);
-  const activeProjectId = selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
-    ? selectedProjectId
-    : selectedProject?.id ?? null;
+  const activeProjectId =
+    selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
+      ? selectedProjectId
+      : (selectedProject?.id ?? null);
   const hasMemberBinding = Boolean(
-    activeProjectId
-    && selectedProject?.chiseiBindings
-    && Object.hasOwn(selectedProject.chiseiBindings, activeProjectId),
+    activeProjectId &&
+    selectedProject?.chiseiBindings &&
+    Object.hasOwn(selectedProject.chiseiBindings, activeProjectId),
   );
   const selectedNamespace = activeProjectId
     ? hasMemberBinding
-      ? selectedProject?.chiseiBindings?.[activeProjectId] ?? null
-      : selectedProject?.chiseiNamespace ?? null
+      ? (selectedProject?.chiseiBindings?.[activeProjectId] ?? null)
+      : (selectedProject?.chiseiNamespace ?? null)
     : null;
   const [namespace, setNamespace] = useState(selectedNamespace ?? "");
   const [boundNamespace, setBoundNamespace] = useState(selectedNamespace);
   const [actions, setActions] = useState<ActionRow[]>([]);
-  const [projectionState, setProjectionState] = useState<"idle" | "loading" | "live" | "stale" | "error">("idle");
+  const [projectionState, setProjectionState] = useState<
+    "idle" | "loading" | "live" | "stale" | "error"
+  >("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [detail, setDetail] = useState<ActionDetail | null>(null);
   const [operationReceipt, setOperationReceipt] = useState<ActionDetail["receipt"]>(null);
   const [operationLoading, setOperationLoading] = useState(false);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const listController = useRef<AbortController | null>(null);
+  const detailController = useRef<AbortController | null>(null);
   const synchronizedBinding = useRef(`${activeProjectId ?? ""}\n${selectedNamespace ?? ""}`);
 
   useEffect(() => {
@@ -123,6 +132,8 @@ function ChiseiActionsPanel({
     setDetail(null);
     setProjectionState(next ? "idle" : "idle");
     setMessage(null);
+    listController.current?.abort();
+    detailController.current?.abort();
     listRequest.current += 1;
     detailRequest.current += 1;
   }, [activeProjectId, selectedNamespace]);
@@ -136,30 +147,36 @@ function ChiseiActionsPanel({
     setOperationReceipt(null);
     setOperationLoading(true);
     setMessage(null);
-    let active = true;
+    const controller = new AbortController();
     void fetch("/api/integrations/chisei/operations/detail", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectId: activeProjectId, correlationId }),
-    }).then(async (response) => {
-      const body = await response.json() as NonNullable<ActionDetail["receipt"]> & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Operation receipt failed.");
-      if (active) {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const body = (await response.json()) as NonNullable<ActionDetail["receipt"]> & {
+          error?: string;
+        };
+        controller.signal.throwIfAborted();
+        if (!response.ok) throw new Error(body.error ?? "Operation receipt failed.");
         setOperationReceipt(body);
         setOperationLoading(false);
-      }
-    }).catch((error) => {
-      if (active) {
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
         setOperationReceipt(null);
         setOperationLoading(false);
         setMessage(error instanceof Error ? error.message : "Operation receipt failed.");
-      }
-    });
-    return () => { active = false; };
+      });
+    return () => controller.abort();
   }, [activeProjectId, correlationId]);
 
   const loadActions = async () => {
     if (!activeProjectId || !boundNamespace) return;
+    listController.current?.abort();
+    const controller = new AbortController();
+    listController.current = controller;
     const request = ++listRequest.current;
     const projectId = activeProjectId;
     setProjectionState("loading");
@@ -169,36 +186,46 @@ function ChiseiActionsPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId, limit: 25 }),
+        signal: controller.signal,
       });
-      const body = await response.json() as {
+      const body = (await response.json()) as {
         state?: "live" | "stale";
         actions?: ActionRow[];
         warning?: string | null;
         error?: string;
       };
+      controller.signal.throwIfAborted();
       if (request !== listRequest.current || activeProjectId !== projectId) return;
       if (!response.ok) throw new Error(body.error ?? "Chisei projection failed.");
       setActions(body.actions ?? []);
       setProjectionState(body.state ?? "live");
       setMessage(body.warning ?? null);
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (request !== listRequest.current || activeProjectId !== projectId) return;
       setProjectionState("error");
       setMessage(error instanceof Error ? error.message : "Chisei projection failed.");
+    } finally {
+      if (listController.current === controller) listController.current = null;
     }
   };
 
   useEffect(() => {
     if (boundNamespace) void loadActions();
     // Fetch only when the server-owned binding changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectId, boundNamespace]);
+
+  useEffect(
+    () => () => {
+      listController.current?.abort();
+      detailController.current?.abort();
+    },
+    [],
+  );
 
   const saveBinding = async (event: FormEvent) => {
     event.preventDefault();
     if (!activeProjectId || !bindingAdministrationAvailable) return;
-    listRequest.current += 1;
-    detailRequest.current += 1;
     setMessage(null);
     try {
       const response = await fetch("/api/integrations/chisei/bind", {
@@ -209,9 +236,14 @@ function ChiseiActionsPanel({
           namespace: namespace.trim() || null,
         }),
       });
-      const body = await response.json() as { chiseiNamespace?: string | null; error?: string };
+      const body = (await response.json()) as { chiseiNamespace?: string | null; error?: string };
       if (!response.ok) throw new Error(body.error ?? "Chisei binding failed.");
       const nextBinding = body.chiseiNamespace ?? null;
+      const listWasActive = listController.current !== null;
+      listController.current?.abort();
+      detailController.current?.abort();
+      listRequest.current += 1;
+      detailRequest.current += 1;
       synchronizedBinding.current = `${activeProjectId}\n${nextBinding ?? ""}`;
       setBoundNamespace(nextBinding);
       setNamespace(nextBinding ?? "");
@@ -220,10 +252,11 @@ function ChiseiActionsPanel({
         setDetail(null);
         setProjectionState("idle");
       }
-      setMessage(body.chiseiNamespace
-        ? "Project binding saved locally."
-        : "Project binding removed.");
+      setMessage(
+        body.chiseiNamespace ? "Project binding saved locally." : "Project binding removed.",
+      );
       await onProjectsChanged?.();
+      if (listWasActive && nextBinding && nextBinding === boundNamespace) await loadActions();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Chisei binding failed.");
       setProjectionState("error");
@@ -232,6 +265,9 @@ function ChiseiActionsPanel({
 
   const openDetail = async (instanceId: string) => {
     if (!activeProjectId) return;
+    detailController.current?.abort();
+    const controller = new AbortController();
+    detailController.current = controller;
     const request = ++detailRequest.current;
     const projectId = activeProjectId;
     setMessage(null);
@@ -240,14 +276,19 @@ function ChiseiActionsPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId, instanceId }),
+        signal: controller.signal,
       });
-      const body = await response.json() as ActionDetail & { error?: string };
+      const body = (await response.json()) as ActionDetail & { error?: string };
+      controller.signal.throwIfAborted();
       if (request !== detailRequest.current || activeProjectId !== projectId) return;
       if (!response.ok) throw new Error(body.error ?? "Action detail failed.");
       setDetail(body);
     } catch (error) {
+      if (controller.signal.aborted) return;
       if (request !== detailRequest.current || activeProjectId !== projectId) return;
       setMessage(error instanceof Error ? error.message : "Action detail failed.");
+    } finally {
+      if (detailController.current === controller) detailController.current = null;
     }
   };
 
@@ -259,13 +300,19 @@ function ChiseiActionsPanel({
           <h2 id="chisei-actions-title">Governed Actions</h2>
         </div>
         {boundNamespace && (
-          <Button type="button" onClick={() => void loadActions()} disabled={projectionState === "loading"}>
+          <Button
+            type="button"
+            onClick={() => void loadActions()}
+            disabled={projectionState === "loading"}
+          >
             {projectionState === "loading" ? "Refreshing…" : "Refresh"}
           </Button>
         )}
       </header>
       {!selectedProject ? (
-        <p className="domain-empty">Open a local project before configuring its Chisei projection.</p>
+        <p className="domain-empty">
+          Open a local project before configuring its Chisei projection.
+        </p>
       ) : (
         <>
           <form className="chisei-binding" onSubmit={saveBinding}>
@@ -282,37 +329,66 @@ function ChiseiActionsPanel({
               maxLength={200}
               autoComplete="off"
             />
-            <Button type="submit" disabled={!bindingAdministrationAvailable}>Save binding</Button>
+            <Button type="submit" disabled={!bindingAdministrationAvailable}>
+              Save binding
+            </Button>
           </form>
           {!bindingAdministrationAvailable && (
             <p className="settings-hint">Binding administration is available only on loopback.</p>
           )}
           <p className="boundary-copy">
-            Endpoint and credentials stay server-side. This view cannot admit, claim, retry, or mutate Actions.
+            Endpoint and credentials stay server-side. This view cannot admit, claim, retry, or
+            mutate Actions.
           </p>
           {message && (
-            <p className={projectionState === "error" ? "domain-message error" : "domain-message"} role={projectionState === "error" ? "alert" : "status"}>
+            <p
+              className={projectionState === "error" ? "domain-message error" : "domain-message"}
+              role={projectionState === "error" ? "alert" : "status"}
+            >
               {message}
             </p>
           )}
           {operationReceipt && (
-            <article className="chisei-action-detail" aria-label="Direct governed operation receipt">
+            <article
+              className="chisei-action-detail"
+              aria-label="Direct governed operation receipt"
+            >
               <p className="eyebrow">Direct governed · Shikigami</p>
               <h3>Operation receipt</h3>
               <dl>
-                <div><dt>Operation</dt><dd><code>{operationReceipt.operationId}</code></dd></div>
-                <div><dt>Receipt</dt><dd>{operationReceipt.complete ? "Complete" : "Incomplete"}</dd></div>
-                <div><dt>Events</dt><dd>{operationReceipt.eventCount ?? "Not reported"}</dd></div>
+                <div>
+                  <dt>Operation</dt>
+                  <dd>
+                    <code>{operationReceipt.operationId}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Receipt</dt>
+                  <dd>{operationReceipt.complete ? "Complete" : "Incomplete"}</dd>
+                </div>
+                <div>
+                  <dt>Events</dt>
+                  <dd>{operationReceipt.eventCount ?? "Not reported"}</dd>
+                </div>
               </dl>
             </article>
           )}
           {operationLoading && (
-            <p className="domain-empty" role="status">Loading operation receipt…</p>
+            <p className="domain-empty" role="status">
+              Loading operation receipt…
+            </p>
           )}
-          {boundNamespace && projectionState !== "loading" && actions.length === 0 && projectionState !== "error" && (
-            <p className="domain-empty">No governed Actions are visible for this project.</p>
+          {boundNamespace &&
+            projectionState !== "loading" &&
+            actions.length === 0 &&
+            projectionState !== "error" && (
+              <p className="domain-empty">No governed Actions are visible for this project.</p>
+            )}
+          {projectionState === "loading" && (
+            <p className="domain-empty" role="status">
+              Loading governed Actions…
+            </p>
           )}
-          {projectionState === "loading" && <p className="domain-empty" role="status">Loading governed Actions…</p>}
           {actions.length > 0 && (
             <ul className="chisei-action-list" aria-label="Governed Actions">
               {actions.map((action) => (
@@ -333,16 +409,38 @@ function ChiseiActionsPanel({
               <header>
                 <div>
                   <p className="eyebrow">Authoritative source: Chisei</p>
-                  <h3 id="chisei-action-detail-title">{detail.action.typeId} · {detail.action.status}</h3>
+                  <h3 id="chisei-action-detail-title">
+                    {detail.action.typeId} · {detail.action.status}
+                  </h3>
                 </div>
-                <Button type="button" onClick={() => setDetail(null)}>Close detail</Button>
+                <Button type="button" onClick={() => setDetail(null)}>
+                  Close detail
+                </Button>
               </header>
               <dl>
-                <div><dt>Action</dt><dd><code>{detail.action.instanceId}</code></dd></div>
+                <div>
+                  <dt>Action</dt>
+                  <dd>
+                    <code>{detail.action.instanceId}</code>
+                  </dd>
+                </div>
                 {detail.receipt && (
                   <>
-                    <div><dt>Operation</dt><dd><code>{detail.receipt.operationId}</code></dd></div>
-                    <div><dt>Receipt</dt><dd>{detail.receipt.complete ? "Complete" : "Incomplete"}{detail.receipt.eventCount === null ? "" : ` · ${detail.receipt.eventCount} events`}</dd></div>
+                    <div>
+                      <dt>Operation</dt>
+                      <dd>
+                        <code>{detail.receipt.operationId}</code>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Receipt</dt>
+                      <dd>
+                        {detail.receipt.complete ? "Complete" : "Incomplete"}
+                        {detail.receipt.eventCount === null
+                          ? ""
+                          : ` · ${detail.receipt.eventCount} events`}
+                      </dd>
+                    </div>
                   </>
                 )}
               </dl>
@@ -350,14 +448,18 @@ function ChiseiActionsPanel({
                 <p className="domain-empty">This Action has no operation or receipt.</p>
               )}
               {detail.receipt && detail.receipt.missingSurfaces.length > 0 && (
-                <p className="domain-message">Missing receipt surfaces: {detail.receipt.missingSurfaces.join(", ")}</p>
+                <p className="domain-message">
+                  Missing receipt surfaces: {detail.receipt.missingSurfaces.join(", ")}
+                </p>
               )}
               <ul className="chisei-effect-list" aria-label="Action effects">
                 {detail.effects.map((effect) => (
                   <li key={effect.effectId}>
                     <strong>{effect.kind}</strong>
                     <span>{effect.lifecycleState || effect.status}</span>
-                    <time dateTime={effect.updatedAt}>{new Date(effect.updatedAt).toLocaleString()}</time>
+                    <time dateTime={effect.updatedAt}>
+                      {new Date(effect.updatedAt).toLocaleString()}
+                    </time>
                   </li>
                 ))}
               </ul>
@@ -387,33 +489,36 @@ export function DomainPage({
   repository?: RepositoryMetadata | null;
 }) {
   const page = productPages[product];
-  const selectedProject = projects.find((project) => (
-    project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? "")
-  )) ?? null;
-  const worktreeProjectId = repository && selectedProject
-    ? Object.entries(selectedProject.memberRoots ?? {}).find(
-      ([, root]) => root === repository.selectedWorktree,
-    )?.[0] ?? null
-    : null;
-  const activeProjectId = worktreeProjectId
-    ?? (
-      selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
-        ? selectedProjectId
-        : selectedProject?.id ?? null
-    );
+  const selectedProject =
+    projects.find(
+      (project) =>
+        project.id === selectedProjectId || project.memberIds?.includes(selectedProjectId ?? ""),
+    ) ?? null;
+  const worktreeProjectId =
+    repository && selectedProject
+      ? (Object.entries(selectedProject.memberRoots ?? {}).find(
+          ([, root]) => root === repository.selectedWorktree,
+        )?.[0] ?? null)
+      : null;
+  const activeProjectId =
+    worktreeProjectId ??
+    (selectedProjectId && selectedProject?.memberIds?.includes(selectedProjectId)
+      ? selectedProjectId
+      : (selectedProject?.id ?? null));
   const chiseiBound = Boolean(
-    activeProjectId
-    && (
-      Object.hasOwn(selectedProject?.chiseiBindings ?? {}, activeProjectId)
-        ? selectedProject?.chiseiBindings?.[activeProjectId]
-        : selectedProject?.chiseiNamespace
-    ),
+    activeProjectId &&
+    (Object.hasOwn(selectedProject?.chiseiBindings ?? {}, activeProjectId)
+      ? selectedProject?.chiseiBindings?.[activeProjectId]
+      : selectedProject?.chiseiNamespace),
   );
   return (
     <main className={`domain-page ${product}`}>
-      <div className="domain-orbit"><Icon name={page.icon} /></div>
+      <div className="domain-orbit">
+        <Icon name={page.icon} />
+      </div>
       <p className="eyebrow">
-        {page.eyebrow} · {page.integration === "embedded" ? "local integration" : "projected contract"}
+        {page.eyebrow} ·{" "}
+        {page.integration === "embedded" ? "local integration" : "projected contract"}
       </p>
       <h1>{page.title}</h1>
       <p className="domain-summary">{page.summary}</p>
