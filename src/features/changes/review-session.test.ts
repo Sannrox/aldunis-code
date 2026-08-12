@@ -3,9 +3,22 @@ import test from "node:test";
 import type { ChangedFile, DiffAnnotation, FileDiff } from "../../types";
 import {
   initialChangedFileReview,
+  LatestReviewDiffCoordinator,
   transitionChangedFileReview,
   type ChangedFileReviewState,
 } from "./review-session";
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+};
+
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 const files = (paths: string[]): ChangedFile[] =>
   paths.map((path) => ({
@@ -88,4 +101,60 @@ test("review session dismisses revision before comment and resets read-only stat
   );
   assert.deepEqual(state.annotations, []);
   assert.deepEqual(state.selectedAnnotationIds, []);
+});
+
+test("review diff coordinator runs one request and retains only the latest follow-up", async () => {
+  const first = deferred<string>();
+  const latest = deferred<string>();
+  const started: string[] = [];
+  const loaded: string[] = [];
+  const coordinator = new LatestReviewDiffCoordinator(
+    (input: string) => {
+      started.push(input);
+      return input === "first" ? first.promise : latest.promise;
+    },
+    (input, output) => loaded.push(`${input}:${output}`),
+    () => assert.fail("request should not fail"),
+  );
+
+  coordinator.request("first");
+  coordinator.request("superseded");
+  coordinator.request("latest");
+  assert.deepEqual(started, ["first"]);
+  first.resolve("old");
+  await settle();
+  assert.deepEqual(started, ["first", "latest"]);
+  assert.deepEqual(loaded, ["first:old"]);
+  latest.resolve("new");
+  await settle();
+  assert.deepEqual(loaded, ["first:old", "latest:new"]);
+});
+
+test("review diff coordinator releases failures and suppresses disposed work", async () => {
+  const first = deferred<string>();
+  const latest = deferred<string>();
+  const started: string[] = [];
+  const failed: string[] = [];
+  const loaded: string[] = [];
+  const coordinator = new LatestReviewDiffCoordinator(
+    (input: string) => {
+      started.push(input);
+      return input === "first" ? first.promise : latest.promise;
+    },
+    (input) => loaded.push(input),
+    (input) => failed.push(input),
+  );
+
+  coordinator.request("first");
+  coordinator.request("latest");
+  first.reject(new Error("failed"));
+  await settle();
+  assert.deepEqual(failed, ["first"]);
+  assert.deepEqual(started, ["first", "latest"]);
+  coordinator.dispose();
+  latest.resolve("ignored");
+  await settle();
+  assert.deepEqual(loaded, []);
+  coordinator.request("after-dispose");
+  assert.deepEqual(started, ["first", "latest"]);
 });
