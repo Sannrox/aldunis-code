@@ -17,6 +17,7 @@ export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
 const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
+export const MAX_ACTIVE_BROWSE_INSPECTIONS = 8;
 const IMAGE_TYPES: Record<string, string> = {
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
@@ -39,6 +40,16 @@ const MAX_STAGED_BYTES_PER_WORKTREE = 32 * 1024 * 1024;
 interface PreviewFileOperations {
   readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
   open(path: string, flags: string): Promise<Pick<FileHandle, "read" | "close">>;
+}
+
+export interface RepositoryBrowseOperations {
+  readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
+  inspectRepositoryFile(
+    worktree: string,
+    path: string,
+    match: RepositoryFileResult["match"],
+    signal?: AbortSignal,
+  ): Promise<RepositoryFileResult>;
 }
 
 const previewFileOperations: PreviewFileOperations = { readFile, open };
@@ -487,14 +498,19 @@ async function inspectRepositoryFile(
   worktree: string,
   path: string,
   match: RepositoryFileResult["match"],
+  signal?: AbortSignal,
 ): Promise<RepositoryFileResult> {
   try {
+    signal?.throwIfAborted();
     const direct = await lstat(join(worktree, path));
+    signal?.throwIfAborted();
     if (direct.isSymbolicLink()) {
       return { path, kind: "inaccessible", size: null, match };
     }
     const canonical = await constrainPath(worktree, join(worktree, path));
+    signal?.throwIfAborted();
     const details = await stat(canonical);
+    signal?.throwIfAborted();
     if (!details.isFile()) return { path, kind: "inaccessible", size: null, match };
     if (IMAGE_TYPES[extname(path).toLocaleLowerCase()]) {
       return {
@@ -507,7 +523,8 @@ async function inspectRepositoryFile(
     if (details.size > MAX_PREVIEW_BYTES) {
       return { path, kind: "oversized", size: details.size, match };
     }
-    const bytes = await readFile(canonical);
+    const bytes = await readFile(canonical, { signal });
+    signal?.throwIfAborted();
     return {
       path,
       kind: bytes.includes(0) ? "binary" : "text",
@@ -515,8 +532,34 @@ async function inspectRepositoryFile(
       match,
     };
   } catch {
+    signal?.throwIfAborted();
     return { path, kind: "inaccessible", size: null, match };
   }
+}
+
+const repositoryBrowseOperations: RepositoryBrowseOperations = { readFile, inspectRepositoryFile };
+
+async function inspectRepositoryFiles(
+  worktree: string,
+  selected: Array<{ path: string; match: RepositoryFileResult["match"] }>,
+  signal: AbortSignal | undefined,
+  operations: RepositoryBrowseOperations,
+): Promise<RepositoryFileResult[]> {
+  const files = new Array<RepositoryFileResult>(selected.length);
+  let nextIndex = 0;
+  const inspectNext = async (): Promise<void> => {
+    while (nextIndex < selected.length) {
+      signal?.throwIfAborted();
+      const index = nextIndex++;
+      const { path, match } = selected[index];
+      files[index] = await operations.inspectRepositoryFile(worktree, path, match, signal);
+      signal?.throwIfAborted();
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_ACTIVE_BROWSE_INSPECTIONS, selected.length) }, inspectNext),
+  );
+  return files;
 }
 
 export async function searchRepositoryFiles(
@@ -544,6 +587,7 @@ export async function browseRepositoryFiles(
   query: string,
   signal?: AbortSignal,
   limit = 100,
+  operations: RepositoryBrowseOperations = repositoryBrowseOperations,
 ): Promise<{ files: RepositoryFileResult[]; truncated: boolean }> {
   const needle = query.trim().toLocaleLowerCase();
   const paths = await repositoryPaths(worktree, signal);
@@ -566,21 +610,21 @@ export async function browseRepositoryFiles(
       const direct = await lstat(join(worktree, path));
       if (direct.isSymbolicLink() || !direct.isFile() || direct.size > MAX_PREVIEW_BYTES) continue;
       const canonical = await constrainPath(worktree, join(worktree, path));
-      const bytes = await readFile(canonical);
+      const bytes = await operations.readFile(canonical, { signal });
+      signal?.throwIfAborted();
       searchedBytes += bytes.length;
       if (!bytes.includes(0) && bytes.toString("utf8").toLocaleLowerCase().includes(needle)) {
         matches.push({ path, match: "content" });
       }
     } catch {
+      signal?.throwIfAborted();
       // Inaccessible and racing files remain discoverable only through a name match.
     }
   }
   const boundedLimit = Math.max(1, Math.min(limit, 200));
   const selected = matches.slice(0, boundedLimit);
   return {
-    files: await Promise.all(
-      selected.map(({ path, match }) => inspectRepositoryFile(worktree, path, match)),
-    ),
+    files: await inspectRepositoryFiles(worktree, selected, signal, operations),
     truncated: matches.length > selected.length || searchBudgetExhausted,
   };
 }
