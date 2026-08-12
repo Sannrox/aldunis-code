@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   acpSetModelRequest,
+  MAX_ACP_MODEL_PROBE_MESSAGE_BYTES,
   MAX_ACTIVE_ACP_MODEL_PROBES,
   parseAcpSessionModels,
   probeAcpModels,
@@ -158,6 +159,38 @@ setInterval(() => {}, 1_000);
   } finally {
     if (isAlive()) process.kill(pid, "SIGKILL");
   }
+});
+
+test("probeAcpModels terminates a newline-free oversized message", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-model-oversized-"));
+  const executable = join(directory, "oversized-acp");
+  const pidPath = join(directory, "pid");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+process.on("SIGTERM", () => {});
+process.stdout.write("x".repeat(${MAX_ACP_MODEL_PROBE_MESSAGE_BYTES + 1}));
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+
+  const startedAt = Date.now();
+  const models = await probeAcpModels({
+    executable,
+    arguments: [],
+    cwd: directory,
+    timeoutMs: 5_000,
+    terminationGraceMs: 25,
+  });
+  assert.deepEqual(models, []);
+  assert.ok(Date.now() - startedAt < 1_000);
+  const pid = Number(await readFile(pidPath, "utf8"));
+  assert.throws(
+    () => process.kill(pid, 0),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH",
+  );
 });
 
 test("probeAcpModels settles promptly when the executable cannot spawn", async () => {
