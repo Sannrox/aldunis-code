@@ -158,6 +158,8 @@ let activeAcpModelProbes = 0;
 interface PendingAcpModelProbe {
   resolve(release: (() => void) | null): void;
   timer: NodeJS.Timeout;
+  signal?: AbortSignal;
+  abort?: () => void;
 }
 const pendingAcpModelProbes: PendingAcpModelProbe[] = [];
 
@@ -165,13 +167,18 @@ function releaseAcpModelProbeSlot(): void {
   const next = pendingAcpModelProbes.shift();
   if (next) {
     clearTimeout(next.timer);
+    if (next.signal && next.abort) next.signal.removeEventListener("abort", next.abort);
     next.resolve(releaseAcpModelProbeSlot);
   } else {
     activeAcpModelProbes -= 1;
   }
 }
 
-function acquireAcpModelProbeSlot(waitMs: number): Promise<(() => void) | null> {
+function acquireAcpModelProbeSlot(
+  waitMs: number,
+  signal?: AbortSignal,
+): Promise<(() => void) | null> {
+  signal?.throwIfAborted();
   if (activeAcpModelProbes < MAX_ACTIVE_ACP_MODEL_PROBES) {
     activeAcpModelProbes += 1;
     return Promise.resolve(releaseAcpModelProbeSlot);
@@ -186,11 +193,24 @@ function acquireAcpModelProbeSlot(waitMs: number): Promise<(() => void) | null> 
       timer: setTimeout(() => {
         const index = pendingAcpModelProbes.indexOf(pending);
         if (index >= 0) pendingAcpModelProbes.splice(index, 1);
+        if (pending.signal && pending.abort) {
+          pending.signal.removeEventListener("abort", pending.abort);
+        }
         resolve(null);
       }, waitMs),
+      signal,
     };
+    pending.abort = () => {
+      const index = pendingAcpModelProbes.indexOf(pending);
+      if (index < 0) return;
+      pendingAcpModelProbes.splice(index, 1);
+      clearTimeout(pending.timer);
+      resolve(null);
+    };
+    signal?.addEventListener("abort", pending.abort, { once: true });
     pending.timer.unref();
     pendingAcpModelProbes.push(pending);
+    if (signal?.aborted) pending.abort();
   });
 }
 
@@ -202,11 +222,20 @@ export async function probeAcpModels(options: {
   sessionCwd?: string;
   timeoutMs?: number;
   terminationGraceMs?: number;
+  signal?: AbortSignal;
 }): Promise<AcpDiscoveredModel[]> {
+  options.signal?.throwIfAborted();
   const timeoutMs = options.timeoutMs ?? 8_000;
   const deadline = Date.now() + timeoutMs;
-  const releaseSlot = await acquireAcpModelProbeSlot(timeoutMs);
-  if (!releaseSlot) return [];
+  const releaseSlot = await acquireAcpModelProbeSlot(timeoutMs, options.signal);
+  if (!releaseSlot) {
+    options.signal?.throwIfAborted();
+    return [];
+  }
+  if (options.signal?.aborted) {
+    releaseSlot();
+    options.signal.throwIfAborted();
+  }
   const remainingMs = deadline - Date.now();
   if (remainingMs <= 0) {
     releaseSlot();
@@ -227,6 +256,8 @@ export async function probeAcpModels(options: {
       let settled = false;
       let forceTimer: NodeJS.Timeout | null = null;
       let completionTimer: NodeJS.Timeout | null = null;
+      let timer: NodeJS.Timeout | null = null;
+      let abort = () => {};
       const clearForceTimer = () => {
         if (forceTimer) clearTimeout(forceTimer);
         forceTimer = null;
@@ -234,13 +265,15 @@ export async function probeAcpModels(options: {
       const finish = (models: AcpDiscoveredModel[]) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
+        timer = null;
         let completed = false;
         const complete = () => {
           if (completed) return;
           completed = true;
           clearForceTimer();
           if (completionTimer) clearTimeout(completionTimer);
+          options.signal?.removeEventListener("abort", abort);
           child.stdin.destroy();
           child.stdout.destroy();
           child.stderr.destroy();
@@ -288,8 +321,12 @@ export async function probeAcpModels(options: {
         releaseOwnedSlot();
       });
 
-      const timer = setTimeout(() => finish([]), remainingMs);
+      timer = setTimeout(() => finish([]), remainingMs);
       timer.unref();
+
+      abort = () => finish([]);
+      options.signal?.addEventListener("abort", abort, { once: true });
+      if (options.signal?.aborted) abort();
 
       const decoder = new StringDecoder("utf8");
       let buffer = "";
@@ -360,6 +397,9 @@ export async function probeAcpModels(options: {
       child.stdout.on("end", () => {
         if (!sawInit) finish([]);
       });
+    }).then((models) => {
+      options.signal?.throwIfAborted();
+      return models;
     });
   } catch (error) {
     releaseOwnedSlot();

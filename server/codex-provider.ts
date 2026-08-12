@@ -614,12 +614,14 @@ export class CodexCliAdapter {
     return codexAppServerArguments(version, browserMcp);
   }
 
-  async readiness(): Promise<CodexReadiness> {
+  async readiness(signal?: AbortSignal): Promise<CodexReadiness> {
+    signal?.throwIfAborted();
     let version: string;
     try {
       const result = await execFileAsync(this.executable, ["--version"], {
         encoding: "utf8",
         timeout: 5_000,
+        signal,
       });
       try {
         version = assertSupportedCodexVersion(result.stdout.trim());
@@ -636,6 +638,7 @@ export class CodexCliAdapter {
         };
       }
     } catch {
+      signal?.throwIfAborted();
       return {
         id: this.id,
         installed: false,
@@ -663,6 +666,9 @@ export class CodexCliAdapter {
       terminateProviderChild(child, 1_000);
     }, 5_000);
     timeout.unref();
+    const abort = () => this.#terminate(child);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     try {
       this.#send(child, {
         method: "initialize",
@@ -723,8 +729,10 @@ export class CodexCliAdapter {
       }
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
       this.#terminate(child);
     }
+    signal?.throwIfAborted();
     if (spawnFailed) {
       return {
         id: this.id,

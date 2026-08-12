@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -359,6 +359,48 @@ test("Codex version and native lifecycle events normalize without provider paylo
     }),
     [{ kind: "thinking", text: "Considered the protocol surface." }],
   );
+});
+
+test("Codex readiness cancellation terminates its temporary app-server", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-readiness-cancel-"));
+  const executable = join(directory, "fake-codex");
+  const pidPath = join(directory, "pid");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+  process.exit(0);
+}
+require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+  const controller = new AbortController();
+  const pending = new CodexCliAdapter(executable).readiness(controller.signal);
+  while (!(await readFile(pidPath, "utf8").catch(() => ""))) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  controller.abort();
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  const pid = Number(await readFile(pidPath, "utf8"));
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    } catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, "ESRCH");
+      return;
+    }
+  }
+  process.kill(pid, "SIGKILL");
+  assert.fail("cancelled Codex readiness child remained active");
 });
 
 test("Codex plan notifications normalize as stable artifacts and reject malformed steps", () => {

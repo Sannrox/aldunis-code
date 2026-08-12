@@ -482,7 +482,9 @@ async function probeShikigamiModelCatalog(options: {
   configPath?: string;
   cwd?: string;
   version: string;
+  signal?: AbortSignal;
 }): Promise<ShikigamiModel[]> {
+  options.signal?.throwIfAborted();
   if (!supportsShikigamiModelCatalog(options.version)) return [];
   const args = options.configPath
     ? ["--config", options.configPath, "doctor", "--models", "--json"]
@@ -493,9 +495,11 @@ async function probeShikigamiModelCatalog(options: {
       timeout: MODEL_CATALOG_TIMEOUT_MS,
       env: options.environment,
       cwd: options.cwd,
+      signal: options.signal,
     });
     return parseShikigamiModelCatalog(result.stdout);
   } catch {
+    options.signal?.throwIfAborted();
     // Discovery is a readiness projection. Keep the configured model visible
     // when the catalog command is unavailable or the CLI is older.
     return [];
@@ -692,8 +696,14 @@ export class ShikigamiAdapter {
 
   async readiness(
     env: NodeJS.ProcessEnv = process.env,
-    options: { executable?: string; configPath?: string; cwd?: string } = {},
+    options: {
+      executable?: string;
+      configPath?: string;
+      cwd?: string;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<ShikigamiReadiness> {
+    options.signal?.throwIfAborted();
     const executable = options.executable ?? this.executable;
     let version: string;
     try {
@@ -701,10 +711,12 @@ export class ShikigamiAdapter {
         encoding: "utf8",
         timeout: 5_000,
         env,
+        signal: options.signal,
       });
       try {
         version = assertSupportedShikigamiVersion(`${result.stdout}\n${result.stderr}`);
       } catch (error) {
+        options.signal?.throwIfAborted();
         const detail =
           error instanceof ProviderProtocolError
             ? error.message
@@ -720,6 +732,7 @@ export class ShikigamiAdapter {
         };
       }
     } catch {
+      options.signal?.throwIfAborted();
       return {
         id: this.id,
         installed: false,
@@ -732,12 +745,15 @@ export class ShikigamiAdapter {
     }
     let config: ShikigamiConfigSource;
     try {
+      options.signal?.throwIfAborted();
       config = await loadShikigamiConfig({
         environment: env,
         cwd: options.cwd,
         explicitPath: options.configPath,
       });
+      options.signal?.throwIfAborted();
     } catch (error) {
+      options.signal?.throwIfAborted();
       return {
         id: this.id,
         installed: true,
@@ -753,8 +769,10 @@ export class ShikigamiAdapter {
     }
     let resolved: ReturnType<typeof resolveModelAdapter>;
     try {
+      options.signal?.throwIfAborted();
       resolved = resolveModelAdapter(env, config.values);
     } catch (error) {
+      options.signal?.throwIfAborted();
       return {
         id: this.id,
         installed: true,
@@ -777,6 +795,7 @@ export class ShikigamiAdapter {
             configPath: options.configPath,
             cwd: options.cwd,
             version,
+            signal: options.signal,
           })
         : [];
     const configuredModels: ShikigamiModel[] =
@@ -790,6 +809,7 @@ export class ShikigamiAdapter {
             },
           ];
     const models = discoveredModels.length > 0 ? discoveredModels : configuredModels;
+    options.signal?.throwIfAborted();
     const detail =
       !authenticated && adapter === "http"
         ? `Set ${apiKeyEnv}, or force SHIKIGAMI_MODEL_ADAPTER=scripted.`

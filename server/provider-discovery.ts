@@ -73,7 +73,8 @@ export class ProviderDiscovery {
     this.acpProbe = dependencies.probeAcpModels ?? probeAcpModels;
   }
 
-  async discover(context: { cwd: string }): Promise<ProviderDiscoveryResult> {
+  async discover(context: { cwd: string; signal?: AbortSignal }): Promise<ProviderDiscoveryResult> {
+    context.signal?.throwIfAborted();
     if (this.dependencies.managedModel) {
       return {
         providers: [
@@ -97,10 +98,11 @@ export class ProviderDiscovery {
     }
 
     const [codexReadiness, declarativeProviders, shikigamiReadiness] = await Promise.all([
-      this.discoverCodex(),
-      this.discoverDeclarative(context.cwd),
-      this.discoverShikigami(context.cwd),
+      this.discoverCodex(context.signal),
+      this.discoverDeclarative(context.cwd, context.signal),
+      this.discoverShikigami(context.cwd, context.signal),
     ]);
+    context.signal?.throwIfAborted();
     return {
       providers: [
         { id: "claude-code", installed: true, models: claudeModelCatalog() },
@@ -111,24 +113,35 @@ export class ProviderDiscovery {
     };
   }
 
-  private async discoverCodex(): Promise<CodexReadiness> {
-    return this.dependencies.codex.readiness().catch(() => ({
-      id: "codex-cli" as const,
-      installed: false,
-      authenticated: false,
-      version: null,
-      models: [],
-      detail: "Install Codex CLI on PATH and sign in (codex login).",
-    }));
+  private async discoverCodex(signal?: AbortSignal): Promise<CodexReadiness> {
+    try {
+      return await this.dependencies.codex.readiness(signal);
+    } catch {
+      signal?.throwIfAborted();
+      return {
+        id: "codex-cli" as const,
+        installed: false,
+        authenticated: false,
+        version: null,
+        models: [],
+        detail: "Install Codex CLI on PATH and sign in (codex login).",
+      };
+    }
   }
 
-  private async discoverDeclarative(cwd: string): Promise<ProviderDiscoverySnapshot[]> {
+  private async discoverDeclarative(
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderDiscoverySnapshot[]> {
+    signal?.throwIfAborted();
     const installed = await this.dependencies.adapters.list();
     return Promise.all(
       installed.map(async (adapter) => {
+        signal?.throwIfAborted();
         const executablePath = await this.dependencies.adapters
           .resolveExecutable(adapter)
           .catch(() => null);
+        signal?.throwIfAborted();
         const missingRequiredEnv = adapter.manifest.environment
           .filter((entry) => entry.required)
           .filter((entry) => {
@@ -156,7 +169,9 @@ export class ProviderDiscovery {
             environment,
             cwd,
             timeoutMs: 8_000,
+            signal,
           }).catch(() => []);
+          signal?.throwIfAborted();
         }
         return {
           id: adapterReference(adapter.manifest),
@@ -173,16 +188,22 @@ export class ProviderDiscovery {
     );
   }
 
-  private async discoverShikigami(cwd: string): Promise<ProviderDiscoverySnapshot> {
+  private async discoverShikigami(
+    cwd: string,
+    signal?: AbortSignal,
+  ): Promise<ProviderDiscoverySnapshot> {
+    signal?.throwIfAborted();
     const profiles = (await this.dependencies.profiles.list().catch(() => [])).filter(
       (profile) => profile.provider === "shikigami",
     );
+    signal?.throwIfAborted();
     const profileDiscoveries = new Array<
       NonNullable<ProviderDiscoverySnapshot["profileDiscoveries"]>[number]
     >(profiles.length);
     let nextProfileIndex = 0;
     const discoverNextProfile = async (): Promise<void> => {
       while (true) {
+        signal?.throwIfAborted();
         const index = nextProfileIndex;
         nextProfileIndex += 1;
         const profile = profiles[index];
@@ -190,12 +211,15 @@ export class ProviderDiscovery {
         let readiness: ShikigamiReadiness;
         try {
           const runtime = await this.dependencies.profiles.runtime(profile.id);
+          signal?.throwIfAborted();
           readiness = await this.dependencies.shikigami.readiness(runtime.environment, {
             executable: runtime.executable,
             configPath: runtime.configPath,
             cwd,
+            signal,
           });
         } catch (error) {
+          signal?.throwIfAborted();
           readiness = unavailableShikigamiReadiness(
             error instanceof ProviderProtocolError
               ? error.message
@@ -218,6 +242,7 @@ export class ProviderDiscovery {
         () => discoverNextProfile(),
       ),
     );
+    signal?.throwIfAborted();
     const selected = profileDiscoveries.find(
       (profile) => profile.profileId === DEFAULT_SHIKIGAMI_PROFILE_ID,
     );

@@ -143,7 +143,7 @@
     },
     {
       "name": "ProviderDiscovery",
-      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, models, and concurrency-bounded profile-specific Shikigami discovery through one authorized-worktree interface; managed mode exposes only its fixed Shikigami model."
+      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, models, and concurrency-bounded profile-specific Shikigami discovery through one authorized-worktree interface; request cancellation stops queued and active readiness subprocess work, while managed mode exposes only its fixed Shikigami model."
     },
     {
       "name": "RendererProviderDiscoveryCoordinator",
@@ -1876,7 +1876,7 @@
     {
       "subject": "ProviderDiscovery",
       "source": "Sannrox/aldunis-code",
-      "locator": "server/provider-discovery.ts#ProviderDiscovery; server/host.ts:/api/providers/discover; Issues #570 and #797",
+      "locator": "server/provider-discovery.ts#ProviderDiscovery; server/host.ts:/api/providers/discover; Issues #570, #797, and #799",
       "confidence": 1.0
     },
     {

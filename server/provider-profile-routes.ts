@@ -40,6 +40,27 @@ const PROBE_KINDS: readonly ProfileProbeKind[] = [
   "models",
 ];
 
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortUnfinishedResponse = () => {
+    if (!response.writableEnded) controller.abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortUnfinishedResponse);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) controller.abort();
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortUnfinishedResponse);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -90,22 +111,31 @@ export async function handleProviderProfileRoute(
   } = context;
 
   if (route === "/api/providers/discover") {
-    const body = await readOptionalJson(request);
-    if (!isRecord(body)) {
-      throw new RepositoryError("Provider discovery context must be an object.");
-    }
-    const hasRoot = body.root !== undefined;
-    const hasWorktree = body.worktree !== undefined;
-    if (
-      hasRoot !== hasWorktree ||
-      (hasRoot && (typeof body.root !== "string" || typeof body.worktree !== "string"))
-    ) {
-      throw new RepositoryError("Provider discovery requires both a repository root and worktree.");
-    }
-    const cwd = hasRoot
-      ? (await selectWorktree(body.root as string, body.worktree as string)).worktree
-      : defaultDiscoveryCwd;
-    sendJson(response, 200, await providerDiscovery.discover({ cwd }));
+    await withRequestCancellation(request, response, async (signal) => {
+      signal.throwIfAborted();
+      const body = await readOptionalJson(request);
+      signal.throwIfAborted();
+      if (!isRecord(body)) {
+        throw new RepositoryError("Provider discovery context must be an object.");
+      }
+      const hasRoot = body.root !== undefined;
+      const hasWorktree = body.worktree !== undefined;
+      if (
+        hasRoot !== hasWorktree ||
+        (hasRoot && (typeof body.root !== "string" || typeof body.worktree !== "string"))
+      ) {
+        throw new RepositoryError(
+          "Provider discovery requires both a repository root and worktree.",
+        );
+      }
+      const cwd = hasRoot
+        ? (await selectWorktree(body.root as string, body.worktree as string)).worktree
+        : defaultDiscoveryCwd;
+      signal.throwIfAborted();
+      const result = await providerDiscovery.discover({ cwd, signal });
+      signal.throwIfAborted();
+      sendJson(response, 200, result);
+    });
     return true;
   }
 
