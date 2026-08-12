@@ -7,7 +7,7 @@ import {
   verify,
   type JsonWebKey,
 } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 
@@ -19,6 +19,106 @@ export const MAX_REMOTE_PROOF_REPLAY_ENTRIES = 10_000;
 export const MAX_LIVE_PAIRING_GRANTS = 32;
 export const MAX_ACTIVE_REMOTE_SESSIONS = 64;
 export const MAX_RETAINED_TERMINAL_REMOTE_SESSIONS = 32;
+export const MAX_REMOTE_AUTH_STATE_BYTES = 1024 * 1024;
+
+interface RemoteAuthStateFileIdentity {
+  size: number;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
+interface RemoteAuthStateReadHandle {
+  stat(): Promise<RemoteAuthStateFileIdentity>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface RemoteAuthStateFileOperations {
+  open(path: string, flags: "r"): Promise<RemoteAuthStateReadHandle>;
+  stat(path: string): Promise<RemoteAuthStateFileIdentity>;
+}
+
+const remoteAuthStateFileOperations: RemoteAuthStateFileOperations = { open, stat };
+
+function sameRemoteAuthStateFile(
+  left: RemoteAuthStateFileIdentity,
+  right: RemoteAuthStateFileIdentity,
+): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export async function readRemoteAuthStateFile(
+  path: string,
+  maxBytes = MAX_REMOTE_AUTH_STATE_BYTES,
+  operations: RemoteAuthStateFileOperations = remoteAuthStateFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path, "r");
+  try {
+    let initial: RemoteAuthStateFileIdentity;
+    try {
+      initial = await handle.stat();
+    } catch {
+      throw new Error("Remote access state changed while it was being read.");
+    }
+    if (!Number.isSafeInteger(initial.size) || initial.size < 0 || initial.size > maxBytes) {
+      throw new Error("Remote access state exceeds the supported size.");
+    }
+    const bytes = Buffer.alloc(initial.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (result.bytesRead === 0) {
+        throw new Error("Remote access state changed while it was being read.");
+      }
+      offset += result.bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if ((await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new Error("Remote access state changed while it was being read.");
+    }
+    let finalHandle: RemoteAuthStateFileIdentity;
+    let finalPath: RemoteAuthStateFileIdentity;
+    try {
+      finalHandle = await handle.stat();
+      finalPath = await operations.stat(path);
+    } catch {
+      throw new Error("Remote access state changed while it was being read.");
+    }
+    if (
+      !sameRemoteAuthStateFile(initial, finalHandle) ||
+      !sameRemoteAuthStateFile(finalHandle, finalPath)
+    ) {
+      throw new Error("Remote access state changed while it was being read.");
+    }
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "Remote access state exceeds the supported size." ||
+        error.message === "Remote access state changed while it was being read.")
+    ) {
+      throw error;
+    }
+    throw new Error("Remote access state changed while it was being read.");
+  } finally {
+    await handle.close().catch(() => {
+      throw new Error("Remote access state changed while it was being read.");
+    });
+  }
+}
 
 interface PairingGrant {
   id: string;
@@ -184,6 +284,8 @@ export class RemoteAuth {
   readonly #maxPairingGrants: number;
   readonly #maxActiveSessions: number;
   readonly #maxTerminalSessions: number;
+  readonly #maxStateBytes: number;
+  readonly #stateFileOperations: RemoteAuthStateFileOperations;
   #state: RemoteAuthState | null = null;
   #writeQueue: Promise<void> = Promise.resolve();
   #mutationQueue: Promise<void> = Promise.resolve();
@@ -197,6 +299,8 @@ export class RemoteAuth {
       maxPairingGrants?: number;
       maxActiveSessions?: number;
       maxTerminalSessions?: number;
+      maxStateBytes?: number;
+      stateFileOperations?: RemoteAuthStateFileOperations;
     } = {},
   ) {
     this.#path = join(directory, "remote-auth.v1.json");
@@ -207,6 +311,8 @@ export class RemoteAuth {
     this.#maxActiveSessions = options.maxActiveSessions ?? MAX_ACTIVE_REMOTE_SESSIONS;
     this.#maxTerminalSessions =
       options.maxTerminalSessions ?? MAX_RETAINED_TERMINAL_REMOTE_SESSIONS;
+    this.#maxStateBytes = options.maxStateBytes ?? MAX_REMOTE_AUTH_STATE_BYTES;
+    this.#stateFileOperations = options.stateFileOperations ?? remoteAuthStateFileOperations;
   }
 
   #prune(state: RemoteAuthState): void {
@@ -216,7 +322,9 @@ export class RemoteAuth {
   async #load(): Promise<RemoteAuthState> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     try {
-      const value = JSON.parse(await readFile(this.#path, "utf8")) as RemoteAuthState;
+      const value = JSON.parse(
+        await readRemoteAuthStateFile(this.#path, this.#maxStateBytes, this.#stateFileOperations),
+      ) as RemoteAuthState;
       if (
         value.schemaVersion !== 1 ||
         typeof value.hostId !== "string" ||
@@ -239,15 +347,20 @@ export class RemoteAuth {
   async #save(): Promise<void> {
     const state = this.#state;
     if (!state) return;
-    this.#writeQueue = this.#writeQueue.then(async () => {
+    const operation = this.#writeQueue.then(async () => {
+      const serialized = `${JSON.stringify(state, null, 2)}\n`;
+      if (Buffer.byteLength(serialized, "utf8") > this.#maxStateBytes) {
+        throw new RemoteAuthError("Remote access state exceeds the supported size.", 500);
+      }
       const temporary = `${this.#path}.tmp`;
-      await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+      await writeFile(temporary, serialized, {
         encoding: "utf8",
         mode: 0o600,
       });
       await rename(temporary, this.#path);
     });
-    await this.#writeQueue;
+    this.#writeQueue = operation.catch(() => undefined);
+    await operation;
   }
 
   async #mutate<T>(operation: (state: RemoteAuthState) => Promise<T> | T): Promise<T> {

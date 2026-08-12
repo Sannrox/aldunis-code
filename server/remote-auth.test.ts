@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,18 +9,200 @@ import {
   MAX_ACTIVE_REMOTE_SESSIONS,
   MAX_LIVE_PAIRING_GRANTS,
   MAX_RETAINED_TERMINAL_REMOTE_SESSIONS,
+  MAX_REMOTE_AUTH_STATE_BYTES,
   MAX_REMOTE_PROOF_REPLAY_ENTRIES,
   RemoteAuth,
   RemoteAuthError,
   assertRemoteProofNotReplayed,
   assertRemoteProofReplayCapacity,
+  readRemoteAuthStateFile,
   retainRemoteProofReplay,
+  type RemoteAuthStateFileOperations,
 } from "./remote-auth.ts";
 
 test("remote pairing authority retention exposes finite production bounds", () => {
   assert.equal(MAX_LIVE_PAIRING_GRANTS, 32);
   assert.equal(MAX_ACTIVE_REMOTE_SESSIONS, 64);
   assert.equal(MAX_RETAINED_TERMINAL_REMOTE_SESSIONS, 32);
+  assert.equal(MAX_REMOTE_AUTH_STATE_BYTES, 1024 * 1024);
+});
+
+function stateFileOperations(options: {
+  bytes: Buffer;
+  initialSize?: number;
+  finalHandle?: Partial<{
+    size: number;
+    dev: number;
+    ino: number;
+    mtimeMs: number;
+    ctimeMs: number;
+  }>;
+  finalPath?: Partial<{
+    size: number;
+    dev: number;
+    ino: number;
+    mtimeMs: number;
+    ctimeMs: number;
+  }>;
+  pathStatError?: Error;
+  readError?: Error;
+}): RemoteAuthStateFileOperations {
+  const initial = {
+    size: options.initialSize ?? options.bytes.length,
+    dev: 1,
+    ino: 2,
+    mtimeMs: 3,
+    ctimeMs: 4,
+  };
+  const finalHandle = { ...initial, ...options.finalHandle };
+  const finalPath = { ...finalHandle, ...options.finalPath };
+  let handleStats = 0;
+  return {
+    async open() {
+      return {
+        async stat() {
+          handleStats += 1;
+          return handleStats === 1 ? initial : finalHandle;
+        },
+        async read(buffer, offset, length, position) {
+          if (options.readError) throw options.readError;
+          const bytesRead = Math.min(length, Math.max(0, options.bytes.length - position));
+          if (bytesRead > 0) options.bytes.copy(buffer, offset, position, position + bytesRead);
+          return { bytesRead };
+        },
+        async close() {},
+      };
+    },
+    async stat() {
+      if (options.pathStatError) throw options.pathStatError;
+      return finalPath;
+    },
+  };
+}
+
+test("remote auth state rejects oversize from metadata before reading content", async () => {
+  let read = false;
+  const operations = stateFileOperations({ bytes: Buffer.alloc(0), initialSize: 9 });
+  const originalOpen = operations.open;
+  operations.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    const originalRead = handle.read;
+    handle.read = async (...readArgs) => {
+      read = true;
+      return originalRead(...readArgs);
+    };
+    return handle;
+  };
+
+  await assert.rejects(
+    () => readRemoteAuthStateFile("ignored", 8, operations),
+    /exceeds the supported size/,
+  );
+  assert.equal(read, false);
+});
+
+test("remote auth state rejects shrink, growth, mutation, replacement, and disappearance", async () => {
+  const changed = /changed while it was being read/;
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abc"), initialSize: 4 }),
+      ),
+    changed,
+  );
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abcd"), initialSize: 3 }),
+      ),
+    changed,
+  );
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abc"), finalHandle: { mtimeMs: 5 } }),
+      ),
+    changed,
+  );
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abc"), finalPath: { ino: 9 } }),
+      ),
+    changed,
+  );
+  const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abc"), readError: missing }),
+      ),
+    changed,
+  );
+  await assert.rejects(
+    () =>
+      readRemoteAuthStateFile(
+        "ignored",
+        8,
+        stateFileOperations({ bytes: Buffer.from("abc"), pathStatError: missing }),
+      ),
+    changed,
+  );
+});
+
+test("remote auth treats only initial absence as an empty first-run state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-auth-absence-"));
+  const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+  const auth = new RemoteAuth(directory, {
+    stateFileOperations: {
+      async open() {
+        throw missing;
+      },
+      async stat() {
+        throw new Error("unexpected path stat");
+      },
+    },
+  });
+
+  await auth.issuePairing();
+  const stored = JSON.parse(await readFile(join(directory, "remote-auth.v1.json"), "utf8")) as {
+    pairingGrants: unknown[];
+  };
+  assert.equal(stored.pairingGrants.length, 1);
+});
+
+test("remote auth rejects oversize writes without replacing prior state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-auth-write-bound-"));
+  await new RemoteAuth(directory).issuePairing();
+  const path = join(directory, "remote-auth.v1.json");
+  const before = await readFile(path);
+  const auth = new RemoteAuth(directory, { maxStateBytes: before.length });
+
+  await assert.rejects(() => auth.issuePairing(), /exceeds the supported size/);
+  assert.deepEqual(await readFile(path), before);
+});
+
+test("remote auth rejects an oversized persisted file through the public API", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-auth-read-bound-"));
+  await writeFile(
+    join(directory, "remote-auth.v1.json"),
+    Buffer.alloc(MAX_REMOTE_AUTH_STATE_BYTES + 1),
+  );
+
+  await assert.rejects(
+    () => new RemoteAuth(directory).listSessions(),
+    (error: unknown) => error instanceof RemoteAuthError && error.status === 500,
+  );
 });
 
 test("pairing grant admission prunes expiry and rejects live overflow", async () => {
