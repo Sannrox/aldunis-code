@@ -43,6 +43,9 @@ const MAX_SCAN_FILES = 200;
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_HOOK_COOLDOWN = 86_400;
+const AUTONOMY_CANCELLATION_DRAIN_MS = 1_000;
+
+class NonDrainingAutonomyTimeoutError extends AutonomyError {}
 
 export interface AutonomyStateSnapshot {
   runs: AutonomyRun[];
@@ -137,29 +140,41 @@ function finding(
   };
 }
 
-async function gitTrackedFiles(worktree: string): Promise<string[]> {
+async function gitTrackedFiles(worktree: string, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
   try {
     const result = await execFileAsync("git", ["-C", worktree, "ls-files", "-z"], {
       encoding: "utf8",
       timeout: 15_000,
       maxBuffer: 4 * 1024 * 1024,
+      signal,
     });
+    signal?.throwIfAborted();
     return result.stdout.split("\0").filter(Boolean).slice(0, MAX_SCAN_FILES);
   } catch {
+    signal?.throwIfAborted();
     throw new AutonomyError("The repository file inventory could not be read.", 409);
   }
 }
 
-async function readBoundedText(worktree: string, path: string): Promise<string | null> {
+async function readBoundedText(
+  worktree: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  signal?.throwIfAborted();
   if (!isSafeRelativePath(worktree, path) || !shouldScanPath(path)) return null;
   try {
     const details = await stat(join(worktree, path));
+    signal?.throwIfAborted();
     if (!details.isFile() || details.size > MAX_FILE_BYTES) return null;
-    const content = await readFile(join(worktree, path));
+    const content = await readFile(join(worktree, path), { signal });
+    signal?.throwIfAborted();
     const boundedBuffer = content.subarray(0, MAX_FILE_BYTES);
     if (boundedBuffer.includes(0)) return null;
     return boundedBuffer.toString("utf8");
   } catch {
+    signal?.throwIfAborted();
     return null;
   }
 }
@@ -578,10 +593,13 @@ export class AutonomyEngine {
       };
       await this.state.saveAutonomyRecords({ runs: [runningRun], tasks: [runningTask] });
       let lastError: string | null = null;
+      let lastAttempt = runningTask.attempt;
       for (let attempt = runningTask.attempt; attempt <= runningTask.maxAttempts; attempt += 1) {
+        lastAttempt = attempt;
         try {
           const output = await this.withTimeout(
-            this.executeStep(flowStep.kind, runningRun, runningTask, projection),
+            (signal) =>
+              this.executeStep(flowStep.kind, runningRun, runningTask, projection, signal),
             flowStep.timeoutSeconds * 1000,
           );
           const completedAt = new Date().toISOString();
@@ -599,7 +617,11 @@ export class AutonomyEngine {
           break;
         } catch (error) {
           lastError = error instanceof Error ? error.message : "Autonomy task failed.";
-          if (attempt >= runningTask.maxAttempts) break;
+          if (
+            error instanceof NonDrainingAutonomyTimeoutError ||
+            attempt >= runningTask.maxAttempts
+          )
+            break;
           await new Promise((resolve) =>
             setTimeout(resolve, Math.min(flowStep.backoffSeconds * 1000, 2000)),
           );
@@ -612,7 +634,7 @@ export class AutonomyEngine {
             {
               ...runningTask,
               status: "failed",
-              attempt: runningTask.maxAttempts,
+              attempt: lastAttempt,
               error: bounded(lastError, 500, "Autonomy task failed."),
               updatedAt: failedAt,
               completedAt: failedAt,
@@ -665,7 +687,9 @@ export class AutonomyEngine {
     run: AutonomyRun,
     task: AutonomyTask,
     projection: Awaited<ReturnType<LocalStateStore["load"]>>,
+    signal?: AbortSignal,
   ): Promise<AutonomyTaskOutput> {
+    signal?.throwIfAborted();
     switch (kind) {
       case "preflight": {
         if (!run.worktree) {
@@ -676,7 +700,7 @@ export class AutonomyEngine {
             detail: "No repository was selected for this awareness run.",
           };
         }
-        const changedFiles = await listChangedFiles(run.worktree);
+        const changedFiles = await listChangedFiles(run.worktree, signal);
         return {
           kind,
           repositoryPresent: true,
@@ -688,7 +712,7 @@ export class AutonomyEngine {
       }
       case "scan_repository": {
         if (!run.worktree) return { kind, filesScanned: 0, findings: [] };
-        const context = await this.scanRepository(run.worktree);
+        const context = await this.scanRepository(run.worktree, signal);
         return { kind, filesScanned: context.filesScanned, findings: context.findings };
       }
       case "rank_findings": {
@@ -744,9 +768,10 @@ export class AutonomyEngine {
     }
   }
 
-  async scanRepository(worktree: string): Promise<ScanContext> {
-    const changedFiles = await listChangedFiles(worktree);
-    const trackedFiles = await gitTrackedFiles(worktree);
+  async scanRepository(worktree: string, signal?: AbortSignal): Promise<ScanContext> {
+    signal?.throwIfAborted();
+    const changedFiles = await listChangedFiles(worktree, signal);
+    const trackedFiles = await gitTrackedFiles(worktree, signal);
     const findings: MaintenanceFinding[] = [];
     if (changedFiles.length > 0) {
       findings.push(
@@ -785,12 +810,13 @@ export class AutonomyEngine {
     let hasPackage = false;
     let hasLock = false;
     for (const path of candidates) {
+      signal?.throwIfAborted();
       if (path.toLocaleLowerCase() === "package.json") hasPackage = true;
       if (/^readme(?:\.[^.]+)?$/i.test(basename(path))) hasReadme = true;
       if (path.toLocaleLowerCase().startsWith("docs/")) hasDocs = true;
       if (/^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i.test(basename(path)))
         hasLock = true;
-      const content = await readBoundedText(worktree, path);
+      const content = await readBoundedText(worktree, path, signal);
       if (content === null || bytes >= MAX_SCAN_BYTES) continue;
       bytes += Buffer.byteLength(content, "utf8");
       filesScanned += 1;
@@ -892,18 +918,45 @@ export class AutonomyEngine {
     return match.path;
   }
 
-  async withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  async withTimeout<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    timeoutMs: number,
+    cancellationDrainMs = AUTONOMY_CANCELLATION_DRAIN_MS,
+  ): Promise<T> {
+    const controller = new AbortController();
     let timer: NodeJS.Timeout | null = null;
+    const active = Promise.resolve().then(() => operation(controller.signal));
     try {
-      return await Promise.race([
-        operation,
-        new Promise<T>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new AutonomyError("The autonomy step timed out.", 408)),
-            timeoutMs,
-          );
+      const result = await Promise.race([
+        active.then(
+          (value) => ({ kind: "completed" as const, value }),
+          (error: unknown) => ({ kind: "failed" as const, error }),
+        ),
+        new Promise<{ kind: "timed_out" }>((resolve) => {
+          timer = setTimeout(() => resolve({ kind: "timed_out" }), timeoutMs);
         }),
       ]);
+      if (result.kind === "completed") return result.value;
+      if (result.kind === "failed") throw result.error;
+      controller.abort();
+      let drainTimer: NodeJS.Timeout | null = null;
+      const drained = await Promise.race([
+        active.then(
+          () => true,
+          () => true,
+        ),
+        new Promise<false>((resolve) => {
+          drainTimer = setTimeout(() => resolve(false), cancellationDrainMs);
+        }),
+      ]);
+      if (drainTimer) clearTimeout(drainTimer);
+      if (!drained) {
+        throw new NonDrainingAutonomyTimeoutError(
+          "The autonomy step timed out and did not stop after cancellation.",
+          408,
+        );
+      }
+      throw new AutonomyError("The autonomy step timed out.", 408);
     } finally {
       if (timer) clearTimeout(timer);
     }

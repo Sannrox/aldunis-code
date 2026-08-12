@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   builtInAutonomyFlows,
   isHeartbeatDue,
+  NIGHTLY_GARDENER_FLOW_ID,
   parseHeartbeatMonitor,
   parseStandingOrder,
   type AutonomyRun,
@@ -107,6 +108,134 @@ test("autonomy records validate bounded durable configuration", () => {
       }),
     /project/,
   );
+});
+
+test("Autonomy step timeout aborts and drains work before rejecting", async () => {
+  const { engine, cleanup } = await fixture();
+  let observedAbort = false;
+  let drained = false;
+  try {
+    await assert.rejects(
+      engine.withTimeout(
+        (signal) =>
+          new Promise<void>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => {
+                observedAbort = true;
+                setImmediate(() => {
+                  drained = true;
+                  resolve();
+                });
+              },
+              { once: true },
+            );
+          }),
+        5,
+      ),
+      /timed out/,
+    );
+    assert.equal(observedAbort, true);
+    assert.equal(drained, true);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy retries cannot overlap a timed-out predecessor", async () => {
+  const { engine, cleanup } = await fixture();
+  let active = 0;
+  let maximumActive = 0;
+  const attempt = () =>
+    engine.withTimeout(
+      (signal) =>
+        new Promise<void>((resolve) => {
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          signal.addEventListener(
+            "abort",
+            () => {
+              setImmediate(() => {
+                active -= 1;
+                resolve();
+              });
+            },
+            { once: true },
+          );
+        }),
+      5,
+    );
+  try {
+    await assert.rejects(attempt, /timed out/);
+    await assert.rejects(attempt, /timed out/);
+    assert.equal(maximumActive, 1);
+    assert.equal(active, 0);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy timeout remains finite when cancelled work does not drain", async () => {
+  const { engine, cleanup } = await fixture();
+  try {
+    await assert.rejects(
+      engine.withTimeout(() => new Promise<void>(() => undefined), 5, 5),
+      /did not stop after cancellation/,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy does not retry a timed-out operation that fails to drain", async () => {
+  const { state, engine, cleanup } = await fixture();
+  let attempts = 0;
+  try {
+    await engine.ensureBuiltInFlows();
+    const projection = await state.load();
+    const gardener = projection.autonomyFlows.find((flow) => flow.id === NIGHTLY_GARDENER_FLOW_ID)!;
+    await state.saveAutonomyRecords({
+      flows: [
+        {
+          ...gardener,
+          steps: [
+            {
+              ...gardener.steps[0]!,
+              timeoutSeconds: 1,
+              maxAttempts: 3,
+            },
+          ],
+          budget: { ...gardener.budget, maxTasks: 1 },
+        },
+      ],
+    });
+    engine.executeStep = async () => {
+      attempts += 1;
+      return new Promise(() => undefined);
+    };
+    const run = await engine.startGardener({ projectId: "project-1" });
+    const completed = await waitForRun(state, run.id);
+    assert.equal(completed.status, "failed");
+    assert.match(completed.error ?? "", /did not stop after cancellation/);
+    assert.equal(attempts, 1);
+    const task = (await state.load()).autonomyTasks.find((candidate) => candidate.runId === run.id);
+    assert.equal(task?.attempt, 1);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy repository scan rejects pre-aborted work before discovery", async () => {
+  const { root, engine, cleanup } = await fixture();
+  const controller = new AbortController();
+  controller.abort();
+  try {
+    await assert.rejects(engine.scanRepository(root, controller.signal), {
+      name: "AbortError",
+    });
+  } finally {
+    await cleanup();
+  }
 });
 
 test("Autonomy scheduler sleeps without work and preserves active deadlines", async () => {
