@@ -48,6 +48,27 @@ function repositorySelection(body: { root?: unknown; worktree?: unknown }): {
   return { root: body.root, worktree: body.worktree };
 }
 
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortUnfinishedResponse = () => {
+    if (!response.writableEnded) controller.abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortUnfinishedResponse);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) controller.abort();
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortUnfinishedResponse);
+  }
+}
+
 /**
  * Dispatch the closed ConversationContextPin route family behind one interface.
  * This module owns request admission, canonical worktree selection, remote and
@@ -72,34 +93,39 @@ export async function handleContextRoute(
   };
 
   if (route === "/api/context/files" || route === "/api/context/browse") {
-    const body = (await context.readJson(request)) as {
-      root?: unknown;
-      worktree?: unknown;
-      query?: unknown;
-    };
-    const selection = repositorySelection(body);
-    if (typeof body.query !== "string") {
-      throw new RepositoryError(
-        route.endsWith("/files")
-          ? "A repository, worktree, and file query are required."
-          : "A repository, worktree, and search query are required.",
+    return await withRequestCancellation(request, response, async (signal) => {
+      const body = (await context.readJson(request)) as {
+        root?: unknown;
+        worktree?: unknown;
+        query?: unknown;
+      };
+      const selection = repositorySelection(body);
+      if (typeof body.query !== "string") {
+        throw new RepositoryError(
+          route.endsWith("/files")
+            ? "A repository, worktree, and file query are required."
+            : "A repository, worktree, and search query are required.",
+        );
+      }
+      const selected = await context.selectWorktree(selection.root, selection.worktree);
+      if (route.endsWith("/files")) {
+        context.sendJson(response, 200, {
+          files: await operations.searchRepositoryFiles(
+            selected.worktree,
+            body.query,
+            undefined,
+            signal,
+          ),
+        });
+        return true;
+      }
+      context.sendJson(
+        response,
+        200,
+        await operations.browseRepositoryFiles(selected.worktree, body.query, signal),
       );
-    }
-    const selected = await context.selectWorktree(selection.root, selection.worktree);
-    if (route.endsWith("/files")) {
-      context.sendJson(response, 200, {
-        files: await operations.searchRepositoryFiles(selected.worktree, body.query),
-      });
       return true;
-    }
-    const controller = new AbortController();
-    request.once("aborted", () => controller.abort());
-    context.sendJson(
-      response,
-      200,
-      await operations.browseRepositoryFiles(selected.worktree, body.query, controller.signal),
-    );
-    return true;
+    });
   }
 
   if (route === "/api/context/preview") {

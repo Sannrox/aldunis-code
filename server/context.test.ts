@@ -178,6 +178,16 @@ test("file discovery is repository-scoped and hides protected names", async () =
   assert.equal(files.includes("api-key.config.js"), true);
 });
 
+test("file discovery cancels both Git listings through the request signal", async () => {
+  const { root } = await fixture();
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    searchRepositoryFiles(root, "main", 20, controller.signal),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+});
+
 test("browsing searches names and bounded text deterministically", async () => {
   const { root } = await fixture();
   const byName = await browseRepositoryFiles(root, "main");
