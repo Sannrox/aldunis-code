@@ -10,6 +10,7 @@ import type { InteractionMode } from "./provider.ts";
 export const AUTOMATIONS_SCHEMA_VERSION = 1 as const;
 export const MIN_INTERVAL_SECONDS = 60;
 export const MAX_ACTIVE_SCHEDULED_AUTOMATIONS = 4;
+export const MAX_DURABLE_AUTOMATIONS = 256;
 
 export type AutomationSchedule =
   { kind: "interval"; seconds: number } | { kind: "cron"; expression: string };
@@ -260,12 +261,16 @@ export function parseAutomation(value: unknown): Automation {
   };
 }
 
-function parseStore(value: unknown): AutomationStoreFile {
+function parseStore(value: unknown, maxItems: number): AutomationStoreFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new AutomationError("Automations store is invalid.");
   }
   const input = value as Record<string, unknown>;
-  if (input.schemaVersion !== AUTOMATIONS_SCHEMA_VERSION || !Array.isArray(input.items)) {
+  if (
+    input.schemaVersion !== AUTOMATIONS_SCHEMA_VERSION ||
+    !Array.isArray(input.items) ||
+    input.items.length > maxItems
+  ) {
     throw new AutomationError("Automations store uses an incompatible schema.");
   }
   return {
@@ -278,7 +283,10 @@ export class AutomationStore {
   readonly #path: string;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(readonly directory: string) {
+  constructor(
+    readonly directory: string,
+    readonly maxItems = MAX_DURABLE_AUTOMATIONS,
+  ) {
     this.#path = join(directory, "automations.v1.json");
   }
 
@@ -309,6 +317,10 @@ export class AutomationStore {
     schedule: AutomationSchedule;
   }): Promise<Automation> {
     return this.#serialize(async () => {
+      const store = await this.#read();
+      if (store.items.length >= this.maxItems) {
+        throw new AutomationError("The automation inventory is full.", 429);
+      }
       const now = new Date().toISOString();
       const draft: Automation = {
         schemaVersion: 1,
@@ -326,7 +338,6 @@ export class AutomationStore {
         lastError: null,
       };
       const automation = parseAutomation(draft);
-      const store = await this.#read();
       store.items.push(automation);
       await this.#write(store);
       return automation;
@@ -379,7 +390,7 @@ export class AutomationStore {
 
   async #read(): Promise<AutomationStoreFile> {
     try {
-      return parseStore(JSON.parse(await readFile(this.#path, "utf8")));
+      return parseStore(JSON.parse(await readFile(this.#path, "utf8")), this.maxItems);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { schemaVersion: 1, items: [] };

@@ -42,6 +42,7 @@ const MIN_PATCH_FOR_RESUME = 5;
 /** Model catalog discovery was added to the Shikigami CLI in version 1.0.5. */
 const MODEL_CATALOG_MIN_PATCH = 5;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
+export const MAX_OPEN_SHIKIGAMI_TOOL_CORRELATIONS = 128;
 const RUN_TIMEOUT_MS = 30 * 60_000;
 
 export interface ShikigamiCloseTimer {
@@ -233,18 +234,24 @@ export function assertManagedShikigamiVersion(output: string): string {
 export class ShikigamiToolIdTracker {
   #seq = 0;
   #open = new Map<string, string[]>();
+  #openCount = 0;
 
   start(name: string): string {
+    if (this.#openCount >= MAX_OPEN_SHIKIGAMI_TOOL_CORRELATIONS) {
+      throw new ProviderProtocolError("Shikigami emitted too many unmatched tool start events.");
+    }
     const id = `shikigami:${name}:${++this.#seq}`;
     const stack = this.#open.get(name) ?? [];
     stack.push(id);
     this.#open.set(name, stack);
+    this.#openCount += 1;
     return id;
   }
 
   end(name: string): string {
     const stack = this.#open.get(name);
     const id = stack?.pop();
+    if (id) this.#openCount -= 1;
     if (!stack?.length) this.#open.delete(name);
     return id ?? `shikigami:${name}:orphan:${++this.#seq}`;
   }

@@ -103,7 +103,7 @@
     },
     {
       "name": "ConversationAutomation",
-      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation through concurrency-bounded scheduled provider-run admission while preserving the conversation, worktree, provider, and explicit approval boundaries."
+      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation through concurrency-bounded scheduled provider-run admission while preserving the conversation, worktree, provider, and explicit approval boundaries; the local store admits and evaluates at most 256 schedules."
     },
     {
       "name": "ConversationAutomationFire",
@@ -180,6 +180,10 @@
           "description": "The minimum compatible Shikigami version for native parked-run resume."
         }
       ]
+    },
+    {
+      "name": "ShikigamiEventNormalizationBoundary",
+      "description": "The Aldunis Code provider-adapter boundary that validates and normalizes Shikigami harness events while retaining at most 128 unmatched tool-call correlation identities per run and failing closed before overflow allocation."
     },
     {
       "name": "ShikigamiParkedRunResume",
@@ -1801,7 +1805,7 @@
     },
     {
       "subject": "ConversationAutomation",
-      "source": "GitHub Issues Sannrox/aldunis-code#448 and #795",
+      "source": "GitHub Issues Sannrox/aldunis-code#448, #795, and #839",
       "locator": "server/automations.ts#Automation; docs/automations.md",
       "confidence": 1.0
     },
@@ -2295,6 +2299,12 @@
       "subject": "ShikigamiCheckpointResumeBoundary",
       "source": "Shikigami native checkpoint resume contract",
       "locator": "src/checkpoint.rs;src/run.rs; server/shikigami-provider.ts#resumeParked",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiEventNormalizationBoundary",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#837",
+      "locator": "server/shikigami-provider.ts#ShikigamiToolIdTracker; server/shikigami-provider.ts#normalizeShikigamiEvent",
       "confidence": 1.0
     },
     {
