@@ -162,6 +162,10 @@
       "description": "A profile-keyed provider readiness projection whose host store coalesces exact profile/kind probes within a fixed eight-probe subprocess bound, cancels obsolete subprocesses after committed profile mutations through bounded exact-child termination, and keeps executable, configuration, authentication, and model discovery aligned with the selected provider profile."
     },
     {
+      "name": "LocalToolApproval",
+      "description": "A single-use Aldunis Code permission record bound to one provider run, conversation, repository, worktree, and tool call. The host retains at most 32 live payload-bearing approvals and 256 total live plus terminal records across active runs; overflow fails closed without evicting pending authority or allocating another decision timer."
+    },
+    {
       "name": "ProviderProfileRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates provider discovery and ProviderProfile route recognition, host-mode admission, request and environment validation, adapter-profile seeding, canonical worktree selection, and response mapping behind one internal dispatch interface without changing provider, filesystem, credential, persistence, or managed-host authority."
     },
@@ -1893,6 +1897,12 @@
       "subject": "ProviderProfileDiscovery",
       "source": "Sannrox/aldunis-code Issues #738, #779, and #817",
       "locator": "server/profiles.ts#ClaudeProfileStore; src/types.ts:ProviderProfileDiscovery; https://github.com/Sannrox/aldunis-code/issues/817",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalToolApproval",
+      "source": "Aldunis Code PermissionBroker contract and Issue Sannrox/aldunis-code#819",
+      "locator": "server/permission.ts#PermissionBroker; https://github.com/Sannrox/aldunis-code/issues/819",
       "confidence": 1.0
     },
     {
