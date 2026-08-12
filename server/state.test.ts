@@ -7,9 +7,11 @@ import {
   coalesceConsecutiveAssistantMessages,
   LocalStateError,
   LocalStateStore,
+  MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES,
   MAX_THREADS_PER_PROJECT,
   projectDelegatedConversationOutcomes,
   projectThreadStatus,
+  writeEventHistory,
 } from "./state.ts";
 
 async function fixtureStore(): Promise<{ directory: string; store: LocalStateStore }> {
@@ -2614,6 +2616,62 @@ test("coalesceConsecutiveAssistantMessages merges tokens and keeps tool splits",
       { role: "assistant", text: "After" },
     ],
   );
+});
+
+test("history serialization bounds batches and writes an oversized envelope directly", async () => {
+  assert.equal(MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES, 256 * 1024);
+  const writes: string[] = [];
+  const envelopes = [
+    {
+      schemaVersion: 2 as const,
+      sequence: 1,
+      id: "event-1",
+      recordedAt: "2026-01-01T00:00:00.000Z",
+      event: {
+        type: "message_saved" as const,
+        message: {
+          schemaVersion: 2 as const,
+          id: "message-1",
+          turnId: "turn-1",
+          role: "assistant" as const,
+          text: "small",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      },
+    },
+    {
+      schemaVersion: 2 as const,
+      sequence: 2,
+      id: "event-2",
+      recordedAt: "2026-01-01T00:00:01.000Z",
+      event: {
+        type: "message_saved" as const,
+        message: {
+          schemaVersion: 2 as const,
+          id: "message-2",
+          turnId: "turn-1",
+          role: "assistant" as const,
+          text: "x".repeat(200),
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+      },
+    },
+  ];
+  await writeEventHistory(
+    {
+      async writeFile(data) {
+        writes.push(data);
+      },
+    },
+    envelopes,
+    300,
+  );
+
+  assert.equal(writes.at(-1), "\n");
+  assert.ok(
+    writes.slice(0, -1).every((write) => Buffer.byteLength(write) <= 300 || !write.endsWith("\n")),
+  );
+  assert.equal(writes.join(""), `${envelopes.map((item) => JSON.stringify(item)).join("\n")}\n`);
 });
 
 test("compactAssistantStreamHistory rewrites legacy token-per-event logs", async () => {

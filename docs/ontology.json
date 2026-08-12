@@ -503,7 +503,7 @@
     },
     {
       "name": "LocalEventHistoryProjectionStore",
-      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that streams ordered envelopes directly into one live projection without retaining complete raw history or parsed-envelope arrays, while preserving physical-line corruption evidence and verified two-pass intact-fork repair."
+      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that streams ordered envelopes directly into one live projection without retaining complete raw history or parsed-envelope arrays, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
     },
     {
       "name": "ApplicationShellBootstrapModule",
@@ -2649,8 +2649,8 @@
     },
     {
       "subject": "LocalEventHistoryProjectionStore",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#869",
-      "locator": "server/state.ts#LocalStateStore; server/state.ts#streamEventEnvelopes; https://github.com/Sannrox/aldunis-code/issues/869",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#869 and #871",
+      "locator": "server/state.ts#LocalStateStore; server/state.ts#streamEventEnvelopes; server/state.ts#writeEventHistory; src/lib/assistant-text.ts#joinAssistantTextChunks; https://github.com/Sannrox/aldunis-code/issues/869; https://github.com/Sannrox/aldunis-code/issues/871",
       "confidence": 1.0
     },
     {
