@@ -4,6 +4,7 @@ import { lstat, mkdir, open, opendir, readFile, stat, writeFile } from "node:fs/
 import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { lock } from "proper-lockfile";
 import { RepositoryError, constrainPath } from "./repository.ts";
 import { isComposerAttachmentPath, isLocalRuntimePath } from "./local-runtime.ts";
 
@@ -793,20 +794,30 @@ export async function stageComposerImage(
     await ensureComposerAttachmentDirectory(worktree, rootAttachmentDir);
     const canonicalRoot = await constrainPath(worktree, rootAttachmentDir);
     await ensureComposerAttachmentIgnore(canonicalRoot);
-    const directory = join(canonicalRoot, scope);
-    const existingDirectory = await lstat(directory).catch(() => null);
-    if (existingDirectory?.isSymbolicLink()) {
-      throw new RepositoryError("Composer attachment path cannot be a symlink.", 403);
+    const release = await lock(join(canonicalRoot, ".quota"), {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: { retries: 1_200, factor: 1, minTimeout: 25, maxTimeout: 25 },
+    });
+    try {
+      const directory = join(canonicalRoot, scope);
+      const existingDirectory = await lstat(directory).catch(() => null);
+      if (existingDirectory?.isSymbolicLink()) {
+        throw new RepositoryError("Composer attachment path cannot be a symlink.", 403);
+      }
+      if (existingDirectory && !existingDirectory.isDirectory()) {
+        throw new RepositoryError("Composer attachment path is not a directory.", 409);
+      }
+      await enforceComposerAttachmentQuota(canonicalRoot, bytes.length, existingDirectory ? 0 : 1);
+      await ensureDirectory(directory);
+      const canonicalDirectory = await constrainPath(worktree, directory);
+      const canonical = join(canonicalDirectory, fileName);
+      await writeFile(canonical, bytes, { flag: "wx" });
+      return { path: relativePath, mediaType, size: bytes.length };
+    } finally {
+      await release();
     }
-    if (existingDirectory && !existingDirectory.isDirectory()) {
-      throw new RepositoryError("Composer attachment path is not a directory.", 409);
-    }
-    await enforceComposerAttachmentQuota(canonicalRoot, bytes.length, existingDirectory ? 0 : 1);
-    await ensureDirectory(directory);
-    const canonicalDirectory = await constrainPath(worktree, directory);
-    const canonical = join(canonicalDirectory, fileName);
-    await writeFile(canonical, bytes, { flag: "wx" });
-    return { path: relativePath, mediaType, size: bytes.length };
   });
 }
 
