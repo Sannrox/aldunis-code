@@ -58,11 +58,13 @@ Open the Tenkai product screen and select the explicit manifest. Each mutation
 has a single-use five-minute preview:
 
 1. **Prepare candidate** checks the committed tree, computes the accepted
-   `aldunis.delivery-candidate/v1` digest, installs the exact committed lockfile
-   with `npm ci --ignore-scripts`, and runs the repository-declared
-   `npm run build` and `npm test`. All three commands run in one detached
-   checkout of the exact reviewed commit; package scripts are restored from
-   that commit before execution.
+   `aldunis.delivery-candidate/v1` digest, and streams the ordered Git blobs
+   through one idle-bounded `git cat-file --batch` subprocess without changing
+   the canonical path, mode, or content framing. It then installs the exact
+   committed lockfile with `npm ci --ignore-scripts` and runs the
+   repository-declared `npm run build` and `npm test`. All three commands run
+   in one detached checkout of the exact reviewed commit; package scripts are
+   restored from that commit before execution.
 2. **Evaluate** submits only candidate identities and digests. Chisei denial,
    unavailability, staleness, and unknown results fail closed.
 3. **Publish** asks Chisei to export a short-lived authenticated provenance

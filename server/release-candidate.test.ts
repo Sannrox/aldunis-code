@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  consumeGitBlobBatch,
   deliveryCandidateIdentity,
   prepareReleaseCandidate,
   sourceTreeDigest,
@@ -13,36 +16,60 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "aldunis-release-candidate-"));
   await execFileAsync("git", ["-C", root, "init", "-q", "-b", "main"]);
   await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
   await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
-  await execFileAsync("git", ["-C", root, "remote", "add", "origin", "https://example.invalid/acme/widget.git"]);
+  await execFileAsync("git", [
+    "-C",
+    root,
+    "remote",
+    "add",
+    "origin",
+    "https://example.invalid/acme/widget.git",
+  ]);
   await mkdir(join(root, "artifact"));
   await writeFile(join(root, "artifact", "payload.txt"), "payload\n");
   await chmod(join(root, "artifact", "payload.txt"), 0o644);
-  await writeFile(join(root, "package.json"), JSON.stringify({
-    name: "widget",
-    scripts: { build: "node build.mjs", test: "node --test" },
-  }, null, 2));
-  await writeFile(join(root, "package-lock.json"), JSON.stringify({
-    name: "widget",
-    lockfileVersion: 3,
-    packages: {},
-  }));
-  await writeFile(join(root, "tenkai.toml"), [
-    "[product]",
-    'name = "widget"',
-    'version = "1.2.3"',
-    "",
-    "[deploy]",
-    'workdir = "."',
-    'install = "true"',
-    'health = "true"',
-    'inputs = ["artifact"]',
-    "",
-  ].join("\n"));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify(
+      {
+        name: "widget",
+        scripts: { build: "node build.mjs", test: "node --test" },
+      },
+      null,
+      2,
+    ),
+  );
+  await writeFile(
+    join(root, "package-lock.json"),
+    JSON.stringify({
+      name: "widget",
+      lockfileVersion: 3,
+      packages: {},
+    }),
+  );
+  await writeFile(
+    join(root, "tenkai.toml"),
+    [
+      "[product]",
+      'name = "widget"',
+      'version = "1.2.3"',
+      "",
+      "[deploy]",
+      'workdir = "."',
+      'install = "true"',
+      'health = "true"',
+      'inputs = ["artifact"]',
+      "",
+    ].join("\n"),
+  );
   await execFileAsync("git", ["-C", root, "add", "."]);
   await execFileAsync("git", ["-C", root, "commit", "-qm", "fixture"]);
   return root;
@@ -57,11 +84,10 @@ test("candidate preparation binds committed source, manifest, artifacts, and npm
   assert.equal(candidate.document.repository.id, "https://example.invalid/acme/widget.git");
   assert.equal(candidate.document.commit.algorithm, "sha1");
   assert.equal(candidate.document.artifacts[0]?.location_class, "local");
-  assert.deepEqual(candidate.build.commands.map((command) => command.args), [
-    ["ci", "--ignore-scripts", "--no-audit", "--no-fund"],
-    ["run", "build"],
-    ["test"],
-  ]);
+  assert.deepEqual(
+    candidate.build.commands.map((command) => command.args),
+    [["ci", "--ignore-scripts", "--no-audit", "--no-fund"], ["run", "build"], ["test"]],
+  );
 });
 
 test("artifact identity uses committed executable modes instead of ambient permissions", async () => {
@@ -82,8 +108,14 @@ test("changed source, manifest, artifact, and build definitions invalidate the c
   const first = await prepareReleaseCandidate(root, root, "tenkai.toml");
   const cases: Array<[string, string]> = [
     ["artifact/payload.txt", "changed artifact\n"],
-    ["package.json", JSON.stringify({ scripts: { build: "node changed.mjs", test: "node --test" } })],
-    ["tenkai.toml", "[product]\nname=\"widget\"\nversion=\"1.2.4\"\n[deploy]\ninstall=\"true\"\ninputs=[]\n"],
+    [
+      "package.json",
+      JSON.stringify({ scripts: { build: "node changed.mjs", test: "node --test" } }),
+    ],
+    [
+      "tenkai.toml",
+      '[product]\nname="widget"\nversion="1.2.4"\n[deploy]\ninstall="true"\ninputs=[]\n',
+    ],
   ];
   for (const [path, contents] of cases) {
     await writeFile(join(root, path), contents);
@@ -109,13 +141,12 @@ test("ignored manifest and artifact inputs are not treated as committed", async 
   await writeFile(join(manifestRoot, ".gitignore"), "tenkai.toml\n");
   await execFileAsync("git", ["-C", manifestRoot, "add", ".gitignore"]);
   await execFileAsync("git", ["-C", manifestRoot, "commit", "-qm", "ignore manifest"]);
-  await writeFile(join(manifestRoot, "tenkai.toml"), [
-    "[product]",
-    'name = "widget"',
-    'version = "1.2.3"',
-    "[deploy]",
-    'inputs = ["artifact"]',
-  ].join("\n"));
+  await writeFile(
+    join(manifestRoot, "tenkai.toml"),
+    ["[product]", 'name = "widget"', 'version = "1.2.3"', "[deploy]", 'inputs = ["artifact"]'].join(
+      "\n",
+    ),
+  );
   await assert.rejects(
     () => prepareReleaseCandidate(manifestRoot, manifestRoot, "tenkai.toml"),
     /manifest must be tracked/,
@@ -155,10 +186,7 @@ test("the accepted Aldunis candidate conformance vector is reproduced", () => {
     ],
     build_definition_digest: `sha256:${"b".repeat(64)}`,
   });
-  assert.equal(
-    identity,
-    "sha256:3059514e30875e7795f4d988295ef3e6d92387b6a8a6f86356e7627cf51745a0",
-  );
+  assert.equal(identity, "sha256:3059514e30875e7795f4d988295ef3e6d92387b6a8a6f86356e7627cf51745a0");
 });
 
 test("the accepted source-tree conformance vector is reproduced", async () => {
@@ -175,4 +203,60 @@ test("the accepted source-tree conformance vector is reproduced", async () => {
     await sourceTreeDigest(root),
     "sha256:be3211c0a271b20c678872100d6c693b7d0952bcaa3c9970c92b5b13ac7c73bc",
   );
+});
+
+test("source-tree batching preserves regular, executable, Unicode, and empty blobs", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-source-tree-batch-"));
+  await execFileAsync("git", ["-C", root, "init", "-q", "-b", "main"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await writeFile(join(root, "empty.txt"), "");
+  await writeFile(join(root, "run.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(join(root, "ümlaut.txt"), "Grüße\n");
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "fixture"]);
+
+  assert.equal(
+    await sourceTreeDigest(root),
+    "sha256:db430f408c900e2735c3750892e97d5e34b3e690fbf2d1db3941a4bf58e82b92",
+  );
+});
+
+test("Git blob batch parsing streams exact objects across arbitrary chunk boundaries", async () => {
+  const firstOid = "1".repeat(40);
+  const secondOid = "2".repeat(64);
+  const output = Buffer.from(`${firstOid} blob 5\nhello\n${secondOid} blob 0\n\n`);
+  const chunks = [
+    output.subarray(0, 7),
+    output.subarray(7, 48),
+    output.subarray(48, 55),
+    output.subarray(55),
+  ];
+  const digests: string[] = [];
+
+  await consumeGitBlobBatch(
+    Readable.from(chunks),
+    [{ oid: firstOid }, { oid: secondOid }],
+    (digest) => digests.push(digest.toString("hex")),
+  );
+
+  assert.deepEqual(digests, [sha256("hello"), sha256("")]);
+});
+
+test("Git blob batch parsing fails closed on malformed or incomplete framing", async () => {
+  const oid = "1".repeat(40);
+  const invalid = [
+    `${"2".repeat(40)} blob 1\na\n`,
+    `${oid} tree 1\na\n`,
+    `${oid} blob 9007199254740992\n`,
+    `${oid} blob 2\na`,
+    `${oid} blob 1\nax`,
+    `${oid} blob 1\na\ntrailing`,
+  ];
+  for (const output of invalid) {
+    await assert.rejects(
+      () => consumeGitBlobBatch(Readable.from([Buffer.from(output)]), [{ oid }], () => undefined),
+      /Git batch/,
+    );
+  }
 });
