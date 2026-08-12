@@ -18,10 +18,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { createLocalHost } from "./host.ts";
 import {
+  FileManagedAssertionReplayStore,
   loadManagedHostConfiguration,
   MAX_MANAGED_ASSERTION_PUBLIC_KEY_BYTES,
+  MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES,
   ManagedHost,
   readManagedPublicKeyFile,
+  readManagedReplayStateFile,
+  type ManagedReplayStateFileOperations,
   type ManagedPublicKeyFileOperations,
   type ManagedHostConfiguration,
 } from "./managed-host.ts";
@@ -339,6 +343,139 @@ test("managed startup configuration is required and Shikigami runtime excludes a
       /filesystem identity changed/,
     );
   });
+});
+
+test("managed assertion replay state rejects oversize before content allocation", async () => {
+  let read = false;
+  let closed = false;
+  const identity = {
+    size: BigInt(MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES + 1),
+    dev: 1n,
+    ino: 2n,
+    mode: 0o100600n,
+    mtimeNs: 3n,
+    ctimeNs: 4n,
+  };
+  const operations: ManagedReplayStateFileOperations = {
+    stat: async () => identity,
+    open: async () => ({
+      stat: async () => identity,
+      read: async () => {
+        read = true;
+        return { bytesRead: 0 };
+      },
+      close: async () => {
+        closed = true;
+      },
+    }),
+  };
+
+  await assert.rejects(
+    () => readManagedReplayStateFile("replay.json", operations),
+    /exceeds the supported size/,
+  );
+  assert.equal(read, false);
+  assert.equal(closed, true);
+});
+
+test("managed assertion replay state closes and rejects concurrent file changes", async () => {
+  const mutations = {
+    shrink: async (path: string) => truncate(path, 1),
+    growth: async (path: string) => writeFile(path, "more", { flag: "a" }),
+    mutation: async (path: string) => writeFile(path, "changed!"),
+    replacement: async (path: string) => {
+      const next = `${path}.next`;
+      await writeFile(next, "replace");
+      await rename(next, path);
+    },
+    disappearance: async (path: string) => unlink(path),
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const directory = await mkdtemp(join(tmpdir(), `aldunis-managed-replay-${name}-`));
+    const path = join(directory, "managed-assertion-replay.v1.json");
+    await writeFile(path, "original");
+    let closed = false;
+    let mutated = false;
+    const operations: ManagedReplayStateFileOperations = {
+      stat: (candidate) => stat(candidate, { bigint: true }),
+      open: async (candidate) => {
+        const handle = await open(candidate, "r");
+        return {
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+          read: async (buffer, offset, length, position) => {
+            const result = await handle.read(buffer, offset, length, position);
+            if (!mutated) {
+              mutated = true;
+              await mutate(candidate);
+            }
+            return { bytesRead: result.bytesRead };
+          },
+          stat: () => handle.stat({ bigint: true }),
+        };
+      },
+    };
+
+    await assert.rejects(() => readManagedReplayStateFile(path, operations));
+    assert.equal(closed, true, `${name} must close the replay-state handle`);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("managed assertion replay state rejects short reads and close failures", async () => {
+  const identity = { size: 1n, dev: 1n, ino: 2n, mode: 0o100600n, mtimeNs: 3n, ctimeNs: 4n };
+  let shortClosed = false;
+  await assert.rejects(
+    () =>
+      readManagedReplayStateFile("short.json", {
+        stat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async () => ({ bytesRead: 0 }),
+          close: async () => {
+            shortClosed = true;
+          },
+        }),
+      }),
+    /changed while being read/,
+  );
+  assert.equal(shortClosed, true);
+
+  await assert.rejects(
+    () =>
+      readManagedReplayStateFile("close.json", {
+        stat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async (buffer, offset, length, position) => {
+            if (position >= Number(identity.size)) return { bytesRead: 0 };
+            buffer.fill(0, offset, offset + length);
+            return { bytesRead: length };
+          },
+          close: async () => {
+            throw new Error("sensitive close detail");
+          },
+        }),
+      }),
+    /could not be closed/,
+  );
+});
+
+test("managed assertion replay store preserves initial absence and rejects oversized state", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-managed-replay-store-"));
+  const store = new FileManagedAssertionReplayStore(directory);
+  const now = Math.floor(Date.now() / 1000);
+  await store.consume("first", now + 60, now);
+  await assert.rejects(() => store.consume("first", now + 60, now), /already used/);
+
+  await writeFile(
+    join(directory, "managed-assertion-replay.v1.json"),
+    Buffer.alloc(MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES + 1),
+  );
+  await assert.rejects(() => store.consume("second", now + 60, now), /exceeds the supported size/);
+  await rm(directory, { recursive: true, force: true });
 });
 
 test("managed assertion public-key loading bounds inline and file-backed input", async () => {

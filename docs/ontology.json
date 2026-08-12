@@ -331,7 +331,7 @@
     },
     {
       "name": "ManagedHostedAssertion",
-      "description": "A short-lived EdDSA gateway assertion bound to the configured issuer, audience, tenant, instance, Code workbench scope, managed profile, and single-use identity; altered, expired, replayed, or cross-context assertions are denied."
+      "description": "A short-lived EdDSA gateway assertion bound to the configured issuer, audience, tenant, instance, Code workbench scope, managed profile, and single-use identity; its durable replay state is read through one stable descriptor within a 2 MiB ceiling, and altered, expired, replayed, or cross-context assertions are denied."
     },
     {
       "name": "ManagedAccountProjection",
@@ -2243,6 +2243,12 @@
       "subject": "ManagedHostedAssertion",
       "source": "Accepted Aldunis Code hosted workbench decision",
       "locator": "docs/decisions/managed-hosted-workbench.md; server/managed-host.ts#ManagedHost.verify",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ManagedHostedAssertion",
+      "source": "Aldunis Code Issue #883 bounded managed assertion replay-state loading",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/883; server/managed-host.ts#readManagedReplayStateFile",
       "confidence": 1.0
     },
     {

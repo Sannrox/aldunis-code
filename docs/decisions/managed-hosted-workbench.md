@@ -31,8 +31,10 @@ assertion selects a fixed Code host profile. The managed host:
    `method`, `path`, and `body_sha256` to the request; unbound assertions are
    rejected. Consumed JTIs are persisted under the host state directory so
    replay fails closed across process restarts and concurrent host processes
-   that share that directory. Missing, expired, replayed, altered, unbound, or
-   cross-audience assertions fail closed;
+   that share that directory. Replay state is limited to 2 MiB and read through
+   one descriptor; oversize, replacement, mutation, truncation, growth, and
+   disappearance fail closed before parsing. Missing, expired, replayed,
+   altered, unbound, or cross-audience assertions fail closed;
 3. exposes only the configured canonical repository catalogue. Root and
    worktree requests are resolved against that catalogue, reject symlinks and
    filesystem-device changes, and never accept URL or arbitrary path input;
