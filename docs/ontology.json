@@ -285,7 +285,7 @@
     },
     {
       "name": "BrowserAutomationBroker",
-      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, authenticates one conversation-scoped provider token, and rejects actions when agent control is disabled or human input has advanced the control epoch."
+      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, authenticates one conversation-scoped provider token, streams broker responses within a 2 MiB ceiling, and rejects actions when agent control is disabled or human input has advanced the control epoch."
     },
     {
       "name": "PictureInPictureBrowserMirror",
@@ -2123,6 +2123,12 @@
       "subject": "BrowserAutomationBroker",
       "source": "Aldunis Code shared-browser broker contract",
       "locator": "server/browser.ts; server/browser-mcp.mjs; server/host.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BrowserAutomationBroker",
+      "source": "Aldunis Code Issue #885 bounded browser broker response streaming",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/885; server/browser-mcp.mjs#readBoundedResponseText",
       "confidence": 1.0
     },
     {

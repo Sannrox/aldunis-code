@@ -19,7 +19,9 @@ Electron browser partition per conversation, exposes bounded loopback-only
 browser tools through a host broker, and renders that same session in the
 desktop workspace and picture-in-picture window. Browser control stays disabled
 until the operator explicitly enables it for that session; human input advances
-the control epoch and stale agent actions fail closed.
+the control epoch and stale agent actions fail closed. Provider-side MCP broker
+responses stream within a 2 MiB ceiling and are cancelled when they exceed it,
+so the bound applies before the complete response is retained or parsed.
 
 Main tradeoff: this adds a desktop bridge, browser-session state, provider MCP
 configuration, and a new explicit control authority, but it makes the agent and
