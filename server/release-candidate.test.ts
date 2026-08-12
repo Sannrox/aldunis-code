@@ -9,7 +9,9 @@ import {
   open,
   readFile,
   rename,
+  symlink,
   truncate,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +20,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  MAX_RELEASE_MANIFEST_BYTES,
   MAX_RELEASE_PACKAGE_MANIFEST_BYTES,
   type ArtifactFileOperations,
   consumeGitBlobBatch,
@@ -25,6 +28,7 @@ import {
   hashArtifactFile,
   hashReleaseLockFile,
   prepareReleaseCandidate,
+  readCommittedReleaseManifest,
   readReleasePackageManifest,
   sourceTreeDigest,
 } from "./release-candidate.ts";
@@ -100,6 +104,10 @@ test("candidate preparation binds committed source, manifest, artifacts, and npm
   assert.equal(candidate.document.commit.algorithm, "sha1");
   assert.equal(candidate.document.artifacts[0]?.location_class, "local");
   assert.equal(
+    candidate.document.manifest.digest,
+    `sha256:${sha256(await readFile(join(root, "tenkai.toml")))}`,
+  );
+  assert.equal(
     candidate.build.definitionDigest,
     "sha256:5ffafe0e42ae8bb0d67c09f1bf5ff583cf8abca8e983ea4e859d4329e4a366f7",
   );
@@ -164,6 +172,50 @@ test("release lock hashing fails closed on concurrent replacement", async () => 
     /package-lock\.json changed while it was hashed/,
   );
   assert.equal(closed, true);
+});
+
+test("release manifest reads enforce the exact byte boundary before parsing", async () => {
+  const root = await fixture();
+  const manifestPath = join(root, "tenkai.toml");
+  await writeFile(manifestPath, Buffer.alloc(MAX_RELEASE_MANIFEST_BYTES, 0x20));
+  await execFileAsync("git", ["-C", root, "add", "tenkai.toml"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "maximum delivery manifest"]);
+  assert.equal(
+    (await readCommittedReleaseManifest(root, "tenkai.toml")).length,
+    MAX_RELEASE_MANIFEST_BYTES,
+  );
+
+  await writeFile(manifestPath, Buffer.alloc(MAX_RELEASE_MANIFEST_BYTES + 1, 0x20));
+  await execFileAsync("git", ["-C", root, "add", "tenkai.toml"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "oversize delivery manifest"]);
+  await assert.rejects(
+    () => prepareReleaseCandidate(root, root, "tenkai.toml"),
+    /Tenkai manifest must be at most 256 KiB/,
+  );
+});
+
+test("release manifest reads stay bound to the committed blob", async () => {
+  const root = await fixture();
+  const path = join(root, "tenkai.toml");
+  const committed = await readFile(path);
+  await writeFile(path, "uncommitted replacement");
+
+  assert.deepEqual(await readCommittedReleaseManifest(root, "tenkai.toml"), committed);
+});
+
+test("release candidate manifests must be committed regular files", async () => {
+  const root = await fixture();
+  const manifestPath = join(root, "tenkai.toml");
+  await writeFile(join(root, "manifest-target.toml"), await readFile(manifestPath));
+  await unlink(manifestPath);
+  await symlink("manifest-target.toml", manifestPath);
+  await execFileAsync("git", ["-C", root, "add", "-A"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "replace manifest with symlink"]);
+
+  await assert.rejects(
+    () => prepareReleaseCandidate(root, root, "tenkai.toml"),
+    /manifest must be a regular file/,
+  );
 });
 
 test("artifact identity uses committed executable modes instead of ambient permissions", async () => {
