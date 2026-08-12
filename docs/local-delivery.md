@@ -62,7 +62,10 @@ has a single-use five-minute preview:
    through one idle-bounded `git cat-file --batch` subprocess without changing
    the canonical path, mode, or content framing. Artifact-tree files use one
    fixed-size read buffer and fail closed if identity, size, or metadata changes
-   while hashing. Code then installs the exact committed lockfile with
+   while hashing. Build-definition inspection admits at most 256 KiB for the
+   root package manifest and streams the exact committed lockfile through the
+   same fixed-size, identity-checked reader without changing its accepted
+   digest. Code then installs that lockfile with
    `npm ci --ignore-scripts` and runs the
    repository-declared `npm run build` and `npm test`. All three commands run
    in one detached checkout of the exact reviewed commit; package scripts are

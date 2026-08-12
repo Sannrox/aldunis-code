@@ -387,7 +387,7 @@
     },
     {
       "name": "LocalDeliveryCandidate",
-      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition; ordered source blobs stream through one idle-bounded Git batch child and artifact files through one fixed-size buffer with stable identity checks while preserving accepted digest framing."
+      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition; ordered source blobs stream through one idle-bounded Git batch child, artifact and lock files stream through one fixed-size buffer with stable identity checks, and package-manifest inspection is limited to 256 KiB while preserving accepted digests."
     },
     {
       "name": "ChiseiGovernedEvaluationReference",
@@ -2439,6 +2439,12 @@
       "subject": "LocalDeliveryCandidate",
       "source": "Aldunis Code Issue #876 streaming artifact-tree implementation",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/876; server/release-candidate.ts#hashArtifactFile",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalDeliveryCandidate",
+      "source": "Aldunis Code Issue #889 bounded build-definition input implementation",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/889; server/release-candidate.ts#readReleasePackageManifest; server/release-candidate.ts#hashReleaseLockFile",
       "confidence": 1.0
     },
     {
