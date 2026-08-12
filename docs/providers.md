@@ -98,7 +98,10 @@ remains the source for provider plan content.
   efforts. Installed-but-not-signed-in Codex stays selectable so the composer
   can show sign-in guidance.
 - Build-mode network and file mutations pause for scoped approval; sandbox
-  escapes that cannot be confined to the selected worktree are declined.
+  escapes that cannot be confined to the selected worktree are declined. The
+  injected approval MCP accepts at most 1 MiB per provider JSON-RPC message and
+  handles at most eight broker requests concurrently, applying stdin
+  backpressure at capacity.
 - A single non-secret `request_user_input` question is normalized and resumed
   through the original app-server JSON-RPC request. Multi-question and secret
   requests fail closed until the normalized UI can preserve their distinct

@@ -34,6 +34,10 @@
       "description": "A deep server-side Aldunis Code module that coordinates one exact provider-child termination lifecycle across delayed cancellation and immediate terminal paths, clears scheduled and force timers on child close, promotes delayed termination without duplication, and preserves bounded SIGTERM-to-SIGKILL escalation without changing provider protocol or permission authority."
     },
     {
+      "name": "PermissionMcpBoundary",
+      "description": "The Aldunis-owned Claude approval MCP child boundary that accepts provider JSON-RPC messages up to 1 MiB, decodes UTF-8 incrementally, and applies stdin backpressure while at most eight broker requests are active."
+    },
+    {
       "name": "ProviderControlRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, request-lifetime-cancelled Codex skill discovery, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
     },
@@ -2023,6 +2027,12 @@
       "subject": "LocalToolApproval",
       "source": "Aldunis Code PermissionBroker contract and Issue Sannrox/aldunis-code#819",
       "locator": "server/permission.ts#PermissionBroker; https://github.com/Sannrox/aldunis-code/issues/819",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PermissionMcpBoundary",
+      "source": "Aldunis Code Issue #897 bounded permission MCP input processing",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/897; server/permission-mcp.mjs",
       "confidence": 1.0
     },
     {
