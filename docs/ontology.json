@@ -155,7 +155,7 @@
     },
     {
       "name": "ProviderDiscovery",
-      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound while failing closed on unstable files, fixed worker bounds cover both adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
+      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound, native Shikigami config reads stay within 4 MiB, both fail closed on unstable files, fixed worker bounds cover adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
     },
     {
       "name": "RendererProviderDiscoveryCoordinator",
@@ -1973,6 +1973,12 @@
       "subject": "ProviderDiscovery",
       "source": "Sannrox/aldunis-code Issues #570, #797, #799, #831, #844, and #863",
       "locator": "server/provider-discovery.ts#ProviderDiscovery; server/provider-adapters.ts#ProviderAdapterStore; server/provider-adapters.ts#readProviderAdapterRecordFile; server/host.ts:/api/providers/discover",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderDiscovery",
+      "source": "Aldunis Code Issue #878 bounded native Shikigami configuration",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/878; server/shikigami-provider.ts#readShikigamiConfigFile",
       "confidence": 1.0
     },
     {
