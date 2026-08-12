@@ -383,7 +383,7 @@
     },
     {
       "name": "LocalDeliveryCandidate",
-      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition."
+      "description": "The content-bound aldunis.delivery-candidate/v1 identity over a canonical Git revision, source tree, Tenkai manifest, artifact tree, and declared build definition; ordered source blobs are streamed through one idle-bounded Git batch child while preserving the accepted digest framing."
     },
     {
       "name": "ChiseiGovernedEvaluationReference",
@@ -2393,6 +2393,12 @@
       "subject": "LocalDeliveryCandidate",
       "source": "Accepted capability-linked developer delivery decision",
       "locator": "server/release-candidate.ts#AldunisDeliveryCandidate",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalDeliveryCandidate",
+      "source": "Aldunis Code Issue #873 batch source-tree digest implementation",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/873; server/release-candidate.ts#sourceTreeDigest",
       "confidence": 1.0
     },
     {

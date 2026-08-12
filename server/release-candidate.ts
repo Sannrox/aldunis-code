@@ -1,7 +1,9 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import TOML from "@iarna/toml";
 import { RepositoryError } from "./repository.ts";
@@ -11,6 +13,9 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SOURCE_DOMAIN = Buffer.from("ALDUNIS-SOURCE-TREE-V1\0", "ascii");
 const CANDIDATE_DOMAIN = Buffer.from("ALDUNIS-DELIVERY-CANDIDATE-V1\0", "ascii");
+const GIT_BATCH_IDLE_TIMEOUT_MS = 20_000;
+const MAX_GIT_BATCH_HEADER_BYTES = 256;
+const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
 
 export interface ReleaseArtifactDescriptor {
   media_type: string;
@@ -87,15 +92,22 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => (
-      `${JSON.stringify(key)}:${canonicalJson(record[key])}`
-    )).join(",")}}`;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
   }
   throw new RepositoryError("The delivery candidate contains an unsupported value.", 409);
 }
 
 function normalizedText(value: unknown, field: string, maximum = 1_024): string {
-  if (typeof value !== "string" || !value || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > maximum ||
+    // eslint-disable-next-line no-control-regex -- candidate text rejects ASCII control bytes.
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
     throw new RepositoryError(`${field} is missing or invalid.`, 409);
   }
   if (value !== value.normalize("NFC")) {
@@ -107,10 +119,10 @@ function normalizedText(value: unknown, field: string, maximum = 1_024): string 
 function safeRelativePath(value: unknown, field: string): string {
   const path = normalizedText(value, field).replaceAll("\\", "/");
   if (
-    path === "."
-    || path.startsWith("/")
-    || path.endsWith("/")
-    || path.split("/").some((part) => !part || part === "." || part === "..")
+    path === "." ||
+    path.startsWith("/") ||
+    path.endsWith("/") ||
+    path.split("/").some((part) => !part || part === "." || part === "..")
   ) {
     throw new RepositoryError(`${field} must be a canonical repository-relative path.`, 409);
   }
@@ -140,20 +152,189 @@ async function git(worktree: string, args: string[], encoding: BufferEncoding | 
   }
 }
 
+class GitBatchReader {
+  readonly #iterator: AsyncIterator<Buffer | string>;
+  readonly #onActivity: () => void;
+  #buffer = Buffer.alloc(0);
+  #ended = false;
+
+  constructor(stream: AsyncIterable<Buffer | string>, onActivity: () => void = () => undefined) {
+    this.#iterator = stream[Symbol.asyncIterator]();
+    this.#onActivity = onActivity;
+  }
+
+  async #fill(): Promise<boolean> {
+    while (!this.#ended) {
+      const next = await this.#iterator.next();
+      if (next.done) {
+        this.#ended = true;
+        return false;
+      }
+      this.#onActivity();
+      const chunk = typeof next.value === "string" ? Buffer.from(next.value) : next.value;
+      if (chunk.length === 0) continue;
+      this.#buffer = this.#buffer.length === 0 ? chunk : Buffer.concat([this.#buffer, chunk]);
+      return true;
+    }
+    return false;
+  }
+
+  async line(): Promise<string> {
+    while (true) {
+      const newline = this.#buffer.indexOf(0x0a);
+      if (newline !== -1) {
+        if (newline > MAX_GIT_BATCH_HEADER_BYTES) {
+          throw new Error("Git batch header exceeds its framing limit.");
+        }
+        const line = this.#buffer.subarray(0, newline).toString("ascii");
+        this.#buffer = this.#buffer.subarray(newline + 1);
+        return line;
+      }
+      if (this.#buffer.length > MAX_GIT_BATCH_HEADER_BYTES || !(await this.#fill())) {
+        throw new Error("Git batch output ended before a complete header.");
+      }
+    }
+  }
+
+  async bytes(length: number, consume: (chunk: Buffer) => void): Promise<void> {
+    let remaining = length;
+    while (remaining > 0) {
+      if (this.#buffer.length === 0 && !(await this.#fill())) {
+        throw new Error("Git batch output ended inside an object.");
+      }
+      const count = Math.min(remaining, this.#buffer.length);
+      consume(this.#buffer.subarray(0, count));
+      this.#buffer = this.#buffer.subarray(count);
+      remaining -= count;
+    }
+  }
+
+  async separator(): Promise<void> {
+    if (this.#buffer.length === 0 && !(await this.#fill())) {
+      throw new Error("Git batch output omitted its object separator.");
+    }
+    if (this.#buffer[0] !== 0x0a) throw new Error("Git batch output has an invalid separator.");
+    this.#buffer = this.#buffer.subarray(1);
+  }
+
+  async end(): Promise<void> {
+    if (this.#buffer.length > 0 || (await this.#fill())) {
+      throw new Error("Git batch output contains unexpected trailing data.");
+    }
+  }
+}
+
+type SourceTreeBlob = { oid: string };
+
+export async function consumeGitBlobBatch(
+  stream: AsyncIterable<Buffer | string>,
+  entries: SourceTreeBlob[],
+  consume: (digest: Buffer) => void,
+  onActivity: () => void = () => undefined,
+): Promise<void> {
+  const reader = new GitBatchReader(stream, onActivity);
+  for (const entry of entries) {
+    const header = await reader.line();
+    const match = header.match(/^([0-9a-f]{40}|[0-9a-f]{64}) blob ([0-9]+)$/);
+    const size = match ? Number(match[2]) : Number.NaN;
+    if (!match || match[1] !== entry.oid || !Number.isSafeInteger(size)) {
+      throw new Error("Git batch output does not match the requested blob.");
+    }
+    const blobHash = createHash("sha256");
+    await reader.bytes(size, (chunk) => blobHash.update(chunk));
+    await reader.separator();
+    consume(blobHash.digest());
+  }
+  await reader.end();
+}
+
+async function hashSourceTreeBlobs(
+  worktree: string,
+  entries: SourceTreeBlob[],
+  consume: (digest: Buffer) => void,
+): Promise<void> {
+  const child = spawn("git", ["-C", worktree, "cat-file", "--batch"], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let timedOut = false;
+  let timer: NodeJS.Timeout;
+  const resetIdleTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, GIT_BATCH_IDLE_TIMEOUT_MS);
+    timer.unref();
+  };
+  resetIdleTimer();
+  const exit = new Promise<{ code: number | null; error: Error | null }>((resolveExit) => {
+    child.once("error", (error) => resolveExit({ code: null, error }));
+    child.once("close", (code) => resolveExit({ code, error: null }));
+  });
+  const stderr = (async () => {
+    const chunks: Buffer[] = [];
+    let retained = 0;
+    for await (const rawChunk of child.stderr) {
+      resetIdleTimer();
+      if (retained >= MAX_GIT_BATCH_STDERR_BYTES) continue;
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      const bounded = chunk.subarray(0, MAX_GIT_BATCH_STDERR_BYTES - retained);
+      chunks.push(bounded);
+      retained += bounded.length;
+    }
+    return Buffer.concat(chunks).toString("utf8").trim();
+  })();
+  const writeRequests = (async () => {
+    for (const entry of entries) {
+      resetIdleTimer();
+      if (!child.stdin.write(`${entry.oid}\n`)) await once(child.stdin, "drain");
+    }
+    child.stdin.end();
+    await finished(child.stdin);
+  })();
+  try {
+    await Promise.all([
+      writeRequests,
+      consumeGitBlobBatch(child.stdout, entries, consume, resetIdleTimer),
+    ]);
+    const outcome = await exit;
+    const errorText = await stderr;
+    if (timedOut || outcome.error || outcome.code !== 0) {
+      throw new Error(errorText || outcome.error?.message || "Git batch process failed.");
+    }
+  } catch {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await exit;
+    await stderr;
+    throw new RepositoryError("The committed repository state could not be inspected.", 409);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function assertCommittedPath(worktree: string, path: string, label: string): Promise<void> {
   const tracked = (await git(worktree, ["ls-files", "-z", "--", path])).stdout as string;
   if (!tracked) {
     throw new RepositoryError(`${label} must be tracked by the candidate commit.`, 409);
   }
-  const ignored = (await git(worktree, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--ignored=matching",
-    "--untracked-files=all",
-    "--",
-    path,
-  ])).stdout as string;
+  const ignored = (
+    await git(worktree, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--ignored=matching",
+      "--untracked-files=all",
+      "--",
+      path,
+    ])
+  ).stdout as string;
   if (ignored.split("\0").some((entry) => entry.startsWith("!! "))) {
     throw new RepositoryError(`${label} cannot contain ignored local inputs.`, 409);
   }
@@ -175,7 +356,12 @@ function canonicalRepositoryIdentity(raw: string): string {
   } catch {
     throw new RepositoryError("A canonical credential-free Git remote is required.", 409);
   }
-  if (!["https:", "http:", "ssh:"].includes(url.protocol) || url.password || url.search || url.hash) {
+  if (
+    !["https:", "http:", "ssh:"].includes(url.protocol) ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
     throw new RepositoryError("A canonical credential-free Git remote is required.", 409);
   }
   if (url.username && url.protocol !== "ssh:") {
@@ -185,8 +371,12 @@ function canonicalRepositoryIdentity(raw: string): string {
 }
 
 export async function sourceTreeDigest(worktree: string): Promise<string> {
-  const tree = (await git(worktree, ["ls-tree", "-r", "-z", "--full-tree", "HEAD"], "buffer")).stdout as Buffer;
-  const entries = tree.subarray(0, tree.length - (tree.at(-1) === 0 ? 1 : 0)).toString("binary").split("\0");
+  const tree = (await git(worktree, ["ls-tree", "-r", "-z", "--full-tree", "HEAD"], "buffer"))
+    .stdout as Buffer;
+  const entries = tree
+    .subarray(0, tree.length - (tree.at(-1) === 0 ? 1 : 0))
+    .toString("binary")
+    .split("\0");
   const parsed: Array<{ path: Buffer; mode: Buffer; oid: string }> = [];
   const normalized = new Set<string>();
   for (const entry of entries) {
@@ -196,31 +386,47 @@ export async function sourceTreeDigest(worktree: string): Promise<string> {
     const metadata = bytes.subarray(0, tab).toString("ascii").split(" ");
     const path = bytes.subarray(tab + 1);
     if (tab < 0 || metadata.length !== 3 || metadata[1] !== "blob") {
-      throw new RepositoryError("Delivery candidates cannot contain submodules or unsupported Git entries.", 409);
+      throw new RepositoryError(
+        "Delivery candidates cannot contain submodules or unsupported Git entries.",
+        409,
+      );
     }
     if (!["100644", "100755"].includes(metadata[0])) {
-      throw new RepositoryError("Delivery candidates cannot contain symlinks or unsupported Git modes.", 409);
+      throw new RepositoryError(
+        "Delivery candidates cannot contain symlinks or unsupported Git modes.",
+        409,
+      );
     }
     const text = path.toString("utf8");
-    if (!Buffer.from(text, "utf8").equals(path) || text !== text.normalize("NFC") || /[\u0000-\u001f\u007f]/u.test(text)) {
+    if (
+      !Buffer.from(text, "utf8").equals(path) ||
+      text !== text.normalize("NFC") ||
+      // eslint-disable-next-line no-control-regex -- canonical paths reject ASCII control bytes.
+      /[\u0000-\u001f\u007f]/u.test(text)
+    ) {
       throw new RepositoryError("Delivery candidates require canonical UTF-8 tracked paths.", 409);
     }
     if (normalized.has(text)) {
-      throw new RepositoryError("Delivery candidates cannot contain duplicate normalized paths.", 409);
+      throw new RepositoryError(
+        "Delivery candidates cannot contain duplicate normalized paths.",
+        409,
+      );
     }
     normalized.add(text);
     parsed.push({ path, mode: Buffer.from(metadata[0], "ascii"), oid: metadata[2] });
   }
   parsed.sort((left, right) => Buffer.compare(left.path, right.path));
   const hash = createHash("sha256").update(SOURCE_DOMAIN);
-  for (const entry of parsed) {
-    const blob = (await git(worktree, ["cat-file", "blob", entry.oid], "buffer")).stdout as Buffer;
+  let digestIndex = 0;
+  await hashSourceTreeBlobs(worktree, parsed, (blobDigest) => {
+    const entry = parsed[digestIndex];
+    digestIndex += 1;
     hash.update(length64(entry.path.length));
     hash.update(entry.path);
     hash.update(length64(entry.mode.length));
     hash.update(entry.mode);
-    hash.update(createHash("sha256").update(blob).digest());
-  }
+    hash.update(blobDigest);
+  });
   return `sha256:${hash.digest("hex")}`;
 }
 
@@ -232,7 +438,10 @@ async function hashArtifactPath(
 ): Promise<number> {
   const entries = await readdir(path, { withFileTypes: true });
   if (entries.length === 0) {
-    throw new RepositoryError("Tenkai artifact inputs cannot contain uncommitted empty directories.", 409);
+    throw new RepositoryError(
+      "Tenkai artifact inputs cannot contain uncommitted empty directories.",
+      409,
+    );
   }
   entries.sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)));
   hash.update(length64(entries.length, true));
@@ -275,20 +484,20 @@ async function committedArtifactMode(
 ): Promise<number> {
   if (directory) return 0o755;
   const relativePath = relative(worktree, path).split(sep).join("/");
-  const tree = (await git(
-    worktree,
-    ["ls-tree", "-z", "--full-tree", "HEAD", "--", relativePath],
-    "buffer",
-  )).stdout as Buffer;
+  const tree = (
+    await git(worktree, ["ls-tree", "-z", "--full-tree", "HEAD", "--", relativePath], "buffer")
+  ).stdout as Buffer;
   const tab = tree.indexOf(0x09);
   const metadata = tree.subarray(0, tab).toString("ascii").split(" ");
-  const listedPath = tree.subarray(tab + 1, tree.length - (tree.at(-1) === 0 ? 1 : 0)).toString("utf8");
+  const listedPath = tree
+    .subarray(tab + 1, tree.length - (tree.at(-1) === 0 ? 1 : 0))
+    .toString("utf8");
   if (
-    tab < 0
-    || metadata.length !== 3
-    || metadata[1] !== "blob"
-    || !["100644", "100755"].includes(metadata[0])
-    || listedPath !== relativePath
+    tab < 0 ||
+    metadata.length !== 3 ||
+    metadata[1] !== "blob" ||
+    !["100644", "100755"].includes(metadata[0]) ||
+    listedPath !== relativePath
   ) {
     throw new RepositoryError("Tenkai artifact files must use a committed regular-file mode.", 409);
   }
@@ -302,9 +511,10 @@ async function artifactDigest(
 ): Promise<{ digest: string; size: number }> {
   const deploy = (manifest.deploy ?? {}) as TOML.JsonMap;
   const workdirValue = deploy.workdir === undefined ? "." : deploy.workdir;
-  const workdir = workdirValue === "."
-    ? dirname(manifestAbsolute)
-    : resolve(dirname(manifestAbsolute), safeRelativePath(workdirValue, "deploy.workdir"));
+  const workdir =
+    workdirValue === "."
+      ? dirname(manifestAbsolute)
+      : resolve(dirname(manifestAbsolute), safeRelativePath(workdirValue, "deploy.workdir"));
   const canonicalWorktree = await realpath(worktree);
   const canonicalWorkdir = await realpath(workdir).catch(() => {
     throw new RepositoryError("The Tenkai deploy workdir is unavailable.", 409);
@@ -339,11 +549,9 @@ async function artifactDigest(
       throw new RepositoryError("Tenkai deploy inputs cannot be symlinks.", 409);
     }
     const permissions = Buffer.alloc(4);
-    permissions.writeUInt32LE(await committedArtifactMode(
-      canonicalWorktree,
-      path,
-      metadata.isDirectory(),
-    ));
+    permissions.writeUInt32LE(
+      await committedArtifactMode(canonicalWorktree, path, metadata.isDirectory()),
+    );
     hash.update(permissions);
     hashBytes(hash, Buffer.from(input));
     if (metadata.isDirectory()) {
@@ -376,12 +584,24 @@ async function buildDefinition(worktree: string): Promise<PreparedReleaseCandida
   }
   const scripts = (value as { scripts?: unknown }).scripts;
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) {
-    throw new RepositoryError("Version 1 delivery requires declared npm build and test scripts.", 409);
+    throw new RepositoryError(
+      "Version 1 delivery requires declared npm build and test scripts.",
+      409,
+    );
   }
-  const build = normalizedText((scripts as Record<string, unknown>).build, "The npm build script", 2_000);
-  const test = normalizedText((scripts as Record<string, unknown>).test, "The npm test script", 2_000);
+  const build = normalizedText(
+    (scripts as Record<string, unknown>).build,
+    "The npm build script",
+    2_000,
+  );
+  const test = normalizedText(
+    (scripts as Record<string, unknown>).test,
+    "The npm test script",
+    2_000,
+  );
   const lock = await readFile(resolve(worktree, "package-lock.json")).catch(() => null);
-  if (!lock) throw new RepositoryError("Version 1 delivery requires a committed package-lock.json.", 409);
+  if (!lock)
+    throw new RepositoryError("Version 1 delivery requires a committed package-lock.json.", 409);
   const definition = {
     schema: "aldunis.build-definition/v1",
     adapter: "npm",
@@ -413,22 +633,36 @@ export async function prepareReleaseCandidate(
   worktree: string,
   manifestPath: string,
 ): Promise<PreparedReleaseCandidate> {
-  const clean = (await git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])).stdout as string;
-  if (clean) throw new RepositoryError("Commit or remove every tracked and untracked change before preparing a release.", 409);
+  const clean = (await git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]))
+    .stdout as string;
+  if (clean)
+    throw new RepositoryError(
+      "Commit or remove every tracked and untracked change before preparing a release.",
+      409,
+    );
   const unmerged = (await git(worktree, ["ls-files", "-u", "-z"])).stdout as string;
-  if (unmerged) throw new RepositoryError("Resolve every unmerged path before preparing a release.", 409);
+  if (unmerged)
+    throw new RepositoryError("Resolve every unmerged path before preparing a release.", 409);
   const head = ((await git(worktree, ["rev-parse", "HEAD"])).stdout as string).trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head)) {
-    throw new RepositoryError("The committed revision uses an unsupported Git object identity.", 409);
+    throw new RepositoryError(
+      "The committed revision uses an unsupported Git object identity.",
+      409,
+    );
   }
   await git(worktree, ["merge-base", "--is-ancestor", head, "HEAD"]);
   const relativeManifest = safeRelativePath(manifestPath, "The Tenkai manifest path");
   const canonicalWorktree = await realpath(worktree);
-  const manifestAbsolute = await realpath(resolve(canonicalWorktree, relativeManifest)).catch(() => {
-    throw new RepositoryError("The selected Tenkai manifest is unavailable.", 404);
-  });
+  const manifestAbsolute = await realpath(resolve(canonicalWorktree, relativeManifest)).catch(
+    () => {
+      throw new RepositoryError("The selected Tenkai manifest is unavailable.", 404);
+    },
+  );
   if (!within(canonicalWorktree, manifestAbsolute) || !(await stat(manifestAbsolute)).isFile()) {
-    throw new RepositoryError("The Tenkai manifest must be a regular file inside the selected worktree.", 403);
+    throw new RepositoryError(
+      "The Tenkai manifest must be a regular file inside the selected worktree.",
+      403,
+    );
   }
   await assertCommittedPath(worktree, relativeManifest, "The Tenkai manifest");
   const manifestBytes = await readFile(manifestAbsolute);
@@ -441,12 +675,18 @@ export async function prepareReleaseCandidate(
   const product = (manifest.product ?? {}) as TOML.JsonMap;
   const kind = product.kind ?? "software";
   if (kind !== "software") {
-    throw new RepositoryError("Version 1 delivery currently admits Tenkai software manifests only.", 409);
+    throw new RepositoryError(
+      "Version 1 delivery currently admits Tenkai software manifests only.",
+      409,
+    );
   }
   const productName = normalizedText(product.name, "The Tenkai product name", 128);
   const version = normalizedText(product.version, "The Tenkai product version", 128);
   if (!SAFE_ID.test(productName) || !SAFE_ID.test(version)) {
-    throw new RepositoryError("The Tenkai product and version are incompatible with local delivery.", 409);
+    throw new RepositoryError(
+      "The Tenkai product and version are incompatible with local delivery.",
+      409,
+    );
   }
   const remote = ((await git(worktree, ["remote", "get-url", "origin"])).stdout as string).trim();
   const repositoryId = canonicalRepositoryIdentity(remote);
@@ -469,12 +709,7 @@ export async function prepareReleaseCandidate(
     artifacts: [artifactDescriptor],
     build_definition_digest: build.definitionDigest,
   };
-  for (const digest of [
-    sourceDigest,
-    manifestDigest,
-    artifact.digest,
-    build.definitionDigest,
-  ]) {
+  for (const digest of [sourceDigest, manifestDigest, artifact.digest, build.definitionDigest]) {
     if (!SHA256.test(digest)) throw new RepositoryError("A candidate digest is invalid.", 409);
   }
   const identity = sha256(Buffer.concat([CANDIDATE_DOMAIN, Buffer.from(canonicalJson(document))]));
