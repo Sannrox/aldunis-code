@@ -197,3 +197,105 @@ test("fork creation persists reviewed provider and workspace choices through one
   });
   assert.deepEqual(writes, [{ status: 201, value: created }]);
 });
+
+test("native provider forks reuse their single model-readiness probe", async (t) => {
+  for (const provider of ["codex-cli", "shikigami"] as const) {
+    await t.test(provider, async () => {
+      let readinessCalls = 0;
+      let readinessInput: unknown;
+      let persisted = false;
+      const shikigamiRuntime = {
+        profile: { provider: "shikigami" },
+        executable: "/fixture/shikigami",
+        environment: { SHIKIGAMI_MODEL_ADAPTER: "scripted" },
+        configPath: "/fixture/shikigami.toml",
+      };
+      await handleConversationForkRoute(
+        "/api/forks/create",
+        request,
+        response,
+        context({
+          readJson: async () => ({
+            sourceThreadId: "source",
+            provider,
+            profileId: provider === "codex-cli" ? null : "profile:shikigami",
+            model: "default",
+            expectedDigest: "digest",
+          }),
+          state: {
+            previewFork: unused,
+            inspect: async () => ({
+              projects: [{ id: "project", root: "/repo" }],
+              threads: [
+                {
+                  id: "source",
+                  projectId: "project",
+                  worktree: "/repo/shared",
+                  workspaceMode: "shared",
+                },
+              ],
+            }),
+            createFork: async () => {
+              persisted = true;
+              return { thread: { id: "fork" }, fork: { id: "manifest" } };
+            },
+          } as never,
+          profiles: {
+            runtime: async () => shikigamiRuntime,
+          } as never,
+          codex: {
+            readiness: async () => {
+              readinessCalls += 1;
+              return {
+                id: "codex-cli",
+                installed: true,
+                authenticated: true,
+                version: "0.145.0",
+                models: [
+                  {
+                    id: "codex-model",
+                    displayName: "Codex model",
+                    isDefault: true,
+                    reasoningEfforts: ["medium"],
+                    defaultReasoningEffort: "medium",
+                  },
+                ],
+                detail: null,
+              };
+            },
+          } as never,
+          shikigami: {
+            readiness: async (environment, options) => {
+              readinessCalls += 1;
+              readinessInput = { environment, options };
+              return {
+                id: "shikigami",
+                installed: true,
+                authenticated: true,
+                version: "1.0.5",
+                models: [{ id: "scripted", displayName: "Scripted", isDefault: true }],
+                name: "Shikigami",
+                detail: null,
+              };
+            },
+          } as never,
+          selectWorktree: async (root, worktree) => ({ root, worktree }),
+          sendJson: () => {},
+        }),
+      );
+
+      assert.equal(readinessCalls, 1);
+      assert.equal(persisted, true);
+      if (provider === "shikigami") {
+        assert.deepEqual(readinessInput, {
+          environment: shikigamiRuntime.environment,
+          options: {
+            executable: shikigamiRuntime.executable,
+            configPath: shikigamiRuntime.configPath,
+            cwd: "/repo/shared",
+          },
+        });
+      }
+    });
+  }
+});
