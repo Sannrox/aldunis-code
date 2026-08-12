@@ -14,6 +14,10 @@
       "description": "A request-scoped Aldunis Code host module that bounds thread-status invalidation buffering, honors HTTP writable backpressure, retains only the latest transition per bounded thread set, serializes managed visibility projection once per burst, and releases queued work and drain listeners on disconnect."
     },
     {
+      "name": "WakeStreamRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates wake SSE route recognition, response headers, WakeStreamCoordinator construction including managed visibility filtering, heartbeat timers, and disconnect cleanup behind one internal dispatch interface while WakeStreamCoordinator retains bounded delivery authority."
+    },
+    {
       "name": "LocalApiDispatchModule",
       "description": "An internal deep module that hides local host route selection, authorization-sensitive request handling, dependency coordination, response normalization, and failure mapping behind one request-dispatch interface."
     },
@@ -539,6 +543,26 @@
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "dispatches_wake_stream_routes",
+      "description": "The wake-stream route dispatch module admits GET /api/state/events, constructs the request-scoped WakeStreamCoordinator, and owns heartbeat and cleanup without acquiring persistence, tenant, provider, or renderer authority.",
+      "domain": "WakeStreamRouteDispatchModule",
+      "range": "WakeStreamCoordinator",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_wake_stream_route_dispatch",
+      "description": "The local API dispatch module delegates wake SSE route recognition and request-scoped managed-host facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "WakeStreamRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
       }
     },
     {
@@ -2670,13 +2694,31 @@
     {
       "subject": "WakeStreamCoordinator",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#767",
-      "locator": "server/wake-stream.ts; server/host.ts#/api/state/events",
+      "locator": "server/wake-stream.ts; server/wake-stream-routes.ts#handleWakeStreamRoute",
       "confidence": 1.0
     },
     {
       "subject": "coordinates_wake_stream_delivery",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#767",
-      "locator": "server/host.ts#/api/state/events; server/wake-stream.ts",
+      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute; server/wake-stream.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WakeStreamRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#842",
+      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute; server/host.ts#handleApi",
+      "confidence": 1.0
+    },
+    {
+      "subject": "dispatches_wake_stream_routes",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#842",
+      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_wake_stream_route_dispatch",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#842",
+      "locator": "server/host.ts#handleApi; server/wake-stream-routes.ts#handleWakeStreamRoute",
       "confidence": 1.0
     },
     {
