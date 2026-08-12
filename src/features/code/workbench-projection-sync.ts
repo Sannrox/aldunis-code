@@ -111,43 +111,85 @@ export function createWorkbenchProjectionSynchronization(
   options: WorkbenchProjectionSynchronizationOptions,
 ): WorkbenchProjectionSynchronization {
   let active = true;
-  let sequence = 0;
   let events: ProjectionEventSource | null = null;
+  let running = false;
+  let backgroundQueued = false;
+  let backgroundFresh = false;
+  const explicitQueue: Array<{
+    resolve(): void;
+    reject(error: unknown): void;
+  }> = [];
 
-  const synchronize = async (fresh: boolean, suppressFailure: boolean): Promise<void> => {
-    if (!active) return;
-    const requestSequence = ++sequence;
+  const run = async (
+    fresh: boolean,
+    completion?: { resolve(): void; reject(error: unknown): void },
+  ): Promise<void> => {
     try {
       const projection = await options.load(fresh);
-      if (!active || requestSequence !== sequence) return;
-      options.accept(workbenchProjectionSnapshot(projection));
+      if (active) options.accept(workbenchProjectionSnapshot(projection));
+      completion?.resolve();
     } catch (error) {
-      // Keep the last accepted snapshot when refresh or normalization fails.
-      if (!suppressFailure) throw error;
+      // Background synchronization preserves the last accepted snapshot.
+      completion?.reject(error);
+    } finally {
+      running = false;
+      pump();
     }
+  };
+
+  const pump = (): void => {
+    if (!active || running) return;
+    const explicit = explicitQueue.shift();
+    if (explicit) {
+      // This fresh read also satisfies background work queued before it.
+      backgroundQueued = false;
+      backgroundFresh = false;
+      running = true;
+      void run(true, explicit);
+      return;
+    }
+    if (!backgroundQueued) return;
+    const fresh = backgroundFresh;
+    backgroundQueued = false;
+    backgroundFresh = false;
+    running = true;
+    void run(fresh);
+  };
+
+  const synchronizeInBackground = (fresh: boolean): void => {
+    if (!active) return;
+    backgroundQueued = true;
+    backgroundFresh ||= fresh;
+    pump();
   };
 
   return {
     start() {
       if (!active || events) return;
-      void synchronize(false, true);
+      synchronizeInBackground(false);
       events = options.createEventSource();
-      events.addEventListener("open", () => void synchronize(true, true));
+      events.addEventListener("open", () => synchronizeInBackground(true));
       events.addEventListener("thread_status", (event) => {
         try {
           if (!isThreadStatusEvent(JSON.parse(event.data) as unknown)) return;
-          void synchronize(true, true);
+          synchronizeInBackground(true);
         } catch {
           // Malformed events cannot replace the last accepted snapshot.
         }
       });
     },
     refresh() {
-      return synchronize(true, false);
+      if (!active) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        explicitQueue.push({ resolve, reject });
+        pump();
+      });
     },
     dispose() {
       active = false;
-      sequence += 1;
+      backgroundQueued = false;
+      backgroundFresh = false;
+      for (const completion of explicitQueue.splice(0)) completion.resolve();
       events?.close();
       events = null;
     },
