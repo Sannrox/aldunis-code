@@ -59,7 +59,8 @@ interface ContextPackageFileOperations {
 }
 
 export interface RepositoryBrowseOperations {
-  readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
+  open(path: string, flags: number): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+  lstat(path: string): Promise<Stats>;
   inspectRepositoryFile(
     worktree: string,
     path: string,
@@ -694,7 +695,75 @@ async function inspectRepositoryFile(
   }
 }
 
-const repositoryBrowseOperations: RepositoryBrowseOperations = { readFile, inspectRepositoryFile };
+const repositoryBrowseOperations: RepositoryBrowseOperations = {
+  open,
+  lstat,
+  inspectRepositoryFile,
+};
+
+export async function readStableRepositorySearchFile(
+  path: string,
+  admitted: Stats,
+  signal?: AbortSignal,
+  operations: Pick<RepositoryBrowseOperations, "open" | "lstat"> = repositoryBrowseOperations,
+): Promise<Buffer | null> {
+  signal?.throwIfAborted();
+  if (
+    !admitted.isFile() ||
+    !Number.isSafeInteger(admitted.size) ||
+    admitted.size < 0 ||
+    admitted.size > MAX_PREVIEW_BYTES
+  ) {
+    return null;
+  }
+  const handle = await operations.open(
+    path,
+    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+  );
+  try {
+    const opened = await handle.stat();
+    const [pathname, canonical] = await Promise.all([
+      operations.lstat(path).catch(() => null),
+      realpath(path).catch(() => null),
+    ]);
+    if (
+      !pathname ||
+      !canonical ||
+      resolve(canonical) !== resolve(path) ||
+      !sameContextFile(admitted, opened) ||
+      !sameContextFile(opened, pathname)
+    ) {
+      return null;
+    }
+    const bytes = Buffer.alloc(admitted.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    signal?.throwIfAborted();
+    const extra = Buffer.alloc(1);
+    const [extraRead, after, finalPath] = await Promise.all([
+      handle.read(extra, 0, 1, offset),
+      handle.stat(),
+      operations.lstat(path).catch(() => null),
+    ]);
+    if (
+      offset !== admitted.size ||
+      extraRead.bytesRead !== 0 ||
+      !finalPath ||
+      !sameContextFile(admitted, after) ||
+      !sameContextFile(after, finalPath)
+    ) {
+      return null;
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
 
 async function inspectRepositoryFiles(
   worktree: string,
@@ -767,7 +836,8 @@ export async function browseRepositoryFiles(
       const direct = await lstat(join(worktree, path));
       if (direct.isSymbolicLink() || !direct.isFile() || direct.size > MAX_PREVIEW_BYTES) continue;
       const canonical = await constrainPath(worktree, join(worktree, path));
-      const bytes = await operations.readFile(canonical, { signal });
+      const bytes = await readStableRepositorySearchFile(canonical, direct, signal, operations);
+      if (!bytes) continue;
       signal?.throwIfAborted();
       searchedBytes += bytes.length;
       if (!bytes.includes(0) && bytes.toString("utf8").toLocaleLowerCase().includes(needle)) {
