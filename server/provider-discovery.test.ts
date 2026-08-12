@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ProviderDiscovery, type ProviderDiscoveryDependencies } from "./provider-discovery.ts";
+import {
+  MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES,
+  ProviderDiscovery,
+  type ProviderDiscoveryDependencies,
+} from "./provider-discovery.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 
 function adapter(): InstalledProviderAdapter {
@@ -189,4 +193,116 @@ test("provider-local failures remain unavailable results instead of failing disc
   assert.equal(codex?.installed, false);
   assert.equal(shikigami?.installed, false);
   assert.deepEqual(declarative?.models, []);
+});
+
+test("Shikigami profile discovery preserves order within a fixed concurrency bound", async () => {
+  const profileCount = MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES * 2;
+  const profiles = Array.from({ length: profileCount }, (_, index) => ({
+    id: index === 0 ? "default:shikigami" : `shikigami-${index}`,
+    provider: "shikigami",
+  }));
+  let active = 0;
+  let peak = 0;
+  const entered: number[] = [];
+  const releases: Array<() => void> = [];
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      profiles: {
+        list: async () => profiles,
+        runtime: async (id: string) => ({
+          executable: id,
+          configPath: undefined,
+          environment: {},
+        }),
+      } as ProviderDiscoveryDependencies["profiles"],
+      shikigami: {
+        readiness: async (_environment, options) => {
+          const index = profiles.findIndex((profile) => profile.id === options.executable);
+          active += 1;
+          peak = Math.max(peak, active);
+          entered.push(index);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          active -= 1;
+          return {
+            id: "shikigami",
+            installed: true,
+            authenticated: true,
+            version: `1.0.${index + 2}`,
+            models: [],
+            name: "Shikigami",
+            detail: null,
+          };
+        },
+      },
+    }),
+  );
+
+  const pending = discovery.discover({ cwd: "/authorized/worktree" });
+  while (entered.length < MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(active, MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES);
+  assert.equal(peak, MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES);
+  assert.deepEqual(
+    entered,
+    Array.from({ length: MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES }, (_, index) => index),
+  );
+
+  while (releases.length > 0) releases.shift()?.();
+  while (entered.length < profileCount) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(peak, MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES);
+  while (releases.length > 0) releases.shift()?.();
+
+  const result = await pending;
+  const shikigami = result.providers.find((provider) => provider.id === "shikigami");
+  assert.deepEqual(
+    shikigami?.profileDiscoveries?.map((profile) => profile.profileId),
+    profiles.map((profile) => profile.id),
+  );
+  assert.deepEqual(
+    entered,
+    Array.from({ length: profileCount }, (_, index) => index),
+  );
+});
+
+test("failed Shikigami profiles do not strand queued discovery work", async () => {
+  const profileCount = MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES * 2;
+  const profiles = Array.from({ length: profileCount }, (_, index) => ({
+    id: index === 0 ? "default:shikigami" : `shikigami-${index}`,
+    provider: "shikigami",
+  }));
+  const attempted: string[] = [];
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      profiles: {
+        list: async () => profiles,
+        runtime: async (id: string) => {
+          attempted.push(id);
+          const index = profiles.findIndex((profile) => profile.id === id);
+          if (index < MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES) {
+            throw new Error("profile unavailable");
+          }
+          return { executable: id, configPath: undefined, environment: {} };
+        },
+      } as ProviderDiscoveryDependencies["profiles"],
+    }),
+  );
+
+  const result = await discovery.discover({ cwd: "/authorized/worktree" });
+  const shikigami = result.providers.find((provider) => provider.id === "shikigami");
+
+  assert.deepEqual(
+    attempted,
+    profiles.map((profile) => profile.id),
+  );
+  assert.deepEqual(
+    shikigami?.profileDiscoveries?.map((profile) => profile.profileId),
+    profiles.map((profile) => profile.id),
+  );
+  assert.deepEqual(
+    shikigami?.profileDiscoveries
+      ?.slice(0, MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES)
+      .map((profile) => profile.installed),
+    Array(MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES).fill(false),
+  );
 });
