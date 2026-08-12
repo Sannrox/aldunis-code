@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import { PermissionError } from "./permission.ts";
@@ -9,9 +10,16 @@ import {
 import { RepositoryError } from "./repository.ts";
 import { LocalStateError } from "./state.ts";
 
-const response = {} as ServerResponse;
+const response = Object.assign(new EventEmitter(), {
+  destroyed: false,
+  writableEnded: false,
+}) as unknown as ServerResponse;
 const request = (authorization?: string, localPort?: number) =>
-  ({ headers: authorization ? { authorization } : {}, socket: { localPort } }) as IncomingMessage;
+  Object.assign(new EventEmitter(), {
+    aborted: false,
+    headers: authorization ? { authorization } : {},
+    socket: { localPort },
+  }) as unknown as IncomingMessage;
 const unused = async () => {
   throw new Error("dependency must not be called");
 };
@@ -116,6 +124,39 @@ test("provider skills require exact provider and workspace input", async () => {
     ),
     (error: unknown) => error instanceof RepositoryError && error.status === 400,
   );
+});
+
+test("provider skills cancel disconnected requests and release lifecycle listeners", async () => {
+  const input = request();
+  const output = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+  }) as unknown as ServerResponse;
+  let started = false;
+  const handling = handleProviderControlRoute(
+    "/api/provider/skills",
+    input,
+    output,
+    context({
+      readJson: async () => ({ provider: "codex-cli", root: "/repo", worktree: "/repo" }),
+      selectWorktree: async () => ({ root: "/repo", worktree: "/repo" }),
+      codex: {
+        skills: async (_worktree: string, signal: AbortSignal) => {
+          started = true;
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+        cancel: () => false,
+      },
+    }) as never,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started, true);
+  output.emit("close");
+  await assert.rejects(handling, (error: unknown) => (error as Error).name === "AbortError");
+  assert.equal(input.listenerCount("aborted"), 0);
+  assert.equal(output.listenerCount("close"), 0);
 });
 
 test("approval listing validates the run before projecting approvals", async () => {

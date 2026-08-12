@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -832,6 +832,37 @@ if (process.argv.includes("--version")) {
     { name: "alpha", description: "Alpha skill" },
     { name: "zeta", description: "Zeta skill" },
   ]);
+});
+
+test("Codex skills abort terminates the temporary app-server", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-skills-abort-"));
+  const executable = join(directory, "fake-codex");
+  const started = join(directory, "started");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.144.3");
+} else {
+  require("node:fs").writeFileSync(${JSON.stringify(started)}, String(process.pid));
+  setInterval(() => {}, 1000);
+}
+`,
+  );
+  await chmod(executable, 0o700);
+  const controller = new AbortController();
+  const pending = new CodexCliAdapter(executable).skills(directory, controller.signal);
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try {
+      await access(started);
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  await access(started);
+  controller.abort();
+  await assert.rejects(pending, (error: unknown) => (error as Error).name === "AbortError");
 });
 
 test("Codex cancellation force-terminates an unresponsive app-server", async () => {
