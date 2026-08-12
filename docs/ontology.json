@@ -407,7 +407,7 @@
     },
     {
       "name": "ChangedFileReviewRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
     },
     {
       "name": "ChangedFileReviewSessionModule",
@@ -1425,8 +1425,8 @@
     },
     {
       "subject": "ChangedFileReviewRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#628",
-      "locator": "server/review-routes.ts#handleReviewRoute",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#628 and #781",
+      "locator": "server/review-routes.ts#withRequestCancellation; server/review-routes.ts#handleReviewRoute; server/changes.ts#listChangedFiles",
       "confidence": 1.0
     },
     {

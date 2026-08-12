@@ -98,11 +98,12 @@ function finalizeDiff(change: ChangedFile, patch: string | null, message: string
   return { ...change, identity, lines: parseDiffLines(patch), patch, message };
 }
 
-function git(worktree: string, args: string[], maxBuffer = 4 * 1024 * 1024) {
+function git(worktree: string, args: string[], maxBuffer = 4 * 1024 * 1024, signal?: AbortSignal) {
   return execFileAsync("git", ["-C", worktree, ...args], {
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer,
+    signal,
   });
 }
 
@@ -111,12 +112,14 @@ function gitWithEnvironment(
   args: string[],
   environment: NodeJS.ProcessEnv,
   maxBuffer = 4 * 1024 * 1024,
+  signal?: AbortSignal,
 ) {
   return execFileAsync("git", ["-C", worktree, ...args], {
     encoding: "utf8",
     timeout: 10_000,
     maxBuffer,
     env: environment,
+    signal,
   });
 }
 
@@ -129,14 +132,21 @@ async function createWorktreeSnapshot(
   worktree: string,
   removePaths: string[] = [],
   addPaths: string[] = [],
+  signal?: AbortSignal,
 ): Promise<WorktreeSnapshot> {
+  signal?.throwIfAborted();
   const temporary = await mkdtemp(join(tmpdir(), "aldunis-changes-"));
   const indexPath = join(temporary, "index");
   try {
-    const realIndex = (await git(worktree, ["rev-parse", "--git-path", "index"])).stdout.trim();
-    const realObjects = (await git(worktree, ["rev-parse", "--git-path", "objects"])).stdout.trim();
+    const realIndex = (
+      await git(worktree, ["rev-parse", "--git-path", "index"], undefined, signal)
+    ).stdout.trim();
+    const realObjects = (
+      await git(worktree, ["rev-parse", "--git-path", "objects"], undefined, signal)
+    ).stdout.trim();
     const temporaryObjects = join(temporary, "objects");
     await mkdir(temporaryObjects);
+    signal?.throwIfAborted();
     const environment = {
       ...process.env,
       GIT_INDEX_FILE: indexPath,
@@ -151,41 +161,58 @@ async function createWorktreeSnapshot(
     const sourceIndex = isAbsolute(realIndex) ? realIndex : resolve(worktree, realIndex);
     const sharedIndexDirectories = new Set([
       dirname(sourceIndex),
-      resolve(worktree, (await git(worktree, ["rev-parse", "--git-common-dir"])).stdout.trim()),
+      resolve(
+        worktree,
+        (await git(worktree, ["rev-parse", "--git-common-dir"], undefined, signal)).stdout.trim(),
+      ),
     ]);
     for (const directory of sharedIndexDirectories) {
+      signal?.throwIfAborted();
       try {
         for (const name of await readdir(directory)) {
+          signal?.throwIfAborted();
           if (name.startsWith("sharedindex.")) {
             await copyFile(join(directory, name), join(temporary, name));
+            signal?.throwIfAborted();
           }
         }
       } catch {
+        signal?.throwIfAborted();
         // Repositories without a split index have no shared files to copy.
       }
     }
     await copyFile(sourceIndex, indexPath);
+    signal?.throwIfAborted();
     for (const path of removePaths) {
+      signal?.throwIfAborted();
       await gitWithEnvironment(
         worktree,
         ["update-index", "--force-remove", "--", path],
         environment,
+        undefined,
+        signal,
       );
     }
     for (const path of addPaths) {
+      signal?.throwIfAborted();
       const details = await lstat(resolve(worktree, path));
+      signal?.throwIfAborted();
       if (!details.isFile() || details.size > MAX_DIFF_BYTES) continue;
       const object = await gitWithEnvironment(
         worktree,
         ["hash-object", "-w", "--no-filters", "--", path],
         environment,
         MAX_DIFF_BYTES * 2,
+        signal,
       );
+      signal?.throwIfAborted();
       const mode = details.mode & 0o111 ? "100755" : "100644";
       await gitWithEnvironment(
         worktree,
         ["update-index", "--add", "--cacheinfo", `${mode},${object.stdout.trim()},${path}`],
         environment,
+        undefined,
+        signal,
       );
     }
     return { temporary, environment };
@@ -195,6 +222,7 @@ async function createWorktreeSnapshot(
     } catch {
       // The snapshot is disposable; cleanup must not replace the review error.
     }
+    signal?.throwIfAborted();
     throw new RepositoryError("The worktree could not be snapshotted for change review.", 409);
   }
 }
@@ -245,19 +273,29 @@ async function isOversized(
   path: string,
   deleted: boolean,
   previousPath: string | null,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   let size = 0;
   if (!deleted) {
     try {
       size = (await stat(resolve(worktree, path))).size;
+      signal?.throwIfAborted();
     } catch {
+      signal?.throwIfAborted();
       // The status may change between discovery and inspection.
     }
   }
   try {
-    const result = await git(worktree, ["cat-file", "-s", `HEAD:${previousPath ?? path}`]);
+    const result = await git(
+      worktree,
+      ["cat-file", "-s", `HEAD:${previousPath ?? path}`],
+      undefined,
+      signal,
+    );
     size = Math.max(size, Number(result.stdout.trim()) || 0);
   } catch {
+    signal?.throwIfAborted();
     // Added files do not have a HEAD object.
   }
   return size > MAX_DIFF_BYTES;
@@ -272,16 +310,19 @@ type ChangeEntry = {
   nonRenderable?: boolean;
 };
 
-async function hasGitConversion(worktree: string, path: string): Promise<boolean> {
+async function hasGitConversion(
+  worktree: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
   try {
-    const result = await git(worktree, [
-      "check-attr",
-      "-z",
-      "filter",
-      "working-tree-encoding",
-      "--",
-      path,
-    ]);
+    const result = await git(
+      worktree,
+      ["check-attr", "-z", "filter", "working-tree-encoding", "--", path],
+      undefined,
+      signal,
+    );
     const fields = result.stdout.split("\0");
     for (let index = 1; index < fields.length; index += 3) {
       const value = fields[index + 1];
@@ -289,11 +330,13 @@ async function hasGitConversion(worktree: string, path: string): Promise<boolean
     }
     return false;
   } catch {
+    signal?.throwIfAborted();
     return true;
   }
 }
 
-async function listIgnoredRuntimePaths(worktree: string): Promise<string[]> {
+async function listIgnoredRuntimePaths(worktree: string, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
   try {
     const result = await execFileAsync(
       "git",
@@ -308,7 +351,7 @@ async function listIgnoredRuntimePaths(worktree: string): Promise<string[]> {
         "--",
         ...IGNORED_RUNTIME_PATHS,
       ],
-      { encoding: "utf8", timeout: 2_000, maxBuffer: 512 * 1024 },
+      { encoding: "utf8", timeout: 2_000, maxBuffer: 512 * 1024, signal },
     );
     return result.stdout
       .split("\0")
@@ -316,6 +359,7 @@ async function listIgnoredRuntimePaths(worktree: string): Promise<string[]> {
       .map((path) => safeRelativePath(worktree, path))
       .filter((path) => isLocalRuntimePath(path));
   } catch {
+    signal?.throwIfAborted();
     // Ignored runtime state is intentionally best-effort and stays hidden if
     // a repository is too large or changes during candidate discovery.
     return [];
@@ -326,20 +370,24 @@ async function boundedSnapshotPaths(
   worktree: string,
   paths: string[],
   limit = MAX_RENAME_CANDIDATES,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const candidates: string[] = [];
   for (const path of [...new Set(paths)]) {
+    signal?.throwIfAborted();
     if (candidates.length >= limit) break;
     try {
       const details = await lstat(resolve(worktree, path));
+      signal?.throwIfAborted();
       if (
         details.isFile() &&
         details.size <= MAX_DIFF_BYTES &&
-        !(await hasGitConversion(worktree, path))
+        !(await hasGitConversion(worktree, path, signal))
       ) {
         candidates.push(path);
       }
     } catch {
+      signal?.throwIfAborted();
       // The worktree may change between status and snapshot preparation.
     }
   }
@@ -351,6 +399,7 @@ async function pairExactRenames(
   entries: ChangeEntry[],
   candidatePredicate: (entry: ChangeEntry) => boolean,
   mark: (entry: ChangeEntry) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const deleted = entries.filter((entry) => entry.initial === "deleted");
   const candidates = entries
@@ -358,24 +407,35 @@ async function pairExactRenames(
     .slice(0, MAX_RENAME_CANDIDATES);
   const sourceObjects = new Map<string, string>();
   for (const entry of deleted.slice(0, MAX_RENAME_CANDIDATES)) {
+    signal?.throwIfAborted();
     try {
       const size = Number(
-        (await git(worktree, ["cat-file", "-s", `HEAD:${entry.path}`])).stdout.trim(),
+        (
+          await git(worktree, ["cat-file", "-s", `HEAD:${entry.path}`], undefined, signal)
+        ).stdout.trim(),
       );
       if (size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path)) continue;
-      const object = await git(worktree, ["rev-parse", `HEAD:${entry.path}`]);
+      if (await hasGitConversion(worktree, entry.path, signal)) continue;
+      const object = await git(worktree, ["rev-parse", `HEAD:${entry.path}`], undefined, signal);
       sourceObjects.set(entry.path, object.stdout.trim());
     } catch {
+      signal?.throwIfAborted();
       // The worktree may change between status and rename matching.
     }
   }
   for (const entry of candidates) {
+    signal?.throwIfAborted();
     try {
       const details = await lstat(resolve(worktree, entry.path));
+      signal?.throwIfAborted();
       if (!details.isFile() || details.size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path)) continue;
-      const object = await git(worktree, ["hash-object", "--no-filters", "--", entry.path]);
+      if (await hasGitConversion(worktree, entry.path, signal)) continue;
+      const object = await git(
+        worktree,
+        ["hash-object", "--no-filters", "--", entry.path],
+        undefined,
+        signal,
+      );
       const previousPath = [...sourceObjects.entries()].find(
         ([, sourceObject]) => sourceObject === object.stdout.trim(),
       )?.[0];
@@ -389,12 +449,17 @@ async function pairExactRenames(
       if (deletedEntry) entries.splice(entries.indexOf(deletedEntry), 1);
       sourceObjects.delete(previousPath);
     } catch {
+      signal?.throwIfAborted();
       // The worktree may change between status and rename matching.
     }
   }
 }
 
-async function pairExactRuntimeRenames(worktree: string, entries: ChangeEntry[]): Promise<void> {
+async function pairExactRuntimeRenames(
+  worktree: string,
+  entries: ChangeEntry[],
+  signal?: AbortSignal,
+): Promise<void> {
   await pairExactRenames(
     worktree,
     entries,
@@ -402,14 +467,21 @@ async function pairExactRuntimeRenames(worktree: string, entries: ChangeEntry[])
     (entry) => {
       entry.nonRenderable = true;
     },
+    signal,
   );
 }
 
-async function markSpecialRenames(worktree: string, entries: ChangeEntry[]): Promise<void> {
+async function markSpecialRenames(
+  worktree: string,
+  entries: ChangeEntry[],
+  signal?: AbortSignal,
+): Promise<void> {
   for (const entry of [...entries]) {
+    signal?.throwIfAborted();
     if (!entry.previousPath) continue;
     try {
       if ((await lstat(resolve(worktree, entry.path))).isSymbolicLink()) {
+        signal?.throwIfAborted();
         entry.symlink = true;
         continue;
       }
@@ -418,12 +490,13 @@ async function markSpecialRenames(worktree: string, entries: ChangeEntry[]): Pro
         continue;
       }
       if (
-        (await hasGitConversion(worktree, entry.previousPath)) ||
-        (await hasGitConversion(worktree, entry.path))
+        (await hasGitConversion(worktree, entry.previousPath, signal)) ||
+        (await hasGitConversion(worktree, entry.path, signal))
       ) {
         entry.nonRenderable = true;
       }
     } catch {
+      signal?.throwIfAborted();
       // The worktree may change between status and rename matching.
     }
   }
@@ -433,6 +506,7 @@ async function pairWorktreeRenames(
   worktree: string,
   entries: ChangeEntry[],
   environment: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (
     !entries.some((entry) => entry.initial === "deleted") ||
@@ -444,6 +518,8 @@ async function pairWorktreeRenames(
     worktree,
     ["diff", "--cached", "--no-textconv", "--name-status", "-z", "--find-renames", "HEAD", "--"],
     environment,
+    undefined,
+    signal,
   );
   const fields = result.stdout.split("\0");
   for (let index = 0; index < fields.length;) {
@@ -468,16 +544,28 @@ async function pairWorktreeRenames(
   }
 }
 
-async function isBinary(worktree: string, path: string, untracked: boolean): Promise<boolean> {
+async function isBinary(
+  worktree: string,
+  path: string,
+  untracked: boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
   if (untracked) {
     try {
       if ((await lstat(resolve(worktree, path))).isSymbolicLink()) return true;
-      return (await readFile(resolve(worktree, path))).subarray(0, 8_000).includes(0);
+      return (await readFile(resolve(worktree, path), { signal })).subarray(0, 8_000).includes(0);
     } catch {
+      signal?.throwIfAborted();
       return false;
     }
   }
-  const result = await git(worktree, ["diff", "--no-textconv", "--numstat", "HEAD", "--", path]);
+  const result = await git(
+    worktree,
+    ["diff", "--no-textconv", "--numstat", "HEAD", "--", path],
+    undefined,
+    signal,
+  );
   return result.stdout.split("\n").some((line) => line.startsWith("-\t-\t"));
 }
 
@@ -513,7 +601,9 @@ async function counts(
   untracked: boolean,
   previousPath: string | null,
   snapshotEnvironment: NodeJS.ProcessEnv | null,
+  signal?: AbortSignal,
 ): Promise<[number | null, number | null]> {
+  signal?.throwIfAborted();
   if (previousPath) {
     if (!snapshotEnvironment) {
       throw new RepositoryError("The rename snapshot is unavailable for change review.", 409);
@@ -532,32 +622,44 @@ async function counts(
         path,
       ],
       snapshotEnvironment,
+      undefined,
+      signal,
     );
     return parseNumstat(result.stdout);
   }
   if (untracked) {
     try {
-      const content = await readFile(resolve(worktree, path), "utf8");
+      const content = await readFile(resolve(worktree, path), { encoding: "utf8", signal });
       return [contentLines(content).length, 0];
     } catch {
+      signal?.throwIfAborted();
       return [null, null];
     }
   }
-  const result = await git(worktree, ["diff", "--no-textconv", "--numstat", "HEAD", "--", path]);
+  const result = await git(
+    worktree,
+    ["diff", "--no-textconv", "--numstat", "HEAD", "--", path],
+    undefined,
+    signal,
+  );
   return parseNumstat(result.stdout);
 }
 
-export async function listChangedFiles(worktree: string): Promise<ChangedFile[]> {
-  const result = await git(worktree, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--untracked-files=all",
-    "--find-renames",
-  ]);
+export async function listChangedFiles(
+  worktree: string,
+  signal?: AbortSignal,
+): Promise<ChangedFile[]> {
+  signal?.throwIfAborted();
+  const result = await git(
+    worktree,
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--find-renames"],
+    undefined,
+    signal,
+  );
   const fields = result.stdout.split("\0");
   const entries: ChangeEntry[] = [];
   for (let index = 0; index < fields.length; index += 1) {
+    signal?.throwIfAborted();
     const field = fields[index];
     if (!field) continue;
     const code = field.slice(0, 2);
@@ -568,19 +670,20 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
   }
 
   const ignoredRuntimePaths = entries.some((entry) => entry.initial === "deleted")
-    ? await listIgnoredRuntimePaths(worktree)
+    ? await listIgnoredRuntimePaths(worktree, signal)
     : [];
   for (const path of ignoredRuntimePaths) {
     if (entries.some((entry) => entry.path === path)) continue;
     entries.push({ code: "??", path, previousPath: null, initial: "added" });
   }
-  await markSpecialRenames(worktree, entries);
-  await pairExactRuntimeRenames(worktree, entries);
+  await markSpecialRenames(worktree, entries, signal);
+  await pairExactRuntimeRenames(worktree, entries, signal);
   await pairExactRenames(
     worktree,
     entries,
     (entry) => !isHiddenReviewPath(entry.path),
     () => {},
+    signal,
   );
 
   // Git reports an unstaged move as one deletion and one untracked addition.
@@ -590,23 +693,28 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
     ...entries.filter((entry) => entry.initial === "deleted").map((entry) => entry.path),
     ...entries.flatMap((entry) => (entry.previousPath ? [entry.previousPath] : [])),
   ];
-  const addPaths = await boundedSnapshotPaths(worktree, [
-    ...entries
-      .filter((entry) => entry.code === "??" && !isHiddenReviewPath(entry.path))
-      .map((entry) => entry.path),
-    ...entries.flatMap((entry) =>
-      entry.previousPath && !isHiddenReviewPath(entry.path) ? [entry.path] : [],
-    ),
-  ]);
+  const addPaths = await boundedSnapshotPaths(
+    worktree,
+    [
+      ...entries
+        .filter((entry) => entry.code === "??" && !isHiddenReviewPath(entry.path))
+        .map((entry) => entry.path),
+      ...entries.flatMap((entry) =>
+        entry.previousPath && !isHiddenReviewPath(entry.path) ? [entry.path] : [],
+      ),
+    ],
+    undefined,
+    signal,
+  );
   const needsSnapshot =
     entries.some((entry) => entry.previousPath !== null && !entry.nonRenderable) ||
     (entries.some((entry) => entry.initial === "deleted") && addPaths.length > 0);
   const snapshot = needsSnapshot
-    ? await createWorktreeSnapshot(worktree, removePaths, addPaths)
+    ? await createWorktreeSnapshot(worktree, removePaths, addPaths, signal)
     : null;
   try {
     if (snapshot && entries.some((entry) => entry.initial === "deleted")) {
-      await pairWorktreeRenames(worktree, entries, snapshot.environment);
+      await pairWorktreeRenames(worktree, entries, snapshot.environment, signal);
     }
 
     // A user's checkout may predate Aldunis' own /data ignore rule. Keep
@@ -615,12 +723,21 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
     // into one of those paths.
     const changes: ChangedFile[] = [];
     for (const entry of entries) {
+      signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
-      const oversized = await isOversized(worktree, path, initial === "deleted", previousPath);
+      const oversized = await isOversized(
+        worktree,
+        path,
+        initial === "deleted",
+        previousPath,
+        signal,
+      );
       const binary =
         !oversized &&
-        (entry.symlink || entry.nonRenderable || (await isBinary(worktree, path, code === "??")));
+        (entry.symlink ||
+          entry.nonRenderable ||
+          (await isBinary(worktree, path, code === "??", signal)));
       const [additions, deletions] =
         oversized || binary
           ? [null, null]
@@ -630,6 +747,7 @@ export async function listChangedFiles(worktree: string): Promise<ChangedFile[]>
               code === "??",
               previousPath,
               snapshot?.environment ?? null,
+              signal,
             );
       changes.push({
         path,

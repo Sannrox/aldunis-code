@@ -46,6 +46,21 @@ test("changed files expose added, modified, deleted, renamed, binary, and oversi
   assert.equal(states.get("large.txt")?.state, "oversized");
 });
 
+test("changed-file listing stops before and during abandoned work", async () => {
+  const root = await fixture();
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort();
+  await assert.rejects(
+    listChangedFiles(root, alreadyAborted.signal),
+    (error: unknown) => (error as Error).name === "AbortError",
+  );
+
+  const active = new AbortController();
+  const listing = listChangedFiles(root, active.signal);
+  setTimeout(() => active.abort(), 10);
+  await assert.rejects(listing, (error: unknown) => (error as Error).name === "AbortError");
+});
+
 test("untracked local runtime state stays out of changed files", async () => {
   const root = await fixture();
   await mkdir(join(root, "data"), { recursive: true });

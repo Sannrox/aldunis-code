@@ -11,7 +11,7 @@ import { LocalStateError, type LocalStateStore, type StateProjection } from "./s
 import { RepositoryError } from "./repository.ts";
 
 interface ReviewChangesAdapter {
-  listChangedFiles: (worktree: string) => Promise<ChangedFile[]>;
+  listChangedFiles: (worktree: string, signal?: AbortSignal) => Promise<ChangedFile[]>;
   readFileDiff: (worktree: string, path: string) => Promise<FileDiff>;
 }
 
@@ -39,6 +39,27 @@ const REVIEW_ROUTES = new Set([
   "/api/annotations/preview",
 ]);
 const ANNOTATION_RESOLUTION_ROUTE = /^\/api\/annotations\/([0-9a-f-]+)\/resolution$/;
+
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortUnfinishedResponse = () => {
+    if (!response.writableEnded) controller.abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortUnfinishedResponse);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) controller.abort();
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortUnfinishedResponse);
+  }
+}
 
 /**
  * Dispatch changed-file review routes behind one interface. The module owns
@@ -87,8 +108,13 @@ export async function handleReviewRoute(
     if (typeof body.root !== "string" || typeof body.worktree !== "string") {
       throw new RepositoryError("A repository and worktree are required.");
     }
-    const selected = await selectWorktree(body.root, body.worktree);
-    sendJson(response, 200, { files: await changes.listChangedFiles(selected.worktree) });
+    await withRequestCancellation(request, response, async (signal) => {
+      const selected = await selectWorktree(body.root, body.worktree);
+      signal.throwIfAborted();
+      const files = await changes.listChangedFiles(selected.worktree, signal);
+      signal.throwIfAborted();
+      sendJson(response, 200, { files });
+    });
     return true;
   }
 
