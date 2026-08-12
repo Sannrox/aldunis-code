@@ -152,6 +152,48 @@ export function acpSetModelRequest(
  * Short-lived ACP probe: initialize + session/new, parse models, kill process.
  * Does not send a prompt. Failures return an empty list (discovery is best-effort).
  */
+export const MAX_ACTIVE_ACP_MODEL_PROBES = 4;
+export const MAX_PENDING_ACP_MODEL_PROBES = 32;
+let activeAcpModelProbes = 0;
+interface PendingAcpModelProbe {
+  resolve(release: (() => void) | null): void;
+  timer: NodeJS.Timeout;
+}
+const pendingAcpModelProbes: PendingAcpModelProbe[] = [];
+
+function releaseAcpModelProbeSlot(): void {
+  const next = pendingAcpModelProbes.shift();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve(releaseAcpModelProbeSlot);
+  } else {
+    activeAcpModelProbes -= 1;
+  }
+}
+
+function acquireAcpModelProbeSlot(waitMs: number): Promise<(() => void) | null> {
+  if (activeAcpModelProbes < MAX_ACTIVE_ACP_MODEL_PROBES) {
+    activeAcpModelProbes += 1;
+    return Promise.resolve(releaseAcpModelProbeSlot);
+  }
+  if (pendingAcpModelProbes.length >= MAX_PENDING_ACP_MODEL_PROBES) {
+    return Promise.resolve(null);
+  }
+  if (waitMs <= 0) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const pending: PendingAcpModelProbe = {
+      resolve,
+      timer: setTimeout(() => {
+        const index = pendingAcpModelProbes.indexOf(pending);
+        if (index >= 0) pendingAcpModelProbes.splice(index, 1);
+        resolve(null);
+      }, waitMs),
+    };
+    pending.timer.unref();
+    pendingAcpModelProbes.push(pending);
+  });
+}
+
 export async function probeAcpModels(options: {
   executable: string;
   arguments: string[];
@@ -162,23 +204,55 @@ export async function probeAcpModels(options: {
   terminationGraceMs?: number;
 }): Promise<AcpDiscoveredModel[]> {
   const timeoutMs = options.timeoutMs ?? 8_000;
+  const deadline = Date.now() + timeoutMs;
+  const releaseSlot = await acquireAcpModelProbeSlot(timeoutMs);
+  if (!releaseSlot) return [];
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    releaseSlot();
+    return [];
+  }
   const terminationGraceMs = options.terminationGraceMs ?? 500;
   const source = options.environment ?? process.env;
   const env: NodeJS.ProcessEnv = { ...source };
+  let slotReleased = false;
+  const releaseOwnedSlot = () => {
+    if (slotReleased) return;
+    slotReleased = true;
+    releaseSlot();
+  };
 
-  return await new Promise((resolve) => {
-    let settled = false;
-    let forceTimer: NodeJS.Timeout | null = null;
-    const clearForceTimer = () => {
-      if (forceTimer) clearTimeout(forceTimer);
-      forceTimer = null;
-    };
-    const finish = (models: AcpDiscoveredModel[]) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        if (child.exitCode === null && child.signalCode === null) {
+  try {
+    return await new Promise((resolve) => {
+      let settled = false;
+      let forceTimer: NodeJS.Timeout | null = null;
+      let completionTimer: NodeJS.Timeout | null = null;
+      const clearForceTimer = () => {
+        if (forceTimer) clearTimeout(forceTimer);
+        forceTimer = null;
+      };
+      const finish = (models: AcpDiscoveredModel[]) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        let completed = false;
+        const complete = () => {
+          if (completed) return;
+          completed = true;
+          clearForceTimer();
+          if (completionTimer) clearTimeout(completionTimer);
+          child.stdin.destroy();
+          child.stdout.destroy();
+          child.stderr.destroy();
+          resolve(models);
+        };
+        if (child.exitCode !== null || child.signalCode !== null) {
+          complete();
+          return;
+        }
+        child.once("exit", complete);
+        child.once("close", complete);
+        try {
           child.kill("SIGTERM");
           forceTimer = setTimeout(
             () => {
@@ -186,101 +260,109 @@ export async function probeAcpModels(options: {
               try {
                 if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
               } catch {
-                // ignore
+                complete();
               }
             },
             Math.max(0, terminationGraceMs),
           );
           forceTimer.unref();
-        }
-      } catch {
-        // ignore
-      }
-      resolve(models);
-    };
-
-    const child: ChildProcessWithoutNullStreams = spawn(options.executable, options.arguments, {
-      cwd: options.cwd ?? process.cwd(),
-      env,
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    child.stderr.resume();
-    child.stdin.on("error", () => {});
-    child.once("error", () => finish([]));
-    child.once("close", clearForceTimer);
-
-    const timer = setTimeout(() => finish([]), timeoutMs);
-    timer.unref();
-
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    let sawInit = false;
-
-    const send = (value: unknown) => {
-      if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-        child.stdin.write(`${JSON.stringify(value)}\n`);
-      }
-    };
-
-    send({
-      jsonrpc: "2.0",
-      id: 0,
-      method: "initialize",
-      params: {
-        protocolVersion: 1,
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: false },
-          terminal: false,
-        },
-        clientInfo: { name: "aldunis-code-model-probe", version: "0.1.0" },
-      },
-    });
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        newline = buffer.indexOf("\n");
-        if (!line) continue;
-        let message: JsonRecord;
-        try {
-          message = JSON.parse(line) as JsonRecord;
+          completionTimer = setTimeout(complete, Math.max(0, terminationGraceMs) + 1_000);
+          completionTimer.unref();
         } catch {
-          continue;
+          complete();
         }
-        if (message.id === 0) {
-          if (message.error) {
-            finish([]);
-            return;
-          }
-          sawInit = true;
-          send({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "session/new",
-            params: {
-              cwd: options.sessionCwd ?? options.cwd ?? process.cwd(),
-              mcpServers: [],
-            },
-          });
-          continue;
-        }
-        if (message.id === 1) {
-          if (message.error) {
-            finish([]);
-            return;
-          }
-          finish(parseAcpSessionModels(message.result));
-          return;
-        }
-      }
-    });
+      };
 
-    child.stdout.on("end", () => {
-      if (!sawInit) finish([]);
+      const child: ChildProcessWithoutNullStreams = spawn(options.executable, options.arguments, {
+        cwd: options.cwd ?? process.cwd(),
+        env,
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      child.stderr.resume();
+      child.stdin.on("error", () => {});
+      child.once("error", () => finish([]));
+      child.once("exit", releaseOwnedSlot);
+      child.once("close", () => {
+        clearForceTimer();
+        releaseOwnedSlot();
+      });
+
+      const timer = setTimeout(() => finish([]), remainingMs);
+      timer.unref();
+
+      const decoder = new StringDecoder("utf8");
+      let buffer = "";
+      let sawInit = false;
+
+      const send = (value: unknown) => {
+        if (!child.stdin.destroyed && !child.stdin.writableEnded) {
+          child.stdin.write(`${JSON.stringify(value)}\n`);
+        }
+      };
+
+      send({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: false },
+            terminal: false,
+          },
+          clientInfo: { name: "aldunis-code-model-probe", version: "0.1.0" },
+        },
+      });
+
+      child.stdout.on("data", (chunk: Buffer | string) => {
+        buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf("\n");
+          if (!line) continue;
+          let message: JsonRecord;
+          try {
+            message = JSON.parse(line) as JsonRecord;
+          } catch {
+            continue;
+          }
+          if (message.id === 0) {
+            if (message.error) {
+              finish([]);
+              return;
+            }
+            sawInit = true;
+            send({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "session/new",
+              params: {
+                cwd: options.sessionCwd ?? options.cwd ?? process.cwd(),
+                mcpServers: [],
+              },
+            });
+            continue;
+          }
+          if (message.id === 1) {
+            if (message.error) {
+              finish([]);
+              return;
+            }
+            finish(parseAcpSessionModels(message.result));
+            return;
+          }
+        }
+      });
+
+      child.stdout.on("end", () => {
+        if (!sawInit) finish([]);
+      });
     });
-  });
+  } catch (error) {
+    releaseOwnedSlot();
+    throw error;
+  }
 }

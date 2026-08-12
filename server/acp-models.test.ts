@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acpSetModelRequest, parseAcpSessionModels, probeAcpModels } from "./acp-models.ts";
+import {
+  acpSetModelRequest,
+  MAX_ACTIVE_ACP_MODEL_PROBES,
+  parseAcpSessionModels,
+  probeAcpModels,
+} from "./acp-models.ts";
 
 test("parseAcpSessionModels reads Kiro/Grok session models field", () => {
   const models = parseAcpSessionModels({
@@ -153,4 +158,67 @@ setInterval(() => {}, 1_000);
   } finally {
     if (isAlive()) process.kill(pid, "SIGKILL");
   }
+});
+
+test("probeAcpModels settles promptly when the executable cannot spawn", async () => {
+  const startedAt = Date.now();
+  assert.deepEqual(
+    await probeAcpModels({
+      executable: join(tmpdir(), `missing-acp-${Date.now()}`),
+      arguments: [],
+      timeoutMs: 25,
+    }),
+    [],
+  );
+  assert.ok(Date.now() - startedAt < 250);
+});
+
+test("probeAcpModels caps active children and recovers capacity after settlement", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-model-capacity-"));
+  const executable = join(directory, "blocked-acp");
+  const startsPath = join(directory, "starts");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").appendFileSync(${JSON.stringify(startsPath)}, "started\\n");
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+
+  const options = {
+    executable,
+    arguments: [] as string[],
+    cwd: directory,
+    timeoutMs: 1_000,
+    terminationGraceMs: 10,
+  };
+  const active = Array.from({ length: MAX_ACTIVE_ACP_MODEL_PROBES }, () => probeAcpModels(options));
+  const startedCount = async () =>
+    (await readFile(startsPath, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  for (
+    let attempt = 0;
+    attempt < 200 && (await startedCount()) < MAX_ACTIVE_ACP_MODEL_PROBES;
+    attempt += 1
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES);
+
+  const queuedStart = Date.now();
+  assert.deepEqual(await probeAcpModels({ ...options, timeoutMs: 25 }), []);
+  assert.ok(Date.now() - queuedStart < 250);
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES);
+
+  let queuedSettled = false;
+  const queued = probeAcpModels({ ...options, timeoutMs: 2_000 }).finally(() => {
+    queuedSettled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(queuedSettled, false);
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES);
+  await Promise.all([...active, queued]);
+
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES + 1);
 });
