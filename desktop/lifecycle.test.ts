@@ -209,6 +209,8 @@ test("shared browser validates webview attachment parameters before guest creati
   assert.match(source, /aldunis-browser-\[0-9a-f\]\{32\}/);
   assert.match(source, /deleteProperty\(webPreferences, "preload"\)/);
   assert.match(source, /pendingAgentInputs/);
+  assert.match(source, /MAX_ACTIVE_SHARED_BROWSER_SESSIONS/);
+  assert.match(source, /!existing && this\.#entries\.size >= MAX_ACTIVE_SHARED_BROWSER_SESSIONS/);
   assert.doesNotMatch(source, /agentInputUntil/);
 });
 

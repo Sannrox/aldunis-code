@@ -5,6 +5,7 @@ export const BROWSER_MCP_NAME = "aldunis_browser";
 export const MAX_BROWSER_OPERATION_TEXT = 8_000;
 export const MAX_BROWSER_SELECTOR = 1_000;
 export const MAX_BROWSER_URL = 2_048;
+export const MAX_ACTIVE_SHARED_BROWSER_SESSIONS = 8;
 
 const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 const BROWSER_MUTATIONS = new Set(["navigate", "click", "type", "press", "scroll"]);
@@ -261,6 +262,13 @@ export class SharedBrowserBroker {
         return { ...existing.snapshot };
       }
     }
+    if (this.#sessions.size >= MAX_ACTIVE_SHARED_BROWSER_SESSIONS) {
+      throw new BrowserError(
+        "Too many shared browser sessions are active.",
+        429,
+        "browser_session_capacity",
+      );
+    }
     const now = new Date().toISOString();
     const id = randomUUID();
     // Prefer a previously published provider token; do not grow the map on open alone.
@@ -400,6 +408,11 @@ export class SharedBrowserBroker {
   /** Test and diagnostics: provider tokens retained outside active sessions. */
   get retainedProviderTokenCount(): number {
     return this.#providerTokens.size;
+  }
+
+  /** Test and diagnostics: live session records retained by the broker. */
+  get retainedSessionCount(): number {
+    return this.#sessions.size;
   }
 
   async executeProvider(
