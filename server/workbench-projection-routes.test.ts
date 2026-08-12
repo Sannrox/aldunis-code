@@ -304,3 +304,40 @@ test("search enforces archive scope and managed visibility", async () => {
     ["archived"],
   );
 });
+
+test("managed search does not traverse unrelated projection collections", async () => {
+  const currentProjection = projection();
+  const searchProjection = new Proxy(currentProjection, {
+    get: (target, property, receiver) => {
+      // Promise resolution probes `then` before returning the inspected object.
+      if (property === "then") return undefined;
+      if (property !== "projects" && property !== "threads") {
+        throw new Error(`search traversed unrelated projection field ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  let value: { threads: Array<{ id: string }> } | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/search",
+    request,
+    response,
+    context({
+      readJson: async () => ({ query: "", archived: "include" }),
+      state: { inspect: async () => searchProjection },
+      managedHost: {
+        repositoryForRoot: (root: string) => {
+          if (root !== "/alpha") throw new Error("outside catalogue");
+          return {};
+        },
+      },
+      sendJson: (_response: ServerResponse, _status: number, body: unknown) => {
+        value = body as { threads: Array<{ id: string }> };
+      },
+    }) as never,
+  );
+  assert.deepEqual(
+    value?.threads.map((thread) => thread.id),
+    ["active", "archived"],
+  );
+});

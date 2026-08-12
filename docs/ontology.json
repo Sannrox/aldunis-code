@@ -183,7 +183,7 @@
     },
     {
       "name": "ThreadSearch",
-      "description": "The bounded local conversation metadata search surface that presents selectable thread results without searching messages, provider output, or repository contents."
+      "description": "The bounded local conversation metadata search surface that presents selectable thread results, applies managed visibility using only project and thread metadata, and does not traverse messages, provider output, repository contents, or unrelated state collections."
     },
     {
       "name": "ConversationActivityInbox",
@@ -1875,8 +1875,8 @@
     },
     {
       "subject": "ThreadSearch",
-      "source": "Sannrox/aldunis-code",
-      "locator": "src/features/dialogs/thread-search-dialog.tsx",
+      "source": "GitHub Issue Sannrox/aldunis-code#783",
+      "locator": "src/features/dialogs/thread-search-dialog.tsx; server/workbench-projection-routes.ts#filterManagedThreadSearchProjection",
       "confidence": 1.0
     },
     {
