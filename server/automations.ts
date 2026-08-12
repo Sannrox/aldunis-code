@@ -2,7 +2,7 @@
  * Timer-only conversation automations (interval or 5-field UTC cron).
  * Evaluated only while the local host process is running.
  */
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { InteractionMode } from "./provider.ts";
@@ -11,6 +11,7 @@ export const AUTOMATIONS_SCHEMA_VERSION = 1 as const;
 export const MIN_INTERVAL_SECONDS = 60;
 export const MAX_ACTIVE_SCHEDULED_AUTOMATIONS = 4;
 export const MAX_DURABLE_AUTOMATIONS = 256;
+export const MAX_AUTOMATION_STORE_BYTES = 64 * 1024 * 1024;
 
 export type AutomationSchedule =
   { kind: "interval"; seconds: number } | { kind: "cron"; expression: string };
@@ -91,6 +92,92 @@ export class AutomationError extends Error {
     readonly status = 400,
   ) {
     super(message);
+  }
+}
+
+export interface AutomationStoreFileOperations {
+  stat(path: string): Promise<{
+    size: number;
+    dev: number | bigint;
+    ino: number | bigint;
+    mtimeMs: number;
+    ctimeMs: number;
+    isFile(): boolean;
+  }>;
+  open(path: string): Promise<{
+    stat(): Promise<{
+      size: number;
+      dev: number | bigint;
+      ino: number | bigint;
+      mtimeMs: number;
+      ctimeMs: number;
+      isFile(): boolean;
+    }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const automationStoreFileOperations: AutomationStoreFileOperations = {
+  stat,
+  open: (path) => open(path, "r"),
+};
+
+export async function readAutomationStoreFile(
+  path: string,
+  maxBytes = MAX_AUTOMATION_STORE_BYTES,
+  operations: AutomationStoreFileOperations = automationStoreFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) {
+      throw new AutomationError("Automations store is not a file.", 500);
+    }
+    if (details.size > maxBytes) {
+      throw new AutomationError("Automations store exceeds the supported size.", 500);
+    }
+    if (!Number.isSafeInteger(details.size) || details.size < 0) {
+      throw new AutomationError("Automations store has an invalid size.", 500);
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    const grew = (await handle.read(extra, 0, 1, offset)).bytesRead > 0;
+    const current = await handle.stat();
+    const pathname = await operations.stat(path).catch(() => {
+      throw new AutomationError("Automations store changed while being read.", 500);
+    });
+    if (
+      grew ||
+      offset !== details.size ||
+      current.size !== details.size ||
+      current.dev !== details.dev ||
+      current.ino !== details.ino ||
+      current.mtimeMs !== details.mtimeMs ||
+      current.ctimeMs !== details.ctimeMs ||
+      !pathname.isFile() ||
+      pathname.size !== details.size ||
+      pathname.dev !== details.dev ||
+      pathname.ino !== details.ino ||
+      pathname.mtimeMs !== details.mtimeMs ||
+      pathname.ctimeMs !== details.ctimeMs
+    ) {
+      throw new AutomationError("Automations store changed while being read.", 500);
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
   }
 }
 
@@ -286,6 +373,7 @@ export class AutomationStore {
   constructor(
     readonly directory: string,
     readonly maxItems = MAX_DURABLE_AUTOMATIONS,
+    readonly maxStoreBytes = MAX_AUTOMATION_STORE_BYTES,
   ) {
     this.#path = join(directory, "automations.v1.json");
   }
@@ -390,7 +478,10 @@ export class AutomationStore {
 
   async #read(): Promise<AutomationStoreFile> {
     try {
-      return parseStore(JSON.parse(await readFile(this.#path, "utf8")), this.maxItems);
+      return parseStore(
+        JSON.parse(await readAutomationStoreFile(this.#path, this.maxStoreBytes)),
+        this.maxItems,
+      );
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return { schemaVersion: 1, items: [] };
@@ -403,7 +494,11 @@ export class AutomationStore {
   async #write(store: AutomationStoreFile): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(store, null, 2)}\n`, {
+    const serialized = `${JSON.stringify(store, null, 2)}\n`;
+    if (Buffer.byteLength(serialized) > this.maxStoreBytes) {
+      throw new AutomationError("Automations store exceeds the supported size.", 500);
+    }
+    await writeFile(temporary, serialized, {
       encoding: "utf8",
       mode: 0o600,
     });
