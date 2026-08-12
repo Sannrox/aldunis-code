@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES,
   MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES,
   ProviderDiscovery,
   type ProviderDiscoveryDependencies,
 } from "./provider-discovery.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 
-function adapter(): InstalledProviderAdapter {
+function adapter(id = "fixture"): InstalledProviderAdapter {
   return {
     schemaVersion: 1,
     source: "/redacted/adapter.json",
@@ -16,7 +17,7 @@ function adapter(): InstalledProviderAdapter {
     installedAt: "2026-08-10T00:00:00.000Z",
     manifest: {
       schemaVersion: 1,
-      id: "fixture",
+      id,
       publisher: { name: "Fixture" },
       version: "1.0.0",
       aldunis: { minimumVersion: "0.1.0", maximumVersion: "0.1.0" },
@@ -28,6 +29,114 @@ function adapter(): InstalledProviderAdapter {
     },
   };
 }
+
+test("declarative adapter discovery preserves order within a fixed concurrency bound", async () => {
+  const adapterCount = MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES * 2;
+  const adapters = Array.from({ length: adapterCount }, (_, index) => adapter(`fixture-${index}`));
+  let active = 0;
+  let peak = 0;
+  const entered: string[] = [];
+  const releases: Array<() => void> = [];
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      adapters: {
+        list: async () => adapters,
+        resolveExecutable: async (installed) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          entered.push(installed.manifest.id);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          active -= 1;
+          return `/usr/bin/${installed.manifest.id}`;
+        },
+      },
+      environment: { FIXTURE_TOKEN: "secret" },
+      probeAcpModels: async () => [],
+    }),
+  );
+
+  const pending = discovery.discover({ cwd: "/authorized/worktree" });
+  while (entered.length < MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(active, MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES);
+  assert.equal(peak, MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES);
+
+  while (releases.length > 0) releases.shift()?.();
+  while (entered.length < adapterCount) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(peak, MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES);
+  while (releases.length > 0) releases.shift()?.();
+
+  const result = await pending;
+  assert.deepEqual(
+    result.providers.slice(3).map((provider) => provider.id),
+    adapters.map((installed) => `adapter:${installed.manifest.id}@1.0.0`),
+  );
+});
+
+test("failed declarative adapter resolution does not strand queued discovery work", async () => {
+  const adapterCount = MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES * 2;
+  const adapters = Array.from({ length: adapterCount }, (_, index) => adapter(`fixture-${index}`));
+  const attempted: string[] = [];
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      adapters: {
+        list: async () => adapters,
+        resolveExecutable: async (installed) => {
+          attempted.push(installed.manifest.id);
+          if (attempted.length <= MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES) {
+            throw new Error("adapter unavailable");
+          }
+          return `/usr/bin/${installed.manifest.id}`;
+        },
+      },
+      environment: { FIXTURE_TOKEN: "secret" },
+      probeAcpModels: async () => [],
+    }),
+  );
+
+  const result = await discovery.discover({ cwd: "/authorized/worktree" });
+
+  assert.deepEqual(
+    attempted.slice().sort(),
+    adapters.map((installed) => installed.manifest.id).sort(),
+  );
+  assert.equal(result.providers.slice(3).length, adapterCount);
+});
+
+test("discovery cancellation stops queued declarative adapters", async () => {
+  const adapterCount = MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES * 2;
+  const adapters = Array.from({ length: adapterCount }, (_, index) => adapter(`fixture-${index}`));
+  const entered: string[] = [];
+  const releases: Array<() => void> = [];
+  const controller = new AbortController();
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      adapters: {
+        list: async () => adapters,
+        resolveExecutable: async (installed) => {
+          entered.push(installed.manifest.id);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          return `/usr/bin/${installed.manifest.id}`;
+        },
+      },
+      environment: { FIXTURE_TOKEN: "secret" },
+    }),
+  );
+
+  const pending = discovery.discover({ cwd: "/authorized/worktree", signal: controller.signal });
+  while (entered.length < MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  controller.abort();
+  while (releases.length > 0) releases.shift()?.();
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  assert.equal(entered.length, MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES);
+});
 
 function dependencies(
   overrides: Partial<ProviderDiscoveryDependencies> = {},
