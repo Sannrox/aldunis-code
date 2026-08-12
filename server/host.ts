@@ -8,6 +8,7 @@ import {
 import { createServer as createHttpsServer } from "node:https";
 import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
@@ -864,6 +865,17 @@ const contentTypes: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+export function pipeStaticAsset(stream: Readable, response: ServerResponse): void {
+  if (response.destroyed) {
+    stream.destroy();
+    return;
+  }
+  const destroyStream = () => stream.destroy();
+  response.once("close", destroyStream);
+  stream.once("close", () => response.off("close", destroyStream));
+  stream.pipe(response);
+}
+
 async function serveStatic(
   request: IncomingMessage,
   response: ServerResponse,
@@ -903,7 +915,7 @@ async function serveStatic(
       "content-type": contentTypes[extname(filePath)] ?? "application/octet-stream",
       "x-content-type-options": "nosniff",
     });
-    stream.pipe(response);
+    pipeStaticAsset(stream, response);
   });
   stream.on("error", () => {
     if (!opened && !response.headersSent) {
