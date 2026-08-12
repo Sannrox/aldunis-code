@@ -22,7 +22,12 @@ import { listChangedFiles, readFileDiff } from "./changes.ts";
 import { DeliveryBroker } from "./delivery.ts";
 import { ReleaseDeliveryBroker, ReleaseDeliveryStore } from "./release-delivery-workflow.ts";
 import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
-import { canonicalizeRepositoryRoot, discoverWorktrees, RepositoryError } from "./repository.ts";
+import {
+  canonicalizeDiscoveredWorktreePaths,
+  canonicalizeRepositoryRoot,
+  discoverWorktrees,
+  RepositoryError,
+} from "./repository.ts";
 import {
   LocalStateError,
   LocalStateStore,
@@ -272,16 +277,8 @@ async function selectWorktreeForRepository(
   const root = await canonicalizeRepositoryRoot(rootInput);
   const selected = await realpath(worktreeInput);
   const worktrees = await discoverWorktrees(root);
-  const allowed = await Promise.all(
-    worktrees.map(async (worktree) => {
-      try {
-        return await realpath(worktree.path);
-      } catch {
-        return null;
-      }
-    }),
-  );
-  if (!allowed.includes(selected)) {
+  const allowed = await canonicalizeDiscoveredWorktreePaths(worktrees);
+  if (!allowed.has(selected)) {
     throw new RepositoryError("Select a discovered worktree from the opened repository.", 403);
   }
   return { root, worktree: selected };
