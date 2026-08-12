@@ -61,6 +61,7 @@ async function withRequestCancellation<T>(
   response.once("close", abortOnUnfinishedClose);
   if (request.aborted || (response.destroyed && !response.writableEnded)) abort();
   try {
+    controller.signal.throwIfAborted();
     const result = await operation(controller.signal);
     controller.signal.throwIfAborted();
     return result;
@@ -74,33 +75,50 @@ async function selectedReleaseProject(
   state: LocalStateStore,
   projectId: string,
   context: SelectedWorktree,
+  signal?: AbortSignal,
 ) {
   const projection = await state.inspect();
+  signal?.throwIfAborted();
   const project = projection.projects.find((item) => item.id === projectId);
-  if (
-    !project ||
-    (await repositoryCommonDir(project.root)) !== (await repositoryCommonDir(context.root))
-  ) {
+  if (!project) {
     throw new RepositoryError("The selected release project is unavailable.", 404);
   }
+  const contextCommonDir = await repositoryCommonDir(context.root);
+  signal?.throwIfAborted();
+  const projectCommonDir = await repositoryCommonDir(project.root);
+  signal?.throwIfAborted();
+  if (projectCommonDir !== contextCommonDir) {
+    throw new RepositoryError("The selected release project is unavailable.", 404);
+  }
+  signal?.throwIfAborted();
   const exactWorktreeProjects: string[] = [];
+  let projectRoot: string | undefined;
   for (const candidate of projection.projects) {
     try {
-      if (
-        (await repositoryCommonDir(candidate.root)) === (await repositoryCommonDir(context.root)) &&
-        (await realpath(candidate.root)) === context.worktree
-      ) {
+      const candidateCommonDir =
+        candidate.id === project.id ? projectCommonDir : await repositoryCommonDir(candidate.root);
+      signal?.throwIfAborted();
+      if (candidateCommonDir !== contextCommonDir) continue;
+      const candidateRoot = await realpath(candidate.root);
+      signal?.throwIfAborted();
+      if (candidate.id === project.id) projectRoot = candidateRoot;
+      if (candidateRoot === context.worktree) {
         exactWorktreeProjects.push(candidate.id);
       }
     } catch {
+      signal?.throwIfAborted();
       // Missing project records cannot authorize a local release.
     }
   }
   if (exactWorktreeProjects.length > 0 && !exactWorktreeProjects.includes(project.id)) {
     throw new RepositoryError("The selected release project does not own this worktree.", 404);
   }
-  if (exactWorktreeProjects.length === 0 && (await realpath(project.root)) !== context.root) {
-    throw new RepositoryError("The selected release project does not own this worktree.", 404);
+  if (exactWorktreeProjects.length === 0) {
+    projectRoot ??= await realpath(project.root);
+    signal?.throwIfAborted();
+    if (projectRoot !== context.root) {
+      throw new RepositoryError("The selected release project does not own this worktree.", 404);
+    }
   }
   return project;
 }
@@ -223,17 +241,18 @@ export async function handleDeliveryRoute(
     if (!hasReleaseContext) {
       throw new RepositoryError("A project, repository, and worktree are required.");
     }
-    const selected = await selectWorktree(body.root, body.worktree);
-    const project = await selectedReleaseProject(state, body.projectId, selected);
-
     if (route === "/api/release-delivery/inspect") {
-      sendJson(
-        response,
-        200,
-        await releaseDelivery.inspect(project.id, selected.root, selected.worktree),
-      );
+      const inspection = await withRequestCancellation(request, response, async (signal) => {
+        const selected = await selectWorktree(body.root, body.worktree);
+        signal.throwIfAborted();
+        const project = await selectedReleaseProject(state, body.projectId, selected, signal);
+        return releaseDelivery.inspect(project.id, selected.root, selected.worktree, signal);
+      });
+      sendJson(response, 200, inspection);
       return true;
     }
+    const selected = await selectWorktree(body.root, body.worktree);
+    const project = await selectedReleaseProject(state, body.projectId, selected);
     if (route === "/api/release-delivery/plans") {
       sendJson(
         response,

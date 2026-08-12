@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ReleaseDeliveryPlan,
   ReleaseDeliverySession,
@@ -55,10 +55,19 @@ const stateProgress: Record<string, number> = {
   stale: 0,
 };
 
-export function nextReleaseAction(session: ReleaseDeliverySession | null): ReleaseWorkflowAction | null {
+export function nextReleaseAction(
+  session: ReleaseDeliverySession | null,
+): ReleaseWorkflowAction | null {
   if (!session) return "prepare";
   if (session.state === "stale") return null;
-  if (["candidate_ready", "governance_denied", "governance_unavailable", "governance_unknown"].includes(session.state)) {
+  if (
+    [
+      "candidate_ready",
+      "governance_denied",
+      "governance_unavailable",
+      "governance_unknown",
+    ].includes(session.state)
+  ) {
     return "evaluate";
   }
   if (session.state === "governance_allowed") return "publish";
@@ -105,12 +114,16 @@ function repairOutcomeForSession(
   outcomes: TenkaiTerminalOutcomeProjection[],
 ): TenkaiTerminalOutcomeProjection | null {
   if (!session) return null;
-  return outcomes.find((outcome) => [
-    "deployment_failed",
-    "rollback_failed",
-    "execution_cancelled",
-    "unknown_reconciled",
-  ].includes(outcome.terminalState)) ?? null;
+  return (
+    outcomes.find((outcome) =>
+      [
+        "deployment_failed",
+        "rollback_failed",
+        "execution_cancelled",
+        "unknown_reconciled",
+      ].includes(outcome.terminalState),
+    ) ?? null
+  );
 }
 
 export function repairPromptForOutcome(
@@ -160,13 +173,19 @@ export function TenkaiDeliveryPanel({
   const [observation, setObservation] = useState<ChiseiObservation | null>(null);
   const [observationEventId, setObservationEventId] = useState<string | null>(null);
   const [observationBusy, setObservationBusy] = useState(false);
-  const context = repository && projectId ? {
-    root: repository.root,
-    worktree: repository.selectedWorktree,
-    projectId,
-  } : null;
+  const inspectionControllerRef = useRef<AbortController | null>(null);
+  const busyGenerationRef = useRef(0);
+  const activeExecutionGenerationRef = useRef<number | null>(null);
+  const context =
+    repository && projectId
+      ? {
+          root: repository.root,
+          worktree: repository.selectedWorktree,
+          projectId,
+        }
+      : null;
 
-  const load = async () => {
+  const load = async (signal?: AbortSignal) => {
     if (!context) {
       setInspection(null);
       return;
@@ -175,18 +194,23 @@ export function TenkaiDeliveryPanel({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(context),
+      signal,
     });
-    const body = await response.json() as Inspection & { error?: string };
+    const body = (await response.json()) as Inspection & { error?: string };
+    signal?.throwIfAborted();
     if (!response.ok) throw new Error(body.error ?? "Release delivery could not be inspected.");
     setInspection(body);
-    setSelectedSessionId((current) => (
+    setSelectedSessionId((current) =>
       current && body.sessions.some((session) => session.id === current)
         ? current
-        : body.sessions[0]?.id ?? null
-    ));
+        : (body.sessions[0]?.id ?? null),
+    );
   };
 
   useEffect(() => {
+    const controller = new AbortController();
+    inspectionControllerRef.current?.abort();
+    inspectionControllerRef.current = controller;
     setInspection(null);
     setPreview(null);
     setObservation(null);
@@ -194,63 +218,74 @@ export function TenkaiDeliveryPanel({
     setStartingNewCandidate(false);
     setError(null);
     setMessage(null);
-    void load().catch((cause) => setError(
-      cause instanceof Error ? cause.message : "Release delivery could not be inspected.",
-    ));
+    busyGenerationRef.current += 1;
+    setBusy(activeExecutionGenerationRef.current !== null);
+    setObservationBusy(false);
+    void load(controller.signal).catch((cause) => {
+      if (controller.signal.aborted) return;
+      setError(cause instanceof Error ? cause.message : "Release delivery could not be inspected.");
+    });
+    return () => {
+      controller.abort();
+      if (inspectionControllerRef.current === controller) inspectionControllerRef.current = null;
+    };
     // Reload when the selected local worktree changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repository?.root, repository?.selectedWorktree, projectId]);
 
   const session = useMemo(
-    () => releaseSessionForView(
-      inspection?.sessions ?? [],
-      selectedSessionId,
-      startingNewCandidate,
-    ),
+    () =>
+      releaseSessionForView(inspection?.sessions ?? [], selectedSessionId, startingNewCandidate),
     [inspection, selectedSessionId, startingNewCandidate],
   );
   const nextAction = nextReleaseAction(session);
-  const progress = session ? stateProgress[session.state] ?? 0 : 0;
+  const progress = session ? (stateProgress[session.state] ?? 0) : 0;
   const matchingOutcomes = session
-    ? (inspection?.terminalOutcomes.outcomes ?? []).filter((outcome) => (
-      outcome.product === session.candidate.product
-      && (
-        outcome.releaseId === session.tenkai.releaseId
-        || outcome.planId === session.tenkai.planId
-        || outcome.planId === session.tenkai.rollbackPlanId
+    ? (inspection?.terminalOutcomes.outcomes ?? []).filter(
+        (outcome) =>
+          outcome.product === session.candidate.product &&
+          (outcome.releaseId === session.tenkai.releaseId ||
+            outcome.planId === session.tenkai.planId ||
+            outcome.planId === session.tenkai.rollbackPlanId),
       )
-    ))
     : [];
   const repairOutcome = repairOutcomeForSession(session, matchingOutcomes);
 
   const preparePreview = async (action: ReleaseWorkflowAction) => {
     if (!context) return;
+    const inspectionSignal = inspectionControllerRef.current?.signal;
+    const busyGeneration = ++busyGenerationRef.current;
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const input = action === "prepare"
-        ? { manifestPath: manifestPath.trim() }
-        : action === "rollback"
-          ? { sessionId: session?.id, reason: rollbackReason.trim() }
-          : { sessionId: session?.id };
+      const input =
+        action === "prepare"
+          ? { manifestPath: manifestPath.trim() }
+          : action === "rollback"
+            ? { sessionId: session?.id, reason: rollbackReason.trim() }
+            : { sessionId: session?.id };
       const response = await fetch("/api/release-delivery/plans", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...context, action, input }),
       });
-      const body = await response.json() as ReleaseDeliveryPlan & { error?: string };
+      const body = (await response.json()) as ReleaseDeliveryPlan & { error?: string };
+      inspectionSignal?.throwIfAborted();
       if (!response.ok) throw new Error(body.error ?? "Release-delivery preview failed.");
       setPreview(body);
     } catch (cause) {
+      if (inspectionSignal?.aborted) return;
       setError(cause instanceof Error ? cause.message : "Release-delivery preview failed.");
     } finally {
-      setBusy(false);
+      if (busyGenerationRef.current === busyGeneration) setBusy(false);
     }
   };
 
   const executePreview = async () => {
     if (!context || !preview) return;
+    const inspectionSignal = inspectionControllerRef.current?.signal;
+    const busyGeneration = ++busyGenerationRef.current;
+    activeExecutionGenerationRef.current = busyGeneration;
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -260,24 +295,33 @@ export function TenkaiDeliveryPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(context),
       });
-      const body = await response.json() as ReleaseDeliverySession & { error?: string };
+      const body = (await response.json()) as ReleaseDeliverySession & { error?: string };
+      inspectionSignal?.throwIfAborted();
       if (!response.ok) throw new Error(body.error ?? "Release-delivery action failed.");
       setPreview(null);
       setSelectedSessionId(body.id);
       setStartingNewCandidate(false);
-      setMessage(`${actionLabel(preview.action)} finished with ${body.state.replaceAll("_", " ")}.`);
-      await load();
+      setMessage(
+        `${actionLabel(preview.action)} finished with ${body.state.replaceAll("_", " ")}.`,
+      );
+      if (!inspectionSignal?.aborted) await load(inspectionSignal);
     } catch (cause) {
+      if (inspectionSignal?.aborted) return;
       setError(cause instanceof Error ? cause.message : "Release-delivery action failed.");
       setPreview(null);
-      await load().catch(() => undefined);
+      await load(inspectionSignal).catch(() => undefined);
     } finally {
-      setBusy(false);
+      if (activeExecutionGenerationRef.current === busyGeneration) {
+        activeExecutionGenerationRef.current = null;
+        setBusy(false);
+      }
     }
   };
 
   const exportReceipt = async () => {
     if (!context || !session) return;
+    const inspectionSignal = inspectionControllerRef.current?.signal;
+    const busyGeneration = ++busyGenerationRef.current;
     setBusy(true);
     setError(null);
     try {
@@ -286,7 +330,8 @@ export function TenkaiDeliveryPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...context, sessionId: session.id }),
       });
-      const body = await response.json() as Record<string, unknown> & { error?: string };
+      const body = (await response.json()) as Record<string, unknown> & { error?: string };
+      inspectionSignal?.throwIfAborted();
       if (!response.ok) throw new Error(body.error ?? "Delivery receipt export failed.");
       const blob = new Blob([`${JSON.stringify(body, null, 2)}\n`], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -297,14 +342,16 @@ export function TenkaiDeliveryPanel({
       URL.revokeObjectURL(url);
       setMessage("Correlation receipt exported. Foreign authority records were not copied.");
     } catch (cause) {
+      if (inspectionSignal?.aborted) return;
       setError(cause instanceof Error ? cause.message : "Delivery receipt export failed.");
     } finally {
-      setBusy(false);
+      if (busyGenerationRef.current === busyGeneration) setBusy(false);
     }
   };
 
   const readObservation = async (outcome: TenkaiTerminalOutcomeProjection) => {
     if (!projectId) return;
+    const inspectionSignal = inspectionControllerRef.current?.signal;
     setObservationBusy(true);
     setError(null);
     try {
@@ -313,29 +360,35 @@ export function TenkaiDeliveryPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId, requestId: outcome.eventId }),
       });
-      const body = await response.json() as ChiseiObservation & { error?: string };
+      const body = (await response.json()) as ChiseiObservation & { error?: string };
+      inspectionSignal?.throwIfAborted();
       if (!response.ok) throw new Error(body.error ?? "Chisei observation readback failed.");
       setObservation(body);
       setObservationEventId(outcome.eventId);
       setMessage("Chisei confirmed the bounded observation projection for this Tenkai event.");
     } catch (cause) {
+      if (inspectionSignal?.aborted) return;
       setObservation(null);
       setObservationEventId(outcome.eventId);
       setError(cause instanceof Error ? cause.message : "Chisei observation readback failed.");
     } finally {
-      setObservationBusy(false);
+      if (!inspectionSignal?.aborted) setObservationBusy(false);
     }
   };
 
   const startRepair = () => {
     if (!projectId || !session || !repairOutcome) return;
-    window.dispatchEvent(new CustomEvent("aldunis:start-shikigami-repair", {
-      detail: {
-        projectId,
-        prompt: repairPromptForOutcome(session, repairOutcome),
-      },
-    }));
-    setMessage("A bounded repair brief is ready in a new Shikigami conversation. Review it and press Send.");
+    window.dispatchEvent(
+      new CustomEvent("aldunis:start-shikigami-repair", {
+        detail: {
+          projectId,
+          prompt: repairPromptForOutcome(session, repairOutcome),
+        },
+      }),
+    );
+    setMessage(
+      "A bounded repair brief is ready in a new Shikigami conversation. Review it and press Send.",
+    );
   };
 
   return (
@@ -366,7 +419,8 @@ export function TenkaiDeliveryPanel({
           <ol className="tenkai-stage-rail" aria-label="Release delivery stages">
             {stages.map((stage, index) => {
               const number = index + 1;
-              const state = number < progress ? "complete" : number === progress ? "current" : "pending";
+              const state =
+                number < progress ? "complete" : number === progress ? "current" : "pending";
               return (
                 <li key={stage.key} data-state={state}>
                   <span>{String(number).padStart(2, "0")}</span>
@@ -411,17 +465,52 @@ export function TenkaiDeliveryPanel({
                     </span>
                     <h3>{session.candidate.release}</h3>
                   </div>
-                  <time dateTime={session.updatedAt}>{new Date(session.updatedAt).toLocaleString()}</time>
+                  <time dateTime={session.updatedAt}>
+                    {new Date(session.updatedAt).toLocaleString()}
+                  </time>
                 </header>
                 <dl>
-                  <div><dt>Candidate</dt><dd title={session.candidate.identity}><code>{compactIdentity(session.candidate.identity)}</code></dd></div>
-                  <div><dt>Commit</dt><dd title={session.candidate.document.commit.oid}><code>{compactIdentity(session.candidate.document.commit.oid)}</code></dd></div>
-                  <div><dt>Governance</dt><dd>{session.evaluation ? `${session.evaluation.decision} · ${compactIdentity(session.evaluation.operationId)}` : "Not evaluated"}</dd></div>
-                  <div><dt>Release</dt><dd>{compactIdentity(session.tenkai.releaseId)}</dd></div>
-                  <div><dt>Plan</dt><dd>{compactIdentity(session.tenkai.planId)}</dd></div>
-                  <div><dt>Local</dt><dd>{session.tenkai.deployedVersion ?? "Not deployed"}{session.tenkai.health ? ` · health ${session.tenkai.health}` : ""}</dd></div>
+                  <div>
+                    <dt>Candidate</dt>
+                    <dd title={session.candidate.identity}>
+                      <code>{compactIdentity(session.candidate.identity)}</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Commit</dt>
+                    <dd title={session.candidate.document.commit.oid}>
+                      <code>{compactIdentity(session.candidate.document.commit.oid)}</code>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Governance</dt>
+                    <dd>
+                      {session.evaluation
+                        ? `${session.evaluation.decision} · ${compactIdentity(session.evaluation.operationId)}`
+                        : "Not evaluated"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Release</dt>
+                    <dd>{compactIdentity(session.tenkai.releaseId)}</dd>
+                  </div>
+                  <div>
+                    <dt>Plan</dt>
+                    <dd>{compactIdentity(session.tenkai.planId)}</dd>
+                  </div>
+                  <div>
+                    <dt>Local</dt>
+                    <dd>
+                      {session.tenkai.deployedVersion ?? "Not deployed"}
+                      {session.tenkai.health ? ` · health ${session.tenkai.health}` : ""}
+                    </dd>
+                  </div>
                 </dl>
-                {session.error && <p className="domain-message error" role="alert">{session.error}</p>}
+                {session.error && (
+                  <p className="domain-message error" role="alert">
+                    {session.error}
+                  </p>
+                )}
               </article>
             ) : (
               <div className="tenkai-manifest">
@@ -452,11 +541,14 @@ export function TenkaiDeliveryPanel({
                   </span>
                 </header>
                 {inspection.terminalOutcomes.warning && (
-                  <p className="domain-message error" role="status">{inspection.terminalOutcomes.warning}</p>
+                  <p className="domain-message error" role="status">
+                    {inspection.terminalOutcomes.warning}
+                  </p>
                 )}
                 {inspection.terminalOutcomes.state === "live" && matchingOutcomes.length === 0 && (
                   <p className="domain-message">
-                    No matching terminal outcome is recorded for this release or plan. The absence of a row is not treated as delivery success.
+                    No matching terminal outcome is recorded for this release or plan. The absence
+                    of a row is not treated as delivery success.
                   </p>
                 )}
                 {matchingOutcomes.length > 0 && (
@@ -465,20 +557,74 @@ export function TenkaiDeliveryPanel({
                       <li key={outcome.eventId}>
                         <header>
                           <strong>{terminalOutcomeLabel(outcome)}</strong>
-                          <span>{outcome.deliveryState} · {outcome.attempts} attempt{outcome.attempts === 1 ? "" : "s"}</span>
+                          <span>
+                            {outcome.deliveryState} · {outcome.attempts} attempt
+                            {outcome.attempts === 1 ? "" : "s"}
+                          </span>
                         </header>
                         <dl>
-                          <div><dt>Event</dt><dd title={outcome.eventId}><code>{compactIdentity(outcome.eventId)}</code></dd></div>
-                          <div><dt>Deployment</dt><dd title={outcome.deploymentId}><code>{compactIdentity(outcome.deploymentId)}</code></dd></div>
-                          <div><dt>Plan</dt><dd title={outcome.planId}><code>{compactIdentity(outcome.planId)}</code></dd></div>
-                          <div><dt>Release</dt><dd title={outcome.releaseId}><code>{compactIdentity(outcome.releaseId)}</code></dd></div>
-                          <div><dt>Environment</dt><dd title={outcome.environmentId}><code>{compactIdentity(outcome.environmentId)}</code></dd></div>
-                          <div><dt>Observed</dt><dd>{new Date(outcome.observedAt).toLocaleString()}</dd></div>
-                          <div><dt>Binding</dt><dd title={outcome.bindingDigest}><code>{compactIdentity(outcome.bindingDigest)}</code></dd></div>
-                          <div><dt>Release digest</dt><dd title={outcome.releaseDigest}><code>{compactIdentity(outcome.releaseDigest)}</code></dd></div>
-                          <div><dt>Plan digest</dt><dd title={outcome.planDigest}><code>{compactIdentity(outcome.planDigest)}</code></dd></div>
-                          <div><dt>Config digest</dt><dd title={outcome.configurationDigest}><code>{compactIdentity(outcome.configurationDigest)}</code></dd></div>
-                          <div><dt>Delivery lag</dt><dd>{outcome.deliveryLagMs.toLocaleString()} ms</dd></div>
+                          <div>
+                            <dt>Event</dt>
+                            <dd title={outcome.eventId}>
+                              <code>{compactIdentity(outcome.eventId)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Deployment</dt>
+                            <dd title={outcome.deploymentId}>
+                              <code>{compactIdentity(outcome.deploymentId)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Plan</dt>
+                            <dd title={outcome.planId}>
+                              <code>{compactIdentity(outcome.planId)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Release</dt>
+                            <dd title={outcome.releaseId}>
+                              <code>{compactIdentity(outcome.releaseId)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Environment</dt>
+                            <dd title={outcome.environmentId}>
+                              <code>{compactIdentity(outcome.environmentId)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Observed</dt>
+                            <dd>{new Date(outcome.observedAt).toLocaleString()}</dd>
+                          </div>
+                          <div>
+                            <dt>Binding</dt>
+                            <dd title={outcome.bindingDigest}>
+                              <code>{compactIdentity(outcome.bindingDigest)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Release digest</dt>
+                            <dd title={outcome.releaseDigest}>
+                              <code>{compactIdentity(outcome.releaseDigest)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Plan digest</dt>
+                            <dd title={outcome.planDigest}>
+                              <code>{compactIdentity(outcome.planDigest)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Config digest</dt>
+                            <dd title={outcome.configurationDigest}>
+                              <code>{compactIdentity(outcome.configurationDigest)}</code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Delivery lag</dt>
+                            <dd>{outcome.deliveryLagMs.toLocaleString()} ms</dd>
+                          </div>
                         </dl>
                         <div className="tenkai-outcome-actions">
                           {outcome.deliveryState === "delivered" && (
@@ -494,7 +640,9 @@ export function TenkaiDeliveryPanel({
                           )}
                           {observationEventId === outcome.eventId && observation && (
                             <span className="tenkai-observation-readback">
-                              Chisei {observation.state} · <code>{compactIdentity(observation.observationDigest)}</code> · read {new Date(observation.readAt).toLocaleString()}
+                              Chisei {observation.state} ·{" "}
+                              <code>{compactIdentity(observation.observationDigest)}</code> · read{" "}
+                              {new Date(observation.readAt).toLocaleString()}
                             </span>
                           )}
                         </div>
@@ -505,7 +653,8 @@ export function TenkaiDeliveryPanel({
                 {repairOutcome && (
                   <div className="tenkai-repair-action">
                     <p>
-                      The failed terminal state is correlated to this candidate. Shikigami can inspect and propose a repair using only these bounded references.
+                      The failed terminal state is correlated to this candidate. Shikigami can
+                      inspect and propose a repair using only these bounded references.
                     </p>
                     <Button type="button" variant="primary" onClick={startRepair} disabled={busy}>
                       Prepare Shikigami repair
@@ -513,28 +662,50 @@ export function TenkaiDeliveryPanel({
                   </div>
                 )}
                 <p className="tenkai-outcome-note">
-                  Projection contains identities, digests, timestamps, and delivery state only; payloads, retry errors, credentials, source, and logs remain with their owning systems.
+                  Projection contains identities, digests, timestamps, and delivery state only;
+                  payloads, retry errors, credentials, source, and logs remain with their owning
+                  systems.
                 </p>
               </article>
             )}
 
-            {message && <p className="domain-message" role="status">{message}</p>}
-            {error && <p className="domain-message error" role="alert">{error}</p>}
+            {message && (
+              <p className="domain-message" role="status">
+                {message}
+              </p>
+            )}
+            {error && (
+              <p className="domain-message error" role="alert">
+                {error}
+              </p>
+            )}
 
             {preview ? (
               <article className="tenkai-preview" aria-labelledby="tenkai-preview-title">
-                <p className="eyebrow">Single-use confirmation · expires {new Date(preview.expiresAt).toLocaleTimeString()}</p>
+                <p className="eyebrow">
+                  Single-use confirmation · expires{" "}
+                  {new Date(preview.expiresAt).toLocaleTimeString()}
+                </p>
                 <h3 id="tenkai-preview-title">{preview.summary}</h3>
                 <ul>
-                  {preview.details.map((detail) => <li key={detail}>{detail}</li>)}
+                  {preview.details.map((detail) => (
+                    <li key={detail}>{detail}</li>
+                  ))}
                 </ul>
                 <p>
                   Local confirmation authorizes only this adapter invocation. Chisei and Tenkai
                   independently retain governance, approval, delivery, and recovery authority.
                 </p>
                 <footer>
-                  <Button type="button" onClick={() => setPreview(null)} disabled={busy}>Cancel</Button>
-                  <Button type="button" variant="primary" onClick={() => void executePreview()} disabled={busy}>
+                  <Button type="button" onClick={() => setPreview(null)} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="primary"
+                    onClick={() => void executePreview()}
+                    disabled={busy}
+                  >
                     {busy ? "Running…" : `Confirm ${actionLabel(preview.action)}`}
                   </Button>
                 </footer>
@@ -545,7 +716,9 @@ export function TenkaiDeliveryPanel({
                   <Button
                     type="button"
                     variant="primary"
-                    disabled={busy || !inspection || (nextAction === "prepare" && !manifestPath.trim())}
+                    disabled={
+                      busy || !inspection || (nextAction === "prepare" && !manifestPath.trim())
+                    }
                     onClick={() => void preparePreview(nextAction)}
                   >
                     {busy ? "Inspecting…" : actionLabel(nextAction)}
@@ -611,8 +784,8 @@ export function TenkaiDeliveryPanel({
         </div>
       )}
       <p className="tenkai-process-boundary">
-        Build scripts and Tenkai deployment commands run with the local OS user’s authority.
-        This workflow is not an operating-system sandbox and exposes no general terminal.
+        Build scripts and Tenkai deployment commands run with the local OS user’s authority. This
+        workflow is not an operating-system sandbox and exposes no general terminal.
       </p>
     </section>
   );

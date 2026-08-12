@@ -564,6 +564,24 @@ test("the staged workflow resumes after restart and exports a complete correlati
   assert.equal((staleReceipt.sekai as { fresh: boolean }).fresh, false);
 });
 
+test("release inspection propagates cancellation through Tenkai projection work", async () => {
+  const { root, state } = await repositoryFixture();
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  const runner: ReleaseCommandRunner = async (_executable, _args, options) => {
+    observedSignal = options.signal;
+    controller.abort();
+    return { stdout: "", stderr: "", exitCode: null, timedOut: false, aborted: true };
+  };
+  const broker = new ReleaseDeliveryBroker(new ReleaseDeliveryStore(state), env, runner);
+
+  await assert.rejects(
+    broker.inspect("project-1", root, root, controller.signal),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(observedSignal, controller.signal);
+});
+
 test("publication reads the reviewed manifest from an immutable candidate snapshot", async () => {
   const { root, state } = await repositoryFixture();
   const fake = fakeRunner();
