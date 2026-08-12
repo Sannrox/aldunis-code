@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
+import type { Stats } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   realpath,
   readdir,
   rm,
@@ -32,6 +33,7 @@ const MAX_PROBE_ENTRIES = 200_000;
 const MAX_PROBE_PREPARATION_MS = 5_000;
 const MAX_ADAPTER_MODEL_DISCOVERY_MS = 13_000;
 const PROBE_INDEX_RESERVE_MS = 1_000;
+const PROBE_COPY_BUFFER_BYTES = 256 * 1024;
 const PROBE_SENSITIVE_PATH =
   /(^|\/)(\.env(?:\..*)?|\.npmrc|\.netrc|credentials(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:key|pem|p12|pfx))$/i;
 const BULK_PROBE_DIRECTORIES = new Set([
@@ -402,6 +404,67 @@ function pathIsInside(root: string, candidate: string): boolean {
   );
 }
 
+function sameProbeFile(left: Stats, right: Stats): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+/** Copy one admitted probe file without allowing a pathname race to exceed its charged size. */
+export async function copyStableProbeFile(
+  sourcePath: string,
+  destinationPath: string,
+  admitted: Stats,
+): Promise<void> {
+  const source = await open(sourcePath, "r");
+  let destination: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    const opened = await source.stat();
+    if (!sameProbeFile(admitted, opened)) throw new Error("Probe source changed before copying.");
+    destination = await open(destinationPath, "w", admitted.mode & 0o700 || 0o600);
+    const buffer = Buffer.allocUnsafe(Math.min(PROBE_COPY_BUFFER_BYTES, admitted.size + 1));
+    let position = 0;
+    while (position < admitted.size) {
+      const length = Math.min(buffer.length, admitted.size - position);
+      const { bytesRead } = await source.read(buffer, 0, length, position);
+      if (bytesRead === 0) throw new Error("Probe source shrank while copying.");
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await destination.write(
+          buffer,
+          written,
+          bytesRead - written,
+          position + written,
+        );
+        if (result.bytesWritten === 0) throw new Error("Probe destination write did not advance.");
+        written += result.bytesWritten;
+      }
+      position += bytesRead;
+    }
+    if ((await source.read(buffer, 0, 1, admitted.size)).bytesRead !== 0) {
+      throw new Error("Probe source grew while copying.");
+    }
+    const [after, pathname] = await Promise.all([source.stat(), lstat(sourcePath)]);
+    if (!sameProbeFile(admitted, after) || !sameProbeFile(after, pathname)) {
+      throw new Error("Probe source changed while copying.");
+    }
+    await destination.chmod(admitted.mode & 0o700 || 0o600);
+  } catch (error) {
+    await destination?.close().catch(() => undefined);
+    destination = null;
+    await rm(destinationPath, { force: true }).catch(() => undefined);
+    throw error;
+  } finally {
+    await Promise.all([destination?.close(), source.close()]);
+  }
+}
+
 async function copyProbeSymlink(
   sourcePath: string,
   destinationPath: string,
@@ -516,8 +579,7 @@ async function copyProbeWorkingTree(
       continue;
     }
     await rm(destinationPath, { recursive: true, force: true });
-    await copyFile(sourcePath, destinationPath);
-    await chmod(destinationPath, stats.mode & 0o700 || 0o600);
+    await copyStableProbeFile(sourcePath, destinationPath, stats);
     budget.files += 1;
     budget.bytes += stats.size;
   }

@@ -543,7 +543,7 @@
     },
     {
       "name": "ACPModelDiscoveryProbe",
-      "description": "A short-lived Aldunis Code provider-adapter probe that initializes a declarative ACP subprocess, retains at most one 1 MiB raw-byte-framed JSON message, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
+      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, retains at most one 1 MiB raw-byte-framed JSON message, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
     }
   ],
   "relations": [
@@ -2917,6 +2917,12 @@
       "subject": "ACPModelDiscoveryProbe",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#909",
       "locator": "server/acp-models.ts#probeAcpModels",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ACPModelDiscoveryProbe",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#911",
+      "locator": "server/provider-models.ts#createAcpProbeWorkspace; server/provider-models.ts#copyStableProbeFile",
       "confidence": 1.0
     },
     {
