@@ -1,6 +1,7 @@
 import { BrowserWindow, webContents, type WebContents } from "electron";
 import {
   assertBrowserUrl,
+  MAX_ACTIVE_SHARED_BROWSER_SESSIONS,
   type BrowserHost,
   type BrowserHostResult,
   type BrowserHostState,
@@ -141,6 +142,7 @@ export class SharedBrowserManager implements BrowserHost {
       return false;
     const existing = this.#entries.get(sessionId);
     if (existing && new URL(existing.origin).origin !== new URL(origin).origin) return false;
+    if (!existing && this.#entries.size >= MAX_ACTIVE_SHARED_BROWSER_SESSIONS) return false;
     const shouldConfigure = !existing || existing.contents !== guest;
     const entry =
       existing ??

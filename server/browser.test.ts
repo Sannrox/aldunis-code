@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertBrowserUrl,
+  BrowserError,
+  MAX_ACTIVE_SHARED_BROWSER_SESSIONS,
   type BrowserHost,
   type BrowserHostResult,
   type BrowserHostState,
@@ -157,6 +159,51 @@ test("shared browser broker reuses the provider token and fails closed on contro
       }),
     /authorization is invalid/,
   );
+});
+
+test("shared browser bounds active sessions and recovers after close", async () => {
+  const host = new FakeBrowserHost();
+  const broker = new SharedBrowserBroker(host);
+  const sessions = Array.from({ length: MAX_ACTIVE_SHARED_BROWSER_SESSIONS }, (_, index) =>
+    broker.open(`conversation-${index}`, "http://127.0.0.1:4173"),
+  );
+  assert.equal(broker.retainedSessionCount, MAX_ACTIVE_SHARED_BROWSER_SESSIONS);
+  assert.equal(broker.open("conversation-0", "http://127.0.0.1:4173").id, sessions[0]!.id);
+  assert.equal(broker.retainedSessionCount, MAX_ACTIVE_SHARED_BROWSER_SESSIONS);
+  assert.throws(
+    () => broker.open("conversation-overflow", "http://127.0.0.1:4173"),
+    (error: unknown) =>
+      error instanceof BrowserError &&
+      error.status === 429 &&
+      error.code === "browser_session_capacity",
+  );
+  assert.equal(broker.retainedSessionCount, MAX_ACTIVE_SHARED_BROWSER_SESSIONS);
+  assert.equal(broker.retainedProviderTokenCount, 0);
+
+  await broker.close(sessions[0]!.id, {
+    conversationId: sessions[0]!.conversationId,
+    origin: sessions[0]!.origin,
+  });
+  const recovered = broker.open("conversation-recovered", "http://127.0.0.1:4173");
+  assert.equal(recovered.conversationId, "conversation-recovered");
+  assert.equal(broker.retainedSessionCount, MAX_ACTIVE_SHARED_BROWSER_SESSIONS);
+});
+
+test("shared browser replaces a failed session while at capacity", async () => {
+  const host = new FakeBrowserHost();
+  const broker = new SharedBrowserBroker(host);
+  const failed = broker.open("conversation-failed-at-capacity", "http://127.0.0.1:4173");
+  for (let index = 1; index < MAX_ACTIVE_SHARED_BROWSER_SESSIONS; index += 1) {
+    broker.open(`conversation-capacity-${index}`, "http://127.0.0.1:4173");
+  }
+  host.state.error = "view crashed";
+  host.state.connected = false;
+  await broker.snapshot(failed.id);
+
+  const replaced = broker.open("conversation-failed-at-capacity", "http://127.0.0.1:4173");
+  assert.notEqual(replaced.id, failed.id);
+  assert.equal(broker.retainedSessionCount, MAX_ACTIVE_SHARED_BROWSER_SESSIONS);
+  assert.deepEqual(host.closedSessionIds, [failed.id]);
 });
 
 test("shared browser MCP env forces Electron Node mode so desktop turns do not dock a second app", () => {

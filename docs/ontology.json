@@ -265,7 +265,7 @@
     },
     {
       "name": "SharedBrowserSession",
-      "description": "A desktop-only Aldunis-owned Electron browser session bound to one local conversation and loopback preview origin, using a conversation-scoped persistent partition and transient page state shared by the operator and an authorized provider."
+      "description": "A desktop-only Aldunis-owned Electron browser session bound to one local conversation and loopback preview origin, using a conversation-scoped persistent partition and transient page state shared by the operator and an authorized provider; one host and Electron manager retain at most eight simultaneous sessions."
     },
     {
       "name": "BrowserAutomationBroker",
@@ -2021,6 +2021,12 @@
       "subject": "SharedBrowserSession",
       "source": "Accepted Aldunis Code shared-browser ownership decision",
       "locator": "docs/decisions/shared-browser-ownership.md; server/browser.ts; desktop/shared-browser.ts; src/features/preview/preview-panel.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "SharedBrowserSession",
+      "source": "GitHub Issue Sannrox/aldunis-code#825",
+      "locator": "server/browser.ts#SharedBrowserBroker.open; desktop/shared-browser.ts#SharedBrowserManager.registerView",
       "confidence": 1.0
     },
     {
