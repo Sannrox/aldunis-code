@@ -8,9 +8,12 @@ import test from "node:test";
 import {
   claudeModelCatalog,
   discoverProviderModels,
+  MAX_ACTIVE_ADAPTER_MODEL_PROBES,
+  MAX_PENDING_ADAPTER_MODEL_PROBES,
   ProviderModelError,
   resolveEffectiveProviderModel,
   validateProviderModel,
+  withAdapterModelProbeAdmission,
   type ProviderModelServices,
 } from "./provider-models.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
@@ -84,28 +87,31 @@ test("effective model resolution normalizes Claude aliases and provider defaults
 test("stale and unknown models return bounded refreshable conflicts", () => {
   assert.throws(
     () => resolveEffectiveProviderModel("codex-cli", "old-model", [codexModel("new-model", true)]),
-    (error: unknown) => error instanceof ProviderModelError
-      && error.status === 409
-      && /Refresh provider discovery and retry/.test(error.message),
+    (error: unknown) =>
+      error instanceof ProviderModelError &&
+      error.status === 409 &&
+      /Refresh provider discovery and retry/.test(error.message),
   );
   assert.throws(
     () => resolveEffectiveProviderModel("codex-cli", "default", []),
-    (error: unknown) => error instanceof ProviderModelError
-      && /model discovery is unavailable/.test(error.message),
+    (error: unknown) =>
+      error instanceof ProviderModelError && /model discovery is unavailable/.test(error.message),
   );
 });
 
 test("run-boundary validation rechecks changed provider capability", async () => {
   let advertised = [codexModel("model-a", true)];
   const current = services({
-    codex: { readiness: async () => ({
-      id: "codex-cli",
-      installed: true,
-      authenticated: true,
-      version: "0.99.0",
-      models: advertised,
-      detail: null,
-    }) },
+    codex: {
+      readiness: async () => ({
+        id: "codex-cli",
+        installed: true,
+        authenticated: true,
+        version: "0.99.0",
+        models: advertised,
+        detail: null,
+      }),
+    },
   });
   assert.equal(await validateProviderModel("codex-cli", "model-a", current, "."), "model-a");
   advertised = [codexModel("model-b", true)];
@@ -113,6 +119,86 @@ test("run-boundary validation rechecks changed provider capability", async () =>
     () => validateProviderModel("codex-cli", "model-a", current, "."),
     (error: unknown) => error instanceof ProviderModelError && error.status === 409,
   );
+});
+
+test("adapter model probe admission bounds preparation, queueing, and cleanup", async () => {
+  let releaseActive!: () => void;
+  const activeGate = new Promise<void>((resolve) => {
+    releaseActive = resolve;
+  });
+  let active = 0;
+  let peak = 0;
+  let cleanupFinished = false;
+  const starts: number[] = [];
+  const activeProbes = Array.from({ length: MAX_ACTIVE_ADAPTER_MODEL_PROBES }, (_, index) =>
+    withAdapterModelProbeAdmission(2_000, async () => {
+      starts.push(index);
+      active += 1;
+      peak = Math.max(peak, active);
+      await activeGate;
+      if (index === 0) cleanupFinished = true;
+      active -= 1;
+      return index;
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(active, MAX_ACTIVE_ADAPTER_MODEL_PROBES);
+
+  let expiredStarted = false;
+  // Production hosts retain listener handles; keep this isolated test process
+  // alive while the admission queue's intentionally unref'ed deadline fires.
+  const expiryKeepAlive = setTimeout(() => {}, 1_000);
+  try {
+    assert.equal(
+      await withAdapterModelProbeAdmission(20, async () => {
+        expiredStarted = true;
+        return "expired";
+      }),
+      null,
+    );
+  } finally {
+    clearTimeout(expiryKeepAlive);
+  }
+  assert.equal(expiredStarted, false);
+
+  let queuedStarted = false;
+  const queuedOrder: number[] = [];
+  const queued = withAdapterModelProbeAdmission(2_000, async () => {
+    queuedStarted = true;
+    assert.equal(cleanupFinished, true);
+    queuedOrder.push(-1);
+    return "queued";
+  });
+  const overflow = Array.from({ length: MAX_PENDING_ADAPTER_MODEL_PROBES - 1 }, (_, index) =>
+    withAdapterModelProbeAdmission(2_000, async () => {
+      queuedOrder.push(index);
+      return "waiting";
+    }),
+  );
+  let overflowStarted = false;
+  assert.equal(
+    await withAdapterModelProbeAdmission(2_000, async () => {
+      overflowStarted = true;
+      return "overflow";
+    }),
+    null,
+  );
+  assert.equal(overflowStarted, false);
+  assert.equal(queuedStarted, false);
+
+  releaseActive();
+  assert.deepEqual(await Promise.all(activeProbes), [0, 1, 2, 3]);
+  assert.equal(await queued, "queued");
+  assert.deepEqual(
+    await Promise.all(overflow),
+    Array(MAX_PENDING_ADAPTER_MODEL_PROBES - 1).fill("waiting"),
+  );
+  assert.equal(peak, MAX_ACTIVE_ADAPTER_MODEL_PROBES);
+  assert.deepEqual(starts, [0, 1, 2, 3]);
+  assert.deepEqual(queuedOrder, [
+    -1,
+    ...Array.from({ length: MAX_PENDING_ADAPTER_MODEL_PROBES - 1 }, (_, index) => index),
+  ]);
 });
 
 test("reviewed adapter models come from a live ACP probe", async () => {
@@ -132,7 +218,9 @@ test("reviewed adapter models come from a live ACP probe", async () => {
   await writeFile(join(directory, "shared", "config.txt"), "current\n");
   await symlink("../../shared/config.txt", join(directory, "packages", "app", "config.txt"));
   const executable = join(directory, "fake-acp");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
   const { execFileSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const { join } = require("node:path");
@@ -172,7 +260,8 @@ rl.on("line", (line) => {
     }) + "\\n");
   }
 });
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = {
     schemaVersion: 1,
@@ -194,16 +283,23 @@ rl.on("line", (line) => {
     },
   } as InstalledProviderAdapter;
   const provider = "adapter:fixture@1.0.0" as const;
-  const discovered = await discoverProviderModels(provider, services({
-    adapters: {
-      version: async () => adapter,
-      resolveExecutable: async () => executable,
-    },
-  }), directory);
-  assert.deepEqual(discovered.map((model) => ({ id: model.id, isDefault: model.isDefault })), [
-    { id: "model-a", isDefault: false },
-    { id: "model-b", isDefault: true },
-  ]);
+  const discovered = await discoverProviderModels(
+    provider,
+    services({
+      adapters: {
+        version: async () => adapter,
+        resolveExecutable: async () => executable,
+      },
+    }),
+    directory,
+  );
+  assert.deepEqual(
+    discovered.map((model) => ({ id: model.id, isDefault: model.isDefault })),
+    [
+      { id: "model-a", isDefault: false },
+      { id: "model-b", isDefault: true },
+    ],
+  );
   assert.match(discovered[0]!.displayName, /aldunis-provider-model-session-/);
   assert.match(discovered[1]!.displayName, /aldunis-provider-model-probe-/);
   assert.notEqual(discovered[0]!.displayName, directory);
@@ -212,33 +308,39 @@ rl.on("line", (line) => {
 });
 
 test("Shikigami model discovery uses the selected profile runtime", async () => {
-  let received: {
-    environment?: NodeJS.ProcessEnv;
-    executable?: string;
-    configPath?: string;
-    cwd?: string;
-  } | undefined;
-  const discovered = await discoverProviderModels("shikigami", services({
-    shikigami: {
-      readiness: async (environment, options) => {
-        received = { environment, ...options };
-        return {
-          id: "shikigami",
-          installed: true,
-          authenticated: true,
-          version: "1.0.5",
-          models: [shikigamiModel("profile-model", true)],
-          name: "Shikigami",
-          detail: null,
-        };
+  let received:
+    | {
+        environment?: NodeJS.ProcessEnv;
+        executable?: string;
+        configPath?: string;
+        cwd?: string;
+      }
+    | undefined;
+  const discovered = await discoverProviderModels(
+    "shikigami",
+    services({
+      shikigami: {
+        readiness: async (environment, options) => {
+          received = { environment, ...options };
+          return {
+            id: "shikigami",
+            installed: true,
+            authenticated: true,
+            version: "1.0.5",
+            models: [shikigamiModel("profile-model", true)],
+            name: "Shikigami",
+            detail: null,
+          };
+        },
       },
-    },
-    shikigamiProfile: {
-      executable: "/profile/shikigami",
-      environment: { SHIKIGAMI_MODEL_ADAPTER: "scripted" },
-      configPath: "/profile/shikigami.toml",
-    },
-  }), "/selected/worktree");
+      shikigamiProfile: {
+        executable: "/profile/shikigami",
+        environment: { SHIKIGAMI_MODEL_ADAPTER: "scripted" },
+        configPath: "/profile/shikigami.toml",
+      },
+    }),
+    "/selected/worktree",
+  );
   assert.deepEqual(received, {
     environment: { SHIKIGAMI_MODEL_ADAPTER: "scripted" },
     executable: "/profile/shikigami",
