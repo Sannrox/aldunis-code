@@ -21,7 +21,7 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import { BROWSER_MCP_NAME } from "./browser.ts";
-import { terminateProviderChild } from "./provider-process.ts";
+import { scheduleProviderChildTermination, terminateProviderChild } from "./provider-process.ts";
 
 const execFileAsync = promisify(execFile);
 /** Major line of the app-server protocol we speak. */
@@ -660,11 +660,7 @@ export class CodexCliAdapter {
     let gotAccount = false;
     let gotModels = false;
     const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      const force = setTimeout(() => {
-        if (child.exitCode === null) child.kill("SIGKILL");
-      }, 1_000);
-      force.unref();
+      terminateProviderChild(child, 1_000);
     }, 5_000);
     timeout.unref();
     try {
@@ -781,11 +777,7 @@ export class CodexCliAdapter {
     child.stdin.on("error", () => {});
     child.stderr.resume();
     const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      const force = setTimeout(() => {
-        if (child.exitCode === null) child.kill("SIGKILL");
-      }, 1_000);
-      force.unref();
+      terminateProviderChild(child, 1_000);
     }, 5_000);
     timeout.unref();
     let received = false;
@@ -947,20 +939,9 @@ export class CodexCliAdapter {
         id: 99,
         params: { threadId: active.threadId, turnId: active.turnId },
       });
-      const terminate = setTimeout(() => {
-        if (active.child.exitCode === null) active.child.kill("SIGTERM");
-        const force = setTimeout(() => {
-          if (active.child.exitCode === null) active.child.kill("SIGKILL");
-        }, 2_000);
-        force.unref();
-      }, 2_000);
-      terminate.unref();
+      scheduleProviderChildTermination(active.child, 2_000);
     } else {
-      active.child.kill("SIGTERM");
-      const force = setTimeout(() => {
-        if (active.child.exitCode === null) active.child.kill("SIGKILL");
-      }, 2_000);
-      force.unref();
+      this.#terminate(active.child);
     }
     return true;
   }
