@@ -4,6 +4,81 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+const MAX_MESSAGE_BYTES = 1024 * 1024;
+const serverPath = fileURLToPath(new URL("./browser-mcp.mjs", import.meta.url));
+
+function spawnBrowserMcp(): {
+  child: ReturnType<typeof spawn>;
+  result: Promise<{ code: number | null; stdout: string; stderr: string }>;
+} {
+  const child = spawn(process.execPath, [serverPath], { stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+  child.stdin.on("error", () => {
+    // Oversized input intentionally closes the child before the writer ends.
+  });
+  const result = new Promise<{ code: number | null; stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    },
+  );
+  return { child, result };
+}
+
+test("browser MCP accepts an exact-limit JSON-RPC message", async () => {
+  const base = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", padding: "" });
+  const message = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    padding: "x".repeat(MAX_MESSAGE_BYTES - Buffer.byteLength(base)),
+  });
+  assert.equal(Buffer.byteLength(message), MAX_MESSAGE_BYTES);
+
+  const { child, result } = spawnBrowserMcp();
+  child.stdin.end(message + "\n");
+  const completed = await result;
+
+  assert.equal(completed.code, 0, completed.stderr);
+  assert.equal(JSON.parse(completed.stdout).id, 1);
+});
+
+test("browser MCP rejects overflow before stdin ends", async () => {
+  const { child, result } = spawnBrowserMcp();
+  child.stdin.write(Buffer.alloc(MAX_MESSAGE_BYTES + 1, 0x20));
+  const completed = await Promise.race([
+    result,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("browser MCP did not reject overflow")), 5_000),
+    ),
+  ]);
+
+  assert.equal(completed.code, 1);
+  assert.match(completed.stderr, /message exceeds the 1024 KiB limit/);
+});
+
+test("browser MCP counts raw bytes after malformed UTF-8 framing", async () => {
+  const { child, result } = spawnBrowserMcp();
+  child.stdin.write(Buffer.from([0xff, 0x0a]));
+  child.stdin.write(Buffer.alloc(MAX_MESSAGE_BYTES + 1, 0x20));
+  const completed = await Promise.race([
+    result,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("browser MCP allowed malformed-byte credit")), 5_000),
+    ),
+  ]);
+
+  assert.equal(completed.code, 1);
+  assert.match(completed.stderr, /message exceeds the 1024 KiB limit/);
+});
+
 test("browser MCP advertises bounded tools and forwards bearer authorization", async () => {
   let authorization: string | undefined;
   let received: unknown;
@@ -54,19 +129,15 @@ test("browser MCP advertises bounded tools and forwards bearer authorization", a
   await new Promise<void>((resolve) => broker.listen(0, "127.0.0.1", resolve));
   const address = broker.address();
   assert.ok(address && typeof address !== "string");
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(new URL("./browser-mcp.mjs", import.meta.url))],
-    {
-      env: {
-        ...process.env,
-        ALDUNIS_BROWSER_TOOL_URL: `http://127.0.0.1:${address.port}/api/browser/tools`,
-        ALDUNIS_BROWSER_CONVERSATION_ID: "conversation-1",
-        ALDUNIS_BROWSER_TOKEN: "browser-token",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
+  const child = spawn(process.execPath, [serverPath], {
+    env: {
+      ...process.env,
+      ALDUNIS_BROWSER_TOOL_URL: `http://127.0.0.1:${address.port}/api/browser/tools`,
+      ALDUNIS_BROWSER_CONVERSATION_ID: "conversation-1",
+      ALDUNIS_BROWSER_TOKEN: "browser-token",
     },
-  );
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   let buffer = "";
   const pending = new Map<number, (value: Record<string, unknown>) => void>();
   child.stdout.on("data", (chunk) => {
