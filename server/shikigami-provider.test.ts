@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { chmod, mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  rename,
+  stat,
+  truncate,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +19,7 @@ import TOML from "@iarna/toml";
 import { loadManagedHostConfiguration } from "./managed-host.ts";
 import { isMutatingTool, PermissionBroker } from "./permission.ts";
 import {
+  type ShikigamiConfigFileOperations,
   assertManagedShikigamiVersion,
   assertSupportedShikigamiVersion,
   buildShikigamiConfig,
@@ -18,7 +30,9 @@ import {
   permissionHookRuntimeEnvironment,
   managedShikigamiEnvironment,
   loadShikigamiConfig,
+  MAX_SHIKIGAMI_CONFIG_BYTES,
   resolveModelAdapter,
+  readShikigamiConfigFile,
   ShikigamiAdapter,
   ShikigamiToolIdTracker,
   supportsShikigamiModelCatalog,
@@ -38,29 +52,31 @@ test("Shikigami model catalog support starts at 1.0.5", () => {
 });
 
 test("parseShikigamiModelCatalog maps canonical models and the auto route", () => {
-  const models = parseShikigamiModelCatalog(JSON.stringify({
-    default_model: "auto",
-    available_models: [
-      {
-        canonical_model: "auto",
-        upstream_model: "auto",
-        provider: "sekai-chisei",
-        lifecycle: "routing",
-      },
-      {
-        canonical_model: "openai/gpt-5.5",
-        upstream_model: "gpt-5.5",
-        provider: "openai",
-        lifecycle: "active",
-      },
-      {
-        canonical_model: "openai/gpt-5.5",
-        upstream_model: "gpt-5.5",
-        provider: "openai",
-        lifecycle: "active",
-      },
-    ],
-  }));
+  const models = parseShikigamiModelCatalog(
+    JSON.stringify({
+      default_model: "auto",
+      available_models: [
+        {
+          canonical_model: "auto",
+          upstream_model: "auto",
+          provider: "sekai-chisei",
+          lifecycle: "routing",
+        },
+        {
+          canonical_model: "openai/gpt-5.5",
+          upstream_model: "gpt-5.5",
+          provider: "openai",
+          lifecycle: "active",
+        },
+        {
+          canonical_model: "openai/gpt-5.5",
+          upstream_model: "gpt-5.5",
+          provider: "openai",
+          lifecycle: "active",
+        },
+      ],
+    }),
+  );
   assert.deepEqual(models, [
     { id: "auto", displayName: "Auto (Sekai-Chisei)", isDefault: true },
     { id: "openai/gpt-5.5", displayName: "openai/gpt-5.5", isDefault: false },
@@ -69,10 +85,7 @@ test("parseShikigamiModelCatalog maps canonical models and the auto route", () =
 
 test("managed Shikigami requires plane-compatible version and emits the fixed profile", () => {
   assert.equal(assertManagedShikigamiVersion("shikigami 1.0.5"), "1.0.5");
-  assert.throws(
-    () => assertManagedShikigamiVersion("shikigami 1.0.4"),
-    /1\.0\.5/,
-  );
+  assert.throws(() => assertManagedShikigamiVersion("shikigami 1.0.4"), /1\.0\.5/);
   const runtime = {
     executable: "/opt/shikigami",
     model: "operator-model",
@@ -157,10 +170,9 @@ test("normalizeShikigamiEvent maps harness events", () => {
 
 test("parseShikigamiStderrLine ignores non-event output", () => {
   assert.equal(parseShikigamiStderrLine("noise"), null);
-  assert.deepEqual(
-    parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'),
-    [{ kind: "assistant_text", text: "status: running" }],
-  );
+  assert.deepEqual(parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'), [
+    { kind: "assistant_text", text: "status: running" },
+  ]);
 });
 
 test("buildShikigamiConfig encodes mode tool allow-lists and pre_tool gate", () => {
@@ -203,7 +215,9 @@ test("native Shikigami settings survive the Code safety overlay", async () => {
   const stateDirectory = join(directory, "state");
   const nativePath = join(stateDirectory, "shikigami.toml");
   await mkdir(stateDirectory, { recursive: true });
-  await writeFile(nativePath, `version = 1
+  await writeFile(
+    nativePath,
+    `version = 1
 
 [profile]
 name = "local"
@@ -223,7 +237,9 @@ tool_concurrency = 1
 
 [network]
 allowlist = ["127.0.0.1"]
-`, "utf8");
+`,
+    "utf8",
+  );
   const loaded = await loadShikigamiConfig({
     environment: { SHIKIGAMI_STATE: stateDirectory },
     cwd: directory,
@@ -234,17 +250,19 @@ allowlist = ["127.0.0.1"]
   assert.equal(resolved.modelId, "local-model");
   assert.equal(resolved.apiKeyEnv, "LOCAL_KEY");
 
-  const overlay = TOML.parse(buildShikigamiConfig({
-    worktree: directory,
-    mode: "ask",
-    modelAdapter: resolved.adapter,
-    modelId: resolved.modelId,
-    baseUrl: resolved.baseUrl,
-    apiKeyEnv: resolved.apiKeyEnv,
-    baseConfig: loaded.values,
-    governanceAdapter: "local",
-    failClosed: true,
-  })) as Record<string, unknown>;
+  const overlay = TOML.parse(
+    buildShikigamiConfig({
+      worktree: directory,
+      mode: "ask",
+      modelAdapter: resolved.adapter,
+      modelId: resolved.modelId,
+      baseUrl: resolved.baseUrl,
+      apiKeyEnv: resolved.apiKeyEnv,
+      baseConfig: loaded.values,
+      governanceAdapter: "local",
+      failClosed: true,
+    }),
+  ) as Record<string, unknown>;
   assert.equal((overlay.model as Record<string, unknown>).base_url, "http://127.0.0.1:11434/v1");
   assert.equal((overlay.governance as Record<string, unknown>).fail_closed, true);
   assert.equal((overlay.run as Record<string, unknown>).tool_concurrency, 1);
@@ -263,6 +281,132 @@ test("explicit Shikigami config paths fail visibly when missing", async () => {
   );
 });
 
+test("Shikigami config loading rejects oversize before content allocation", async () => {
+  let read = false;
+  let closed = false;
+  const identity = {
+    size: MAX_SHIKIGAMI_CONFIG_BYTES + 1,
+    dev: 1,
+    ino: 2,
+    mode: 0o100600,
+    mtimeMs: 3,
+    ctimeMs: 4,
+  };
+  const operations: ShikigamiConfigFileOperations = {
+    stat: async () => identity,
+    open: async () => ({
+      stat: async () => identity,
+      read: async () => {
+        read = true;
+        return { bytesRead: 0 };
+      },
+      close: async () => {
+        closed = true;
+      },
+    }),
+  };
+
+  await assert.rejects(
+    () => readShikigamiConfigFile("fixture.toml", operations),
+    /exceeds 4096 KiB/,
+  );
+  assert.equal(read, false);
+  assert.equal(closed, true);
+});
+
+test("Shikigami config loading closes and rejects concurrent file changes", async () => {
+  const mutations = {
+    shrink: async (path: string) => truncate(path, 1),
+    growth: async (path: string) => writeFile(path, "more", { flag: "a" }),
+    mutation: async (path: string) => writeFile(path, "changed!"),
+    replacement: async (path: string) => {
+      const next = `${path}.next`;
+      await writeFile(next, "replace");
+      await rename(next, path);
+    },
+    disappearance: async (path: string) => unlink(path),
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const directory = await mkdtemp(join(tmpdir(), `aldunis-shikigami-${name}-`));
+    const path = join(directory, "shikigami.toml");
+    await writeFile(path, "original");
+    let closed = false;
+    let mutated = false;
+    const operations: ShikigamiConfigFileOperations = {
+      stat,
+      open: async (candidate) => {
+        const handle = await open(candidate, "r");
+        return {
+          close: async () => {
+            closed = true;
+            await handle.close();
+          },
+          read: async (buffer, offset, length, position) => {
+            const { bytesRead } = await handle.read(buffer, offset, length, position);
+            if (!mutated) {
+              mutated = true;
+              await mutate(candidate);
+            }
+            return { bytesRead };
+          },
+          stat: () => handle.stat(),
+        };
+      },
+    };
+
+    await assert.rejects(
+      () => readShikigamiConfigFile(path, operations),
+      /changed while being read/,
+    );
+    assert.equal(closed, true, `${name} must close the config handle`);
+  }
+});
+
+test("Shikigami config loading rejects short reads and close failures", async () => {
+  const identity = { size: 1, dev: 1, ino: 2, mode: 0o100600, mtimeMs: 3, ctimeMs: 4 };
+  let shortClosed = false;
+  await assert.rejects(
+    () =>
+      readShikigamiConfigFile("short.toml", {
+        stat: async () => identity,
+        open: async () => ({
+          stat: async () => identity,
+          read: async () => ({ bytesRead: 0 }),
+          close: async () => {
+            shortClosed = true;
+          },
+        }),
+      }),
+    /changed while being read/,
+  );
+  assert.equal(shortClosed, true);
+
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-close-"));
+  const path = join(directory, "shikigami.toml");
+  await writeFile(path, "x");
+  await assert.rejects(
+    () =>
+      readShikigamiConfigFile(path, {
+        stat,
+        open: async (candidate) => {
+          const handle = await open(candidate, "r");
+          return {
+            stat: () => handle.stat(),
+            read: async (buffer, offset, length, position) => {
+              const { bytesRead } = await handle.read(buffer, offset, length, position);
+              return { bytesRead };
+            },
+            close: async () => {
+              await handle.close();
+              throw new Error("fixture close failure");
+            },
+          };
+        },
+      }),
+    /could not be closed/,
+  );
+});
+
 test("Electron-hosted hooks run the embedded runtime as Node", () => {
   const source = { PATH: "/bin", ELECTRON_RUN_AS_NODE: "unexpected" };
   const electron = permissionHookRuntimeEnvironment(source, "43.2.0");
@@ -277,7 +421,9 @@ test("Electron-hosted hooks run the embedded runtime as Node", () => {
 test("ShikigamiAdapter streams events from a fixture CLI", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
   console.log("shikigami 1.0.2");
@@ -292,7 +438,8 @@ if (args.includes("run")) {
 }
 console.error("unexpected");
 process.exit(1);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
@@ -305,18 +452,21 @@ process.exit(1);
   assert.equal(readiness.version, "1.0.2");
   assert.equal(readiness.detail, null);
 
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "11111111-1111-4111-8111-111111111111",
-    prompt: "demo task",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-  }, {
-    ...process.env,
-    SHIKIGAMI_MODEL_ADAPTER: "scripted",
-    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
-  });
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      prompt: "demo task",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+    },
+    {
+      ...process.env,
+      SHIKIGAMI_MODEL_ADAPTER: "scripted",
+      SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+    },
+  );
   const kinds: string[] = [];
   for await (const event of run.events) kinds.push(event.kind);
   assert.deepEqual(kinds, [
@@ -331,11 +481,12 @@ process.exit(1);
 
 test("normalizeShikigamiEvent rejects malformed provider run identities", () => {
   assert.throws(
-    () => normalizeShikigamiEvent({
-      type: "run_finished",
-      run_id: "invented-local-id",
-      success: true,
-    }),
+    () =>
+      normalizeShikigamiEvent({
+        type: "run_finished",
+        run_id: "invented-local-id",
+        success: true,
+      }),
     /malformed run identity/,
   );
 });
@@ -353,7 +504,9 @@ test("provider-confirmed Shikigami identities reject conflicting resume output",
 test("ShikigamiAdapter fails visibly when stderr and stdout run identities conflict", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-conflict-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv[2] === "version") {
   console.log("shikigami 1.0.2");
   process.exit(0);
@@ -361,55 +514,79 @@ if (process.argv[2] === "version") {
 console.error('[shikigami] {"type":"run_finished","run_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","success":true,"summary":"done"}');
 console.error('[shikigami] {"type":"run_finished","run_id":"bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee","success":true,"summary":"duplicate"}');
 console.log("run bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee turns=1 success=true termination=completed");
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new ShikigamiAdapter(executable);
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "11111111-1111-4111-8111-111111111111",
-    prompt: "demo",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-  }, {
-    ...process.env,
-    SHIKIGAMI_MODEL_ADAPTER: "scripted",
-    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
-  });
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      prompt: "demo",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+    },
+    {
+      ...process.env,
+      SHIKIGAMI_MODEL_ADAPTER: "scripted",
+      SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+    },
+  );
   const events = [];
   for await (const event of run.events) events.push(event);
-  assert.ok(events.some((event) => (
-    event.kind === "failed" && /conflicting run identities/.test(event.message)
-  )));
-  assert.equal(events.some((event) => event.kind === "governance_correlation"), false);
-  assert.equal(events.some((event) => event.kind === "turn_completed"), false);
+  assert.ok(
+    events.some(
+      (event) => event.kind === "failed" && /conflicting run identities/.test(event.message),
+    ),
+  );
+  assert.equal(
+    events.some((event) => event.kind === "governance_correlation"),
+    false,
+  );
+  assert.equal(
+    events.some((event) => event.kind === "turn_completed"),
+    false,
+  );
 });
 
 test("governed Shikigami runs fail when the provider confirms no run identity", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-missing-id-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv[2] === "version") console.log("shikigami 1.0.2");
-`);
+`,
+  );
   await chmod(executable, 0o700);
-  const run = await new ShikigamiAdapter(executable).start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "11111111-1111-4111-8111-111111111111",
-    prompt: "demo",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-  }, {
-    ...process.env,
-    SHIKIGAMI_MODEL_ADAPTER: "scripted",
-    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
-  });
+  const run = await new ShikigamiAdapter(executable).start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      prompt: "demo",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+    },
+    {
+      ...process.env,
+      SHIKIGAMI_MODEL_ADAPTER: "scripted",
+      SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+    },
+  );
   const events = [];
   for await (const event of run.events) events.push(event);
-  assert.ok(events.some((event) => (
-    event.kind === "failed" && /without a provider-confirmed run identity/.test(event.message)
-  )));
-  assert.equal(events.some((event) => event.kind === "turn_completed"), false);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === "failed" && /without a provider-confirmed run identity/.test(event.message),
+    ),
+  );
+  assert.equal(
+    events.some((event) => event.kind === "turn_completed"),
+    false,
+  );
 });
 
 test("ShikigamiAdapter readiness reports install detail when missing", async () => {
@@ -423,9 +600,12 @@ test("ShikigamiAdapter readiness reports install detail when missing", async () 
 test("ShikigamiAdapter readiness reports unsupported version detail", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-version-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 console.log("shikigami 1.0.1");
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new ShikigamiAdapter(executable);
   const readiness = await adapter.readiness(process.env);
@@ -437,9 +617,12 @@ console.log("shikigami 1.0.1");
 test("ShikigamiAdapter readiness reports missing HTTP key when forced", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-http-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 console.log("shikigami 1.0.2");
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new ShikigamiAdapter(executable);
   const env = {
@@ -460,16 +643,16 @@ test("ShikigamiAdapter readiness discovers governed model catalog", async () => 
   const script = [
     "#!/usr/bin/env node",
     "const args = process.argv.slice(2);",
-    "if (args[0] === \"version\") {",
-    "  console.log(\"shikigami 1.0.5\");",
+    'if (args[0] === "version") {',
+    '  console.log("shikigami 1.0.5");',
     "  process.exit(0);",
     "}",
-    "if (args.includes(\"doctor\") && args.includes(\"--models\") && args.includes(\"--json\")) {",
+    'if (args.includes("doctor") && args.includes("--models") && args.includes("--json")) {',
     "  console.log(JSON.stringify({",
-    "    default_model: \"auto\",",
+    '    default_model: "auto",',
     "    available_models: [",
-    "      { canonical_model: \"auto\", upstream_model: \"auto\" },",
-    "      { canonical_model: \"openai/gpt-5.5\", upstream_model: \"gpt-5.5\" },",
+    '      { canonical_model: "auto", upstream_model: "auto" },',
+    '      { canonical_model: "openai/gpt-5.5", upstream_model: "gpt-5.5" },',
     "    ],",
     "  }));",
     "  process.exit(0);",
@@ -479,10 +662,13 @@ test("ShikigamiAdapter readiness discovers governed model catalog", async () => 
   await writeFile(executable, script);
   await chmod(executable, 0o700);
   const adapter = new ShikigamiAdapter(executable);
-  const readiness = await adapter.readiness({
-    ...process.env,
-    SHIKIGAMI_MODEL_ADAPTER: "plane",
-  }, { cwd: directory });
+  const readiness = await adapter.readiness(
+    {
+      ...process.env,
+      SHIKIGAMI_MODEL_ADAPTER: "plane",
+    },
+    { cwd: directory },
+  );
   assert.deepEqual(readiness.models, [
     { id: "auto", displayName: "Auto (Sekai-Chisei)", isDefault: true },
     { id: "openai/gpt-5.5", displayName: "openai/gpt-5.5", isDefault: false },
@@ -492,7 +678,9 @@ test("ShikigamiAdapter readiness discovers governed model catalog", async () => 
 test("ShikigamiAdapter normalizes a parked question as a native resume request", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-park-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
   console.log("shikigami 1.0.2");
@@ -506,27 +694,34 @@ if (args.includes("run")) {
   process.exit(0);
 }
 process.exit(1);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "33333333-3333-4333-8333-333333333333",
-    prompt: "park me",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-  }, {
-    ...process.env,
-    SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
-  });
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "33333333-3333-4333-8333-333333333333",
+      prompt: "park me",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+    },
+    {
+      ...process.env,
+      SHIKIGAMI_GOVERNANCE_ADAPTER: "sekai-chisei",
+    },
+  );
   const events = [];
   for await (const event of run.events) events.push(event);
-  assert.ok(events.some((event) => (
-    event.kind === "governance_correlation"
-    && event.runId === "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"
-  )));
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === "governance_correlation" &&
+        event.runId === "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee",
+    ),
+  );
   const request = events.find((event) => event.kind === "input_requested");
   assert.equal(request?.kind, "input_requested");
   if (request?.kind === "input_requested") {
@@ -542,7 +737,9 @@ test("ShikigamiAdapter resumes with a protected transient answer file and cleans
   const executable = join(directory, "fake-shikigami");
   const runId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
   const conversationId = "44444444-4444-4444-8444-444444444444";
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 if (args[0] === "version") {
@@ -565,60 +762,77 @@ if (args.includes("--resume")) {
   process.exit(0);
 }
 process.exit(1);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
-  const run = await adapter.resumeParked({
-    repository: directory,
-    worktree: directory,
-    conversationId,
-    prompt: "",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-    resumeSessionId: runId,
-    model: "scripted",
-  }, "operator answer", process.env, {
-    executable,
-    model: "scripted",
-    governanceEndpoint: "http://127.0.0.1:9",
-    principal: "service:test",
-    namespace: "test",
-    tokenEnv: "TEST_TOKEN",
-    token: "test-token",
-    path: process.env.PATH,
-    stateRoot,
-  });
+  const run = await adapter.resumeParked(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId,
+      prompt: "",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+      resumeSessionId: runId,
+      model: "scripted",
+    },
+    "operator answer",
+    process.env,
+    {
+      executable,
+      model: "scripted",
+      governanceEndpoint: "http://127.0.0.1:9",
+      principal: "service:test",
+      namespace: "test",
+      tokenEnv: "TEST_TOKEN",
+      token: "test-token",
+      path: process.env.PATH,
+      stateRoot,
+    },
+  );
   const events = [];
   for await (const event of run.events) events.push(event);
   assert.equal(events.at(-1)?.kind, "turn_completed");
-  assert.equal(events.some((event) => event.kind === "failed"), false);
+  assert.equal(
+    events.some((event) => event.kind === "failed"),
+    false,
+  );
   assert.deepEqual(await readdir(join(stateRoot, conversationId, "tmp")), []);
 });
 
 test("ShikigamiAdapter fails closed when native resume capability is too old", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-resume-version-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 if (process.argv[2] === "version") console.log("shikigami 1.0.4");
 else process.exit(0);
-`);
+`,
+  );
   await chmod(executable, 0o700);
   const adapter = new ShikigamiAdapter(executable);
   await assert.rejects(
-    () => adapter.resumeParked({
-      repository: directory,
-      worktree: directory,
-      conversationId: "55555555-5555-4555-8555-555555555555",
-      prompt: "",
-      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-      mode: "build",
-      resumeSessionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-      model: "scripted",
-    }, "answer", {
-      ...process.env,
-      SHIKIGAMI_MODEL_ADAPTER: "scripted",
-    }),
+    () =>
+      adapter.resumeParked(
+        {
+          repository: directory,
+          worktree: directory,
+          conversationId: "55555555-5555-4555-8555-555555555555",
+          prompt: "",
+          approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+          mode: "build",
+          resumeSessionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          model: "scripted",
+        },
+        "answer",
+        {
+          ...process.env,
+          SHIKIGAMI_MODEL_ADAPTER: "scripted",
+        },
+      ),
     /requires Shikigami 1\.0\.5/,
   );
 });
@@ -626,7 +840,9 @@ else process.exit(0);
 test("ShikigamiAdapter emits approval_pending for mutating tools in build mode", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-approve-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
   console.log("shikigami 1.0.2");
@@ -640,31 +856,39 @@ if (args.includes("run")) {
   process.exit(0);
 }
 process.exit(1);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const permissions = new PermissionBroker();
   const adapter = new ShikigamiAdapter(executable, permissions);
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "44444444-4444-4444-8444-444444444444",
-    prompt: "write",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "build",
-  }, process.env);
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "44444444-4444-4444-8444-444444444444",
+      prompt: "write",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "build",
+    },
+    process.env,
+  );
 
   const events = [];
   for await (const event of run.events) {
     events.push(event);
     if (event.kind === "approval_pending") {
-      permissions.decide(event.id, {
-        runId: event.runId,
-        conversationId: event.conversationId,
-        repository: event.repository,
-        worktree: event.worktree,
-        toolCallId: event.toolCallId,
-      }, "allow_once");
+      permissions.decide(
+        event.id,
+        {
+          runId: event.runId,
+          conversationId: event.conversationId,
+          repository: event.repository,
+          worktree: event.worktree,
+          toolCallId: event.toolCallId,
+        },
+        "allow_once",
+      );
     }
   }
   assert.ok(events.some((event) => event.kind === "approval_pending"));
@@ -676,7 +900,9 @@ process.exit(1);
 test("ShikigamiAdapter fails closed when mutating tools run outside build mode", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-ask-mutate-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
   console.log("shikigami 1.0.2");
@@ -688,18 +914,22 @@ if (args.includes("run")) {
   setInterval(() => {}, 1000);
 }
 process.exit(1);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "55555555-5555-4555-8555-555555555555",
-    prompt: "should fail",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "ask",
-  }, process.env);
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "55555555-5555-4555-8555-555555555555",
+      prompt: "should fail",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "ask",
+    },
+    process.env,
+  );
   const events = [];
   for await (const event of run.events) events.push(event);
   const failed = events.find((event) => event.kind === "failed");
@@ -721,9 +951,10 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
   const denyInput = { path: "b.txt", content: "nope" };
 
   let resolveRequest: ((body: { toolName: string; input: unknown }) => void) | null = null;
-  const nextRequest = () => new Promise<{ toolName: string; input: unknown }>((resolve) => {
-    resolveRequest = resolve;
-  });
+  const nextRequest = () =>
+    new Promise<{ toolName: string; input: unknown }>((resolve) => {
+      resolveRequest = resolve;
+    });
 
   const server = createServer(async (request, response) => {
     try {
@@ -749,9 +980,11 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
       response.end(JSON.stringify(result));
     } catch (error) {
       response.writeHead(500, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        error: error instanceof Error ? error.message : "failed",
-      }));
+      response.end(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : "failed",
+        }),
+      );
     }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -761,26 +994,32 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
 
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-hook-"));
   const configPath = join(directory, "gate.json");
-  await writeFile(configPath, JSON.stringify({
-    approvalUrl,
-    runId,
-    token,
-    mutatingTools: ["write_file", "edit", "bash"],
-  }));
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      approvalUrl,
+      runId,
+      token,
+      mutatingTools: ["write_file", "edit", "bash"],
+    }),
+  );
 
   const { spawn } = await import("node:child_process");
   const { fileURLToPath } = await import("node:url");
   const hookPath = fileURLToPath(new URL("./shikigami-permission-hook.mjs", import.meta.url));
 
-  const runHook = (payload: object) => new Promise<{ code: number | null; stderr: string }>((resolve) => {
-    const child = spawn(process.execPath, [hookPath, configPath], { stdio: ["pipe", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
+  const runHook = (payload: object) =>
+    new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, [hookPath, configPath], {
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("close", (code) => resolve({ code, stderr }));
+      child.stdin.end(`${JSON.stringify(payload)}\n`);
     });
-    child.on("close", (code) => resolve({ code, stderr }));
-    child.stdin.end(`${JSON.stringify(payload)}\n`);
-  });
 
   const approval = permissions.register({
     runId,
@@ -799,13 +1038,17 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
     payload: { run_id: "h1", tool: "write_file", args_json: JSON.stringify(toolInput) },
   });
   await allowSeen;
-  permissions.decide(approval.id, {
-    runId,
-    conversationId: "c1",
-    repository: "/repo",
-    worktree: "/repo/wt",
-    toolCallId: "shikigami:write_file:1",
-  }, "allow_once");
+  permissions.decide(
+    approval.id,
+    {
+      runId,
+      conversationId: "c1",
+      repository: "/repo",
+      worktree: "/repo/wt",
+      toolCallId: "shikigami:write_file:1",
+    },
+    "allow_once",
+  );
   const allowed = await allowWait;
   assert.equal(allowed.code, 0, allowed.stderr);
 
@@ -857,25 +1100,37 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
   });
   await secondIdenticalSeen;
 
-  permissions.decide(firstIdentical.id, {
-    runId,
-    conversationId: "c1",
-    repository: "/repo",
-    worktree: "/repo/wt",
-    toolCallId: "shikigami:write_file:identical-1",
-  }, "allow_once");
+  permissions.decide(
+    firstIdentical.id,
+    {
+      runId,
+      conversationId: "c1",
+      repository: "/repo",
+      worktree: "/repo/wt",
+      toolCallId: "shikigami:write_file:identical-1",
+    },
+    "allow_once",
+  );
   const firstIdenticalResult = await firstIdenticalWait;
   assert.equal(firstIdenticalResult.code, 0, firstIdenticalResult.stderr);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(secondIdenticalSettled, false, "one allow-once must not release an identical operation");
+  assert.equal(
+    secondIdenticalSettled,
+    false,
+    "one allow-once must not release an identical operation",
+  );
 
-  permissions.decide(secondIdentical.id, {
-    runId,
-    conversationId: "c1",
-    repository: "/repo",
-    worktree: "/repo/wt",
-    toolCallId: "shikigami:write_file:identical-2",
-  }, "deny");
+  permissions.decide(
+    secondIdentical.id,
+    {
+      runId,
+      conversationId: "c1",
+      repository: "/repo",
+      worktree: "/repo/wt",
+      toolCallId: "shikigami:write_file:identical-2",
+    },
+    "deny",
+  );
   const secondIdenticalResult = await secondIdenticalWait;
   assert.equal(secondIdenticalResult.code, 1, secondIdenticalResult.stderr);
 
@@ -900,29 +1155,37 @@ test("shikigami permission hook allows once and denies via PermissionBroker", as
     },
   });
   await denySeen;
-  permissions.decide(denyApproval.id, {
-    runId,
-    conversationId: "c1",
-    repository: "/repo",
-    worktree: "/repo/wt",
-    toolCallId: "shikigami:write_file:2",
-  }, "deny");
+  permissions.decide(
+    denyApproval.id,
+    {
+      runId,
+      conversationId: "c1",
+      repository: "/repo",
+      worktree: "/repo/wt",
+      toolCallId: "shikigami:write_file:2",
+    },
+    "deny",
+  );
   const denied = await denyWait;
   assert.equal(denied.code, 1, denied.stderr);
 
   const skip = await runHook({
     event: "pre_tool",
-    payload: { run_id: "h1", tool: "read_file", args_json: "{\"path\":\"a.txt\"}" },
+    payload: { run_id: "h1", tool: "read_file", args_json: '{"path":"a.txt"}' },
   });
   assert.equal(skip.code, 0);
 
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
 });
 
 test("ShikigamiAdapter cancel stops a long-running fixture", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-shikigami-cancel-"));
   const executable = join(directory, "fake-shikigami");
-  await writeFile(executable, `#!/usr/bin/env node
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
 const args = process.argv.slice(2);
 if (args[0] === "version") {
   console.log("shikigami 1.0.2");
@@ -935,18 +1198,22 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 setInterval(() => {}, 1000);
-`);
+`,
+  );
   await chmod(executable, 0o700);
 
   const adapter = new ShikigamiAdapter(executable);
-  const run = await adapter.start({
-    repository: directory,
-    worktree: directory,
-    conversationId: "22222222-2222-4222-8222-222222222222",
-    prompt: "hang",
-    approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
-    mode: "ask",
-  }, process.env);
+  const run = await adapter.start(
+    {
+      repository: directory,
+      worktree: directory,
+      conversationId: "22222222-2222-4222-8222-222222222222",
+      prompt: "hang",
+      approvalUrl: "http://127.0.0.1:9/api/provider/permissions/request",
+      mode: "ask",
+    },
+    process.env,
+  );
   const kinds: string[] = [];
   for await (const event of run.events) {
     kinds.push(event.kind);

@@ -134,11 +134,13 @@ leave the configured model visible as a bounded fallback.
 - The built-in Shikigami profile uses Shikigami's native config resolution:
   `SHIKIGAMI_CONFIG`, `$SHIKIGAMI_STATE/shikigami.toml`, then the selected
   worktree's `shikigami.toml`. A user-created Shikigami profile may provide an
-  explicit config path. Code never edits the source config; it creates a
-  private per-run overlay that preserves model, governance, network, context,
-  and other provider settings while enforcing the selected worktree, Code's
-  mode tool allow-list, stderr events, bounded turns, and the local approval
-  hook. Native MCP definitions are not imported implicitly.
+  explicit config path. Native config reads are capped at 4 MiB and fail closed
+  if the file changes or is replaced while being read. Code never edits the
+  source config; it creates a private per-run overlay that preserves model,
+  governance, network, context, and other provider settings while enforcing the
+  selected worktree, Code's mode tool allow-list, stderr events, bounded turns,
+  and the local approval hook. Native MCP definitions are not imported
+  implicitly.
 - Progress is streamed from stderr events (`[shikigami] {…}`).
 - Build-mode mutating tools are gated by a fail-closed `pre_tool` hook into the
   PermissionBroker (same allow-once contract as other providers).

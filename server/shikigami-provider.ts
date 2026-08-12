@@ -12,7 +12,7 @@
 
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,7 @@ const MIN_PATCH_FOR_RESUME = 5;
 /** Model catalog discovery was added to the Shikigami CLI in version 1.0.5. */
 const MODEL_CATALOG_MIN_PATCH = 5;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
+export const MAX_SHIKIGAMI_CONFIG_BYTES = 4 * 1024 * 1024;
 export const MAX_OPEN_SHIKIGAMI_TOOL_CORRELATIONS = 128;
 const RUN_TIMEOUT_MS = 30 * 60_000;
 
@@ -404,6 +405,103 @@ function configPathForCwd(input: string, cwd: string): string {
   return isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
 }
 
+interface ShikigamiConfigFileIdentity {
+  size: number;
+  dev: number;
+  ino: number;
+  mode: number;
+  mtimeMs: number;
+  ctimeMs: number;
+}
+
+interface ShikigamiConfigReadHandle {
+  stat(): Promise<ShikigamiConfigFileIdentity>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface ShikigamiConfigFileOperations {
+  open(path: string): Promise<ShikigamiConfigReadHandle>;
+  stat(path: string): Promise<ShikigamiConfigFileIdentity>;
+}
+
+const shikigamiConfigFileOperations: ShikigamiConfigFileOperations = {
+  open: (path) => open(path, "r"),
+  stat,
+};
+
+function sameShikigamiConfigFile(
+  left: ShikigamiConfigFileIdentity,
+  right: ShikigamiConfigFileIdentity,
+): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export async function readShikigamiConfigFile(
+  path: string,
+  operations: ShikigamiConfigFileOperations = shikigamiConfigFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  let closed = false;
+  try {
+    const initial = await handle.stat();
+    const initialPath = await operations.stat(path);
+    if (!sameShikigamiConfigFile(initial, initialPath)) {
+      throw new ProviderProtocolError("The selected Shikigami config changed while being read.");
+    }
+    if (
+      !Number.isSafeInteger(initial.size) ||
+      initial.size < 0 ||
+      initial.size > MAX_SHIKIGAMI_CONFIG_BYTES
+    ) {
+      throw new ProviderProtocolError(
+        `The selected Shikigami config exceeds ${MAX_SHIKIGAMI_CONFIG_BYTES / 1024} KiB.`,
+      );
+    }
+    const bytes = Buffer.alloc(initial.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) {
+        throw new ProviderProtocolError("The selected Shikigami config changed while being read.");
+      }
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if ((await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new ProviderProtocolError("The selected Shikigami config changed while being read.");
+    }
+    const final = await handle.stat();
+    const finalPath = await operations.stat(path);
+    if (!sameShikigamiConfigFile(initial, final) || !sameShikigamiConfigFile(initial, finalPath)) {
+      throw new ProviderProtocolError("The selected Shikigami config changed while being read.");
+    }
+    try {
+      await handle.close();
+      closed = true;
+    } catch {
+      throw new ProviderProtocolError("The selected Shikigami config could not be closed.");
+    }
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (!closed) await handle.close().catch(() => undefined);
+    if (error instanceof ProviderProtocolError) throw error;
+    throw new ProviderProtocolError("The selected Shikigami config changed while being read.");
+  }
+}
+
 /** Read native settings without modifying the operator's config file. */
 export async function loadShikigamiConfig(
   options: {
@@ -426,7 +524,7 @@ export async function loadShikigamiConfig(
 
   for (const path of candidates) {
     try {
-      const source = await readFile(path, "utf8");
+      const source = await readShikigamiConfigFile(path);
       let parsed: unknown;
       try {
         parsed = TOML.parse(source);
