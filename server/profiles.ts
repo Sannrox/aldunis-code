@@ -8,6 +8,7 @@ import { defaultStateDirectory } from "./state.ts";
 
 const PROFILE_SCHEMA_VERSION = 1;
 const PROFILE_PROBE_TERMINATION_GRACE_MS = 1_000;
+export const MAX_ACTIVE_PROFILE_PROBES = 8;
 
 function execProfileProbe(
   executable: string,
@@ -636,6 +637,9 @@ export class ClaudeProfileStore {
     const existing = this.#activeProbes.get(key);
     if (existing && !existing.invalidated && this.#awaitsCurrentMutations(id, existing)) {
       return existing.promise;
+    }
+    if (this.#runningProbes.size >= MAX_ACTIVE_PROFILE_PROBES) {
+      throw new ProfileError("Too many provider profile probes are already active.", 429);
     }
     const active = {
       profileId: id,

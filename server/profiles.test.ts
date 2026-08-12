@@ -8,6 +8,7 @@ import {
   DEFAULT_CLAUDE_PROFILE_ID,
   DEFAULT_CODEX_PROFILE_ID,
   DEFAULT_SHIKIGAMI_PROFILE_ID,
+  MAX_ACTIVE_PROFILE_PROBES,
   defaultProfileId,
 } from "./profiles.ts";
 
@@ -281,6 +282,72 @@ setTimeout(() => console.log("provider 1.0.0"), 80);
 
   await store.refresh(saved.id, "availability");
   assert.equal((await readFile(calls, "utf8")).trim().split("\n").length, 2);
+});
+
+test("profile probe admission is bounded, coalesces at capacity, and recovers", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-profile-probe-capacity-"));
+  const executable = join(directory, "bounded-provider");
+  const calls = join(directory, "calls");
+  const release = join(directory, "release");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(calls)}, "call\\n");
+const waiting = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(release)})) return;
+  clearInterval(waiting);
+  console.log("provider 1.0.0");
+}, 10);
+`,
+  );
+  await chmod(executable, 0o700);
+  const store = new ClaudeProfileStore(directory);
+  const profiles = [];
+  for (let index = 0; index <= MAX_ACTIVE_PROFILE_PROBES; index += 1) {
+    profiles.push(
+      await store.save({
+        name: `Bounded ${index}`,
+        binaryPath: executable,
+        provider: "adapter:test",
+      }),
+    );
+  }
+
+  const active = profiles
+    .slice(0, MAX_ACTIVE_PROFILE_PROBES)
+    .map((profile) => store.refresh(profile.id, "availability"));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const callCount = await readFile(calls, "utf8").then(
+      (value) => value.trim().split("\n").length,
+      () => 0,
+    );
+    if (callCount === MAX_ACTIVE_PROFILE_PROBES) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(store.activeProbeCount, MAX_ACTIVE_PROFILE_PROBES);
+  const duplicate = store.refresh(profiles[0]!.id, "availability");
+  await assert.rejects(
+    () => store.refresh(profiles[MAX_ACTIVE_PROFILE_PROBES]!.id, "availability"),
+    (error: unknown) => error instanceof Error && "status" in error && error.status === 429,
+  );
+  assert.equal(
+    (await readFile(calls, "utf8")).trim().split("\n").length,
+    MAX_ACTIVE_PROFILE_PROBES,
+  );
+
+  await writeFile(release, "release");
+  const [first, shared] = await Promise.all([active[0], duplicate]);
+  await Promise.all(active.slice(1));
+  assert.deepEqual(shared, first);
+  assert.equal(store.activeProbeCount, 0);
+
+  const recovered = await store.refresh(profiles[MAX_ACTIVE_PROFILE_PROBES]!.id, "availability");
+  assert.equal(recovered.probes.availability.state, "ready");
+  assert.equal(
+    (await readFile(calls, "utf8")).trim().split("\n").length,
+    MAX_ACTIVE_PROFILE_PROBES + 1,
+  );
 });
 
 test("failed coalesced profile probes release so a retry can execute", async () => {
