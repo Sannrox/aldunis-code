@@ -4,6 +4,7 @@ const endpoint = process.env.ALDUNIS_BROWSER_TOOL_URL;
 const conversationId = process.env.ALDUNIS_BROWSER_CONVERSATION_ID;
 const token = process.env.ALDUNIS_BROWSER_TOKEN;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+const INITIAL_RESPONSE_BUFFER_BYTES = 16 * 1024;
 
 const tools = [
   {
@@ -13,7 +14,8 @@ const tools = [
   },
   {
     name: "browser_snapshot",
-    description: "Inspect the current shared loopback page, visible text, interactive elements, and a bounded screenshot.",
+    description:
+      "Inspect the current shared loopback page, visible text, interactive elements, and a bounded screenshot.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -28,7 +30,8 @@ const tools = [
   },
   {
     name: "browser_click",
-    description: "Click one interactive element by its snapshot selector or by bounded page coordinates.",
+    description:
+      "Click one interactive element by its snapshot selector or by bounded page coordinates.",
     inputSchema: {
       type: "object",
       properties: {
@@ -86,11 +89,13 @@ function reply(id, result) {
 }
 
 function errorReply(id, code, message) {
-  process.stdout.write(`${JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    error: { code, message },
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code, message },
+    })}\n`,
+  );
 }
 
 function isRecord(value) {
@@ -108,13 +113,11 @@ function snapshotImageContent(result) {
 
 function toolContent(result) {
   const image = snapshotImageContent(result);
-  const textResult = image && isRecord(result) && isRecord(result.snapshot)
-    ? { ...result, snapshot: { ...result.snapshot, screenshot: "[image attached]" } }
-    : result;
-  return [
-    { type: "text", text: JSON.stringify(textResult) },
-    ...(image ? [image] : []),
-  ];
+  const textResult =
+    image && isRecord(result) && isRecord(result.snapshot)
+      ? { ...result, snapshot: { ...result.snapshot, screenshot: "[image attached]" } }
+      : result;
+  return [{ type: "text", text: JSON.stringify(textResult) }, ...(image ? [image] : [])];
 }
 
 function operationFor(name, args) {
@@ -136,6 +139,59 @@ function operationFor(name, args) {
   return operations[name];
 }
 
+function responseContentLength(response) {
+  const raw = response.headers.get("content-length");
+  if (raw === null || !/^(?:0|[1-9][0-9]*)$/.test(raw)) return null;
+  const length = Number(raw);
+  return Number.isSafeInteger(length) ? length : null;
+}
+
+async function readBoundedResponseText(response) {
+  const contentLength = responseContentLength(response);
+  if (contentLength !== null && contentLength > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("The browser broker response was too large.");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  let buffer = Buffer.allocUnsafe(
+    Math.max(1, Math.min(contentLength ?? INITIAL_RESPONSE_BUFFER_BYTES, MAX_RESPONSE_BYTES)),
+  );
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) {
+        throw new Error("The browser broker response could not be read.");
+      }
+      if (length + value.byteLength > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("The browser broker response was too large.");
+      }
+      const required = length + value.byteLength;
+      if (required > buffer.length) {
+        let capacity = buffer.length;
+        while (capacity < required) capacity = Math.min(MAX_RESPONSE_BYTES, capacity * 2);
+        const grown = Buffer.allocUnsafe(capacity);
+        buffer.copy(grown, 0, 0, length);
+        buffer = grown;
+      }
+      buffer.set(value, length);
+      length = required;
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    if (error instanceof Error && error.message.startsWith("The browser broker response")) {
+      throw error;
+    }
+    throw new Error("The browser broker response could not be read.");
+  } finally {
+    reader.releaseLock();
+  }
+  return buffer.toString("utf8", 0, length);
+}
+
 async function callBroker(operation) {
   if (!endpoint || !conversationId || !token) {
     throw new Error("The Aldunis browser tool is not configured for this provider session.");
@@ -150,10 +206,7 @@ async function callBroker(operation) {
     body: JSON.stringify({ conversationId, operation }),
     signal: AbortSignal.timeout(15_000),
   });
-  const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
-    throw new Error("The browser broker response was too large.");
-  }
+  const text = await readBoundedResponseText(response);
   let body;
   try {
     body = JSON.parse(text);
@@ -161,7 +214,11 @@ async function callBroker(operation) {
     throw new Error(`The browser broker returned an invalid response (${response.status}).`);
   }
   if (!response.ok) {
-    throw new Error(typeof body?.error === "string" ? body.error : `Browser broker request failed (${response.status}).`);
+    throw new Error(
+      typeof body?.error === "string"
+        ? body.error
+        : `Browser broker request failed (${response.status}).`,
+    );
   }
   return body;
 }
@@ -200,13 +257,16 @@ async function handle(message) {
       });
     } catch (error) {
       reply(id, {
-        content: [{ type: "text", text: error instanceof Error ? error.message : "Browser tool failed." }],
+        content: [
+          { type: "text", text: error instanceof Error ? error.message : "Browser tool failed." },
+        ],
         isError: true,
       });
     }
     return;
   }
-  if (id !== undefined) errorReply(id, -32601, `Unsupported MCP method: ${String(message.method)}.`);
+  if (id !== undefined)
+    errorReply(id, -32601, `Unsupported MCP method: ${String(message.method)}.`);
 }
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
