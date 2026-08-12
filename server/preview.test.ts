@@ -9,9 +9,11 @@ import type { ChildProcess } from "node:child_process";
 import {
   assertPreviewOrigin,
   hasPendingPreviewTermination,
+  MAX_PREVIEW_PACKAGE_MANIFEST_BYTES,
   MAX_RETAINED_PREVIEW_SESSIONS,
   PreviewError,
   PreviewManager,
+  readPreviewPackageManifest,
   releasePreviewTerminationAttempt,
   terminatePreviewProcess,
   type PreviewTerminationRuntime,
@@ -338,6 +340,100 @@ test("missing development scripts fail visibly", async () => {
     () => new PreviewManager().requestStart("/repo", worktree, "http://localhost:4173"),
     (error: unknown) => error instanceof PreviewError && error.status === 404,
   );
+});
+
+test("preview admission rejects oversized package manifests before reading", async () => {
+  const worktree = await mkdtemp(join(tmpdir(), "aldunis-preview-manifest-"));
+  await writeFile(
+    join(worktree, "package.json"),
+    JSON.stringify({ scripts: { dev: "vite" }, padding: "x" }).padEnd(
+      MAX_PREVIEW_PACKAGE_MANIFEST_BYTES + 1,
+      " ",
+    ),
+  );
+
+  await assert.rejects(
+    () => new PreviewManager().requestStart("/repo", worktree, "http://localhost:4173"),
+    (error: unknown) => error instanceof PreviewError && error.status === 413,
+  );
+});
+
+test("preview manifest reads fail closed when the file grows", async () => {
+  let reads = 0;
+  let closed = false;
+  await assert.rejects(
+    () =>
+      readPreviewPackageManifest("/repo/package.json", {
+        async open() {
+          return {
+            async stat() {
+              return { size: 2, dev: 1, ino: 2, mtimeMs: 3, ctimeMs: 4 };
+            },
+            async read(buffer, offset) {
+              reads += 1;
+              buffer[offset] = reads === 1 ? 0x7b : 0x78;
+              if (reads === 1) buffer[offset + 1] = 0x7d;
+              return { bytesRead: reads === 1 ? 2 : 1 };
+            },
+            async close() {
+              closed = true;
+            },
+          };
+        },
+      }),
+    (error: unknown) => error instanceof PreviewError && error.status === 409,
+  );
+  assert.equal(reads, 2);
+  assert.equal(closed, true);
+});
+
+test("preview manifest reads fail closed when the file shrinks", async () => {
+  let reads = 0;
+  await assert.rejects(
+    () =>
+      readPreviewPackageManifest("/repo/package.json", {
+        async open() {
+          return {
+            async stat() {
+              return { size: 2, dev: 1, ino: 2, mtimeMs: 3, ctimeMs: 4 };
+            },
+            async read(buffer, offset) {
+              reads += 1;
+              if (reads === 1) buffer[offset] = 0x7b;
+              return { bytesRead: reads === 1 ? 1 : 0 };
+            },
+            async close() {},
+          };
+        },
+      }),
+    (error: unknown) => error instanceof PreviewError && error.status === 409,
+  );
+});
+
+test("preview manifest reads fail closed when metadata changes", async () => {
+  let stats = 0;
+  await assert.rejects(
+    () =>
+      readPreviewPackageManifest("/repo/package.json", {
+        async open() {
+          return {
+            async stat() {
+              stats += 1;
+              return { size: 2, dev: 1, ino: 2, mtimeMs: stats, ctimeMs: 4 };
+            },
+            async read(buffer, offset, length) {
+              if (length === 1) return { bytesRead: 0 };
+              buffer[offset] = 0x7b;
+              buffer[offset + 1] = 0x7d;
+              return { bytesRead: 2 };
+            },
+            async close() {},
+          };
+        },
+      }),
+    (error: unknown) => error instanceof PreviewError && error.status === 409,
+  );
+  assert.equal(stats, 2);
 });
 
 test("approved previews become available and stop explicitly", async () => {
