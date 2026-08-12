@@ -95,7 +95,7 @@
     },
     {
       "name": "ConversationLifecycleControl",
-      "description": "A deep renderer control module for renaming, pinning, archiving, restoring, settling, releasing, and deleting conversations that concentrates host requests, refresh ordering, deletion pane repair, retry semantics, and bounded partial bulk-release evidence while Workbench retains dialog targets, presentation, and DOM focus and the host retains lifecycle and worktree authority."
+      "description": "A deep renderer control module for renaming, pinning, archiving, restoring, settling, snoozing, releasing, and deleting conversations that concentrates host requests, named lifecycle commands, settle-then-release ordering, refresh ordering, deletion pane repair, retry semantics, and bounded partial bulk-release evidence while Workbench and Conversation retain dialog targets, presentation, and DOM focus and the host retains lifecycle and worktree authority."
     },
     {
       "name": "CollapsibleCodeSidebar",
@@ -1827,8 +1827,8 @@
     },
     {
       "subject": "ConversationLifecycleControl",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#703",
-      "locator": "src/lib/conversation-lifecycle-control.ts; src/features/code/workbench.tsx; src/lib/conversation-lifecycle-control.test.ts",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#901",
+      "locator": "src/lib/conversation-lifecycle-control.ts; src/features/code/workbench.tsx; src/features/code/conversation.tsx; src/lib/conversation-lifecycle-control.test.ts",
       "confidence": 1.0
     },
     {
