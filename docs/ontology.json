@@ -496,6 +496,10 @@
     {
       "name": "ConversationAutomationSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates timer-only conversation automation loading, typed drafts, create, pause, enable, run, explicit unknown-fire retry, delete, post-command reload, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains schedule, conversation, provider, permission, and persistence authority."
+    },
+    {
+      "name": "ConversationTurnSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates LocalConversation turn transport—provider-run admission HTTP, NDJSON stream intake, cancellation, approval decide, and input answer—behind one interface that emits ConversationRunModule actions, while ConversationComposer retains archive, draft, workspace, and rendering authority and the local host retains provider-process, permission, and persistence authority."
     }
   ],
   "relations": [
@@ -1407,6 +1411,16 @@
       "cardinality": {
         "min": 0,
         "max": null
+      }
+    },
+    {
+      "name": "transports_conversation_turns",
+      "description": "The conversation turn session transports one LocalConversation turn's host HTTP and stream intake into ConversationRunModule actions without acquiring provider-process, permission, persistence, or rendering authority.",
+      "domain": "ConversationTurnSessionModule",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": 1
       }
     }
   ],
@@ -2645,6 +2659,18 @@
       "subject": "projects_conversation_automations",
       "source": "Aldunis Code conversation automation session interface",
       "locator": "src/lib/automation-session.ts#ConversationAutomationSessionModule",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationTurnSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#828",
+      "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule; src/features/code/conversation.tsx#Conversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "transports_conversation_turns",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#828",
+      "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule",
       "confidence": 1.0
     }
   ]
