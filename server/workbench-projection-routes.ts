@@ -26,16 +26,18 @@ export interface WorkbenchProjectionRouteContext {
   sendStatus: (response: ServerResponse, status: number) => void;
 }
 
+type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
+
 const ROUTES = new Set([
   "/api/state/load",
   "/api/state/conversations/history",
   "/api/state/search",
 ]);
 
-export function filterManagedProjection(
-  projection: StateProjection,
+export function filterManagedThreadSearchProjection(
+  projection: ThreadSearchProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
-): StateProjection {
+): ThreadSearchProjection {
   const projects = projection.projects.filter((project) => {
     try {
       managedHost.repositoryForRoot(project.root);
@@ -45,7 +47,18 @@ export function filterManagedProjection(
     }
   });
   const projectIds = new Set(projects.map((project) => project.id));
-  const threads = projection.threads.filter((thread) => projectIds.has(thread.projectId));
+  return {
+    projects,
+    threads: projection.threads.filter((thread) => projectIds.has(thread.projectId)),
+  };
+}
+
+export function filterManagedProjection(
+  projection: StateProjection,
+  managedHost: Pick<ManagedHost, "repositoryForRoot">,
+): StateProjection {
+  const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
+  const projectIds = new Set(projects.map((project) => project.id));
   const threadIds = new Set(threads.map((thread) => thread.id));
   const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
   const turnIds = new Set(turns.map((turn) => turn.id));
@@ -221,7 +234,7 @@ export async function handleWorkbenchProjectionRoute(
   const archived = body.archived ?? "exclude";
   const projection = (await state.inspect()) as StateProjection;
   const visibleProjection = managedHost
-    ? filterManagedProjection(projection, managedHost)
+    ? filterManagedThreadSearchProjection(projection, managedHost)
     : projection;
   const projects = new Map(visibleProjection.projects.map((project) => [project.id, project]));
   const threads = visibleProjection.threads
