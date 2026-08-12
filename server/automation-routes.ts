@@ -46,13 +46,12 @@ export async function handleAutomationRoute(
       return true;
     }
     const items = await automations.list();
+    const latestFires = await state.latestAutomationFires(items.map((automation) => automation.id));
     sendJson(response, 200, {
-      automations: await Promise.all(
-        items.map(async (automation) => ({
-          ...automation,
-          lastFire: await state.latestAutomationFire(automation.id),
-        })),
-      ),
+      automations: items.map((automation) => ({
+        ...automation,
+        lastFire: latestFires.get(automation.id) ?? null,
+      })),
     });
     return true;
   }

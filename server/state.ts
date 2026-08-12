@@ -1805,11 +1805,23 @@ export class LocalStateStore {
   }
 
   async latestAutomationFire(automationId: string): Promise<AutomationFire | null> {
-    const projection = await this.load();
-    return (
-      projection.automationFires
-        .filter((fire) => fire.automationId === automationId)
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null
+    return (await this.latestAutomationFires([automationId])).get(automationId) ?? null;
+  }
+
+  async latestAutomationFires(
+    automationIds: Iterable<string>,
+  ): Promise<Map<string, AutomationFire>> {
+    const wanted = new Set(automationIds);
+    const latest = new Map<string, Readonly<AutomationFire>>();
+    if (wanted.size === 0) return new Map();
+    const projection = await this.inspect();
+    for (const fire of projection.automationFires) {
+      if (!wanted.has(fire.automationId)) continue;
+      const current = latest.get(fire.automationId);
+      if (!current || fire.createdAt > current.createdAt) latest.set(fire.automationId, fire);
+    }
+    return new Map(
+      [...latest].map(([automationId, fire]) => [automationId, structuredClone(fire)]),
     );
   }
 
