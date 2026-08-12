@@ -500,6 +500,10 @@
     {
       "name": "ConversationTurnSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates LocalConversation turn transport—provider-run admission HTTP, NDJSON stream intake, cancellation, approval decide, and input answer—behind one interface that emits ConversationRunModule actions, while ConversationComposer retains archive, draft, workspace, and rendering authority and the local host retains provider-process, permission, and persistence authority."
+    },
+    {
+      "name": "DelegatedHumanControlSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates parent-routed delegated link and unlink, child-bound approval decide and input answer, busy and error coordination, optimistic approval resolution, input drafts, and acyclic candidate filtering behind one snapshot-and-intent interface while DelegatedChildrenPanel retains projection and dialog wiring and the local host retains relationship, permission, and provider authority."
     }
   ],
   "relations": [
@@ -1421,6 +1425,16 @@
       "cardinality": {
         "min": 0,
         "max": 1
+      }
+    },
+    {
+      "name": "coordinates_delegated_human_control",
+      "description": "The delegated human-control session coordinates parent-routed child-bound approvals and inputs for explicitly linked LocalConversation children without acquiring parent provider context, permission authority, or relationship persistence authority.",
+      "domain": "DelegatedHumanControlSessionModule",
+      "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": null
       }
     }
   ],
@@ -2671,6 +2685,18 @@
       "subject": "transports_conversation_turns",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#828",
       "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedHumanControlSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#832",
+      "locator": "src/lib/delegated-human-control-session.ts#DelegatedHumanControlSessionModule; src/features/code/workbench.tsx#DelegatedChildrenPanel",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_delegated_human_control",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#832",
+      "locator": "src/lib/delegated-human-control-session.ts#DelegatedHumanControlSessionModule",
       "confidence": 1.0
     }
   ]
