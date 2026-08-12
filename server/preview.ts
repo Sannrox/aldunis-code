@@ -20,12 +20,14 @@ export interface PreviewSnapshot {
 interface PreviewRecord extends PreviewSnapshot {
   child: ChildProcess | null;
   approvalTimer: NodeJS.Timeout | null;
+  terminalTimer: NodeJS.Timeout | null;
 }
 
 const LOOPBACK_NAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 const APPROVAL_TIMEOUT_MS = 5 * 60_000;
 /** Keep terminal snapshots long enough for the 1s status poller to observe them. */
 const TERMINAL_RETAIN_MS = 60_000;
+export const MAX_RETAINED_PREVIEW_SESSIONS = 8;
 const STOP_GRACE_MS = 3_000;
 const STOP_FORCE_MS = 2_000;
 
@@ -239,6 +241,12 @@ export class PreviewManager {
         throw new PreviewError("This worktree already has an active preview.", 409);
       }
     }
+    if (this.#previews.size >= MAX_RETAINED_PREVIEW_SESSIONS) {
+      this.#releaseOldestTerminalPreview();
+    }
+    if (this.#previews.size >= MAX_RETAINED_PREVIEW_SESSIONS) {
+      throw new PreviewError("Too many preview sessions are already active.", 429);
+    }
     const id = randomUUID();
     const record: PreviewRecord = {
       id,
@@ -251,6 +259,7 @@ export class PreviewManager {
       message: null,
       child: null,
       approvalTimer: null,
+      terminalTimer: null,
     };
     record.approvalTimer = setTimeout(() => {
       if (record.state === "approval_pending") {
@@ -429,12 +438,23 @@ export class PreviewManager {
     return preview;
   }
 
+  #releaseOldestTerminalPreview(): void {
+    for (const preview of this.#previews.values()) {
+      if (!preview.child && (preview.state === "stopped" || preview.state === "failed")) {
+        this.#release(preview);
+        return;
+      }
+    }
+  }
+
   #scheduleRelease(preview: PreviewRecord): void {
     if (preview.approvalTimer) {
       clearTimeout(preview.approvalTimer);
       preview.approvalTimer = null;
     }
-    const timer = setTimeout(() => {
+    if (preview.terminalTimer) clearTimeout(preview.terminalTimer);
+    preview.terminalTimer = setTimeout(() => {
+      preview.terminalTimer = null;
       if (
         this.#previews.get(preview.id) === preview &&
         !preview.child &&
@@ -443,7 +463,7 @@ export class PreviewManager {
         this.#release(preview);
       }
     }, TERMINAL_RETAIN_MS);
-    timer.unref();
+    preview.terminalTimer.unref();
   }
 
   #release(preview: PreviewRecord): void {
@@ -451,11 +471,20 @@ export class PreviewManager {
       clearTimeout(preview.approvalTimer);
       preview.approvalTimer = null;
     }
+    if (preview.terminalTimer) {
+      clearTimeout(preview.terminalTimer);
+      preview.terminalTimer = null;
+    }
     this.#previews.delete(preview.id);
   }
 
   #snapshot(preview: PreviewRecord): PreviewSnapshot {
-    const { child: _child, approvalTimer: _approvalTimer, ...snapshot } = preview;
+    const {
+      child: _child,
+      approvalTimer: _approvalTimer,
+      terminalTimer: _terminalTimer,
+      ...snapshot
+    } = preview;
     return { ...snapshot };
   }
 }

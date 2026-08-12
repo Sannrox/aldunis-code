@@ -241,7 +241,7 @@
     },
     {
       "name": "ConstrainedWebPreview",
-      "description": "A loopback-only Aldunis Code preview session that starts one selected worktree's declared development command after scoped approval, renders it in a sandboxed iframe with browser permissions denied, and coordinates one idempotent process-tree termination lifecycle whose force timer is released on exact-child exit."
+      "description": "A loopback-only Aldunis Code preview session admitted within a fixed eight-session host bound that starts one selected worktree's declared development command after scoped approval, renders it in a sandboxed iframe with browser permissions denied, and coordinates one idempotent process-tree termination lifecycle whose force timer is released on exact-child exit."
     },
     {
       "name": "PreviewHostContractModule",
@@ -1951,8 +1951,8 @@
     },
     {
       "subject": "ConstrainedWebPreview",
-      "source": "Aldunis Code constrained web preview contract and Issue Sannrox/aldunis-code#760",
-      "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx",
+      "source": "Aldunis Code constrained web preview contract and Issues Sannrox/aldunis-code#760 and #813",
+      "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx; https://github.com/Sannrox/aldunis-code/issues/813",
       "confidence": 1.0
     },
     {

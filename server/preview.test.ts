@@ -9,6 +9,7 @@ import type { ChildProcess } from "node:child_process";
 import {
   assertPreviewOrigin,
   hasPendingPreviewTermination,
+  MAX_RETAINED_PREVIEW_SESSIONS,
   PreviewError,
   PreviewManager,
   releasePreviewTerminationAttempt,
@@ -169,6 +170,162 @@ test("preview start approval is scoped, exact, and single-use", async () => {
     () => manager.snapshot(pending.id),
     (error: unknown) => error instanceof PreviewError && error.status === 404,
   );
+});
+
+test("preview admission bounds retained sessions and recovers released capacity", async () => {
+  const worktrees: string[] = [];
+  const manager = new PreviewManager();
+
+  try {
+    for (let index = 0; index <= MAX_RETAINED_PREVIEW_SESSIONS; index += 1) {
+      const worktree = await mkdtemp(join(tmpdir(), "aldunis-preview-capacity-"));
+      await writeFile(
+        join(worktree, "package.json"),
+        JSON.stringify({ scripts: { dev: 'node -e "setTimeout(() => {}, 10000)"' } }),
+      );
+      worktrees.push(worktree);
+    }
+
+    const pending = [];
+    for (const worktree of worktrees.slice(0, MAX_RETAINED_PREVIEW_SESSIONS)) {
+      pending.push(await manager.requestStart("/repo", worktree, "http://localhost:4173"));
+    }
+    await assert.rejects(
+      () =>
+        manager.requestStart(
+          "/repo",
+          worktrees[MAX_RETAINED_PREVIEW_SESSIONS]!,
+          "http://localhost:4173",
+        ),
+      (error: unknown) => error instanceof PreviewError && error.status === 429,
+    );
+
+    manager.decide(pending[0]!.id, { repository: "/repo", worktree: worktrees[0]! }, "deny");
+    const admitted = await manager.requestStart(
+      "/repo",
+      worktrees[MAX_RETAINED_PREVIEW_SESSIONS]!,
+      "http://localhost:4173",
+    );
+    assert.equal(admitted.state, "approval_pending");
+  } finally {
+    await manager.stopAll();
+  }
+});
+
+test("preview admission preserves terminal visibility until capacity pressure", async () => {
+  const manager = new PreviewManager();
+  const worktrees: string[] = [];
+
+  try {
+    for (let index = 0; index <= MAX_RETAINED_PREVIEW_SESSIONS; index += 1) {
+      const worktree = await mkdtemp(join(tmpdir(), "aldunis-preview-terminal-capacity-"));
+      await writeFile(
+        join(worktree, "package.json"),
+        JSON.stringify({
+          scripts: {
+            dev:
+              index === 0 ? 'node -e "process.exit(1)"' : 'node -e "setTimeout(() => {}, 10000)"',
+          },
+        }),
+      );
+      worktrees.push(worktree);
+    }
+
+    const terminal = await manager.requestStart("/repo", worktrees[0]!, "http://localhost:4173");
+    manager.decide(terminal.id, { repository: "/repo", worktree: worktrees[0]! }, "allow_once");
+    let snapshot = manager.snapshot(terminal.id);
+    for (
+      let attempt = 0;
+      attempt < 50 && (snapshot.state === "starting" || snapshot.state === "running");
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      snapshot = manager.snapshot(terminal.id);
+    }
+    assert.equal(snapshot.state, "failed");
+
+    for (const worktree of worktrees.slice(1, MAX_RETAINED_PREVIEW_SESSIONS)) {
+      await manager.requestStart("/repo", worktree, "http://localhost:4173");
+      assert.equal(manager.snapshot(terminal.id).state, "failed");
+    }
+    await manager.requestStart(
+      "/repo",
+      worktrees[MAX_RETAINED_PREVIEW_SESSIONS]!,
+      "http://localhost:4173",
+    );
+    assert.throws(
+      () => manager.snapshot(terminal.id),
+      (error: unknown) => error instanceof PreviewError && error.status === 404,
+    );
+  } finally {
+    await manager.stopAll();
+  }
+});
+
+test("capacity eviction cancels the terminal retention timer", async (context) => {
+  const manager = new PreviewManager();
+  const worktrees: string[] = [];
+  const terminalTimers = new Set<NodeJS.Timeout>();
+  const clearedTerminalTimers = new Set<NodeJS.Timeout>();
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+
+  context.mock.method(globalThis, "setTimeout", ((
+    callback: (...args: unknown[]) => void,
+    delay?: number,
+    ...args: unknown[]
+  ) => {
+    const timer = originalSetTimeout(callback, delay, ...args);
+    if (delay === 60_000) terminalTimers.add(timer);
+    return timer;
+  }) as typeof setTimeout);
+  context.mock.method(globalThis, "clearTimeout", ((timer: NodeJS.Timeout) => {
+    if (terminalTimers.has(timer)) clearedTerminalTimers.add(timer);
+    originalClearTimeout(timer);
+  }) as typeof clearTimeout);
+
+  try {
+    for (let index = 0; index <= MAX_RETAINED_PREVIEW_SESSIONS; index += 1) {
+      const worktree = await mkdtemp(join(tmpdir(), "aldunis-preview-timer-capacity-"));
+      await writeFile(
+        join(worktree, "package.json"),
+        JSON.stringify({
+          scripts: {
+            dev:
+              index === 0 ? 'node -e "process.exit(1)"' : 'node -e "setTimeout(() => {}, 10000)"',
+          },
+        }),
+      );
+      worktrees.push(worktree);
+    }
+
+    const terminal = await manager.requestStart("/repo", worktrees[0]!, "http://localhost:4173");
+    manager.decide(terminal.id, { repository: "/repo", worktree: worktrees[0]! }, "allow_once");
+    let snapshot = manager.snapshot(terminal.id);
+    for (
+      let attempt = 0;
+      attempt < 50 && (snapshot.state === "starting" || snapshot.state === "running");
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      snapshot = manager.snapshot(terminal.id);
+    }
+    assert.equal(snapshot.state, "failed");
+    for (const worktree of worktrees.slice(1, MAX_RETAINED_PREVIEW_SESSIONS)) {
+      await manager.requestStart("/repo", worktree, "http://localhost:4173");
+    }
+    assert.equal(terminalTimers.size, 1);
+    assert.equal(clearedTerminalTimers.size, 0);
+
+    await manager.requestStart(
+      "/repo",
+      worktrees[MAX_RETAINED_PREVIEW_SESSIONS]!,
+      "http://localhost:4173",
+    );
+    assert.deepEqual(clearedTerminalTimers, terminalTimers);
+  } finally {
+    await manager.stopAll();
+  }
 });
 
 test("missing development scripts fail visibly", async () => {
