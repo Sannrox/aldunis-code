@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open, mkdir, readFile, rename, rm } from "node:fs/promises";
+import { open, mkdir, rename, rm, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { lock } from "proper-lockfile";
 import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
 import { wouldCreateDelegatedConversationCycle } from "../src/lib/delegated-conversation-graph.ts";
@@ -1110,6 +1111,35 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   };
 }
 
+async function* streamEventEnvelopes(handle: FileHandle): AsyncGenerator<EventEnvelope> {
+  const input = handle.createReadStream({ encoding: "utf8", start: 0, autoClose: false });
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  let lineNumber = 0;
+  try {
+    for await (const line of lines) {
+      lineNumber += 1;
+      if (!line) continue;
+      yield parseEnvelope(line, lineNumber);
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+function sameEventHistoryFile(
+  left: Awaited<ReturnType<FileHandle["stat"]>>,
+  right: Awaited<ReturnType<FileHandle["stat"]>>,
+): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
 export function defaultStateDirectory(): string {
   const configured = process.env.ALDUNIS_CODE_STATE_DIR;
   if (configured) return configured;
@@ -1142,52 +1172,82 @@ export class LocalStateStore {
     projection: StateProjection;
     repaired: boolean;
   }> {
-    let contents = "";
+    let handle: FileHandle;
     try {
-      contents = await readFile(this.#eventPath, "utf8");
+      handle = await open(this.#eventPath, "r");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new LocalStateError("Local history could not be read.");
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { envelopes: [], projection: emptyProjection(), repaired: false };
       }
+      throw new LocalStateError("Local history could not be read.");
     }
-    const parsedEnvelopes: EventEnvelope[] = [];
-    const lines = contents.split("\n");
-    for (let index = 0; index < lines.length; index += 1) {
-      if (!lines[index]) continue;
-      parsedEnvelopes.push(parseEnvelope(lines[index], index + 1));
-    }
-    const sequences = new Set(parsedEnvelopes.map((envelope) => envelope.sequence));
-    const maximumSequence = parsedEnvelopes.reduce(
-      (maximum, envelope) => Math.max(maximum, envelope.sequence),
-      0,
-    );
-    const firstMismatch = parsedEnvelopes.findIndex(
-      (envelope, index) => envelope.sequence !== index + 1,
-    );
-    const repaired = firstMismatch !== -1;
-    if (repaired) {
+    try {
+      const sourceIdentity = await handle.stat();
+      let projection = emptyProjection();
+      let parsedCount = 0;
+      let maximumSequence = 0;
+      let firstMismatch: { actual: number; expected: number } | null = null;
+      let forkSequences: Set<number> | null = null;
+      for await (const envelope of streamEventEnvelopes(handle)) {
+        parsedCount += 1;
+        maximumSequence = Math.max(maximumSequence, envelope.sequence);
+        if (!firstMismatch && envelope.sequence !== parsedCount) {
+          firstMismatch = { actual: envelope.sequence, expected: parsedCount };
+          forkSequences = new Set<number>();
+          for (let sequence = 1; sequence < parsedCount; sequence += 1) {
+            forkSequences.add(sequence);
+          }
+        }
+        if (forkSequences) forkSequences.add(envelope.sequence);
+        if (!firstMismatch) applyEvent(projection, envelope);
+      }
+      if (!firstMismatch) {
+        return { envelopes: [], projection, repaired: false };
+      }
       const isCompleteFork =
+        Number.isSafeInteger(maximumSequence) &&
         maximumSequence > 0 &&
-        parsedEnvelopes.length > maximumSequence &&
-        sequences.size === maximumSequence &&
-        Array.from({ length: maximumSequence }, (_, index) => sequences.has(index + 1)).every(
-          Boolean,
+        parsedCount > maximumSequence &&
+        forkSequences !== null &&
+        forkSequences.size === maximumSequence &&
+        [...forkSequences].every(
+          (sequence) =>
+            Number.isSafeInteger(sequence) && sequence >= 1 && sequence <= maximumSequence,
         );
       if (!isCompleteFork) {
-        const envelope = parsedEnvelopes[firstMismatch];
         throw new LocalStateError(
-          `Local history is not ordered at event ${envelope.sequence}; expected ${firstMismatch + 1}.`,
+          `Local history is not ordered at event ${firstMismatch.actual}; expected ${firstMismatch.expected}.`,
         );
       }
+      projection = emptyProjection();
+      const envelopes: EventEnvelope[] = [];
+      const repairHandle = await open(this.#eventPath, "r");
+      try {
+        const repairIdentity = await repairHandle.stat();
+        if (
+          !sameEventHistoryFile(sourceIdentity, repairIdentity) ||
+          !sameEventHistoryFile(repairIdentity, await stat(this.#eventPath))
+        ) {
+          throw new LocalStateError("Local history changed while it was being repaired.");
+        }
+        for await (const parsed of streamEventEnvelopes(repairHandle)) {
+          const envelope = { ...parsed, sequence: envelopes.length + 1 };
+          envelopes.push(envelope);
+          applyEvent(projection, envelope);
+        }
+        if (!sameEventHistoryFile(sourceIdentity, await stat(this.#eventPath))) {
+          throw new LocalStateError("Local history changed while it was being repaired.");
+        }
+      } finally {
+        await repairHandle.close().catch(() => undefined);
+      }
+      return { envelopes, projection, repaired: true };
+    } catch (error) {
+      if (error instanceof LocalStateError) throw error;
+      throw new LocalStateError("Local history could not be read.");
+    } finally {
+      await handle.close().catch(() => undefined);
     }
-    const projection = emptyProjection();
-    const envelopes = parsedEnvelopes.map((parsed, index) =>
-      repaired ? { ...parsed, sequence: index + 1 } : parsed,
-    );
-    for (const envelope of envelopes) {
-      applyEvent(projection, envelope);
-    }
-    return { envelopes, projection, repaired };
   }
 
   async #replaceHistory(envelopes: EventEnvelope[]): Promise<void> {
