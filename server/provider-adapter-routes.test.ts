@@ -44,7 +44,7 @@ function context(overrides: Record<string, unknown> = {}) {
       rollback: unused,
       uninstall: unused,
     },
-    profiles: { ensureProviderDefault: unused },
+    profiles: { withProviderDefault: unused },
     listReviewedAdapters: unused,
     prepareReviewedAdapter: unused,
     remote: false,
@@ -176,15 +176,22 @@ test("provider adapter module seeds a default profile after installation", async
       readJson: async () => ({ approved: true }),
       adapters: {
         ...context().adapters,
+        inspect: () => {
+          calls.push("inspect");
+          return installedAdapter;
+        },
         install: async () => {
           calls.push("install");
           return installedAdapter;
         },
       },
       profiles: {
-        ensureProviderDefault: async (seed: { provider: string; environment?: unknown[] }) => {
+        withProviderDefault: async <T>(
+          seed: { provider: string; environment?: unknown[] },
+          operation: () => Promise<T>,
+        ) => {
           calls.push(`profile:${seed.provider}:${seed.environment?.length}`);
-          return {};
+          return operation();
         },
       },
       sendJson: (_response: ServerResponse, status: number, value: unknown) => {
@@ -193,8 +200,110 @@ test("provider adapter module seeds a default profile after installation", async
       },
     }) as never,
   );
-  assert.deepEqual(calls, ["install", "profile:adapter:example.agent@1.0.0:1", "response"]);
+  assert.deepEqual(calls, [
+    "inspect",
+    "profile:adapter:example.agent@1.0.0:1",
+    "install",
+    "response",
+  ]);
   assert.deepEqual(writes, [{ status: 200, value: installedAdapter }]);
+});
+
+test("provider adapter installation checks profile capacity before mutating the store", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    handleProviderAdapterRoute(
+      "/api/provider/adapters/install",
+      request,
+      response,
+      context({
+        readJson: async () => ({ approved: true }),
+        adapters: {
+          ...context().adapters,
+          inspect: () => {
+            calls.push("inspect");
+            return installedAdapter;
+          },
+          install: async () => {
+            calls.push("install");
+            return installedAdapter;
+          },
+        },
+        profiles: {
+          withProviderDefault: async () => {
+            calls.push("profile");
+            throw new Error("profile capacity");
+          },
+        },
+      }) as never,
+    ),
+    /profile capacity/,
+  );
+  assert.deepEqual(calls, ["inspect", "profile"]);
+});
+
+test("provider adapter update seeds its default after mutation", async () => {
+  const calls: string[] = [];
+  await handleProviderAdapterRoute(
+    "/api/provider/adapters/update",
+    request,
+    response,
+    context({
+      readJson: async () => ({ approved: true }),
+      adapters: {
+        ...context().adapters,
+        inspect: () => {
+          calls.push("inspect");
+          return installedAdapter;
+        },
+        update: async () => {
+          calls.push("update");
+          return installedAdapter;
+        },
+      },
+      profiles: {
+        withProviderDefault: async <T>(_seed: unknown, operation: () => Promise<T>) => {
+          calls.push("profile");
+          return operation();
+        },
+      },
+      sendJson: () => calls.push("response"),
+    }) as never,
+  );
+  assert.deepEqual(calls, ["inspect", "profile", "update", "response"]);
+});
+
+test("provider adapter update checks profile capacity before mutating the store", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    handleProviderAdapterRoute(
+      "/api/provider/adapters/update",
+      request,
+      response,
+      context({
+        readJson: async () => ({ approved: true }),
+        adapters: {
+          ...context().adapters,
+          inspect: () => {
+            calls.push("inspect");
+            return installedAdapter;
+          },
+          update: async () => {
+            calls.push("update");
+            return installedAdapter;
+          },
+        },
+        profiles: {
+          withProviderDefault: async () => {
+            calls.push("profile");
+            throw new Error("profile capacity");
+          },
+        },
+      }) as never,
+    ),
+    /profile capacity/,
+  );
+  assert.deepEqual(calls, ["inspect", "profile"]);
 });
 
 test("provider adapter module routes approved adapter actions", async () => {

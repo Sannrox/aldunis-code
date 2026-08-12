@@ -13,7 +13,7 @@ interface ProviderAdapterRouteContext {
     ProviderAdapterStore,
     "list" | "inspect" | "install" | "update" | "setEnabled" | "rollback" | "uninstall"
   >;
-  profiles: Pick<ClaudeProfileStore, "ensureProviderDefault">;
+  profiles: Pick<ClaudeProfileStore, "withProviderDefault">;
   listReviewedAdapters: () => Promise<ReviewedAdapterCatalogEntry[]>;
   prepareReviewedAdapter: (slug: unknown) => Promise<unknown>;
   remote: boolean;
@@ -150,10 +150,11 @@ export async function handleProviderAdapterRoute(
       approved?: unknown;
     };
     assertApproved(body);
+    const inspected = adapters.inspect(body);
+    const seed = adapterProfileSeed(inspected);
     const installed = route.endsWith("/install")
-      ? await adapters.install(body)
-      : await adapters.update(body);
-    await profiles.ensureProviderDefault(adapterProfileSeed(installed));
+      ? await profiles.withProviderDefault(seed, () => adapters.install(body))
+      : await profiles.withProviderDefault(seed, () => adapters.update(body));
     sendJson(response, 200, installed);
     return true;
   }
