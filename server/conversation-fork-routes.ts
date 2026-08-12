@@ -6,7 +6,7 @@ import {
   validateProviderModel,
   type ProviderModelServices,
 } from "./provider-models.ts";
-import { type ProviderId, ProviderProtocolError } from "./provider.ts";
+import type { ProviderId } from "./provider.ts";
 import { ProfileError, type ClaudeProfileStore } from "./profiles.ts";
 import type { ShikigamiAdapter } from "./shikigami-provider.ts";
 import { LocalStateError, type LocalStateStore } from "./state.ts";
@@ -197,20 +197,6 @@ export async function handleConversationForkRoute(
   );
   if (provider === "claude-code") {
     await profiles.runtime(body.profileId as string);
-  } else if (provider === "shikigami") {
-    const readiness = await shikigami.readiness(shikigamiProfile?.environment ?? process.env, {
-      executable: shikigamiProfile?.executable,
-      configPath: shikigamiProfile?.configPath,
-      cwd: destinationWorktree,
-    });
-    if (!readiness.installed || !readiness.authenticated) {
-      throw new ProviderProtocolError("Shikigami is unavailable or not authenticated.");
-    }
-  } else if (provider === "codex-cli") {
-    const readiness = await codex.readiness();
-    if (!readiness.installed || !readiness.authenticated) {
-      throw new ProviderProtocolError("Codex CLI is unavailable or not authenticated.");
-    }
   }
   const created = await state.createFork({
     sourceThreadId: source.id,
