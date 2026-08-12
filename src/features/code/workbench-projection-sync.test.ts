@@ -43,7 +43,7 @@ test("projection normalization reconciles optimistic visits and recovery fields"
   assert.deepEqual(snapshot.managedWorktreePaths, ["/one", "/two"]);
 });
 
-test("synchronization accepts only the newest request and owns event refresh", async () => {
+test("synchronization serializes startup and coalesces event bursts", async () => {
   const requests: Array<(value: WorkbenchStateProjection) => void> = [];
   const listeners = new Map<string, (event: { data: string }) => void>();
   const accepted: WorkbenchProjectionSnapshot[] = [];
@@ -62,13 +62,21 @@ test("synchronization accepts only the newest request and owns event refresh", a
 
   synchronization.start();
   listeners.get("open")?.({ data: "" });
-  requests[1]?.(projection("fresh"));
+  listeners.get("thread_status")?.({
+    data: JSON.stringify({ threadId: "thread", status: "running", at: "2026-01-01" }),
+  });
+  listeners.get("thread_status")?.({
+    data: JSON.stringify({ threadId: "thread", status: "completed", at: "2026-01-02" }),
+  });
+  assert.equal(requests.length, 1);
+  requests[0]?.(projection("initial"));
   await Promise.resolve();
-  requests[0]?.(projection("stale"));
+  assert.equal(requests.length, 2);
+  requests[1]?.(projection("fresh"));
   await Promise.resolve();
   assert.deepEqual(
     accepted.map((item) => item.conversations[0]?.id),
-    ["fresh"],
+    ["initial", "fresh"],
   );
 
   listeners.get("thread_status")?.({ data: "not-json" });
@@ -79,17 +87,72 @@ test("synchronization accepts only the newest request and owns event refresh", a
     data: JSON.stringify({ threadId: "thread", status: "running", at: "2026-01-01" }),
   });
   assert.equal(requests.length, 3);
+  listeners.get("thread_status")?.({
+    data: JSON.stringify({ threadId: "thread", status: "completed", at: "2026-01-02" }),
+  });
+  assert.equal(requests.length, 3);
   requests[2]?.(projection("status"));
   await Promise.resolve();
   assert.equal(accepted.at(-1)?.conversations[0]?.id, "status");
+  assert.equal(requests.length, 4);
+  requests[3]?.(projection("follow-up"));
+  await Promise.resolve();
+  assert.equal(accepted.at(-1)?.conversations[0]?.id, "follow-up");
 
   synchronization.dispose();
   assert.equal(closed, true);
   listeners.get("open")?.({ data: "" });
-  assert.equal(requests.length, 3);
-  requests[3]?.(projection("disposed"));
+  assert.equal(requests.length, 4);
+});
+
+test("explicit refresh waits behind background work and owns its failure", async () => {
+  const requests: Array<{
+    resolve(value: WorkbenchStateProjection): void;
+    reject(error: Error): void;
+  }> = [];
+  const synchronization = createWorkbenchProjectionSynchronization({
+    load: () =>
+      new Promise((resolve, reject) => {
+        requests.push({ resolve, reject });
+      }),
+    createEventSource: () => ({
+      addEventListener: () => undefined,
+      close: () => undefined,
+    }),
+    accept: () => undefined,
+  });
+
+  synchronization.start();
+  const refresh = synchronization.refresh();
+  assert.equal(requests.length, 1);
+  requests[0]?.resolve(projection("initial"));
   await Promise.resolve();
-  assert.equal(accepted.at(-1)?.conversations[0]?.id, "status");
+  assert.equal(requests.length, 2);
+  requests[1]?.reject(new Error("projection unavailable"));
+  await assert.rejects(refresh, /projection unavailable/);
+  synchronization.dispose();
+});
+
+test("disposal clears queued refreshes and suppresses late publication", async () => {
+  const requests: Array<(value: WorkbenchStateProjection) => void> = [];
+  const accepted: WorkbenchProjectionSnapshot[] = [];
+  const synchronization = createWorkbenchProjectionSynchronization({
+    load: () => new Promise((resolve) => requests.push(resolve)),
+    createEventSource: () => ({
+      addEventListener: () => undefined,
+      close: () => undefined,
+    }),
+    accept: (snapshot) => accepted.push(snapshot),
+  });
+
+  synchronization.start();
+  const refresh = synchronization.refresh();
+  synchronization.dispose();
+  await refresh;
+  requests[0]?.(projection("disposed"));
+  await Promise.resolve();
+  assert.deepEqual(accepted, []);
+  assert.equal(requests.length, 1);
 });
 
 test("imperative refresh preserves failures while background start soft-fails", async () => {

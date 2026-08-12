@@ -171,7 +171,7 @@
     },
     {
       "name": "ConversationActivityInbox",
-      "description": "A derived, read-only cross-project Code workbench projection that groups bounded conversation metadata by operator attention, running, completed, and idle state and offers explicit open or changes-review navigation without provider, approval, execution, or remote mutation authority."
+      "description": "A derived, read-only cross-project Code workbench projection that groups bounded conversation metadata by operator attention, running, completed, and idle state, serializes event-driven projection refreshes with one coalesced follow-up, and offers explicit open or changes-review navigation without provider, approval, execution, or remote mutation authority."
     },
     {
       "name": "WorkGraph",
@@ -1835,8 +1835,8 @@
     },
     {
       "subject": "ConversationActivityInbox",
-      "source": "GitHub Issue Sannrox/aldunis-code#511",
-      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx; src/main.tsx",
+      "source": "GitHub Issues Sannrox/aldunis-code#511 and #758",
+      "locator": "src/features/dialogs/activity-dialog.tsx; src/features/code/workbench.tsx; src/features/code/workbench-projection-sync.ts; src/main.tsx",
       "confidence": 1.0
     },
     {
