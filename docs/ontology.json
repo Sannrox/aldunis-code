@@ -202,6 +202,10 @@
       "description": "The Aldunis Code provider-adapter boundary that validates and normalizes Shikigami harness events while retaining at most 128 unmatched tool-call correlation identities per run and failing closed before overflow allocation."
     },
     {
+      "name": "ShikigamiPermissionHookBoundary",
+      "description": "The Aldunis-owned pre-tool hook boundary that accepts at most 1 MiB of provider-supplied JSON before parsing and delegates mutating Shikigami operations to the existing fail-closed PermissionBroker approval contract."
+    },
+    {
       "name": "ShikigamiParkedRunResume",
       "description": "The Aldunis Code operation that resumes one Shikigami parked run through a bound input request and existing local turn. It keeps the answer transient, requires a fresh PermissionBroker scope, preserves the baseline checkpoint, and reports explicit unavailability when exact identity or capability cannot be proven."
     },
@@ -1995,6 +1999,12 @@
       "subject": "ProviderDiscovery",
       "source": "Aldunis Code Issue #878 bounded native Shikigami configuration",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/878; server/shikigami-provider.ts#readShikigamiConfigFile",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiPermissionHookBoundary",
+      "source": "Aldunis Code Issue #895 bounded permission-hook input",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/895; server/shikigami-permission-hook.mjs",
       "confidence": 1.0
     },
     {

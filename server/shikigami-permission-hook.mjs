@@ -10,6 +10,8 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 
+const MAX_HOOK_INPUT_BYTES = 1024 * 1024;
+
 const configPath = process.argv[2];
 if (!configPath) {
   process.stderr.write("shikigami permission hook: missing config path\n");
@@ -28,12 +30,21 @@ const approvalUrl = typeof config.approvalUrl === "string" ? config.approvalUrl 
 const runId = typeof config.runId === "string" ? config.runId : "";
 const token = typeof config.token === "string" ? config.token : "";
 const mutatingTools = new Set(
-  Array.isArray(config.mutatingTools) ? config.mutatingTools.filter((name) => typeof name === "string") : [],
+  Array.isArray(config.mutatingTools)
+    ? config.mutatingTools.filter((name) => typeof name === "string")
+    : [],
 );
 
 async function readStdin() {
   const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of process.stdin) {
+    total += chunk.byteLength;
+    if (total > MAX_HOOK_INPUT_BYTES) {
+      throw new Error(`input exceeds the ${MAX_HOOK_INPUT_BYTES / 1024} KiB limit`);
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString("utf8");
 }
 
@@ -55,7 +66,15 @@ function parseArgsJson(value) {
   }
 }
 
-const raw = await readStdin();
+let raw;
+try {
+  raw = await readStdin();
+} catch (error) {
+  process.stderr.write(
+    `shikigami permission hook: ${error instanceof Error ? error.message : "input failed"}\n`,
+  );
+  process.exit(1);
+}
 const body = parsePayload(raw);
 const payload = body && typeof body === "object" ? body.payload : null;
 const tool = payload && typeof payload.tool === "string" ? payload.tool : "";
@@ -97,9 +116,7 @@ try {
   if (result.behavior === "allow") {
     process.exit(0);
   }
-  process.stderr.write(
-    `shikigami permission hook: denied: ${result.message ?? "user denied"}\n`,
-  );
+  process.stderr.write(`shikigami permission hook: denied: ${result.message ?? "user denied"}\n`);
   process.exit(1);
 } catch (error) {
   process.stderr.write(
