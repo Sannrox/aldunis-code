@@ -131,6 +131,66 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
+/**
+ * Keep one expensive diff read active and retain only the newest selection as
+ * follow-up work. The host finishes an admitted Git read normally; the pane
+ * bounds how many such reads it can admit and never publishes after disposal.
+ */
+export class LatestReviewDiffCoordinator<Input, Output> {
+  private active = false;
+  private queued: Input | null = null;
+  private disposed = false;
+
+  constructor(
+    private readonly load: (input: Input) => Promise<Output>,
+    private readonly loaded: (input: Input, output: Output) => void,
+    private readonly failed: (input: Input, cause: unknown) => void,
+  ) {}
+
+  request(input: Input): void {
+    if (this.disposed) return;
+    if (this.active) {
+      this.queued = input;
+      return;
+    }
+    void this.start(input);
+  }
+
+  clearPending(): void {
+    this.queued = null;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.queued = null;
+  }
+
+  private async start(input: Input): Promise<void> {
+    this.active = true;
+    try {
+      const output = await this.load(input);
+      if (!this.disposed) this.loaded(input, output);
+    } catch (cause) {
+      if (!this.disposed) this.failed(input, cause);
+    } finally {
+      this.active = false;
+      const next = this.queued;
+      this.queued = null;
+      if (!this.disposed && next !== null) void this.start(next);
+    }
+  }
+}
+
+interface ReviewDiffRequest {
+  request: number;
+  route: string;
+  body: {
+    root: string;
+    worktree: string;
+    path: string;
+  };
+}
+
 export function useChangedFileReviewSession({
   repository,
   threadId,
@@ -151,34 +211,65 @@ export function useChangedFileReviewSession({
   );
   const diffRequest = useRef(0);
   const annotationRequest = useRef(0);
+  const diffCoordinator = useRef<LatestReviewDiffCoordinator<ReviewDiffRequest, FileDiff> | null>(
+    null,
+  );
+  const getDiffCoordinator = useCallback(() => {
+    if (!diffCoordinator.current) {
+      diffCoordinator.current = new LatestReviewDiffCoordinator(
+        async (input) => {
+          const response = await fetch(input.route, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input.body),
+          });
+          const body = (await response.json()) as FileDiff | { error?: string };
+          if (!response.ok)
+            throw new Error("error" in body ? body.error : "Diff could not be read.");
+          return body as FileDiff;
+        },
+        (input, diff) => dispatch({ type: "diff_loaded", request: input.request, diff }),
+        (input, cause) =>
+          dispatch({
+            type: "diff_failed",
+            request: input.request,
+            error: errorMessage(cause, "Diff could not be read."),
+          }),
+      );
+    }
+    return diffCoordinator.current;
+  }, []);
 
   useEffect(() => dispatch({ type: "repair_selection", files }), [files]);
+  useEffect(
+    () => () => {
+      diffCoordinator.current?.dispose();
+      diffCoordinator.current = null;
+    },
+    [],
+  );
   useEffect(() => {
     const request = ++diffRequest.current;
     dispatch({ type: "diff_loading", request });
+    const coordinator = getDiffCoordinator();
+    coordinator.clearPending();
     if (!state.selected) return;
-    void fetch(checkpointId ? `/api/checkpoints/${checkpointId}/diff` : "/api/changes/diff", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    coordinator.request({
+      request,
+      route: checkpointId ? `/api/checkpoints/${checkpointId}/diff` : "/api/changes/diff",
+      body: {
         root: repository.root,
         worktree: repository.selectedWorktree,
         path: state.selected,
-      }),
-    })
-      .then(async (response) => {
-        const body = (await response.json()) as FileDiff | { error?: string };
-        if (!response.ok) throw new Error("error" in body ? body.error : "Diff could not be read.");
-        dispatch({ type: "diff_loaded", request, diff: body as FileDiff });
-      })
-      .catch((cause) =>
-        dispatch({
-          type: "diff_failed",
-          request,
-          error: errorMessage(cause, "Diff could not be read."),
-        }),
-      );
-  }, [checkpointId, repository.root, repository.selectedWorktree, state.selected]);
+      },
+    });
+  }, [
+    checkpointId,
+    getDiffCoordinator,
+    repository.root,
+    repository.selectedWorktree,
+    state.selected,
+  ]);
 
   const loadAnnotations = useCallback(async () => {
     const request = ++annotationRequest.current;

@@ -407,7 +407,7 @@
     },
     {
       "name": "ChangedFileReviewSessionModule",
-      "description": "A deep renderer module that concentrates current-versus-checkpoint review scope, changed-file selection repair, stale diff and annotation response suppression, local comment and revision-preview transitions, read-only resets, and nested dismissal priority behind one hook interface while ChangesPanel retains rendering and delivery state and the host retains repository and persistence authority."
+      "description": "A deep renderer module that concentrates current-versus-checkpoint review scope, changed-file selection repair, at most one active diff read plus one latest-selection follow-up per pane, stale diff and annotation response suppression, local comment and revision-preview transitions, read-only resets, and nested dismissal priority behind one hook interface while ChangesPanel retains rendering and delivery state and the host retains repository and persistence authority."
     },
     {
       "name": "ConversationLifecycleRouteDispatchModule",
