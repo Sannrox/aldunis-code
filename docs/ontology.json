@@ -182,6 +182,10 @@
       ]
     },
     {
+      "name": "ShikigamiEventNormalizationBoundary",
+      "description": "The Aldunis Code provider-adapter boundary that validates and normalizes Shikigami harness events while retaining at most 128 unmatched tool-call correlation identities per run and failing closed before overflow allocation."
+    },
+    {
       "name": "ShikigamiParkedRunResume",
       "description": "The Aldunis Code operation that resumes one Shikigami parked run through a bound input request and existing local turn. It keeps the answer transient, requires a fresh PermissionBroker scope, preserves the baseline checkpoint, and reports explicit unavailability when exact identity or capability cannot be proven."
     },
@@ -2281,6 +2285,12 @@
       "subject": "ShikigamiCheckpointResumeBoundary",
       "source": "Shikigami native checkpoint resume contract",
       "locator": "src/checkpoint.rs;src/run.rs; server/shikigami-provider.ts#resumeParked",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ShikigamiEventNormalizationBoundary",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#837",
+      "locator": "server/shikigami-provider.ts#ShikigamiToolIdTracker; server/shikigami-provider.ts#normalizeShikigamiEvent",
       "confidence": 1.0
     },
     {
