@@ -182,6 +182,10 @@
       "description": "A deep server-side Aldunis Code module that concentrates provider discovery and ProviderProfile route recognition, host-mode admission, request and environment validation, adapter-profile seeding, canonical worktree selection, and response mapping behind one internal dispatch interface without changing provider, filesystem, credential, persistence, or managed-host authority."
     },
     {
+      "name": "AcpDelegatedFileReadBoundary",
+      "description": "The Aldunis Code ACP client boundary that resolves delegated text reads within the canonical conversation worktree, admits only stable regular files, and reads at most 1 MiB through one descriptor while special files and concurrent changes fail closed."
+    },
+    {
       "name": "ShikigamiCheckpointResumeBoundary",
       "description": "The Shikigami provider boundary that accepts a provider-confirmed run UUID, loads the matching checkpoint, and requires the canonical workspace and adapter identity to match before native resume.",
       "properties": [
@@ -1571,6 +1575,12 @@
       "subject": "ProviderProfileRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#663",
       "locator": "server/provider-profile-routes.ts#handleProviderProfileRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AcpDelegatedFileReadBoundary",
+      "source": "Aldunis Code Issue #887 bounded ACP delegated file reads",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/887; server/acp-provider.ts#readAcpTextFile",
       "confidence": 1.0
     },
     {

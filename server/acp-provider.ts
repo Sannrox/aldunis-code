@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { PermissionBroker } from "./permission.ts";
@@ -19,7 +19,7 @@ import { terminateProviderChild } from "./provider-process.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
-const MAX_ACP_FS_READ_BYTES = 1024 * 1024;
+export const MAX_ACP_FS_READ_BYTES = 1024 * 1024;
 const ACP_HANDSHAKE_TIMEOUT_MS = 10_000;
 const ACP_RUN_TIMEOUT_MS = 30 * 60_000;
 type JsonRecord = Record<string, unknown>;
@@ -546,6 +546,110 @@ export function acpPromptRequest(
   };
 }
 
+interface AcpTextFileIdentity {
+  size: bigint;
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  isFile(): boolean;
+}
+
+interface AcpTextFileReadHandle {
+  stat(): Promise<AcpTextFileIdentity>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface AcpTextFileOperations {
+  lstat(path: string): Promise<AcpTextFileIdentity>;
+  open(path: string): Promise<AcpTextFileReadHandle>;
+}
+
+const acpTextFileOperations: AcpTextFileOperations = {
+  lstat: (path) => lstat(path, { bigint: true }),
+  open: async (path) => {
+    const handle = await open(path, "r");
+    return {
+      close: () => handle.close(),
+      read: async (buffer, offset, length, position) => {
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return { bytesRead };
+      },
+      stat: () => handle.stat({ bigint: true }),
+    };
+  },
+};
+
+function sameAcpTextFile(left: AcpTextFileIdentity, right: AcpTextFileIdentity): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+export async function readAcpTextFile(
+  path: string,
+  operations: AcpTextFileOperations = acpTextFileOperations,
+): Promise<string> {
+  let handle: AcpTextFileReadHandle | null = null;
+  try {
+    const initialPath = await operations.lstat(path);
+    if (!initialPath.isFile()) {
+      throw new ProviderProtocolError("ACP fs/read_text_file path is not a regular file.");
+    }
+    if (initialPath.size < 0n || initialPath.size > BigInt(MAX_ACP_FS_READ_BYTES)) {
+      throw new ProviderProtocolError("ACP fs/read_text_file exceeds the host read size limit.");
+    }
+    handle = await operations.open(path);
+    const initial = await handle.stat();
+    if (!initial.isFile() || !sameAcpTextFile(initialPath, initial)) {
+      throw new ProviderProtocolError("ACP fs/read_text_file changed while being read.");
+    }
+    const bytes = Buffer.alloc(Number(initial.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const requested = bytes.length - offset;
+      const { bytesRead } = await handle.read(bytes, offset, requested, offset);
+      if (bytesRead <= 0 || bytesRead > requested) {
+        throw new ProviderProtocolError("ACP fs/read_text_file changed while being read.");
+      }
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if ((await handle.read(extra, 0, 1, offset)).bytesRead !== 0) {
+      throw new ProviderProtocolError("ACP fs/read_text_file changed while being read.");
+    }
+    const final = await handle.stat();
+    const finalPath = await operations.lstat(path);
+    if (!sameAcpTextFile(initial, final) || !sameAcpTextFile(initial, finalPath)) {
+      throw new ProviderProtocolError("ACP fs/read_text_file changed while being read.");
+    }
+    const completedHandle = handle;
+    handle = null;
+    try {
+      await completedHandle.close();
+    } catch {
+      throw new ProviderProtocolError("ACP fs/read_text_file could not be closed.");
+    }
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (handle) await handle.close().catch(() => undefined);
+    if (error instanceof ProviderProtocolError) throw error;
+    throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
+  }
+}
+
 /**
  * Serve ACP `fs/read_text_file` for agents that delegate reads to the client
  * (Grok Build). Path must resolve inside the conversation worktree.
@@ -571,19 +675,11 @@ export async function acpReadTextFile(
     }
     throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
   }
-  let size: number;
-  try {
-    size = (await stat(path)).size;
-  } catch {
-    throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
-  }
-  if (size > MAX_ACP_FS_READ_BYTES) {
-    throw new ProviderProtocolError("ACP fs/read_text_file exceeds the host read size limit.");
-  }
   let content: string;
   try {
-    content = await readFile(path, "utf8");
-  } catch {
+    content = await readAcpTextFile(path);
+  } catch (error) {
+    if (error instanceof ProviderProtocolError) throw error;
     throw new ProviderProtocolError("ACP fs/read_text_file path is not readable.");
   }
   // Optional 1-based line window (ACP clients may request a slice).

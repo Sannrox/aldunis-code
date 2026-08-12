@@ -212,6 +212,9 @@ Rules shared by reviewed ACP adapters:
 - Mutating tool calls stay on the PermissionBroker path.
 - Optional proprietary ACP extensions are ignored unless the runtime explicitly
   supports them; unknown core methods fail closed.
+- Delegated `fs/read_text_file` requests resolve only stable regular files
+  inside the conversation worktree and read at most 1 MiB through one file
+  descriptor; special files and concurrent file changes fail closed.
 - Advanced import remains available for custom manifests (user-approved trust).
 - **Models**: discovery probes ACP `session/new` for `models.availableModels`
   (and `configOptions` with `category: "model"`). The composer model menu lists
