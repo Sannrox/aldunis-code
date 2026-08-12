@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  MAX_ACTIVE_REMOTE_SESSIONS,
+  MAX_LIVE_PAIRING_GRANTS,
+  MAX_RETAINED_TERMINAL_REMOTE_SESSIONS,
   MAX_REMOTE_PROOF_REPLAY_ENTRIES,
   RemoteAuth,
   RemoteAuthError,
@@ -13,6 +16,72 @@ import {
   assertRemoteProofReplayCapacity,
   retainRemoteProofReplay,
 } from "./remote-auth.ts";
+
+test("remote pairing authority retention exposes finite production bounds", () => {
+  assert.equal(MAX_LIVE_PAIRING_GRANTS, 32);
+  assert.equal(MAX_ACTIVE_REMOTE_SESSIONS, 64);
+  assert.equal(MAX_RETAINED_TERMINAL_REMOTE_SESSIONS, 32);
+});
+
+test("pairing grant admission prunes expiry and rejects live overflow", async () => {
+  let now = Date.parse("2026-08-12T09:00:00.000Z");
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-remote-auth-retention-"));
+  const auth = new RemoteAuth(directory, { now: () => now, maxPairingGrants: 2 });
+
+  await auth.issuePairing();
+  await auth.issuePairing();
+  await assert.rejects(
+    () => auth.issuePairing(),
+    (error: unknown) => error instanceof RemoteAuthError && error.status === 429,
+  );
+
+  now += 10 * 60_000 + 1;
+  await auth.issuePairing();
+  const stored = JSON.parse(await readFile(join(directory, "remote-auth.v1.json"), "utf8")) as {
+    pairingGrants: unknown[];
+  };
+  assert.equal(stored.pairingGrants.length, 1);
+});
+
+test("remote session retention bounds active authority and terminal history", async () => {
+  let now = Date.parse("2026-08-12T09:00:00.000Z");
+  const auth = new RemoteAuth(await mkdtemp(join(tmpdir(), "aldunis-remote-auth-retention-")), {
+    now: () => now,
+    maxActiveSessions: 2,
+    maxTerminalSessions: 1,
+  });
+  const keys = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const publicKey = keys.publicKey.export({ format: "jwk" });
+  const pairDevice = async (label: string) => {
+    const pairing = await auth.issuePairing();
+    return auth.pair({ credential: pairing.credential, label, publicKey });
+  };
+
+  const first = await pairDevice("First");
+  const second = await pairDevice("Second");
+  const overflow = await auth.issuePairing();
+  await assert.rejects(
+    () => auth.pair({ credential: overflow.credential, label: "Overflow", publicKey }),
+    (error: unknown) => error instanceof RemoteAuthError && error.status === 429,
+  );
+
+  assert.equal(await auth.revoke(second.sessionId), true);
+  const third = await auth.pair({ credential: overflow.credential, label: "Third", publicKey });
+  now += 1_000;
+  assert.equal(await auth.revoke(first.sessionId), true);
+  const sessions = await auth.listSessions();
+  assert.deepEqual(
+    sessions.map((session) => session.id),
+    [first.sessionId, third.sessionId],
+  );
+  assert.equal(sessions[0]?.revokedAt !== null, true);
+
+  now += 30 * 24 * 60 * 60_000 + 1;
+  assert.deepEqual(
+    (await auth.listSessions()).map((session) => session.id),
+    [third.sessionId],
+  );
+});
 
 function proof(
   session: { sessionId: string; sessionToken: string },
