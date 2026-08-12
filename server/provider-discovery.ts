@@ -22,6 +22,8 @@ export interface ProviderDiscoveryDependencies {
   probeAcpModels?: typeof probeAcpModels;
 }
 
+export const MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES = 4;
+
 function unavailableShikigamiReadiness(detail: string): ShikigamiReadiness {
   return {
     id: "shikigami",
@@ -175,8 +177,16 @@ export class ProviderDiscovery {
     const profiles = (await this.dependencies.profiles.list().catch(() => [])).filter(
       (profile) => profile.provider === "shikigami",
     );
-    const profileDiscoveries = await Promise.all(
-      profiles.map(async (profile) => {
+    const profileDiscoveries = new Array<
+      NonNullable<ProviderDiscoverySnapshot["profileDiscoveries"]>[number]
+    >(profiles.length);
+    let nextProfileIndex = 0;
+    const discoverNextProfile = async (): Promise<void> => {
+      while (true) {
+        const index = nextProfileIndex;
+        nextProfileIndex += 1;
+        const profile = profiles[index];
+        if (!profile) return;
         let readiness: ShikigamiReadiness;
         try {
           const runtime = await this.dependencies.profiles.runtime(profile.id);
@@ -192,7 +202,7 @@ export class ProviderDiscovery {
               : "The selected Shikigami profile could not be checked.",
           );
         }
-        return {
+        profileDiscoveries[index] = {
           profileId: profile.id,
           installed: readiness.installed,
           authenticated: readiness.authenticated,
@@ -200,7 +210,13 @@ export class ProviderDiscovery {
           detail: readiness.detail,
           models: readiness.models,
         };
-      }),
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES, profiles.length) },
+        () => discoverNextProfile(),
+      ),
     );
     const selected = profileDiscoveries.find(
       (profile) => profile.profileId === DEFAULT_SHIKIGAMI_PROFILE_ID,
