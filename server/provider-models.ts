@@ -18,10 +18,7 @@ import { buildAcpEnvironment } from "./acp-provider.ts";
 import { probeAcpModels, type AcpDiscoveredModel } from "./acp-models.ts";
 import type { ProviderAdapterStore } from "./provider-adapters.ts";
 import type { ProviderId, ReasoningEffort } from "./provider.ts";
-import {
-  CLAUDE_PROBE_MODELS,
-  normalizeClaudeModelSlug,
-} from "./profiles.ts";
+import { CLAUDE_PROBE_MODELS, normalizeClaudeModelSlug } from "./profiles.ts";
 import type {
   ShikigamiAdapter,
   ShikigamiModel,
@@ -33,8 +30,10 @@ const MAX_PROBE_FILES = 100_000;
 const MAX_PROBE_BYTES = 256 * 1024 * 1024;
 const MAX_PROBE_ENTRIES = 200_000;
 const MAX_PROBE_PREPARATION_MS = 5_000;
+const MAX_ADAPTER_MODEL_DISCOVERY_MS = 13_000;
 const PROBE_INDEX_RESERVE_MS = 1_000;
-const PROBE_SENSITIVE_PATH = /(^|\/)(\.env(?:\..*)?|\.npmrc|\.netrc|credentials(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:key|pem|p12|pfx))$/i;
+const PROBE_SENSITIVE_PATH =
+  /(^|\/)(\.env(?:\..*)?|\.npmrc|\.netrc|credentials(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:key|pem|p12|pfx))$/i;
 const BULK_PROBE_DIRECTORIES = new Set([
   ".cache",
   ".gradle",
@@ -67,7 +66,10 @@ export interface ProviderModel {
 }
 
 export class ProviderModelError extends Error {
-  constructor(message: string, readonly status = 409) {
+  constructor(
+    message: string,
+    readonly status = 409,
+  ) {
     super(message);
   }
 }
@@ -123,10 +125,10 @@ export function resolveEffectiveProviderModel(
   models: readonly ProviderModel[],
 ): string {
   if (
-    typeof requestedModel !== "string"
-    || !requestedModel.trim()
-    || requestedModel.length > 256
-    || requestedModel.includes("\0")
+    typeof requestedModel !== "string" ||
+    !requestedModel.trim() ||
+    requestedModel.length > 256 ||
+    requestedModel.includes("\0")
   ) {
     throw modelConflict(provider);
   }
@@ -138,9 +140,8 @@ export function resolveEffectiveProviderModel(
     if (provider === "claude-code") return "default";
     return available.find((model) => model.isDefault)?.id ?? available[0]!.id;
   }
-  const requested = provider === "claude-code"
-    ? normalizeClaudeModelSlug(requestedModel)
-    : requestedModel.trim();
+  const requested =
+    provider === "claude-code" ? normalizeClaudeModelSlug(requestedModel) : requestedModel.trim();
   const match = available.find((model) => model.id === requested);
   if (!match) throw modelConflict(provider);
   return match.id;
@@ -193,6 +194,65 @@ interface ProbeTreeContext {
   branchName: string;
 }
 
+export const MAX_ACTIVE_ADAPTER_MODEL_PROBES = 4;
+export const MAX_PENDING_ADAPTER_MODEL_PROBES = 32;
+
+interface PendingAdapterModelProbe {
+  resolve(release: (() => void) | null): void;
+  timer: NodeJS.Timeout;
+}
+
+let activeAdapterModelProbes = 0;
+const pendingAdapterModelProbes: PendingAdapterModelProbe[] = [];
+
+function releaseAdapterModelProbeSlot(): void {
+  const next = pendingAdapterModelProbes.shift();
+  if (next) {
+    clearTimeout(next.timer);
+    next.resolve(releaseAdapterModelProbeSlot);
+  } else {
+    activeAdapterModelProbes -= 1;
+  }
+}
+
+function acquireAdapterModelProbeSlot(waitMs: number): Promise<(() => void) | null> {
+  if (activeAdapterModelProbes < MAX_ACTIVE_ADAPTER_MODEL_PROBES) {
+    activeAdapterModelProbes += 1;
+    return Promise.resolve(releaseAdapterModelProbeSlot);
+  }
+  if (pendingAdapterModelProbes.length >= MAX_PENDING_ADAPTER_MODEL_PROBES || waitMs <= 0) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const pending: PendingAdapterModelProbe = {
+      resolve,
+      timer: setTimeout(() => {
+        const index = pendingAdapterModelProbes.indexOf(pending);
+        if (index >= 0) pendingAdapterModelProbes.splice(index, 1);
+        resolve(null);
+      }, waitMs),
+    };
+    pending.timer.unref();
+    pendingAdapterModelProbes.push(pending);
+  });
+}
+
+/** Admit one complete temporary-workspace lifecycle through the host-wide bound. */
+export async function withAdapterModelProbeAdmission<T>(
+  timeoutMs: number,
+  operation: (deadline: number) => Promise<T>,
+): Promise<T | null> {
+  const deadline = Date.now() + timeoutMs;
+  const release = await acquireAdapterModelProbeSlot(timeoutMs);
+  if (!release) return null;
+  try {
+    if (deadline <= Date.now()) return null;
+    return await operation(deadline);
+  } finally {
+    release();
+  }
+}
+
 function remainingProbeTime(deadline: number): number {
   return Math.max(1, deadline - Date.now());
 }
@@ -228,11 +288,11 @@ async function probeTreeContext(source: string, deadline: number): Promise<Probe
       branchName: "probe",
     };
   }
-  const { stdout } = await execFileAsync(
-    "git",
-    ["-C", source, "ls-files", "-s", "-z"],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: remainingProbeTime(deadline) },
-  );
+  const { stdout } = await execFileAsync("git", ["-C", source, "ls-files", "-s", "-z"], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: remainingProbeTime(deadline),
+  });
   const trackedPaths = new Set<string>();
   const submoduleDirectories = new Set<string>();
   for (const record of stdout.split("\0").filter(Boolean)) {
@@ -317,18 +377,17 @@ async function isIgnoredProbeDirectory(
     return BULK_PROBE_DIRECTORIES.has(relativePath.split("/").at(-1) ?? "");
   }
   if (
-    !BULK_PROBE_DIRECTORIES.has(relativePath.split("/").at(-1) ?? "")
-    || context.trackedPaths.has(relativePath)
-    || context.trackedDirectories.has(relativePath)
+    !BULK_PROBE_DIRECTORIES.has(relativePath.split("/").at(-1) ?? "") ||
+    context.trackedPaths.has(relativePath) ||
+    context.trackedDirectories.has(relativePath)
   ) {
     return false;
   }
   try {
-    await execFileAsync(
-      "git",
-      ["-C", context.source, "check-ignore", "-q", "--", relativePath],
-      { encoding: "utf8", timeout: timeoutMs },
-    );
+    await execFileAsync("git", ["-C", context.source, "check-ignore", "-q", "--", relativePath], {
+      encoding: "utf8",
+      timeout: timeoutMs,
+    });
     return true;
   } catch {
     return false;
@@ -337,10 +396,9 @@ async function isIgnoredProbeDirectory(
 
 function pathIsInside(root: string, candidate: string): boolean {
   const difference = relative(root, candidate);
-  return difference === "" || (
-    difference !== ".."
-    && !difference.startsWith(`..${sep}`)
-    && !difference.startsWith(sep)
+  return (
+    difference === "" ||
+    (difference !== ".." && !difference.startsWith(`..${sep}`) && !difference.startsWith(sep))
   );
 }
 
@@ -376,8 +434,10 @@ async function copyProbeWorkingTree(
   entries.sort((left, right) => {
     const leftPath = relativeDirectory ? `${relativeDirectory}/${left.name}` : left.name;
     const rightPath = relativeDirectory ? `${relativeDirectory}/${right.name}` : right.name;
-    const leftTracked = context.trackedPaths.has(leftPath) || context.trackedDirectories.has(leftPath);
-    const rightTracked = context.trackedPaths.has(rightPath) || context.trackedDirectories.has(rightPath);
+    const leftTracked =
+      context.trackedPaths.has(leftPath) || context.trackedDirectories.has(leftPath);
+    const rightTracked =
+      context.trackedPaths.has(rightPath) || context.trackedDirectories.has(rightPath);
     return Number(rightTracked) - Number(leftTracked) || left.name.localeCompare(right.name);
   });
   for (const entry of entries) {
@@ -398,28 +458,42 @@ async function copyProbeWorkingTree(
     }
     if (stats.isSymbolicLink()) {
       if (
-        PROBE_SENSITIVE_PATH.test(relativePath)
-        || (
-          !context.allowNonGitFiles
-          && !context.trackedPaths.has(relativePath)
-          && !context.allowedUntrackedPaths.has(relativePath)
-        )
-      ) continue;
+        PROBE_SENSITIVE_PATH.test(relativePath) ||
+        (!context.allowNonGitFiles &&
+          !context.trackedPaths.has(relativePath) &&
+          !context.allowedUntrackedPaths.has(relativePath))
+      )
+        continue;
       await copyProbeSymlink(sourcePath, destinationPath, context, destinationRoot);
       continue;
     }
     if (stats.isDirectory()) {
-      const hasAllowedContent = context.trackedPaths.has(relativePath)
-        || context.trackedDirectories.has(relativePath)
-        || context.submoduleDirectories.has(relativePath)
-        || context.allowedUntrackedPaths.has(relativePath)
-        || context.allowedUntrackedDirectories.has(relativePath)
-        || context.allowNonGitFiles;
+      const hasAllowedContent =
+        context.trackedPaths.has(relativePath) ||
+        context.trackedDirectories.has(relativePath) ||
+        context.submoduleDirectories.has(relativePath) ||
+        context.allowedUntrackedPaths.has(relativePath) ||
+        context.allowedUntrackedDirectories.has(relativePath) ||
+        context.allowNonGitFiles;
       if (!hasAllowedContent) continue;
-      if (await isIgnoredProbeDirectory(context, relativePath, Math.max(1, budget.deadline - Date.now()))) continue;
+      if (
+        await isIgnoredProbeDirectory(
+          context,
+          relativePath,
+          Math.max(1, budget.deadline - Date.now()),
+        )
+      )
+        continue;
       await rm(destinationPath, { recursive: true, force: true });
       await mkdir(destinationPath, { recursive: true, mode: 0o700 });
-      await copyProbeWorkingTree(sourcePath, destinationPath, budget, context, relativePath, destinationRoot);
+      await copyProbeWorkingTree(
+        sourcePath,
+        destinationPath,
+        budget,
+        context,
+        relativePath,
+        destinationRoot,
+      );
       continue;
     }
     if (!stats.isFile()) {
@@ -427,13 +501,12 @@ async function copyProbeWorkingTree(
       continue;
     }
     if (
-      PROBE_SENSITIVE_PATH.test(relativePath)
-      || (
-        !context.allowNonGitFiles
-        && !context.trackedPaths.has(relativePath)
-        && !context.allowedUntrackedPaths.has(relativePath)
-      )
-    ) continue;
+      PROBE_SENSITIVE_PATH.test(relativePath) ||
+      (!context.allowNonGitFiles &&
+        !context.trackedPaths.has(relativePath) &&
+        !context.allowedUntrackedPaths.has(relativePath))
+    )
+      continue;
     if (budget.files >= MAX_PROBE_FILES) {
       budget.truncated = true;
       return;
@@ -444,27 +517,29 @@ async function copyProbeWorkingTree(
     }
     await rm(destinationPath, { recursive: true, force: true });
     await copyFile(sourcePath, destinationPath);
-    await chmod(destinationPath, (stats.mode & 0o700) || 0o600);
+    await chmod(destinationPath, stats.mode & 0o700 || 0o600);
     budget.files += 1;
     budget.bytes += stats.size;
   }
 }
 
-async function createAcpProbeWorkspace(source: string): Promise<{
+async function createAcpProbeWorkspace(
+  source: string,
+  operationDeadline: number,
+): Promise<{
   processDirectory: string;
   sessionDirectory: string;
 }> {
   const sourceRoot = await realpath(source);
-  const deadline = Date.now() + MAX_PROBE_PREPARATION_MS;
+  const deadline = Math.min(operationDeadline, Date.now() + MAX_PROBE_PREPARATION_MS);
   const processDirectory = await mkdtemp(join(tmpdir(), "aldunis-provider-model-probe-"));
   const sessionDirectory = await mkdtemp(join(tmpdir(), "aldunis-provider-model-session-"));
   try {
     const context = await probeTreeContext(sourceRoot, deadline);
-    await execFileAsync(
-      "git",
-      ["init", "-q", sessionDirectory],
-      { encoding: "utf8", timeout: remainingProbeTime(deadline) },
-    );
+    await execFileAsync("git", ["init", "-q", sessionDirectory], {
+      encoding: "utf8",
+      timeout: remainingProbeTime(deadline),
+    });
     await execFileAsync(
       "git",
       ["-C", sessionDirectory, "symbolic-ref", "HEAD", `refs/heads/${context.branchName}`],
@@ -495,11 +570,10 @@ async function createAcpProbeWorkspace(source: string): Promise<{
         },
       },
     );
-    await execFileAsync(
-      "git",
-      ["-C", sessionDirectory, "update-ref", "HEAD", emptyCommit.trim()],
-      { encoding: "utf8", timeout: remainingProbeTime(deadline) },
-    );
+    await execFileAsync("git", ["-C", sessionDirectory, "update-ref", "HEAD", emptyCommit.trim()], {
+      encoding: "utf8",
+      timeout: remainingProbeTime(deadline),
+    });
     const budget: ProbeCopyBudget = {
       entries: 0,
       files: 0,
@@ -507,23 +581,15 @@ async function createAcpProbeWorkspace(source: string): Promise<{
       truncated: false,
       deadline: deadline - PROBE_INDEX_RESERVE_MS,
     };
-    await copyProbeWorkingTree(
-      sourceRoot,
-      sessionDirectory,
-      budget,
-      context,
-      "",
-      sessionDirectory,
-    );
+    await copyProbeWorkingTree(sourceRoot, sessionDirectory, budget, context, "", sessionDirectory);
     // A bounded copy may be partial; keep it isolated and object-limited so
     // adapters can still advertise context-free models without seeing secrets.
     if (!budget.truncated) {
       try {
-        await execFileAsync(
-          "git",
-          ["-C", sessionDirectory, "add", "-A", "-f", "--", "."],
-          { encoding: "utf8", timeout: remainingProbeTime(deadline) },
-        );
+        await execFileAsync("git", ["-C", sessionDirectory, "add", "-A", "-f", "--", "."], {
+          encoding: "utf8",
+          timeout: remainingProbeTime(deadline),
+        });
         const { stdout: tree } = await execFileAsync(
           "git",
           ["-C", sessionDirectory, "write-tree"],
@@ -550,7 +616,9 @@ async function createAcpProbeWorkspace(source: string): Promise<{
           { encoding: "utf8", timeout: remainingProbeTime(deadline) },
         );
       } catch {
-        await rm(join(sessionDirectory, ".git", "index.lock"), { force: true }).catch(() => undefined);
+        await rm(join(sessionDirectory, ".git", "index.lock"), { force: true }).catch(
+          () => undefined,
+        );
       }
     }
     await chmod(sessionDirectory, 0o700);
@@ -577,31 +645,41 @@ async function discoverAdapterModels(
   } catch {
     throw discoveryUnavailable(provider);
   }
-  let probeWorkspace: { processDirectory: string; sessionDirectory: string };
-  try {
-    probeWorkspace = await createAcpProbeWorkspace(cwd);
-  } catch {
-    throw discoveryUnavailable(provider);
-  }
-  try {
-    // Model discovery is a provider subprocess operation. Give it an isolated
-    // snapshot of the selected revision, so session/new sees the same project
-    // context without exposing or mutating the user's live worktree before the
-    // run checkpoint is captured.
-    const models = await probeAcpModels({
-      executable,
-      arguments: installed.manifest.executable.arguments,
-      environment,
-      cwd: probeWorkspace.processDirectory,
-      sessionCwd: probeWorkspace.sessionDirectory,
-      timeoutMs: 8_000,
-    }).catch(() => []);
-    if (models.length === 0) throw discoveryUnavailable(provider);
-    return mapAcpModels(models);
-  } finally {
-    await rm(probeWorkspace.processDirectory, { recursive: true, force: true }).catch(() => undefined);
-    await rm(probeWorkspace.sessionDirectory, { recursive: true, force: true }).catch(() => undefined);
-  }
+  const models = await withAdapterModelProbeAdmission(
+    MAX_ADAPTER_MODEL_DISCOVERY_MS,
+    async (deadline) => {
+      let probeWorkspace: { processDirectory: string; sessionDirectory: string };
+      try {
+        probeWorkspace = await createAcpProbeWorkspace(cwd, deadline);
+      } catch {
+        return [];
+      }
+      try {
+        if (deadline <= Date.now()) return [];
+        // Model discovery is a provider subprocess operation. Give it an isolated
+        // snapshot of the selected revision, so session/new sees the same project
+        // context without exposing or mutating the user's live worktree before the
+        // run checkpoint is captured.
+        return await probeAcpModels({
+          executable,
+          arguments: installed.manifest.executable.arguments,
+          environment,
+          cwd: probeWorkspace.processDirectory,
+          sessionCwd: probeWorkspace.sessionDirectory,
+          timeoutMs: remainingProbeTime(deadline),
+        }).catch(() => []);
+      } finally {
+        await rm(probeWorkspace.processDirectory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+        await rm(probeWorkspace.sessionDirectory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
+    },
+  );
+  if (!models || models.length === 0) throw discoveryUnavailable(provider);
+  return mapAcpModels(models);
 }
 
 export async function discoverProviderModels(
@@ -618,14 +696,13 @@ export async function discoverProviderModels(
     return mapCodexModels(readiness.models);
   }
   if (provider === "shikigami") {
-    const readiness = await services.shikigami.readiness(
-      services.shikigamiProfile?.environment,
-      {
+    const readiness = await services.shikigami
+      .readiness(services.shikigamiProfile?.environment, {
         executable: services.shikigamiProfile?.executable,
         configPath: services.shikigamiProfile?.configPath,
         cwd,
-      },
-    ).catch(() => null);
+      })
+      .catch(() => null);
     if (!readiness?.installed || !readiness.authenticated || readiness.models.length === 0) {
       throw discoveryUnavailable(provider);
     }
