@@ -39,7 +39,7 @@
     },
     {
       "name": "HostCommand",
-      "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind, remote, and TLS options."
+      "description": "A typed Aldunis Code CLI startup command for starting or explicitly serving the local host with validated bind and remote options plus certificate and private-key PEM inputs bounded to 1 MiB each through stable opened descriptors."
     },
     {
       "name": "RemoteAuthCommand",
@@ -1677,6 +1677,12 @@
       "subject": "HostCommand",
       "source": "Aldunis Code CLI command contract",
       "locator": "server/cli.ts#parseCliArgs; server/main.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "HostCommand",
+      "source": "Aldunis Code Issue #893 bounded TLS material loading",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/893; server/tls-material.ts#readTlsMaterial; server/main.ts",
       "confidence": 1.0
     },
     {

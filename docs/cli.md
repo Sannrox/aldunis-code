@@ -29,13 +29,13 @@ npm run cli -- serve --host 127.0.0.1 --port 4175
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| `start` | Start the local Aldunis Code host; this is the default command. |
-| `serve` | Start the host with explicit server-oriented intent. |
-| `auth pairing create` | Issue a one-time remote pairing credential. |
-| `auth pairing list` | List active remote sessions without exposing secrets. |
-| `auth pairing revoke --session <id>` | Revoke one remote session. |
+| Command                              | Purpose                                                         |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `start`                              | Start the local Aldunis Code host; this is the default command. |
+| `serve`                              | Start the host with explicit server-oriented intent.            |
+| `auth pairing create`                | Issue a one-time remote pairing credential.                     |
+| `auth pairing list`                  | List active remote sessions without exposing secrets.           |
+| `auth pairing revoke --session <id>` | Revoke one remote session.                                      |
 
 The auth group accepts the shorter aliases `auth pair`, `auth list`, and
 `auth revoke`. `auth remote ...` is also accepted as a descriptive alias.
@@ -52,7 +52,9 @@ The auth group accepts the shorter aliases `auth pair`, `auth list`, and
 ```
 
 LAN mode requires a private bind address, an HTTPS public origin, and both TLS
-files. Tailscale mode keeps the host bound to loopback and configures Tailscale
+files. Each PEM file must be a regular file no larger than 1 MiB; symlink-mounted
+secret files are accepted and pinned through their opened descriptor. Tailscale
+mode keeps the host bound to loopback and configures Tailscale
 Serve. SSH mode keeps the host bound to loopback, enables proof-key pairing over
 an SSH local forward, and is intended for the desktop-managed environment
 flow. SSH mode defaults to port 4177 so it does not collide with the Vite

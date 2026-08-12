@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
 import packageJson from "../package.json" with { type: "json" };
@@ -9,6 +8,7 @@ import { loadManagedHostConfiguration, ManagedHost } from "./managed-host.ts";
 import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
 import { DEFAULT_HOST_PORT, DEFAULT_SSH_REMOTE_PORT } from "../src/ports.ts";
+import { readTlsMaterial } from "./tls-material.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -140,8 +140,8 @@ const managedHost = managedMode
 const tls =
   remoteMode === "lan" || managedNetworkBind
     ? {
-        cert: await readFile(tlsCertificatePath!),
-        key: await readFile(tlsKeyPath!),
+        cert: await readTlsMaterial(tlsCertificatePath!, "TLS certificate"),
+        key: await readTlsMaterial(tlsKeyPath!, "TLS private key"),
       }
     : undefined;
 let publicUrl = configuredPublicUrl;
