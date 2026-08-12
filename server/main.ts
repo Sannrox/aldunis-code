@@ -130,10 +130,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535) {
   throw new Error(`Invalid port: ${portValue}`);
 }
 
+const stateDirectory = defaultStateDirectory();
 const remoteAuth = remoteMode
-  ? new RemoteAuth(defaultStateDirectory(), { allowLoopbackHttp: remoteMode === "ssh" })
+  ? new RemoteAuth(stateDirectory, { allowLoopbackHttp: remoteMode === "ssh" })
   : undefined;
-const managedHost = managedMode ? new ManagedHost(await loadManagedHostConfiguration()) : undefined;
+const managedHost = managedMode
+  ? new ManagedHost(await loadManagedHostConfiguration(), { replayDirectory: stateDirectory })
+  : undefined;
 const tls =
   remoteMode === "lan" || managedNetworkBind
     ? {
@@ -142,7 +145,7 @@ const tls =
       }
     : undefined;
 let publicUrl = configuredPublicUrl;
-const state = new LocalStateStore();
+const state = new LocalStateStore(stateDirectory);
 const releaseWriterLease = await state.acquireWriterLease();
 const server = createLocalHost({
   state,

@@ -68,9 +68,10 @@ persisted state.
 Enterprise-managed hosted mode is a separate, explicitly selected startup
 profile. The gateway supplies a short-lived, audience- and tenant-bound
 `x-aldunis-code-assertion`; Code verifies its EdDSA signature, lifetime, scope,
-single-use identity, and any supplied request bindings before serving an API
-mutation. This mode is single-tenant alpha only and does not reuse paired
-device sessions or silently fall back to loopback. See the accepted
+single-use identity (durable across host restarts), and mandatory
+method/path/body bindings before serving a non-descriptor `/api/*` request.
+This mode is single-tenant alpha only and does not reuse paired device sessions
+or silently fall back to loopback. See the accepted
 [managed hosted workbench decision](decisions/managed-hosted-workbench.md).
 
 ## Ownership
@@ -101,6 +102,9 @@ transfer of usage and audit authority from Sekai Chisei.
   executables, adapters, endpoints, credentials, arbitrary roots, or arbitrary
   worktrees. The browser receives a bounded catalogue rather than filesystem
   enumeration.
+- Managed assertion JTIs are single-use and durable in the host state
+  directory; method, path, and body digest bindings are mandatory for every
+  authenticated `/api/*` route other than the remote descriptor.
 - A non-loopback managed listener requires explicit TLS certificate and key
   material; private addressing is not treated as transport security.
 - Managed Shikigami receives a deterministic allowlisted environment and a

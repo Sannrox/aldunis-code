@@ -24,8 +24,11 @@ assertion selects a fixed Code host profile. The managed host:
 2. accepts only `x-aldunis-code-assertion` assertions with the configured
    issuer/audience/tenant/instance, `code:workbench` scope, `managed` mode,
    `aldunis-code-managed` profile, valid lifetime of at most five minutes, and
-   a single-use `jti`. Optional method/path/body bindings are checked when the
-   gateway supplies them. Missing, expired, replayed, altered, or
+   a single-use `jti`. Every non-descriptor `/api/*` assertion must bind
+   `method`, `path`, and `body_sha256` to the request; unbound assertions are
+   rejected. Consumed JTIs are persisted under the host state directory so
+   replay fails closed across process restarts and concurrent host processes
+   that share that directory. Missing, expired, replayed, altered, unbound, or
    cross-audience assertions fail closed;
 3. exposes only the configured canonical repository catalogue. Root and
    worktree requests are resolved against that catalogue, reject symlinks and
