@@ -7,6 +7,7 @@ import {
   coalesceConsecutiveAssistantMessages,
   LocalStateError,
   LocalStateStore,
+  MAX_EVENT_ENVELOPE_BYTES,
   MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES,
   MAX_THREADS_PER_PROJECT,
   projectDelegatedConversationOutcomes,
@@ -864,6 +865,68 @@ test("extreme sequence gaps fail without scanning the numeric range", async () =
   await assert.rejects(
     () => new LocalStateStore(directory).load(),
     /not ordered at event 9007199254740991; expected 1/,
+  );
+});
+
+test("concurrent first loads share one initialization and keep append order", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
+  const seed = new LocalStateStore(directory);
+  await seed.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+
+  let releaseRead!: () => void;
+  const holdRead = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  let markWaiting!: () => void;
+  const sawWaiting = new Promise<void>((resolve) => {
+    markWaiting = resolve;
+  });
+  let waiting = 0;
+  const store = new LocalStateStore(directory, {
+    holdHistoryRead: async () => {
+      waiting += 1;
+      markWaiting();
+      await holdRead;
+    },
+  });
+
+  const firstLoad = store.load();
+  const secondLoad = store.inspect();
+  await sawWaiting;
+  assert.equal(waiting, 1);
+  releaseRead();
+  await firstLoad;
+  await store.saveProject({ id: "project-2", name: "second", root: "/second" });
+  await secondLoad;
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const projection = await store.inspect();
+  assert.equal(projection.projects.length, 2);
+  const sequences = (await readFile(join(directory, "events.v1.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).sequence);
+  assert.deepEqual(
+    sequences,
+    Array.from({ length: sequences.length }, (_, index) => index + 1),
+  );
+});
+
+test("oversized history events fail closed before parsing envelope JSON", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
+  const padding = "x".repeat(MAX_EVENT_ENVELOPE_BYTES + 1);
+  await writeFile(
+    join(directory, "events.v1.jsonl"),
+    `{"schemaVersion":2,"sequence":1,"id":"event-1","recordedAt":"2026-08-12T00:00:00.000Z","event":{"type":"project_saved","project":{"schemaVersion":2,"id":"project-1","name":"${padding}","root":"/fixture","createdAt":"2026-08-12T00:00:00.000Z","updatedAt":"2026-08-12T00:00:00.000Z"}}}\n`,
+    "utf8",
+  );
+
+  await assert.rejects(
+    () => new LocalStateStore(directory).load(),
+    (error: unknown) =>
+      error instanceof LocalStateError &&
+      /exceeds the supported size at line 1/.test(error.message),
   );
 });
 

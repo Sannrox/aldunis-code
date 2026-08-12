@@ -38,6 +38,8 @@ const MANAGED_STAGED_IMAGE_NAME = /^.+-[0-9a-f]{8}\.(gif|jpe?g|png|webp)$/i;
 const MAX_STAGED_IMAGES_PER_WORKTREE = 32;
 const MAX_STAGED_BYTES_PER_WORKTREE = 32 * 1024 * 1024;
 export const MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES = 256;
+/** Managed ignore file is exactly `*\n`; reject anything larger before reading it. */
+export const MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES = 16;
 
 interface PreviewFileOperations {
   readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
@@ -930,15 +932,54 @@ async function ensureComposerAttachmentDirectory(
   await constrainPath(worktree, rootAttachmentDir);
 }
 
+async function readComposerAttachmentIgnore(ignoreFile: string): Promise<string | null> {
+  let handle: FileHandle;
+  try {
+    handle = await open(ignoreFile, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const details = await handle.stat();
+    if (!Number.isSafeInteger(details.size) || details.size < 0) {
+      throw new RepositoryError(
+        "aldunis-code-composer-images/.gitignore must use the Aldunis-managed ignore rule (* only).",
+        409,
+      );
+    }
+    if (details.size > MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES) {
+      throw new RepositoryError(
+        "aldunis-code-composer-images/.gitignore exceeds the supported size.",
+        413,
+      );
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new RepositoryError(
+        "aldunis-code-composer-images/.gitignore changed while being read.",
+        409,
+      );
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 async function ensureComposerAttachmentIgnore(rootAttachmentDir: string): Promise<void> {
   const ignoreFile = join(rootAttachmentDir, ".gitignore");
   // Exact rule only: ignore everything in this directory, including this file.
   // No negation rules, so screenshots and the ignore file stay out of `git add -A`.
   const required = "*\n";
-  const current = await readFile(ignoreFile, "utf8").catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
+  const current = await readComposerAttachmentIgnore(ignoreFile);
   if (current === null) {
     try {
       await writeFile(ignoreFile, required, { flag: "wx" });
@@ -946,8 +987,16 @@ async function ensureComposerAttachmentIgnore(rootAttachmentDir: string): Promis
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       // Another request created the ignore file; re-read and validate below.
     }
+  } else if (current === required) {
+    return;
   }
-  const effective = await readFile(ignoreFile, "utf8").catch(() => null);
+  let effective: string | null;
+  try {
+    effective = await readComposerAttachmentIgnore(ignoreFile);
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    effective = null;
+  }
   if (effective === required) return;
   throw new RepositoryError(
     "aldunis-code-composer-images/.gitignore must use the Aldunis-managed ignore rule (* only).",

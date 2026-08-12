@@ -21,14 +21,15 @@ active worktree. That directory is gitignored (so screenshots stay out of
 `git add -A`), remains attachable as local context, and is filtered out of
 Changes review and file browse results. Staging is capped at 32 images or 32 MB
 per worktree (reject when full), with quota mutations serialized across local
-host processes. Operators may remove
+host processes. The managed `.gitignore` is exactly `*\n` and is inspected with
+a 16-byte fail-closed read. Operators may remove
 `aldunis-code-composer-images/` manually when reclaiming disk space.
 
 Typical contents (names may evolve; do not commit these files):
 
 | File / area                  | Purpose                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `events.v1.jsonl`            | Append-only conversation and autonomy history log                                          |
+| `events.v1.jsonl`            | Append-only conversation and autonomy history log (at most 8 MiB per JSONL event record)   |
 | `preferences.v1.json`        | At most 16 KiB of schema-owned theme, density, worktree, shortcut, and display preferences |
 | `automations.v1.json`        | Scheduled automations                                                                      |
 | `release-deliveries.v1.json` | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references  |
@@ -72,8 +73,11 @@ seconds as an explicitly stale fallback.
 - Active turns remain owned by the host if you navigate away and return.
 - Ordered event history streams directly into the live projection at startup;
   raw whole-file content, a complete line array, and all parsed envelopes are
-  not retained. The rare intact-fork recovery path verifies the file identity,
-  rereads it to renumber physical append order, and atomically replaces it.
+  not retained. Initialization is single-flight so concurrent first loads cannot
+  clobber a newer append. Each JSONL event record is capped at 8 MiB on read and
+  write. The rare intact-fork recovery path verifies the file identity, rereads
+  it to renumber physical append order, rechecks identity immediately before
+  replace, and atomically replaces it.
 - Compaction, deletion, retention, and repair rewrites coalesce legacy
   assistant chunks in linear time and serialize through a 256 KiB buffer;
   neither a complete serialized-line array nor a joined history string is

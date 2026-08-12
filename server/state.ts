@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { open, mkdir, rename, rm, stat, type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { lock } from "proper-lockfile";
 import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
 import { wouldCreateDelegatedConversationCycle } from "../src/lib/delegated-conversation-graph.ts";
@@ -43,6 +42,16 @@ export const LOCAL_STATE_SCHEMA_VERSION = 2;
 const SUPPORTED_LOCAL_STATE_SCHEMA_VERSIONS = new Set([1, LOCAL_STATE_SCHEMA_VERSION]);
 export const MAX_THREADS_PER_PROJECT = 200;
 export const MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES = 256 * 1024;
+/** Fail-closed ceiling for one JSONL event record (line body, excluding newline). */
+export const MAX_EVENT_ENVELOPE_BYTES = 8 * 1024 * 1024;
+
+export interface LocalStateStoreOptions {
+  /**
+   * Test-only seam: pause after opening history so concurrent first loads can
+   * interleave with later appends before initialization finishes.
+   */
+  holdHistoryRead?: () => Promise<void>;
+}
 
 export interface Project {
   schemaVersion: 2;
@@ -1135,20 +1144,58 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
   };
 }
 
-async function* streamEventEnvelopes(handle: FileHandle): AsyncGenerator<EventEnvelope> {
-  const input = handle.createReadStream({ encoding: "utf8", start: 0, autoClose: false });
-  const lines = createInterface({ input, crlfDelay: Infinity });
+async function* streamEventEnvelopes(
+  handle: FileHandle,
+  maxBytes = MAX_EVENT_ENVELOPE_BYTES,
+): AsyncGenerator<EventEnvelope> {
+  const input = handle.createReadStream({ start: 0, autoClose: false });
+  let pending = Buffer.alloc(0);
   let lineNumber = 0;
+  const emitLine = function* (raw: Buffer): Generator<EventEnvelope> {
+    lineNumber += 1;
+    const lineBuffer =
+      raw.length > 0 && raw[raw.length - 1] === 0x0d ? raw.subarray(0, raw.length - 1) : raw;
+    if (lineBuffer.length === 0) return;
+    if (lineBuffer.length > maxBytes) {
+      throw new LocalStateError(
+        `Local history event exceeds the supported size at line ${lineNumber}.`,
+      );
+    }
+    yield parseEnvelope(lineBuffer.toString("utf8"), lineNumber);
+  };
   try {
-    for await (const line of lines) {
-      lineNumber += 1;
-      if (!line) continue;
-      yield parseEnvelope(line, lineNumber);
+    for await (const chunk of input) {
+      pending = pending.length ? Buffer.concat([pending, chunk]) : Buffer.from(chunk);
+      while (true) {
+        const newline = pending.indexOf(0x0a);
+        if (newline === -1) {
+          if (pending.length > maxBytes + 1) {
+            throw new LocalStateError(
+              `Local history event exceeds the supported size at line ${lineNumber + 1}.`,
+            );
+          }
+          break;
+        }
+        const raw = pending.subarray(0, newline);
+        pending = pending.subarray(newline + 1);
+        yield* emitLine(raw);
+      }
+    }
+    if (pending.length > 0) {
+      yield* emitLine(pending);
     }
   } finally {
-    lines.close();
     input.destroy();
   }
+}
+
+function assertEventEnvelopeSize(serialized: string, lineNumber?: number): void {
+  if (Buffer.byteLength(serialized, "utf8") <= MAX_EVENT_ENVELOPE_BYTES) return;
+  throw new LocalStateError(
+    lineNumber === undefined
+      ? "Local history event exceeds the supported size."
+      : `Local history event exceeds the supported size at line ${lineNumber}.`,
+  );
 }
 
 function sameEventHistoryFile(
@@ -1181,8 +1228,9 @@ export async function writeEventHistory(
     buffered = [];
     bufferedBytes = 0;
   };
-  for (const envelope of envelopes) {
+  for (const [index, envelope] of envelopes.entries()) {
     const serialized = JSON.stringify(envelope);
+    assertEventEnvelopeSize(serialized, index + 1);
     const lineBytes = Buffer.byteLength(serialized, "utf8") + 1;
     if (lineBytes > maxBufferBytes) {
       await flush();
@@ -1206,9 +1254,11 @@ export function defaultStateDirectory(): string {
 
 export class LocalStateStore {
   readonly #eventPath: string;
+  readonly #options: LocalStateStoreOptions;
   #projection = emptyProjection();
   #writeQueue: Promise<void> = Promise.resolve();
   #loaded = false;
+  #loadPromise: Promise<void> | null = null;
   /**
    * Open assistant segments that have been applied to the in-memory projection
    * and may still be growing. Closed on tool/approval/input or terminal turn
@@ -1220,25 +1270,36 @@ export class LocalStateStore {
   /** Soft-checkpoint growth threshold so long text-only replies are not only in RAM. */
   static readonly ASSISTANT_CHECKPOINT_CHARS = 4_096;
 
-  constructor(readonly directory = defaultStateDirectory()) {
+  constructor(
+    readonly directory = defaultStateDirectory(),
+    options: LocalStateStoreOptions = {},
+  ) {
     this.#eventPath = join(directory, "events.v1.jsonl");
+    this.#options = options;
   }
 
   async #readProjection(): Promise<{
     envelopes: EventEnvelope[];
     projection: StateProjection;
     repaired: boolean;
+    sourceIdentity: Awaited<ReturnType<FileHandle["stat"]>> | null;
   }> {
     let handle: FileHandle;
     try {
       handle = await open(this.#eventPath, "r");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { envelopes: [], projection: emptyProjection(), repaired: false };
+        return {
+          envelopes: [],
+          projection: emptyProjection(),
+          repaired: false,
+          sourceIdentity: null,
+        };
       }
       throw new LocalStateError("Local history could not be read.");
     }
     try {
+      if (this.#options.holdHistoryRead) await this.#options.holdHistoryRead();
       const sourceIdentity = await handle.stat();
       let projection = emptyProjection();
       let parsedCount = 0;
@@ -1259,7 +1320,7 @@ export class LocalStateStore {
         if (!firstMismatch) applyEvent(projection, envelope);
       }
       if (!firstMismatch) {
-        return { envelopes: [], projection, repaired: false };
+        return { envelopes: [], projection, repaired: false, sourceIdentity };
       }
       const isCompleteFork =
         Number.isSafeInteger(maximumSequence) &&
@@ -1298,7 +1359,7 @@ export class LocalStateStore {
       } finally {
         await repairHandle.close().catch(() => undefined);
       }
-      return { envelopes, projection, repaired: true };
+      return { envelopes, projection, repaired: true, sourceIdentity };
     } catch (error) {
       if (error instanceof LocalStateError) throw error;
       throw new LocalStateError("Local history could not be read.");
@@ -1351,9 +1412,35 @@ export class LocalStateStore {
 
   async #ensureLoaded(): Promise<void> {
     if (this.#loaded) return;
+    if (!this.#loadPromise) {
+      this.#loadPromise = this.#initializeProjection();
+    }
+    try {
+      await this.#loadPromise;
+    } catch (error) {
+      this.#loadPromise = null;
+      throw error;
+    }
+  }
+
+  async #initializeProjection(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const history = await this.#readProjection();
-    if (history.repaired) await this.#replaceHistory(history.envelopes);
+    if (history.repaired) {
+      if (!history.sourceIdentity) {
+        throw new LocalStateError("Local history could not be repaired.");
+      }
+      let currentIdentity: Awaited<ReturnType<typeof stat>>;
+      try {
+        currentIdentity = await stat(this.#eventPath);
+      } catch {
+        throw new LocalStateError("Local history changed while it was being repaired.");
+      }
+      if (!sameEventHistoryFile(history.sourceIdentity, currentIdentity)) {
+        throw new LocalStateError("Local history changed while it was being repaired.");
+      }
+      await this.#replaceHistory(history.envelopes);
+    }
     this.#projection = history.projection;
     this.#loaded = true;
   }
@@ -1396,9 +1483,11 @@ export class LocalStateStore {
           recordedAt: new Date().toISOString(),
           event,
         };
+        const serialized = JSON.stringify(envelope);
+        assertEventEnvelopeSize(serialized);
         const handle = await open(this.#eventPath, "a", 0o600);
         try {
-          await handle.writeFile(`${JSON.stringify(envelope)}\n`, "utf8");
+          await handle.writeFile(`${serialized}\n`, "utf8");
           await handle.sync();
         } finally {
           await handle.close();
@@ -1419,9 +1508,11 @@ export class LocalStateStore {
       recordedAt: new Date().toISOString(),
       event: { type: "message_saved", message: { ...message } },
     };
+    const serialized = JSON.stringify(envelope);
+    assertEventEnvelopeSize(serialized);
     const handle = await open(this.#eventPath, "a", 0o600);
     try {
-      await handle.writeFile(`${JSON.stringify(envelope)}\n`, "utf8");
+      await handle.writeFile(`${serialized}\n`, "utf8");
       await handle.sync();
     } finally {
       await handle.close();
