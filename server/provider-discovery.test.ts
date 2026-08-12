@@ -306,3 +306,64 @@ test("failed Shikigami profiles do not strand queued discovery work", async () =
     Array(MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES).fill(false),
   );
 });
+
+test("discovery cancellation stops queued Shikigami profiles and remains cancellation", async () => {
+  const profileCount = MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES * 2;
+  const profiles = Array.from({ length: profileCount }, (_, index) => ({
+    id: index === 0 ? "default:shikigami" : `shikigami-${index}`,
+    provider: "shikigami",
+  }));
+  const entered: string[] = [];
+  const observedSignals: AbortSignal[] = [];
+  const controller = new AbortController();
+  const discovery = new ProviderDiscovery(
+    dependencies({
+      codex: {
+        readiness: async (signal?: AbortSignal) => {
+          if (signal) observedSignals.push(signal);
+          return dependencies().codex.readiness();
+        },
+      },
+      profiles: {
+        list: async () => profiles,
+        runtime: async (id: string) => ({
+          executable: id,
+          configPath: undefined,
+          environment: {},
+        }),
+      } as ProviderDiscoveryDependencies["profiles"],
+      shikigami: {
+        readiness: async (_environment, options) => {
+          entered.push(options.executable ?? "");
+          assert.ok(options.signal);
+          observedSignals.push(options.signal);
+          await new Promise<void>((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+              once: true,
+            });
+          });
+          throw new Error("unreachable");
+        },
+      },
+      probeAcpModels: async (options) => {
+        assert.ok(options.signal);
+        observedSignals.push(options.signal);
+        return [];
+      },
+    }),
+  );
+
+  const pending = discovery.discover({ cwd: "/authorized/worktree", signal: controller.signal });
+  while (entered.length < MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  controller.abort();
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  assert.equal(entered.length, MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES);
+  assert.ok(observedSignals.length > MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES);
+  assert.ok(observedSignals.every((signal) => signal === controller.signal && signal.aborted));
+});

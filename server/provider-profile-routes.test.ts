@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import { handleProviderProfileRoute } from "./provider-profile-routes.ts";
@@ -6,8 +7,11 @@ import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 import { ProfileError } from "./profiles.ts";
 import { RepositoryError } from "./repository.ts";
 
-const request = {} as IncomingMessage;
-const response = {} as ServerResponse;
+const request = Object.assign(new EventEmitter(), { aborted: false }) as IncomingMessage;
+const response = Object.assign(new EventEmitter(), {
+  destroyed: false,
+  writableEnded: false,
+}) as ServerResponse;
 const unused = async () => {
   throw new Error("dependency must not be called");
 };
@@ -65,12 +69,17 @@ test("provider discovery uses the default cwd when no worktree is supplied", asy
     response,
     context({
       readOptionalJson: async () => ({}),
-      providerDiscovery: { discover: async (input: unknown) => ({ input }) },
+      providerDiscovery: {
+        discover: async (input: { cwd: string; signal: AbortSignal }) => ({
+          cwd: input.cwd,
+          aborted: input.signal.aborted,
+        }),
+      },
       sendJson: (_response: ServerResponse, status: number, value: unknown) =>
         writes.push({ status, value }),
     }) as never,
   );
-  assert.deepEqual(writes, [{ status: 200, value: { input: { cwd: "/default" } } }]);
+  assert.deepEqual(writes, [{ status: 200, value: { cwd: "/default", aborted: false } }]);
 });
 
 test("provider discovery canonicalizes an explicitly selected worktree", async () => {
@@ -85,11 +94,86 @@ test("provider discovery canonicalizes an explicitly selected worktree", async (
         calls.push({ root, worktree });
         return { worktree: "/canonical/work" };
       },
-      providerDiscovery: { discover: async (input: unknown) => calls.push(input) },
+      providerDiscovery: {
+        discover: async (input: { cwd: string; signal: AbortSignal }) =>
+          calls.push({ cwd: input.cwd, aborted: input.signal.aborted }),
+      },
       sendJson: () => undefined,
     }) as never,
   );
-  assert.deepEqual(calls, [{ root: "/repo", worktree: "/repo/work" }, { cwd: "/canonical/work" }]);
+  assert.deepEqual(calls, [
+    { root: "/repo", worktree: "/repo/work" },
+    { cwd: "/canonical/work", aborted: false },
+  ]);
+});
+
+test("provider discovery cancels disconnected work and releases lifecycle listeners", async () => {
+  const activeRequest = Object.assign(new EventEmitter(), { aborted: false }) as IncomingMessage;
+  const activeResponse = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+  }) as ServerResponse;
+  let observedSignal: AbortSignal | undefined;
+  let wrote = false;
+  const pending = handleProviderProfileRoute(
+    "/api/providers/discover",
+    activeRequest,
+    activeResponse,
+    context({
+      readOptionalJson: async () => ({}),
+      providerDiscovery: {
+        discover: async ({ signal }: { signal: AbortSignal }) => {
+          observedSignal = signal;
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      },
+      sendJson: () => {
+        wrote = true;
+      },
+    }) as never,
+  );
+  while (!observedSignal) await new Promise((resolve) => setImmediate(resolve));
+
+  activeResponse.emit("close");
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  assert.equal(observedSignal.aborted, true);
+  assert.equal(wrote, false);
+  assert.equal(activeRequest.listenerCount("aborted"), 0);
+  assert.equal(activeResponse.listenerCount("close"), 0);
+});
+
+test("provider discovery rejects a disconnect observed before lifecycle registration", async () => {
+  const closedRequest = Object.assign(new EventEmitter(), { aborted: true }) as IncomingMessage;
+  const closedResponse = Object.assign(new EventEmitter(), {
+    destroyed: true,
+    writableEnded: false,
+  }) as ServerResponse;
+  let discovered = false;
+
+  await assert.rejects(
+    handleProviderProfileRoute(
+      "/api/providers/discover",
+      closedRequest,
+      closedResponse,
+      context({
+        providerDiscovery: {
+          discover: async () => {
+            discovered = true;
+          },
+        },
+      }) as never,
+    ),
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  assert.equal(discovered, false);
+  assert.equal(closedRequest.listenerCount("aborted"), 0);
+  assert.equal(closedResponse.listenerCount("close"), 0);
 });
 
 test("provider discovery rejects incomplete worktree context", async () => {

@@ -173,6 +173,44 @@ test("probeAcpModels settles promptly when the executable cannot spawn", async (
   assert.ok(Date.now() - startedAt < 250);
 });
 
+test("probeAcpModels cancellation terminates its active child", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-model-cancel-"));
+  const executable = join(directory, "blocked-acp");
+  const pidPath = join(directory, "pid");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+  const controller = new AbortController();
+  const pending = probeAcpModels({
+    executable,
+    arguments: [],
+    cwd: directory,
+    timeoutMs: 5_000,
+    terminationGraceMs: 10,
+    signal: controller.signal,
+  });
+  while (!(await readFile(pidPath, "utf8").catch(() => ""))) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  controller.abort();
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  const pid = Number(await readFile(pidPath, "utf8"));
+  assert.throws(
+    () => process.kill(pid, 0),
+    (error: unknown) => (error as NodeJS.ErrnoException).code === "ESRCH",
+  );
+});
+
 test("probeAcpModels caps active children and recovers capacity after settlement", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-model-capacity-"));
   const executable = join(directory, "blocked-acp");
@@ -221,4 +259,44 @@ setInterval(() => {}, 1_000);
   await Promise.all([...active, queued]);
 
   assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES + 1);
+});
+
+test("probeAcpModels cancellation removes queued admission without starting a child", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-model-queue-cancel-"));
+  const executable = join(directory, "blocked-acp");
+  const startsPath = join(directory, "starts");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+require("node:fs").appendFileSync(${JSON.stringify(startsPath)}, "started\\n");
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o700);
+  const options = {
+    executable,
+    arguments: [] as string[],
+    cwd: directory,
+    timeoutMs: 1_000,
+    terminationGraceMs: 10,
+  };
+  const active = Array.from({ length: MAX_ACTIVE_ACP_MODEL_PROBES }, () => probeAcpModels(options));
+  const startedCount = async () =>
+    (await readFile(startsPath, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  while ((await startedCount()) < MAX_ACTIVE_ACP_MODEL_PROBES) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const controller = new AbortController();
+  const queued = probeAcpModels({ ...options, timeoutMs: 5_000, signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  controller.abort();
+
+  await assert.rejects(
+    queued,
+    (error: unknown) => (error as { name?: unknown }).name === "AbortError",
+  );
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES);
+  await Promise.all(active);
+  assert.equal(await startedCount(), MAX_ACTIVE_ACP_MODEL_PROBES);
 });
