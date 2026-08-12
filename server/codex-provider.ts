@@ -755,17 +755,21 @@ export class CodexCliAdapter {
     };
   }
 
-  async skills(worktree: string): Promise<CodexSkill[]> {
+  async skills(worktree: string, signal?: AbortSignal): Promise<CodexSkill[]> {
+    signal?.throwIfAborted();
     let version: string;
     try {
       const result = await execFileAsync(this.executable, ["--version"], {
         encoding: "utf8",
         timeout: 5_000,
+        signal,
       });
       version = assertSupportedCodexVersion(result.stdout.trim());
     } catch {
+      signal?.throwIfAborted();
       throw new ProviderProtocolError("Codex CLI is not installed or could not be started.");
     }
+    signal?.throwIfAborted();
     const child = spawn(this.executable, this.#appServerArguments(version), {
       cwd: worktree,
       stdio: ["pipe", "pipe", "pipe"],
@@ -780,6 +784,9 @@ export class CodexCliAdapter {
       terminateProviderChild(child, 1_000);
     }, 5_000);
     timeout.unref();
+    const abort = () => this.#terminate(child);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
     let received = false;
     let skills: CodexSkill[] = [];
     try {
@@ -834,10 +841,15 @@ export class CodexCliAdapter {
         received = true;
         break;
       }
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw error;
     } finally {
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
       this.#terminate(child);
     }
+    signal?.throwIfAborted();
     if (spawnFailed || !received) {
       throw new ProviderProtocolError("Codex CLI could not list skills.");
     }

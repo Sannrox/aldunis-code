@@ -31,7 +31,7 @@
     },
     {
       "name": "ProviderControlRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, Codex skills, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
+      "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, request-lifetime-cancelled Codex skill discovery, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
     },
     {
       "name": "HostCommand",
@@ -2379,8 +2379,8 @@
     },
     {
       "subject": "ProviderControlRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#675",
-      "locator": "server/provider-control-routes.ts#handleProviderControlRoute",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#675 and #777",
+      "locator": "server/provider-control-routes.ts#withRequestCancellation; server/provider-control-routes.ts#handleProviderControlRoute",
       "confidence": 1.0
     },
     {

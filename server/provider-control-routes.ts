@@ -10,7 +10,7 @@ interface CancellableProvider {
 
 interface ProviderControlRouteContext {
   provider: CancellableProvider & { capabilities(): unknown };
-  codex: CancellableProvider & { skills(worktree: string): Promise<unknown> };
+  codex: CancellableProvider & { skills(worktree: string, signal?: AbortSignal): Promise<unknown> };
   shikigami: CancellableProvider;
   permissions: Pick<PermissionBroker, "approvalsFor" | "awaitDecision">;
   activeAcp: Map<string, CancellableProvider>;
@@ -37,6 +37,27 @@ const APPROVALS_ROUTE = "/api/provider/approvals/list";
 const RUNS_ROUTE = "/api/provider/runs";
 export const PROVIDER_PERMISSION_ROUTE = "/api/provider/permissions/request";
 const CANCEL_ROUTE = /^\/api\/provider\/runs\/([0-9a-f-]+)\/cancel$/;
+
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortUnfinishedResponse = () => {
+    if (!response.writableEnded) controller.abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortUnfinishedResponse);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) controller.abort();
+  try {
+    return await operation(controller.signal);
+  } finally {
+    request.off("aborted", abort);
+    response.off("close", abortUnfinishedResponse);
+  }
+}
 
 /**
  * Resolve one provider permission request through the same interface used by
@@ -125,8 +146,13 @@ export async function handleProviderControlRoute(
     ) {
       throw new RepositoryError("A Codex provider, repository, and worktree are required.");
     }
-    const selected = await context.selectWorktree(body.root, body.worktree);
-    context.sendJson(response, 200, { skills: await context.codex.skills(selected.worktree) });
+    await withRequestCancellation(request, response, async (signal) => {
+      const selected = await context.selectWorktree(body.root, body.worktree);
+      signal.throwIfAborted();
+      const skills = await context.codex.skills(selected.worktree, signal);
+      signal.throwIfAborted();
+      context.sendJson(response, 200, { skills });
+    });
     return true;
   }
 
