@@ -7,11 +7,7 @@ import {
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { IncomingMessage } from "node:http";
-import {
-  canonicalizeRepositoryRoot,
-  discoverWorktrees,
-  RepositoryError,
-} from "./repository.ts";
+import { canonicalizeRepositoryRoot, discoverWorktrees, RepositoryError } from "./repository.ts";
 
 const ASSERTION_HEADER = "x-aldunis-code-assertion";
 const REQUIRED_SCOPE = "code:workbench";
@@ -165,18 +161,16 @@ function optionalClaimString(value: unknown, name: string, maxLength = 200): str
   return result;
 }
 
-function claimList(
-  value: unknown,
-  name: string,
-  splitString = true,
-  maxItems = 20,
-): string[] {
+function claimList(value: unknown, name: string, splitString = true, maxItems = 20): string[] {
   if (value === undefined || value === null) return [];
-  const values = typeof value === "string"
-    ? (splitString ? value.split(/[\s,]+/) : [value])
-    : Array.isArray(value) && value.every((item) => typeof item === "string")
-      ? value as string[]
-      : null;
+  const values =
+    typeof value === "string"
+      ? splitString
+        ? value.split(/[\s,]+/)
+        : [value]
+      : Array.isArray(value) && value.every((item) => typeof item === "string")
+        ? (value as string[])
+        : null;
   if (!values) throw new ManagedHostError(`Managed assertion ${name} is malformed.`);
   const result = [...new Set(values.map((item) => item.trim()).filter(Boolean))];
   if (result.length > maxItems || result.some((item) => item.length > 100)) {
@@ -232,11 +226,17 @@ function parseRepositoryCatalogue(raw: string): Array<{ id: string; name: string
     throw new ManagedHostError("ALDUNIS_MANAGED_REPOSITORIES_JSON must be valid JSON.", 500);
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new ManagedHostError("Managed hosted mode requires a non-empty repository catalogue.", 500);
+    throw new ManagedHostError(
+      "Managed hosted mode requires a non-empty repository catalogue.",
+      500,
+    );
   }
   return parsed.map((entry, index) => {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      throw new ManagedHostError(`Managed repository catalogue entry ${index + 1} is invalid.`, 500);
+      throw new ManagedHostError(
+        `Managed repository catalogue entry ${index + 1} is invalid.`,
+        500,
+      );
     }
     const record = entry as Record<string, unknown>;
     const id = nonEmpty(record.id, `Managed repository catalogue entry ${index + 1} id`);
@@ -262,7 +262,7 @@ async function readPublicKey(env: NodeJS.ProcessEnv): Promise<KeyObject> {
     );
   }
   try {
-    const pem = inline ?? await readFile(file!, "utf8");
+    const pem = inline ?? (await readFile(file!, "utf8"));
     const key = createPublicKey(pem);
     if (key.asymmetricKeyType !== "ed25519") {
       throw new Error("Managed assertions require an Ed25519 public key.");
@@ -301,7 +301,10 @@ export async function loadManagedHostConfiguration(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ManagedHostConfiguration> {
   const issuer = nonEmpty(env.ALDUNIS_MANAGED_ASSERTION_ISSUER, "ALDUNIS_MANAGED_ASSERTION_ISSUER");
-  const audience = nonEmpty(env.ALDUNIS_MANAGED_ASSERTION_AUDIENCE, "ALDUNIS_MANAGED_ASSERTION_AUDIENCE");
+  const audience = nonEmpty(
+    env.ALDUNIS_MANAGED_ASSERTION_AUDIENCE,
+    "ALDUNIS_MANAGED_ASSERTION_AUDIENCE",
+  );
   const tenantId = nonEmpty(env.ALDUNIS_MANAGED_TENANT_ID, "ALDUNIS_MANAGED_TENANT_ID");
   const instanceId = nonEmpty(env.ALDUNIS_MANAGED_INSTANCE_ID, "ALDUNIS_MANAGED_INSTANCE_ID");
   const logoutUrl = managedLogoutUrl(env.ALDUNIS_MANAGED_LOGOUT_URL);
@@ -334,7 +337,10 @@ export async function loadManagedHostConfiguration(
     throw new ManagedHostError("Managed Shikigami token environment name is invalid.", 500);
   }
   if (RESERVED_MANAGED_RUNTIME_ENVIRONMENT_KEYS.has(tokenEnv)) {
-    throw new ManagedHostError("Managed Shikigami token environment name collides with a reserved runtime key.", 500);
+    throw new ManagedHostError(
+      "Managed Shikigami token environment name collides with a reserved runtime key.",
+      500,
+    );
   }
   const token = nonEmpty(env[tokenEnv], tokenEnv);
   const path = env.ALDUNIS_MANAGED_SHIKIGAMI_PATH?.trim();
@@ -429,13 +435,15 @@ export class ManagedHost {
 
   repository(id: string): ManagedRepository {
     const repository = this.#repositoriesById.get(id);
-    if (!repository) throw new RepositoryError("The requested repository is not in the managed catalogue.", 403);
+    if (!repository)
+      throw new RepositoryError("The requested repository is not in the managed catalogue.", 403);
     return repository;
   }
 
   repositoryForRoot(root: string): ManagedRepository {
     const repository = this.#repositoriesByRoot.get(root);
-    if (!repository) throw new RepositoryError("The repository is not in the managed catalogue.", 403);
+    if (!repository)
+      throw new RepositoryError("The repository is not in the managed catalogue.", 403);
     return repository;
   }
 
@@ -443,7 +451,10 @@ export class ManagedHost {
     try {
       const details = await stat(repository.root);
       if (details.dev !== repository.device || details.ino !== repository.inode) {
-        throw new RepositoryError("The managed repository filesystem identity changed; restart the host after re-provisioning it.", 403);
+        throw new RepositoryError(
+          "The managed repository filesystem identity changed; restart the host after re-provisioning it.",
+          403,
+        );
       }
     } catch (error) {
       if (error instanceof RepositoryError) throw error;
@@ -461,10 +472,16 @@ export class ManagedHost {
     worktreeInput: string,
   ): Promise<{ root: string; worktree: string; repositoryId: string }> {
     if (!isAbsolute(rootInput) || !isAbsolute(worktreeInput)) {
-      throw new RepositoryError("Managed requests require absolute canonical repository paths.", 403);
+      throw new RepositoryError(
+        "Managed requests require absolute canonical repository paths.",
+        403,
+      );
     }
     try {
-      if ((await lstat(rootInput)).isSymbolicLink() || (await lstat(worktreeInput)).isSymbolicLink()) {
+      if (
+        (await lstat(rootInput)).isSymbolicLink() ||
+        (await lstat(worktreeInput)).isSymbolicLink()
+      ) {
         throw new RepositoryError("Managed repository and worktree symlinks are not allowed.", 403);
       }
       const root = await realpath(rootInput);
@@ -499,20 +516,26 @@ export class ManagedHost {
     if (parts.length !== 3) throw new ManagedHostError("Managed assertion is malformed.");
     const header = decodeJson<ManagedAssertionHeader>(parts[0], "header");
     const claims = decodeJson<ManagedAssertionClaims>(parts[1], "claims");
-    if (header.alg !== "EdDSA") throw new ManagedHostError("Managed assertion algorithm is not allowed.");
+    if (header.alg !== "EdDSA")
+      throw new ManagedHostError("Managed assertion algorithm is not allowed.");
     const signature = decodeBase64Url(parts[2], "signature");
-    if (!verifySignature(
-      null,
-      Buffer.from(`${parts[0]}.${parts[1]}`, "ascii"),
-      this.configuration.publicKey,
-      signature,
-    )) {
+    if (
+      !verifySignature(
+        null,
+        Buffer.from(`${parts[0]}.${parts[1]}`, "ascii"),
+        this.configuration.publicKey,
+        signature,
+      )
+    ) {
       throw new ManagedHostError("Managed assertion signature is invalid.");
     }
     if (claims.iss !== this.configuration.issuer || claims.aud !== this.configuration.audience) {
       throw new ManagedHostError("Managed assertion issuer or audience is not trusted.");
     }
-    if (claims.tenant_id !== this.configuration.tenantId || claims.instance_id !== this.configuration.instanceId) {
+    if (
+      claims.tenant_id !== this.configuration.tenantId ||
+      claims.instance_id !== this.configuration.instanceId
+    ) {
       throw new ManagedHostError("Managed assertion tenant or instance is not trusted.");
     }
     if (claims.code_mode !== "managed" || claims.managed_profile !== "aldunis-code-managed") {
@@ -533,9 +556,8 @@ export class ManagedHost {
     if (exp <= iat || exp - iat > MAX_ASSERTION_TTL_SECONDS) {
       throw new ManagedHostError("Managed assertion lifetime is not allowed.");
     }
-    const sessionExp = claims.session_exp === undefined
-      ? null
-      : numericClaim(claims.session_exp, "session_exp");
+    const sessionExp =
+      claims.session_exp === undefined ? null : numericClaim(claims.session_exp, "session_exp");
     if (sessionExp !== null && sessionExp <= now - CLOCK_SKEW_SECONDS) {
       throw new ManagedHostError("Managed account session is expired.");
     }
@@ -550,7 +572,8 @@ export class ManagedHost {
     for (const [key, expiresAt] of this.#replayed) {
       if (expiresAt <= now) this.#replayed.delete(key);
     }
-    if (this.#replayed.has(jti)) throw new ManagedHostError("Managed assertion was already used.", 401);
+    if (this.#replayed.has(jti))
+      throw new ManagedHostError("Managed assertion was already used.", 401);
     if (this.#replayed.size >= MAX_REPLAY_ENTRIES) {
       throw new ManagedHostError("Managed assertion replay protection is at capacity.", 503);
     }
@@ -567,11 +590,12 @@ export class ManagedHost {
       throw new ManagedHostError("Managed assertion body binding does not match the request.");
     }
     this.#replayed.set(jti, exp + CLOCK_SKEW_SECONDS);
-    const displayName = optionalClaimString(claims.name, "name")
-      ?? optionalClaimString(claims.display_name, "display_name")
-      ?? optionalClaimString(claims.preferred_username, "preferred_username")
-      ?? optionalClaimString(claims.email, "email")
-      ?? DEFAULT_MANAGED_DISPLAY_NAME;
+    const displayName =
+      optionalClaimString(claims.name, "name") ??
+      optionalClaimString(claims.display_name, "display_name") ??
+      optionalClaimString(claims.preferred_username, "preferred_username") ??
+      optionalClaimString(claims.email, "email") ??
+      DEFAULT_MANAGED_DISPLAY_NAME;
     return {
       subject,
       displayName,
