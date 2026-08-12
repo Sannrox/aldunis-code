@@ -23,6 +23,7 @@ export interface ProviderDiscoveryDependencies {
 }
 
 export const MAX_CONCURRENT_SHIKIGAMI_PROFILE_DISCOVERIES = 4;
+export const MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES = 4;
 
 function unavailableShikigamiReadiness(detail: string): ShikigamiReadiness {
   return {
@@ -135,9 +136,16 @@ export class ProviderDiscovery {
   ): Promise<ProviderDiscoverySnapshot[]> {
     signal?.throwIfAborted();
     const installed = await this.dependencies.adapters.list();
-    return Promise.all(
-      installed.map(async (adapter) => {
+    signal?.throwIfAborted();
+    const discoveries = new Array<ProviderDiscoverySnapshot>(installed.length);
+    let nextAdapterIndex = 0;
+    const discoverNextAdapter = async (): Promise<void> => {
+      while (true) {
         signal?.throwIfAborted();
+        const index = nextAdapterIndex;
+        nextAdapterIndex += 1;
+        const adapter = installed[index];
+        if (!adapter) return;
         const executablePath = await this.dependencies.adapters
           .resolveExecutable(adapter)
           .catch(() => null);
@@ -173,7 +181,7 @@ export class ProviderDiscovery {
           }).catch(() => []);
           signal?.throwIfAborted();
         }
-        return {
+        discoveries[index] = {
           id: adapterReference(adapter.manifest),
           installed: true,
           // Retain the existing wire contract: authenticated means run-ready.
@@ -184,8 +192,17 @@ export class ProviderDiscovery {
           detail: readiness.detail,
           models,
         };
-      }),
+      }
+    };
+    await Promise.all(
+      Array.from(
+        {
+          length: Math.min(MAX_CONCURRENT_DECLARATIVE_ADAPTER_DISCOVERIES, installed.length),
+        },
+        () => discoverNextAdapter(),
+      ),
     );
+    return discoveries;
   }
 
   private async discoverShikigami(
