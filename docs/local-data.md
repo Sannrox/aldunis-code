@@ -32,7 +32,7 @@ Typical contents (names may evolve; do not commit these files):
 | `preferences.v1.json`        | At most 16 KiB of schema-owned theme, density, worktree, shortcut, and display preferences |
 | `automations.v1.json`        | Scheduled automations                                                                      |
 | `release-deliveries.v1.json` | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references  |
-| Profile / secret store       | Provider profile metadata (all providers + adapters) + env secrets                         |
+| Profile / secret store       | At most 24 MiB each of provider metadata and Aldunis-owned environment secrets             |
 | Provider adapter metadata    | Installed declarative adapters                                                             |
 | Shikigami run dirs           | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related)             |
 

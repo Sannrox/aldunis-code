@@ -9,8 +9,48 @@ import {
   DEFAULT_CODEX_PROFILE_ID,
   DEFAULT_SHIKIGAMI_PROFILE_ID,
   MAX_ACTIVE_PROFILE_PROBES,
+  MAX_PROVIDER_PROFILE_DOCUMENT_BYTES,
   defaultProfileId,
 } from "./profiles.ts";
+
+test("oversized profile and secret documents fail before reading content", async () => {
+  for (const oversizedName of ["claude-profiles.v1.json", "provider-secrets.v1.json"]) {
+    let oversizedReads = 0;
+    let oversizedClosed = false;
+    const store = new ClaudeProfileStore("/state", undefined, {
+      async open(path) {
+        const name = path.split("/").at(-1);
+        const oversized = name === oversizedName;
+        const content = Buffer.from(
+          name === "provider-secrets.v1.json"
+            ? JSON.stringify({ schemaVersion: 1, values: {} })
+            : JSON.stringify({ schemaVersion: 1, profiles: [] }),
+        );
+        return {
+          async stat() {
+            return { size: oversized ? MAX_PROVIDER_PROFILE_DOCUMENT_BYTES + 1 : content.length };
+          },
+          async read(buffer, offset, length, position) {
+            if (oversized) {
+              oversizedReads += 1;
+              return { bytesRead: 0 };
+            }
+            const bytesRead = Math.min(length, Math.max(0, content.length - position));
+            content.copy(buffer, offset, position, position + bytesRead);
+            return { bytesRead };
+          },
+          async close() {
+            if (oversized) oversizedClosed = true;
+          },
+        };
+      },
+    });
+
+    await assert.rejects(() => store.runtime("missing"), /storage exceeds its size limit/);
+    assert.equal(oversizedReads, 0);
+    assert.equal(oversizedClosed, true);
+  }
+});
 
 test("profile store seeds default profiles for every first-class provider", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-profiles-"));
