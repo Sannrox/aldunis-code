@@ -29,7 +29,7 @@ Typical contents (names may evolve; do not commit these files):
 
 | File / area                  | Purpose                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `events.v1.jsonl`            | Append-only conversation and autonomy history log (at most 8 MiB per JSONL event record)    |
+| `events.v1.jsonl`            | Append-only conversation and autonomy history log (at most 8 MiB per JSONL event record)   |
 | `preferences.v1.json`        | At most 16 KiB of schema-owned theme, density, worktree, shortcut, and display preferences |
 | `automations.v1.json`        | Scheduled automations                                                                      |
 | `release-deliveries.v1.json` | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references  |
