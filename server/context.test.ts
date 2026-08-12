@@ -10,6 +10,7 @@ import {
   COMPOSER_ATTACHMENT_DIR,
   composePrompt,
   MAX_ACTIVE_BROWSE_INSPECTIONS,
+  MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES,
   MAX_CONTEXT_FILES,
   MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
@@ -762,6 +763,28 @@ test("stageComposerImage writes bounded attachable images under aldunis-code-com
       }),
     /at most 2 MB/,
   );
+});
+
+test("stageComposerImage rejects an oversized managed ignore file before reading it", async () => {
+  const { root } = await fixture();
+  const staging = join(root, COMPOSER_ATTACHMENT_DIR);
+  await mkdir(staging);
+  await writeFile(
+    join(staging, ".gitignore"),
+    `${"*".repeat(MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES + 1)}\n`,
+  );
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: png.toString("base64"),
+        name: "ignored.png",
+      }),
+    /gitignore exceeds the supported size/,
+  );
+  assert.deepEqual(await readdir(staging), [".gitignore"]);
 });
 
 test("stageComposerImage bounds staging-tree inspection before writing", async () => {
