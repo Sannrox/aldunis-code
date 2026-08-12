@@ -138,6 +138,9 @@ npm run cli -- serve --remote lan --host 192.168.1.20 \
   --tls-key /path/to/key.pem
 ```
 
+The certificate and private-key PEM files must each be regular files no larger
+than 1 MiB. Symlink-mounted secret files remain supported.
+
 For a quick private-WLAN setup, use the repository helper. It detects the
 WLAN address, builds the web UI, generates a temporary certificate with
 `mkcert` when no certificate is supplied, and starts the same authenticated LAN
