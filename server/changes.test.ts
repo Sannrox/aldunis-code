@@ -5,9 +5,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { listChangedFiles, MAX_DIFF_BYTES, readFileDiff } from "./changes.ts";
+import {
+  listChangedFiles,
+  MAX_DIFF_BYTES,
+  readBoundedChangedFile,
+  readFileDiff,
+} from "./changes.ts";
 
 const execFileAsync = promisify(execFile);
+
+test("bounded changed-file reads accept the limit and reject overflow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-change-read-"));
+  const path = join(root, "untracked.txt");
+  await writeFile(path, Buffer.alloc(MAX_DIFF_BYTES, 0x61));
+  assert.equal((await readBoundedChangedFile(path))?.length, MAX_DIFF_BYTES);
+
+  await truncate(path, MAX_DIFF_BYTES + 1);
+  assert.equal(await readBoundedChangedFile(path), null);
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "aldunis-code-changes-"));

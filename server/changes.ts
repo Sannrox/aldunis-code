@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import type { Stats } from "node:fs";
+import { copyFile, lstat, mkdir, mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -13,6 +14,7 @@ function isHiddenReviewPath(path: string): boolean {
 
 const execFileAsync = promisify(execFile);
 export const MAX_DIFF_BYTES = 256 * 1024;
+const CHANGED_FILE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_RENAME_CANDIDATES = 128;
 // Exact identity checks may read a runtime-looking file, but never beyond this
 // bound. Larger local runtime artifacts remain outside the review surface.
@@ -554,7 +556,8 @@ async function isBinary(
   if (untracked) {
     try {
       if ((await lstat(resolve(worktree, path))).isSymbolicLink()) return true;
-      return (await readFile(resolve(worktree, path), { signal })).subarray(0, 8_000).includes(0);
+      const content = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
+      return content?.subarray(0, 8_000).includes(0) ?? true;
     } catch {
       signal?.throwIfAborted();
       return false;
@@ -576,6 +579,55 @@ function contentLines(content: string): string[] {
   const lines = content.split(/\r?\n/);
   if (lines[lines.length - 1] === "") lines.pop();
   return lines;
+}
+
+function sameChangedFile(left: Stats, right: Stats): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+/** Read one stable regular file without retaining bytes beyond the review ceiling. */
+export async function readBoundedChangedFile(
+  path: string,
+  maximum = MAX_DIFF_BYTES,
+  signal?: AbortSignal,
+): Promise<Buffer | null> {
+  signal?.throwIfAborted();
+  const handle = await open(path, "r");
+  try {
+    const admitted = await handle.stat();
+    if (!admitted.isFile() || admitted.size > maximum) return null;
+    const chunks: Buffer[] = [];
+    const buffer = Buffer.allocUnsafe(Math.min(CHANGED_FILE_READ_BUFFER_BYTES, maximum + 1));
+    let position = 0;
+    while (position <= maximum) {
+      signal?.throwIfAborted();
+      const length = Math.min(buffer.length, maximum + 1 - position);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      position += bytesRead;
+    }
+    if (position > maximum) return null;
+    const [after, pathname] = await Promise.all([handle.stat(), lstat(path)]);
+    if (
+      position !== admitted.size ||
+      !sameChangedFile(admitted, after) ||
+      !sameChangedFile(after, pathname)
+    ) {
+      return null;
+    }
+    return Buffer.concat(chunks, position);
+  } finally {
+    await handle.close();
+  }
 }
 
 function parseNumstat(output: string): [number | null, number | null] {
@@ -629,8 +681,8 @@ async function counts(
   }
   if (untracked) {
     try {
-      const content = await readFile(resolve(worktree, path), { encoding: "utf8", signal });
-      return [contentLines(content).length, 0];
+      const content = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
+      return content ? [contentLines(content.toString("utf8")).length, 0] : [null, null];
     } catch {
       signal?.throwIfAborted();
       return [null, null];
@@ -726,29 +778,42 @@ export async function listChangedFiles(
       signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
-      const oversized = await isOversized(
+      let oversized = await isOversized(
         worktree,
         path,
         initial === "deleted",
         previousPath,
         signal,
       );
+      let untrackedContent: Buffer | null | undefined;
+      if (!oversized && code === "??" && !entry.symlink && !entry.nonRenderable) {
+        untrackedContent = await readBoundedChangedFile(
+          resolve(worktree, path),
+          MAX_DIFF_BYTES,
+          signal,
+        );
+        if (untrackedContent === null) oversized = true;
+      }
       const binary =
         !oversized &&
         (entry.symlink ||
           entry.nonRenderable ||
-          (await isBinary(worktree, path, code === "??", signal)));
+          (untrackedContent
+            ? untrackedContent.subarray(0, 8_000).includes(0)
+            : await isBinary(worktree, path, false, signal)));
       const [additions, deletions] =
         oversized || binary
           ? [null, null]
-          : await counts(
-              worktree,
-              path,
-              code === "??",
-              previousPath,
-              snapshot?.environment ?? null,
-              signal,
-            );
+          : untrackedContent && !previousPath
+            ? [contentLines(untrackedContent.toString("utf8")).length, 0]
+            : await counts(
+                worktree,
+                path,
+                code === "??",
+                previousPath,
+                snapshot?.environment ?? null,
+                signal,
+              );
       changes.push({
         path,
         previousPath,
@@ -809,7 +874,11 @@ export async function readFileDiff(worktree: string, requestedPath: string): Pro
     return finalizeDiff(change, patch, null);
   }
   if (change.state === "added") {
-    const content = await readFile(resolve(worktree, path), "utf8");
+    const bytes = await readBoundedChangedFile(resolve(worktree, path));
+    if (!bytes) {
+      throw new RepositoryError("The selected file changed before its diff could be read.", 409);
+    }
+    const content = bytes.toString("utf8");
     const lines = contentLines(content);
     const endsWithNewline = content.endsWith("\n");
     const patch = [
