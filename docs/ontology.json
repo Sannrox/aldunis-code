@@ -167,7 +167,7 @@
     },
     {
       "name": "ProviderProfileDiscovery",
-      "description": "A profile-keyed provider readiness projection whose host store admits at most 128 durable profiles, coalesces exact profile/kind probes within a fixed eight-probe subprocess bound, cancels obsolete subprocesses after committed profile mutations through bounded exact-child termination, and keeps executable, configuration, authentication, and model discovery aligned with the selected provider profile."
+      "description": "A profile-keyed provider readiness projection whose host store admits at most 128 durable profiles, reads and writes profile metadata and Aldunis-owned secret documents within separate 24 MiB bounds, coalesces exact profile/kind probes within a fixed eight-probe subprocess bound, cancels obsolete subprocesses after committed profile mutations through bounded exact-child termination, and keeps executable, configuration, authentication, and model discovery aligned with the selected provider profile."
     },
     {
       "name": "LocalToolApproval",
@@ -1965,8 +1965,8 @@
     },
     {
       "subject": "ProviderProfileDiscovery",
-      "source": "Sannrox/aldunis-code Issues #738, #779, #817, and #841",
-      "locator": "server/profiles.ts#ClaudeProfileStore; src/types.ts:ProviderProfileDiscovery; https://github.com/Sannrox/aldunis-code/issues/817",
+      "source": "Sannrox/aldunis-code Issues #738, #779, #817, #841, and #859",
+      "locator": "server/profiles.ts#ClaudeProfileStore; src/types.ts:ProviderProfileDiscovery; https://github.com/Sannrox/aldunis-code/issues/817; https://github.com/Sannrox/aldunis-code/issues/859",
       "confidence": 1.0
     },
     {

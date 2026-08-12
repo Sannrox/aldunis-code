@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { access, mkdir, open, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { terminateProviderChild } from "./provider-process.ts";
@@ -10,6 +10,7 @@ const PROFILE_SCHEMA_VERSION = 1;
 const PROFILE_PROBE_TERMINATION_GRACE_MS = 1_000;
 export const MAX_ACTIVE_PROFILE_PROBES = 8;
 export const MAX_DURABLE_PROVIDER_PROFILES = 128;
+export const MAX_PROVIDER_PROFILE_DOCUMENT_BYTES = 24 * 1024 * 1024;
 
 function execProfileProbe(
   executable: string,
@@ -186,6 +187,23 @@ interface SecretDocument {
   values: Record<string, string>;
 }
 
+export interface ProfileDocumentOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{ size: number }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const profileDocumentOperations: ProfileDocumentOperations = {
+  open: (path) => open(path, "r"),
+};
+
 export class ProfileError extends Error {
   constructor(
     message: string,
@@ -278,21 +296,53 @@ function publicProfile(profile: ClaudeProfile, secrets: SecretDocument): ClaudeP
   };
 }
 
-async function readDocument<T>(path: string, fallback: T): Promise<T> {
+async function readDocument<T>(
+  path: string,
+  fallback: T,
+  operations: ProfileDocumentOperations,
+): Promise<T> {
+  let handle: Awaited<ReturnType<ProfileDocumentOperations["open"]>>;
   try {
-    return JSON.parse(await readFile(path, "utf8")) as T;
+    handle = await operations.open(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback;
     throw new ProfileError("Provider profile storage could not be read.", 500);
   }
+  try {
+    const details = await handle.stat();
+    if (details.size > MAX_PROVIDER_PROFILE_DOCUMENT_BYTES) {
+      throw new ProfileError("Provider profile storage exceeds its size limit.", 500);
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new ProfileError("Provider profile storage changed while being read.", 500);
+    }
+    return JSON.parse(bytes.toString("utf8")) as T;
+  } catch (error) {
+    if (error instanceof ProfileError) throw error;
+    throw new ProfileError("Provider profile storage could not be read.", 500);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function writeDocument(path: string, value: unknown): Promise<void> {
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  if (Buffer.byteLength(serialized) > MAX_PROVIDER_PROFILE_DOCUMENT_BYTES) {
+    throw new ProfileError("Provider profile storage exceeds its size limit.", 500);
+  }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "wx", 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.writeFile(serialized, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
@@ -317,6 +367,7 @@ export class ClaudeProfileStore {
   constructor(
     readonly directory = defaultStateDirectory(),
     readonly maxProfiles = MAX_DURABLE_PROVIDER_PROFILES,
+    readonly operations: ProfileDocumentOperations = profileDocumentOperations,
   ) {
     this.#profilesPath = join(directory, "claude-profiles.v1.json");
     this.#secretsPath = join(directory, "provider-secrets.v1.json");
@@ -326,14 +377,22 @@ export class ClaudeProfileStore {
     options: { allowOversized?: boolean } = {},
   ): Promise<{ profiles: ProfileDocument; secrets: SecretDocument }> {
     const [profiles, secrets] = await Promise.all([
-      readDocument<ProfileDocument>(this.#profilesPath, {
-        schemaVersion: PROFILE_SCHEMA_VERSION,
-        profiles: [],
-      }),
-      readDocument<SecretDocument>(this.#secretsPath, {
-        schemaVersion: PROFILE_SCHEMA_VERSION,
-        values: {},
-      }),
+      readDocument<ProfileDocument>(
+        this.#profilesPath,
+        {
+          schemaVersion: PROFILE_SCHEMA_VERSION,
+          profiles: [],
+        },
+        this.operations,
+      ),
+      readDocument<SecretDocument>(
+        this.#secretsPath,
+        {
+          schemaVersion: PROFILE_SCHEMA_VERSION,
+          values: {},
+        },
+        this.operations,
+      ),
     ]);
     if (
       profiles.schemaVersion !== PROFILE_SCHEMA_VERSION ||
