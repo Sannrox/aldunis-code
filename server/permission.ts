@@ -57,6 +57,8 @@ const SECRET_KEYS = /(?:authorization|cookie|credential|password|secret|token|ap
 const CONTENT_KEYS = /(?:content|new_string|old_string|patch|replacement)/i;
 const MAX_DETAIL_LENGTH = 180;
 export const MAX_APPROVAL_PATHS = 50;
+export const MAX_LIVE_APPROVALS = 32;
+export const MAX_RETAINED_APPROVALS = 256;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -203,6 +205,12 @@ export class PermissionBroker {
     provider?: string;
   }): ApprovalSnapshot | null {
     if (!isMutatingTool(input.toolName)) return null;
+    if (this.#approvals.size >= MAX_LIVE_APPROVALS) {
+      throw new PermissionError("Too many approval requests are already pending.", 429);
+    }
+    if (this.#approvals.size + this.#terminal.size >= MAX_RETAINED_APPROVALS) {
+      throw new PermissionError("Too many approval records are retained for active runs.", 429);
+    }
     const id = randomUUID();
     let resolve!: (decision: PermissionDecision) => void;
     const decision = new Promise<PermissionDecision>((complete) => {

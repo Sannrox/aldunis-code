@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeMutation, PermissionBroker, PermissionError } from "./permission.ts";
+import {
+  describeMutation,
+  MAX_LIVE_APPROVALS,
+  MAX_RETAINED_APPROVALS,
+  PermissionBroker,
+  PermissionError,
+} from "./permission.ts";
 
 const context = {
   runId: "run-1",
@@ -228,6 +234,54 @@ test("closeRun purges retained approvals for a completed provider run", async ()
   assert.equal(broker.approvalsFor(context.runId).length, 0);
   assert.equal(broker.approvalFor(context.runId, context.toolCallId), null);
   assert.equal(broker.approvals().length, 0);
+});
+
+test("permission broker bounds live payload approvals and recovers on run close", () => {
+  const broker = new PermissionBroker();
+  for (let index = 0; index < MAX_LIVE_APPROVALS; index += 1) {
+    assert.ok(broker.register({ ...context, toolCallId: `live-${index}` }));
+  }
+  assert.equal(broker.retainedPayloadApprovalCount, MAX_LIVE_APPROVALS);
+  assert.throws(
+    () => broker.register({ ...context, toolCallId: "live-overflow" }),
+    (error: unknown) => error instanceof PermissionError && error.status === 429,
+  );
+
+  broker.closeRun(context.runId, "provider_failed");
+  assert.equal(broker.retainedPayloadApprovalCount, 0);
+  assert.ok(
+    broker.register({
+      ...context,
+      runId: "run-after-live-capacity",
+      toolCallId: "after-live-capacity",
+    }),
+  );
+});
+
+test("permission broker bounds total replay records and recovers on run close", () => {
+  const broker = new PermissionBroker();
+  for (let index = 0; index < MAX_RETAINED_APPROVALS; index += 1) {
+    const input = { ...context, toolCallId: `terminal-${index}` };
+    const approval = broker.register(input);
+    assert.ok(approval);
+    assert.equal(broker.decide(approval.id, decisionContext(input), "deny").state, "denied");
+  }
+  assert.equal(broker.approvalsFor(context.runId).length, MAX_RETAINED_APPROVALS);
+  assert.equal(broker.retainedPayloadApprovalCount, 0);
+  assert.throws(
+    () => broker.register({ ...context, toolCallId: "terminal-overflow" }),
+    (error: unknown) => error instanceof PermissionError && error.status === 429,
+  );
+
+  broker.closeRun(context.runId, "provider_failed");
+  assert.equal(broker.approvalsFor(context.runId).length, 0);
+  assert.ok(
+    broker.register({
+      ...context,
+      runId: "run-after-total-capacity",
+      toolCallId: "after-total-capacity",
+    }),
+  );
 });
 
 test("deny, cancellation, expiry, and provider failure resolve fail-closed", async () => {
