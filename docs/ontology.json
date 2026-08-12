@@ -22,6 +22,10 @@
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
     },
     {
+      "name": "ProviderProcessTerminationCoordinator",
+      "description": "A deep server-side Aldunis Code module that coordinates one exact provider-child termination lifecycle across delayed cancellation and immediate terminal paths, clears scheduled and force timers on child close, promotes delayed termination without duplication, and preserves bounded SIGTERM-to-SIGKILL escalation without changing provider protocol or permission authority."
+    },
+    {
       "name": "ProviderControlRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, Codex skills, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
     },
@@ -2479,6 +2483,12 @@
       "subject": "ConversationAutomationSessionModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#723",
       "locator": "src/lib/automation-session.ts#ConversationAutomationSessionModule; src/features/dialogs/automations-dialog.tsx#AutomationsDialog",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderProcessTerminationCoordinator",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#744 and #762",
+      "locator": "server/provider-process.ts; server/codex-provider.ts",
       "confidence": 1.0
     },
     {
