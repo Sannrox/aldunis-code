@@ -7,6 +7,24 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+interface BranchPrExecOptions {
+  cwd: string;
+  encoding: "utf8";
+  timeout: number;
+  maxBuffer: number;
+  env: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+}
+
+export type BranchPrExec = (
+  command: string,
+  args: string[],
+  options: BranchPrExecOptions,
+) => Promise<{ stdout: string }>;
+
+const defaultBranchPrExec: BranchPrExec = (command, args, options) =>
+  execFileAsync(command, args, options);
+
 export type BranchPrState = "open" | "merged" | "closed";
 
 export interface BranchPrStatus {
@@ -25,6 +43,7 @@ export interface BranchPrLookupResult {
 }
 
 const MAX_BATCH = 24;
+export const BRANCH_PR_BATCH_CONCURRENCY = 4;
 export const BRANCH_PR_CACHE_TTL_MS = 45_000;
 export const BRANCH_PR_CACHE_LIMIT = MAX_BATCH * 4;
 
@@ -104,63 +123,94 @@ export function parseBranchPrPayload(
   return { worktree, branch, number, title, state, url };
 }
 
-async function gitShowCurrentBranch(worktree: string): Promise<string | null> {
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted();
+}
+
+function isCancellation(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(
+    signal?.aborted ||
+    (error && typeof error === "object" && (error as { name?: unknown }).name === "AbortError"),
+  );
+}
+
+async function gitShowCurrentBranch(
+  worktree: string,
+  signal?: AbortSignal,
+  execute: BranchPrExec = defaultBranchPrExec,
+): Promise<string | null> {
+  throwIfAborted(signal);
   try {
-    const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+    const { stdout } = await execute("git", ["branch", "--show-current"], {
       cwd: worktree,
       encoding: "utf8",
       timeout: 5_000,
       maxBuffer: 64 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      signal,
     });
     const branch = stdout.trim();
     return branch || null;
-  } catch {
+  } catch (error) {
+    if (isCancellation(error, signal)) throw error;
     return null;
   }
 }
 
-async function ghPrViewJson(worktree: string): Promise<unknown | null> {
+async function ghPrViewJson(
+  worktree: string,
+  signal?: AbortSignal,
+  execute: BranchPrExec = defaultBranchPrExec,
+): Promise<unknown | null> {
+  throwIfAborted(signal);
   try {
-    const { stdout } = await execFileAsync(
-      "gh",
-      ["pr", "view", "--json", "number,title,state,url"],
-      {
-        cwd: worktree,
-        encoding: "utf8",
-        timeout: 12_000,
-        maxBuffer: 256 * 1024,
-        env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" },
-      },
-    );
+    const { stdout } = await execute("gh", ["pr", "view", "--json", "number,title,state,url"], {
+      cwd: worktree,
+      encoding: "utf8",
+      timeout: 12_000,
+      maxBuffer: 256 * 1024,
+      env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" },
+      signal,
+    });
     const trimmed = stdout.trim();
     if (!trimmed) return null;
     return JSON.parse(trimmed) as unknown;
-  } catch {
+  } catch (error) {
+    if (isCancellation(error, signal)) throw error;
     return null;
   }
 }
 
-export async function inspectBranchPr(worktree: string): Promise<BranchPrLookupResult> {
+export async function inspectBranchPr(
+  worktree: string,
+  signal?: AbortSignal,
+  execute: BranchPrExec = defaultBranchPrExec,
+): Promise<BranchPrLookupResult> {
+  throwIfAborted(signal);
   const now = Date.now();
   const cached = cache.get(worktree, now);
   if (cached) return cached;
 
-  const branch = await gitShowCurrentBranch(worktree);
+  const branch = await gitShowCurrentBranch(worktree, signal, execute);
   if (!branch) {
     const value: BranchPrLookupResult = { worktree, branch: null, pr: null };
     cache.set(worktree, value, now);
     return value;
   }
 
-  const payload = await ghPrViewJson(worktree);
+  const payload = await ghPrViewJson(worktree, signal, execute);
   const pr = payload ? parseBranchPrPayload(worktree, branch, payload) : null;
   const value: BranchPrLookupResult = { worktree, branch, pr };
   cache.set(worktree, value, now);
   return value;
 }
 
-export async function inspectBranchPrBatch(worktrees: string[]): Promise<BranchPrLookupResult[]> {
+export async function inspectBranchPrBatch(
+  worktrees: string[],
+  signal?: AbortSignal,
+  execute: BranchPrExec = defaultBranchPrExec,
+): Promise<BranchPrLookupResult[]> {
+  throwIfAborted(signal);
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const worktree of worktrees) {
@@ -170,7 +220,23 @@ export async function inspectBranchPrBatch(worktrees: string[]): Promise<BranchP
     unique.push(worktree);
     if (unique.length >= MAX_BATCH) break;
   }
-  return Promise.all(unique.map((worktree) => inspectBranchPr(worktree)));
+  const results = new Array<BranchPrLookupResult>(unique.length);
+  let nextIndex = 0;
+  const inspectNext = async (): Promise<void> => {
+    while (true) {
+      throwIfAborted(signal);
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= unique.length) return;
+      results[index] = await inspectBranchPr(unique[index], signal, execute);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(BRANCH_PR_BATCH_CONCURRENCY, unique.length) }, () =>
+      inspectNext(),
+    ),
+  );
+  return results;
 }
 
 /** Test helper: drop cache between cases. */

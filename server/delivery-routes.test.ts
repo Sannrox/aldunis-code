@@ -141,3 +141,66 @@ test("release execution propagates request cancellation through the dispatch int
 
   assert.equal(observedAbort, true);
 });
+
+test("PR status batch cancels disconnected work and releases lifecycle listeners", async () => {
+  const currentRequest = new EventEmitter() as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+  }) as ServerResponse;
+  let observedAbort = false;
+
+  await assert.rejects(
+    handleDeliveryRoute(
+      "/api/delivery/pr-status/batch",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ items: [{ root: "/repo", worktree: "/worktree" }] }),
+        selectWorktree: async () => ({ root: "/repo", worktree: "/worktree" }),
+        inspectBranchPrBatch: async (_worktrees, signal) => {
+          currentResponse.emit("close");
+          observedAbort = Boolean(signal?.aborted);
+          signal?.throwIfAborted();
+          return [];
+        },
+      }),
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(observedAbort, true);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
+});
+
+test("PR status batch rejects a disconnect that predates lifecycle listeners", async () => {
+  const currentRequest = Object.assign(new EventEmitter(), {
+    aborted: true,
+  }) as IncomingMessage;
+  const currentResponse = Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
+  let inspections = 0;
+
+  await assert.rejects(
+    handleDeliveryRoute(
+      "/api/delivery/pr-status/batch",
+      currentRequest,
+      currentResponse,
+      context({
+        readJson: async () => ({ items: [{ root: "/repo", worktree: "/worktree" }] }),
+        selectWorktree: async () => ({ root: "/repo", worktree: "/worktree" }),
+        inspectBranchPrBatch: async () => {
+          inspections += 1;
+          return [];
+        },
+      }),
+    ),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+
+  assert.equal(inspections, 0);
+  assert.equal(currentRequest.listenerCount("aborted"), 0);
+  assert.equal(currentResponse.listenerCount("close"), 0);
+});

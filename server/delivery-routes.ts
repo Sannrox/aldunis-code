@@ -28,6 +28,7 @@ export interface DeliveryRouteContext {
   selectWorktree: (root: string, worktree: string) => Promise<SelectedWorktree>;
   readJson: (request: IncomingMessage) => Promise<unknown>;
   sendJson: (response: ServerResponse, status: number, value: unknown) => void;
+  inspectBranchPrBatch?: typeof inspectBranchPrBatch;
 }
 
 const DELIVERY_ACTIONS = new Set<DeliveryAction>(["stage", "commit", "push", "pull_request"]);
@@ -44,6 +45,29 @@ const RELEASE_ACTIONS = new Set<ReleaseWorkflowAction>([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortOnUnfinishedClose = () => {
+    if (!response.writableEnded) abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortOnUnfinishedClose);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) abort();
+  try {
+    const result = await operation(controller.signal);
+    controller.signal.throwIfAborted();
+    return result;
+  } finally {
+    request.removeListener("aborted", abort);
+    response.removeListener("close", abortOnUnfinishedClose);
+  }
 }
 
 async function selectedReleaseProject(
@@ -116,18 +140,25 @@ export async function handleDeliveryRoute(
     if (!Array.isArray(body.items)) {
       throw new RepositoryError("A list of repository worktrees is required.");
     }
-    const worktrees: string[] = [];
-    for (const item of body.items) {
-      if (worktrees.length >= BRANCH_PR_BATCH_LIMIT) break;
-      if (!isRecord(item)) continue;
-      if (typeof item.root !== "string" || typeof item.worktree !== "string") continue;
-      try {
-        worktrees.push((await selectWorktree(item.root, item.worktree)).worktree);
-      } catch {
-        // Released, missing, or out-of-scope paths stay without PR projection.
+    const results = await withRequestCancellation(request, response, async (signal) => {
+      const worktrees: string[] = [];
+      for (const item of body.items) {
+        signal.throwIfAborted();
+        if (worktrees.length >= BRANCH_PR_BATCH_LIMIT) break;
+        if (!isRecord(item)) continue;
+        if (typeof item.root !== "string" || typeof item.worktree !== "string") continue;
+        try {
+          const selected = await selectWorktree(item.root, item.worktree);
+          signal.throwIfAborted();
+          worktrees.push(selected.worktree);
+        } catch (error) {
+          if (signal.aborted) throw error;
+          // Released, missing, or out-of-scope paths stay without PR projection.
+        }
       }
-    }
-    sendJson(response, 200, { results: await inspectBranchPrBatch(worktrees) });
+      return (context.inspectBranchPrBatch ?? inspectBranchPrBatch)(worktrees, signal);
+    });
+    sendJson(response, 200, { results });
     return true;
   }
 

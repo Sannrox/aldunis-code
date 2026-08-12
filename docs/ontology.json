@@ -443,7 +443,11 @@
     },
     {
       "name": "DeliveryRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, pull-request projection, release-project correlation, cancellation lifetime, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, request-lifetime-cancelled and concurrency-bounded pull-request projection, release-project correlation, cancellation lifetime, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+    },
+    {
+      "name": "BranchPrStatusPollingCoordinator",
+      "description": "A renderer and host-coordinated best-effort pull-request status projection that polls only while visible, aborts obsolete lookup sets through HTTP and exact Git or GitHub children, stops later client batches after cancellation, and admits at most four concurrent worktree inspections per server batch without changing repository or delivery authority."
     },
     {
       "name": "CrossProviderConversationForkRouteDispatchModule",
@@ -2439,8 +2443,14 @@
     },
     {
       "subject": "DeliveryRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#653",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#653 and #785",
       "locator": "server/delivery-routes.ts#handleDeliveryRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BranchPrStatusPollingCoordinator",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#785",
+      "locator": "src/lib/branch-pr-status.ts; src/features/code/workbench.tsx; server/delivery-routes.ts; server/branch-pr.ts",
       "confidence": 1.0
     },
     {
