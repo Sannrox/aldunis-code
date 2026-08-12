@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -195,6 +195,27 @@ test("managed startup configuration is required and Shikigami runtime excludes a
     () => replacedIdentity.selectWorktree(root, root),
     /filesystem identity changed/,
   );
+});
+
+test("managed worktree selection uses discovered canonical membership", async () => {
+  const keys = generateKeyPairSync("ed25519");
+  const root = await realpath(process.cwd());
+  const managed = new ManagedHost(configuration(keys.publicKey, root));
+  const outside = await mkdtemp(join(root, ".aldunis-managed-unregistered-worktree-"));
+
+  try {
+    assert.deepEqual(await managed.selectWorktree(root, root), {
+      root,
+      worktree: root,
+      repositoryId: "code",
+    });
+    await assert.rejects(
+      () => managed.selectWorktree(root, outside),
+      /Select a discovered worktree from the managed repository/,
+    );
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("managed HTTP routes require gateway assertions and reject local control overrides", async () => {
