@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -820,6 +821,79 @@ test("stageComposerImage retains the existing image quota within the inspection 
         conversationId: "shared",
       }),
     /staging is full/,
+  );
+});
+
+test("stageComposerImage serializes the final quota slot across processes", async () => {
+  const { root } = await fixture();
+  const staging = join(root, COMPOSER_ATTACHMENT_DIR);
+  await mkdir(staging);
+  await writeFile(join(staging, ".gitignore"), "*\n");
+  await Promise.all(
+    Array.from({ length: 31 }, async (_, index) => {
+      const scope = join(staging, index.toString(16).padStart(8, "0"));
+      await mkdir(scope);
+      await writeFile(join(scope, `image-${index.toString(16).padStart(8, "0")}.png`), "image");
+    }),
+  );
+  const childSource = `
+    import { stageComposerImage } from ${JSON.stringify(new URL("./context.ts", import.meta.url).href)};
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await stageComposerImage(process.argv[1], {
+      mediaType: "image/png",
+      data: png.toString("base64"),
+      name: process.argv[2] + ".png",
+      conversationId: "shared",
+    });
+  `;
+  const stageInProcess = (name: string) =>
+    new Promise<number>((resolve) => {
+      const child = spawn(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "-e", childSource, root, name],
+        { stdio: "ignore" },
+      );
+      child.once("exit", (code) => resolve(code ?? 1));
+      child.once("error", () => resolve(1));
+    });
+
+  const exits = await Promise.all([stageInProcess("left"), stageInProcess("right")]);
+  assert.deepEqual(exits.toSorted(), [0, 1]);
+  let imageCount = 0;
+  for (const scope of await readdir(staging, { withFileTypes: true })) {
+    if (!scope.isDirectory()) continue;
+    imageCount += (await readdir(join(staging, scope.name))).filter((name) =>
+      name.endsWith(".png"),
+    ).length;
+  }
+  assert.equal(imageCount, 32);
+  assert.equal((await readdir(staging)).includes(".quota.lock"), false);
+});
+
+test("stageComposerImage releases the quota lock after a failed transaction", async () => {
+  const { root } = await fixture();
+  const staging = join(root, COMPOSER_ATTACHMENT_DIR);
+  await mkdir(staging);
+  await writeFile(join(staging, ".gitignore"), "*\n");
+  await writeFile(join(staging, "shared"), "not a directory");
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  await assert.rejects(
+    () =>
+      stageComposerImage(root, {
+        mediaType: "image/png",
+        data: png.toString("base64"),
+        conversationId: "shared",
+      }),
+    /not a directory/,
+  );
+  assert.equal((await readdir(staging)).includes(".quota.lock"), false);
+  await assert.doesNotReject(() =>
+    stageComposerImage(root, {
+      mediaType: "image/png",
+      data: png.toString("base64"),
+      conversationId: "11111111-1111-1111-1111-111111111111",
+    }),
   );
 });
 

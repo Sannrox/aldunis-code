@@ -443,7 +443,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search, concurrency-bounded browse inspection, file-preview, and context-package cancellation, image staging with fixed byte, item, and 256-entry inspection bounds, context-package assembly, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search, concurrency-bounded browse inspection, file-preview, and context-package cancellation, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, context-package assembly, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -1565,8 +1565,8 @@
     },
     {
       "subject": "ConversationContextRouteDispatchModule",
-      "source": "Aldunis Code Issues Sannrox/aldunis-code#635, #756, #775, #791, #793, and #849",
-      "locator": "server/context-routes.ts#handleContextRoute; server/context.ts#stageComposerImage; https://github.com/Sannrox/aldunis-code/issues/849",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#635, #756, #775, #791, #793, #849, and #851",
+      "locator": "server/context-routes.ts#handleContextRoute; server/context.ts#stageComposerImage; https://github.com/Sannrox/aldunis-code/issues/849; https://github.com/Sannrox/aldunis-code/issues/851",
       "confidence": 1.0
     },
     {
