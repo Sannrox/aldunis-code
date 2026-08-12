@@ -20,7 +20,12 @@ function context(overrides: Record<string, unknown> = {}) {
     sent,
     automations: { list: unused, create: unused, update: unused, remove: unused },
     automationScheduler: { runNow: unused, refresh: unused },
-    state: { inspect: unused, latestAutomationFire: unused, getAutomationFireById: unused },
+    state: {
+      inspect: unused,
+      latestAutomationFire: unused,
+      latestAutomationFires: unused,
+      getAutomationFireById: unused,
+    },
     remoteRequest: false,
     managed: false,
     readJson: unused,
@@ -57,9 +62,20 @@ test("managed automation list is an empty projection", async () => {
 });
 
 test("automation list enriches each item with its latest fire", async () => {
+  const batches: string[][] = [];
   const module = context({
-    automations: { list: async () => [{ id: "automation-1", name: "Daily" }] },
-    state: { latestAutomationFire: async (id: string) => ({ id: `fire-for-${id}` }) },
+    automations: {
+      list: async () => [
+        { id: "automation-1", name: "Daily" },
+        { id: "automation-2", name: "Weekly" },
+      ],
+    },
+    state: {
+      latestAutomationFires: async (ids: string[]) => {
+        batches.push(ids);
+        return new Map([["automation-1", { id: "fire-for-automation-1" }]]);
+      },
+    },
   });
   await handleAutomationRoute(
     "/api/automations/list",
@@ -67,11 +83,13 @@ test("automation list enriches each item with its latest fire", async () => {
     response,
     module as unknown as AutomationRouteContext,
   );
+  assert.deepEqual(batches, [["automation-1", "automation-2"]]);
   assert.deepEqual(module.sent[0], {
     status: 200,
     value: {
       automations: [
         { id: "automation-1", name: "Daily", lastFire: { id: "fire-for-automation-1" } },
+        { id: "automation-2", name: "Weekly", lastFire: null },
       ],
     },
   });

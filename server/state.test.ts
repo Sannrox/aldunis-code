@@ -437,6 +437,54 @@ test("automation fires are durable, idempotent, and bind turn and provider ident
     (await store.latestAutomationFire("automation-1"))?.key,
     "scheduled:2026-01-01T00:01:00.000Z",
   );
+
+  const originalInspect = store.inspect.bind(store);
+  let projectionInspections = 0;
+  store.load = async () => {
+    throw new Error("batch latest-fire projection must not clone full state");
+  };
+  store.inspect = async () => {
+    projectionInspections += 1;
+    const projection = structuredClone(await originalInspect());
+    const template = projection.automationFires[0];
+    projection.automationFires = [
+      {
+        ...template,
+        id: "automation-1-old",
+        automationId: "automation-1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        ...template,
+        id: "automation-1-latest-first",
+        automationId: "automation-1",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        ...template,
+        id: "automation-1-latest-tied",
+        automationId: "automation-1",
+        createdAt: "2026-01-02T00:00:00.000Z",
+      },
+      {
+        ...template,
+        id: "automation-2-only",
+        automationId: "automation-2",
+        createdAt: "2026-01-03T00:00:00.000Z",
+      },
+    ];
+    return projection;
+  };
+  const latest = await store.latestAutomationFires([
+    "automation-1",
+    "automation-2",
+    "automation-3",
+    "automation-1",
+  ]);
+  assert.equal(projectionInspections, 1);
+  assert.equal(latest.get("automation-1")?.id, "automation-1-latest-first");
+  assert.equal(latest.get("automation-2")?.id, "automation-2-only");
+  assert.equal(latest.has("automation-3"), false);
 });
 
 test("automation fires become explicit unknown after an interrupted host", async () => {
