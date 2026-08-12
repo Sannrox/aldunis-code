@@ -5,13 +5,19 @@ import test from "node:test";
 import { handleContextRoute, MAX_STAGE_IMAGE_BODY_BYTES } from "./context-routes.ts";
 import { RepositoryError } from "./repository.ts";
 
-const response = {} as ServerResponse;
 const unused = async () => {
   throw new Error("dependency must not be called");
 };
 
 function request(): IncomingMessage {
   return new EventEmitter() as IncomingMessage;
+}
+
+function response(): ServerResponse {
+  return Object.assign(new EventEmitter(), {
+    writableEnded: false,
+    destroyed: false,
+  }) as ServerResponse;
 }
 
 function context(overrides: Record<string, unknown> = {}) {
@@ -28,29 +34,44 @@ function context(overrides: Record<string, unknown> = {}) {
 
 test("context module leaves unrelated routes to local dispatch", async () => {
   assert.equal(
-    await handleContextRoute("/api/provider/capabilities", request(), response, context() as never),
+    await handleContextRoute(
+      "/api/provider/capabilities",
+      request(),
+      response(),
+      context() as never,
+    ),
     false,
   );
 });
 
-test("context module searches through the selected worktree and shapes the response", async () => {
+test("context module searches through the selected worktree and propagates cancellation", async () => {
   const writes: unknown[] = [];
   const selections: unknown[] = [];
+  const incoming = request();
+  const outgoing = response();
+  let signal: AbortSignal | undefined;
   assert.equal(
     await handleContextRoute(
       "/api/context/files",
-      request(),
-      response,
+      incoming,
+      outgoing,
       context({
         readJson: async () => ({ root: "/repo", worktree: "/repo/wt", query: "route" }),
         selectWorktree: async (root: string, worktree: string) => {
           selections.push({ root, worktree });
+          outgoing.emit("close");
           return { root: "/canonical", worktree: "/canonical/wt" };
         },
         operations: {
-          searchRepositoryFiles: async (worktree: string, query: string) => {
+          searchRepositoryFiles: async (
+            worktree: string,
+            query: string,
+            _limit?: number,
+            receivedSignal?: AbortSignal,
+          ) => {
             assert.equal(worktree, "/canonical/wt");
             assert.equal(query, "route");
+            signal = receivedSignal;
             return ["server/context-routes.ts"];
           },
         },
@@ -62,15 +83,17 @@ test("context module searches through the selected worktree and shapes the respo
   );
   assert.deepEqual(selections, [{ root: "/repo", worktree: "/repo/wt" }]);
   assert.deepEqual(writes, [{ status: 200, value: { files: ["server/context-routes.ts"] } }]);
+  assert.equal(signal?.aborted, true);
 });
 
 test("context module propagates browse cancellation through its interface", async () => {
   const incoming = request();
+  const outgoing = response();
   let signal: AbortSignal | undefined;
   await handleContextRoute(
     "/api/context/browse",
     incoming,
-    response,
+    outgoing,
     context({
       readJson: async () => ({ root: "/repo", worktree: "/repo/wt", query: "needle" }),
       selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
@@ -97,7 +120,7 @@ test("context module denies remote absolute image paths before worktree or files
     handleContextRoute(
       "/api/context/stage-image",
       request(),
-      response,
+      response(),
       context({
         remote: true,
         readJson: async (_request: IncomingMessage, receivedMaxBytes?: number) => {
@@ -116,7 +139,7 @@ test("context module denies remote folder pins before worktree selection", async
     handleContextRoute(
       "/api/context/package/preview",
       request(),
-      response,
+      response(),
       context({
         remote: true,
         readJson: async () => ({
@@ -135,7 +158,7 @@ test("context module omits provider instructions for managed package previews", 
   await handleContextRoute(
     "/api/context/package/preview",
     request(),
-    response,
+    response(),
     context({
       managed: true,
       readJson: async () => ({

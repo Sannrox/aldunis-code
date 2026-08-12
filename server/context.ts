@@ -512,10 +512,11 @@ export async function searchRepositoryFiles(
   worktree: string,
   query: string,
   limit = 20,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const boundedLimit = Math.max(1, Math.min(limit, 50));
   const needle = query.trim().toLocaleLowerCase();
-  return (await repositoryPaths(worktree))
+  return (await repositoryPaths(worktree, signal))
     .filter((path) => !needle || path.toLocaleLowerCase().includes(needle))
     .sort((left, right) => {
       const leftName = left.split("/").at(-1)?.toLocaleLowerCase() ?? left;
