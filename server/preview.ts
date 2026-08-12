@@ -29,58 +29,134 @@ const TERMINAL_RETAIN_MS = 60_000;
 const STOP_GRACE_MS = 3_000;
 const STOP_FORCE_MS = 2_000;
 
+interface PreviewTerminationTimer {
+  unref(): void;
+}
+
+export interface PreviewTerminationRuntime {
+  platform: NodeJS.Platform;
+  setTimeout(callback: () => void, delayMs: number): PreviewTerminationTimer;
+  clearTimeout(timer: PreviewTerminationTimer): void;
+  killProcessGroup(pid: number, signal: NodeJS.Signals): void;
+  killWindowsTree(pid: number): void;
+}
+
+interface ActivePreviewTermination {
+  timer: PreviewTerminationTimer | null;
+  runtime: PreviewTerminationRuntime;
+  onExit: () => void;
+}
+
+const defaultPreviewTerminationRuntime: PreviewTerminationRuntime = {
+  platform: process.platform,
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (timer) => clearTimeout(timer as NodeJS.Timeout),
+  killProcessGroup: (pid, signal) => process.kill(-pid, signal),
+  killWindowsTree: (pid) => {
+    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+  },
+};
+
+const activePreviewTerminations = new WeakMap<ChildProcess, ActivePreviewTermination>();
+
+function releasePreviewTermination(child: ChildProcess, expected?: ActivePreviewTermination): void {
+  const active = activePreviewTerminations.get(child);
+  if (!active || (expected && active !== expected)) return;
+  activePreviewTerminations.delete(child);
+  child.off("exit", active.onExit);
+  child.off("close", active.onExit);
+  if (active.timer) active.runtime.clearTimeout(active.timer);
+  active.timer = null;
+}
+
+/** End one bounded attempt so a still-live failed preview can be stopped again. */
+export function releasePreviewTerminationAttempt(child: ChildProcess): void {
+  releasePreviewTermination(child);
+}
+
+function signalPreviewChild(
+  child: ChildProcess,
+  pid: number | undefined,
+  signal: NodeJS.Signals,
+  runtime: PreviewTerminationRuntime,
+): boolean {
+  if (runtime.platform !== "win32" && pid !== undefined) {
+    try {
+      runtime.killProcessGroup(pid, signal);
+      return true;
+    } catch {
+      // Fall back to the exact child when its process group is already unavailable.
+    }
+  }
+  try {
+    return child.kill(signal);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Terminate npm and its descendants. Posix spawns use a new process group so
  * SIGTERM/SIGKILL can target the whole tree; Windows uses taskkill /T.
  */
-export function terminatePreviewProcess(child: ChildProcess): void {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+export function terminatePreviewProcess(
+  child: ChildProcess,
+  runtime: PreviewTerminationRuntime = defaultPreviewTerminationRuntime,
+): void {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    releasePreviewTermination(child);
+    return;
+  }
+  if (activePreviewTerminations.has(child)) return;
+
+  const active: ActivePreviewTermination = {
+    timer: null,
+    runtime,
+    onExit: () => releasePreviewTermination(child, active),
+  };
+  activePreviewTerminations.set(child, active);
+  child.once("exit", active.onExit);
+  child.once("close", active.onExit);
+
   const pid = child.pid;
-  if (process.platform === "win32") {
+  if (runtime.platform === "win32") {
     if (typeof pid === "number") {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      }).unref();
+      try {
+        runtime.killWindowsTree(pid);
+      } catch {
+        releasePreviewTermination(child, active);
+      }
       return;
     }
-    try {
-      child.kill();
-    } catch {
-      // Already gone.
+    if (!signalPreviewChild(child, undefined, "SIGTERM", runtime)) {
+      releasePreviewTermination(child, active);
     }
     return;
   }
-  if (typeof pid === "number") {
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        // Already gone.
-      }
-    }
-    const force = setTimeout(() => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // Already gone.
-        }
-      }
-    }, STOP_FORCE_MS);
-    force.unref();
+
+  if (!signalPreviewChild(child, pid, "SIGTERM", runtime)) {
+    releasePreviewTermination(child, active);
     return;
   }
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    // Already gone.
-  }
+  if (activePreviewTerminations.get(child) !== active) return;
+  active.timer = runtime.setTimeout(() => {
+    if (activePreviewTerminations.get(child) !== active) return;
+    active.timer = null;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      releasePreviewTermination(child, active);
+      return;
+    }
+    signalPreviewChild(child, pid, "SIGKILL", runtime);
+  }, STOP_FORCE_MS);
+  active.timer.unref();
+}
+
+/** Test diagnostic without retaining the child outside its lifecycle. */
+export function hasPendingPreviewTermination(child: ChildProcess): boolean {
+  return activePreviewTerminations.has(child);
 }
 
 function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -247,6 +323,10 @@ export class PreviewManager {
     const child = preview.child;
     terminatePreviewProcess(child);
     if (!(await waitForExit(child, STOP_GRACE_MS + STOP_FORCE_MS))) {
+      // This bounded termination attempt is over. Release its idempotence
+      // guard so the failed snapshot's documented later-stop retry can signal
+      // the still-live process tree again.
+      releasePreviewTerminationAttempt(child);
       preview.state = "failed";
       preview.message = "The development process did not stop after SIGTERM/SIGKILL.";
       const failed = this.#snapshot(preview);
@@ -278,7 +358,9 @@ export class PreviewManager {
         if (child && child.exitCode === null && child.signalCode === null) {
           preview.state = "stopping";
           terminatePreviewProcess(child);
-          await waitForExit(child, STOP_GRACE_MS + STOP_FORCE_MS);
+          if (!(await waitForExit(child, STOP_GRACE_MS + STOP_FORCE_MS))) {
+            releasePreviewTerminationAttempt(child);
+          }
         }
         preview.child = null;
         this.#release(preview);
