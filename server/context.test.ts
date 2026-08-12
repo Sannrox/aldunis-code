@@ -302,9 +302,8 @@ test("repository browse bounds parallel inspections and preserves result order",
   let active = 0;
   let maximumActive = 0;
   const result = await browseRepositoryFiles(root, "", undefined, 200, {
-    readFile: async () => {
-      throw new Error("Empty-query browsing must not content-search files.");
-    },
+    open,
+    lstat,
     inspectRepositoryFile: async (_worktree, path, match, signal) => {
       signal?.throwIfAborted();
       active += 1;
@@ -334,9 +333,8 @@ test("repository browse cancellation stops queued inspections", async () => {
     confirmWorkersStarted = resolve;
   });
   const browsing = browseRepositoryFiles(root, "", controller.signal, 200, {
-    readFile: async () => {
-      throw new Error("Empty-query browsing must not content-search files.");
-    },
+    open,
+    lstat,
     inspectRepositoryFile: async (_worktree, path, match) => {
       started += 1;
       if (started === MAX_ACTIVE_BROWSE_INSPECTIONS) confirmWorkersStarted();
@@ -360,12 +358,19 @@ test("repository content search forwards and preserves read cancellation", async
   let receivedSignal: AbortSignal | undefined;
   await assert.rejects(
     browseRepositoryFiles(root, "absent-content-query", controller.signal, 100, {
-      readFile: async (_path, options) => {
-        receivedSignal = options.signal;
-        controller.abort();
-        options.signal?.throwIfAborted();
-        return Buffer.alloc(0);
+      open: async (path, flags) => {
+        const handle = await open(path, flags);
+        return {
+          stat: async () => {
+            receivedSignal = controller.signal;
+            controller.abort();
+            return handle.stat();
+          },
+          read: handle.read.bind(handle),
+          close: handle.close.bind(handle),
+        };
       },
+      lstat,
       inspectRepositoryFile: async () => {
         throw new Error("Canceled content search must not inspect results.");
       },
@@ -373,6 +378,41 @@ test("repository content search forwards and preserves read cancellation", async
     (error: unknown) => error instanceof Error && error.name === "AbortError",
   );
   assert.equal(receivedSignal, controller.signal);
+});
+
+test("repository content search rejects an oversized atomic replacement before reading", async () => {
+  const { root } = await fixture();
+  const target = join(root, "notes.txt");
+  const replacement = join(root, "replacement.txt");
+  await writeFile(replacement, Buffer.alloc(2 * MAX_IMAGE_BYTES));
+  let openedFlags = 0;
+  let reads = 0;
+  const result = await browseRepositoryFiles(root, "absent-content-query", undefined, 100, {
+    open: async (path, flags) => {
+      const isTarget = path.endsWith("/notes.txt");
+      if (isTarget) {
+        openedFlags = flags;
+        await rename(replacement, target);
+      }
+      const handle = await open(path, flags);
+      return {
+        stat: handle.stat.bind(handle),
+        read: async (...args: Parameters<typeof handle.read>) => {
+          if (isTarget) reads += 1;
+          return handle.read(...args);
+        },
+        close: handle.close.bind(handle),
+      };
+    },
+    lstat,
+    inspectRepositoryFile: async () => {
+      throw new Error("Rejected replacement must not produce a result.");
+    },
+  });
+  assert.equal(result.files.length, 0);
+  assert.equal(reads, 0);
+  assert.equal((openedFlags & constants.O_NONBLOCK) !== 0, true);
+  assert.equal((openedFlags & constants.O_NOFOLLOW) !== 0, true);
 });
 
 test("content search reports when its byte budget makes results incomplete", async () => {
