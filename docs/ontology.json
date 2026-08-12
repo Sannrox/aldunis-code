@@ -111,7 +111,7 @@
     },
     {
       "name": "ConversationAutomation",
-      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation through concurrency-bounded scheduled provider-run admission while preserving the conversation, worktree, provider, and explicit approval boundaries; the local store admits and evaluates at most 256 schedules."
+      "description": "A durable timer-only Aldunis Code schedule that sends bounded prompts into one existing conversation through concurrency-bounded scheduled provider-run admission while preserving the conversation, worktree, provider, and explicit approval boundaries; the local store admits and evaluates at most 256 schedules and reads and writes its complete projection within a 64 MiB file bound while failing closed on unstable files."
     },
     {
       "name": "ConversationAutomationFire",
@@ -1843,8 +1843,8 @@
     },
     {
       "subject": "ConversationAutomation",
-      "source": "GitHub Issues Sannrox/aldunis-code#448, #795, and #839",
-      "locator": "server/automations.ts#Automation; docs/automations.md",
+      "source": "GitHub Issues Sannrox/aldunis-code#448, #795, #839, and #865",
+      "locator": "server/automations.ts#Automation; server/automations.ts#readAutomationStoreFile; docs/automations.md",
       "confidence": 1.0
     },
     {
