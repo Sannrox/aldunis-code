@@ -359,6 +359,7 @@ export function TenkaiDeliveryPanel({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ projectId, requestId: outcome.eventId }),
+        signal: inspectionSignal,
       });
       const body = (await response.json()) as ChiseiObservation & { error?: string };
       inspectionSignal?.throwIfAborted();

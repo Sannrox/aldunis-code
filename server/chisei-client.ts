@@ -87,6 +87,7 @@ export interface ChiseiSdkClient {
         operationId?: string;
         requestId?: string;
         timeoutMs?: number;
+        signal?: AbortSignal;
       },
     ): Promise<T>;
   };
@@ -327,7 +328,9 @@ export class ChiseiProjectionClient {
     method: string,
     request: Record<string, unknown>,
     context: { namespace: string; operationId?: string },
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
+    signal?.throwIfAborted();
     const endpoint = configuredEndpoint(this.env);
     const token = this.env.ALDUNIS_CHISEI_TOKEN?.trim();
     if (!endpoint.secure && !endpoint.loopback) {
@@ -346,12 +349,15 @@ export class ChiseiProjectionClient {
         namespace: context.namespace,
         protoRoot: CHISEI_PROTO_ROOT,
       });
+      signal?.throwIfAborted();
       const response = await client.raw.unary<Record<string, unknown>>(service, method, request, {
         namespace: context.namespace,
         operationId: context.operationId,
         requestId: randomUUID(),
         timeoutMs: DEFAULT_TIMEOUT_MS,
+        signal,
       });
+      signal?.throwIfAborted();
       if (!response || typeof response !== "object" || Array.isArray(response)) {
         throw new ChiseiClientError(
           "Chisei returned an incompatible response.",
@@ -361,6 +367,7 @@ export class ChiseiProjectionClient {
       }
       return response;
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof ChiseiClientError) throw error;
       const code =
         error instanceof SdkError ? error.code : (error as { code?: string | number }).code;
@@ -394,7 +401,9 @@ export class ChiseiProjectionClient {
     projectId: string,
     namespace: string,
     filters: { typeId?: string; status?: string; limit?: number } = {},
+    signal?: AbortSignal,
   ): Promise<ChiseiActionListProjection> {
+    signal?.throwIfAborted();
     const limit = Math.max(1, Math.min(MAX_ACTIONS, filters.limit ?? 25));
     const cacheKey = `${projectId}\n${namespace}\n${filters.typeId ?? ""}\n${filters.status ?? ""}\n${limit}`;
     for (const [key, value] of this.#cache) {
@@ -414,6 +423,7 @@ export class ChiseiProjectionClient {
           limit,
         },
         { namespace },
+        signal,
       );
       if (!Array.isArray(response.instances) || response.instances.length > limit) {
         throw new ChiseiClientError(
@@ -438,6 +448,7 @@ export class ChiseiProjectionClient {
       this.#scheduleCacheExpiry(cacheKey, fetchedAt);
       return result;
     } catch (error) {
+      signal?.throwIfAborted();
       if (
         existing &&
         this.now() - Date.parse(existing.fetchedAt) <= CACHE_TTL_MS &&
@@ -454,7 +465,11 @@ export class ChiseiProjectionClient {
     }
   }
 
-  async actionDetail(namespace: string, instanceId: string): Promise<ChiseiActionDetailProjection> {
+  async actionDetail(
+    namespace: string,
+    instanceId: string,
+    signal?: AbortSignal,
+  ): Promise<ChiseiActionDetailProjection> {
     const actionResponse = await this.#call(
       "sekai",
       "GetActionInstance",
@@ -464,6 +479,7 @@ export class ChiseiProjectionClient {
         idempotency_key: "",
       },
       { namespace },
+      signal,
     );
     const action = actionProjection(actionResponse.instance, namespace);
     if (action.instanceId !== instanceId) {
@@ -484,6 +500,7 @@ export class ChiseiProjectionClient {
           limit: MAX_EFFECTS,
         },
         { namespace },
+        signal,
       ),
       this.#call(
         "chisei",
@@ -495,6 +512,7 @@ export class ChiseiProjectionClient {
           attempt: 1,
         },
         { namespace, operationId: action.operationId },
+        signal,
       ),
     ]);
     if (!Array.isArray(effectResponse.effects) || effectResponse.effects.length > MAX_EFFECTS) {
@@ -529,7 +547,11 @@ export class ChiseiProjectionClient {
     };
   }
 
-  async operationReceipt(operationId: string): Promise<ChiseiReceiptProjection> {
+  async operationReceipt(
+    operationId: string,
+    signal?: AbortSignal,
+  ): Promise<ChiseiReceiptProjection> {
+    signal?.throwIfAborted();
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operationId)) {
       throw new ChiseiClientError(
         "The Chisei operation identity is incompatible.",
@@ -547,6 +569,7 @@ export class ChiseiProjectionClient {
         attempt: 1,
       },
       { namespace: "", operationId },
+      signal,
     );
     const missing = responseField(response, "missing_surfaces", "missingSurfaces");
     const complete = responseField(response, "complete", "complete");
@@ -573,7 +596,9 @@ export class ChiseiProjectionClient {
   async sampleObservation(
     namespace: string,
     requestId: string,
+    signal?: AbortSignal,
   ): Promise<ChiseiSampleObservationProjection | null> {
+    signal?.throwIfAborted();
     if (
       typeof namespace !== "string" ||
       !namespace ||
@@ -600,8 +625,10 @@ export class ChiseiProjectionClient {
           namespace,
         },
         { namespace },
+        signal,
       );
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof ChiseiClientError && error.kind === "not_found") return null;
       throw error;
     }

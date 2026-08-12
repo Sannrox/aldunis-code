@@ -14,6 +14,7 @@ type FixtureOptions = {
   operationId?: string;
   requestId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 type Handler = (
@@ -353,6 +354,81 @@ test("ChiseiProjectionClient joins effect and receipt detail without returning r
   assert.equal(result.effects[0].kind, "runtime_dispatch");
   assert.equal(result.receipt?.eventCount, 2);
   assert.doesNotMatch(JSON.stringify(result), /task|prompt|not projected/);
+});
+
+test("ChiseiProjectionClient cancels every Action detail RPC and closes each client", async () => {
+  const controller = new AbortController();
+  const signals: AbortSignal[] = [];
+  let closes = 0;
+  let secondaryCalls = 0;
+  let releaseSecondary!: () => void;
+  const secondaryStarted = new Promise<void>((resolve) => {
+    releaseSecondary = resolve;
+  });
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    async () => ({
+      raw: {
+        async unary<T = unknown>(
+          _service: "sekai" | "chisei",
+          method: string,
+          _request: Record<string, unknown>,
+          options: FixtureOptions = {},
+        ): Promise<T> {
+          assert.ok(options.signal);
+          signals.push(options.signal);
+          if (method === "GetActionInstance") return { instance: action } as T;
+          secondaryCalls += 1;
+          if (secondaryCalls === 2) releaseSecondary();
+          return new Promise<T>((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+              once: true,
+            });
+          });
+        },
+      },
+      close: () => {
+        closes += 1;
+      },
+    }),
+  );
+
+  const detail = client.actionDetail("team/project", "instance-1", controller.signal);
+  await secondaryStarted;
+  controller.abort();
+  await assert.rejects(
+    detail,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.deepEqual(signals, [controller.signal, controller.signal, controller.signal]);
+  assert.equal(closes, 3);
+});
+
+test("ChiseiProjectionClient never converts cancellation into a stale cached list", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const client = new ChiseiProjectionClient(
+    { ALDUNIS_CHISEI_ENDPOINT: "http://127.0.0.1:50051" },
+    fixtureFactory({
+      "sekai.ListActionInstances": (_request, options) => {
+        calls += 1;
+        if (calls === 1) return { instances: [action] };
+        return new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+            once: true,
+          });
+        });
+      },
+    }),
+  );
+
+  await client.listActions("project-1", "team/project");
+  const refresh = client.listActions("project-1", "team/project", {}, controller.signal);
+  controller.abort();
+  await assert.rejects(
+    refresh,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
 });
 
 test("ChiseiProjectionClient does not read effects or receipts for denied Actions", async () => {

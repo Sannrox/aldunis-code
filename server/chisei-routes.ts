@@ -27,8 +27,10 @@ const CHISEI_ROUTES = new Set([
 async function boundProject(
   state: ChiseiRouteState,
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<Project & { chiseiNamespace: string }> {
   const project = (await state.inspect()).projects.find((item) => item.id === projectId);
+  signal?.throwIfAborted();
   if (!project) throw new LocalStateError("The selected project is unavailable.", 404);
   if (!project.chiseiNamespace) {
     throw new ChiseiClientError(
@@ -38,6 +40,30 @@ async function boundProject(
     );
   }
   return project as Project & { chiseiNamespace: string };
+}
+
+async function withRequestCancellation<T>(
+  request: IncomingMessage,
+  response: ServerResponse,
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const abortOnUnfinishedClose = () => {
+    if (!response.writableEnded) abort();
+  };
+  request.once("aborted", abort);
+  response.once("close", abortOnUnfinishedClose);
+  if (request.aborted || (response.destroyed && !response.writableEnded)) abort();
+  try {
+    controller.signal.throwIfAborted();
+    const result = await operation(controller.signal);
+    controller.signal.throwIfAborted();
+    return result;
+  } finally {
+    request.removeListener("aborted", abort);
+    response.removeListener("close", abortOnUnfinishedClose);
+  }
 }
 
 /**
@@ -97,16 +123,20 @@ export async function handleChiseiRoute(
     ) {
       throw new LocalStateError("A valid local project and bounded filters are required.", 400);
     }
-    const project = await boundProject(context.state, body.projectId);
-    context.sendJson(
-      response,
-      200,
-      await context.chisei.listActions(project.id, project.chiseiNamespace, {
-        typeId: body.typeId?.trim().slice(0, 200),
-        status: body.status?.trim().slice(0, 50),
-        limit: body.limit as number | undefined,
-      }),
-    );
+    const result = await withRequestCancellation(request, response, async (signal) => {
+      const project = await boundProject(context.state, body.projectId, signal);
+      return context.chisei.listActions(
+        project.id,
+        project.chiseiNamespace,
+        {
+          typeId: body.typeId?.trim().slice(0, 200),
+          status: body.status?.trim().slice(0, 50),
+          limit: body.limit as number | undefined,
+        },
+        signal,
+      );
+    });
+    context.sendJson(response, 200, result);
     return true;
   }
 
@@ -120,12 +150,11 @@ export async function handleChiseiRoute(
     ) {
       throw new LocalStateError("A valid local project and Action id are required.", 400);
     }
-    const project = await boundProject(context.state, body.projectId);
-    context.sendJson(
-      response,
-      200,
-      await context.chisei.actionDetail(project.chiseiNamespace, body.instanceId),
-    );
+    const result = await withRequestCancellation(request, response, async (signal) => {
+      const project = await boundProject(context.state, body.projectId, signal);
+      return context.chisei.actionDetail(project.chiseiNamespace, body.instanceId, signal);
+    });
+    context.sendJson(response, 200, result);
     return true;
   }
 
@@ -143,11 +172,10 @@ export async function handleChiseiRoute(
         400,
       );
     }
-    const project = await boundProject(context.state, body.projectId);
-    const observation = await context.chisei.sampleObservation(
-      project.chiseiNamespace,
-      body.requestId,
-    );
+    const observation = await withRequestCancellation(request, response, async (signal) => {
+      const project = await boundProject(context.state, body.projectId, signal);
+      return context.chisei.sampleObservation(project.chiseiNamespace, body.requestId, signal);
+    });
     if (!observation) {
       throw new LocalStateError("The Chisei observation is unavailable on the read surface.", 404);
     }
@@ -162,16 +190,20 @@ export async function handleChiseiRoute(
   if (typeof body.projectId !== "string" || typeof body.correlationId !== "string") {
     throw new LocalStateError("A project and governance correlation are required.", 400);
   }
-  const projection = await context.state.inspect();
-  const correlation = projection.governanceCorrelations.find(
-    (item) => item.id === body.correlationId,
-  );
-  const thread = correlation
-    ? projection.threads.find((item) => item.id === correlation.threadId)
-    : null;
-  if (!correlation || !thread || thread.projectId !== body.projectId) {
-    throw new LocalStateError("The governance correlation is unavailable.", 404);
-  }
-  context.sendJson(response, 200, await context.chisei.operationReceipt(correlation.operationId));
+  const receipt = await withRequestCancellation(request, response, async (signal) => {
+    const projection = await context.state.inspect();
+    signal.throwIfAborted();
+    const correlation = projection.governanceCorrelations.find(
+      (item) => item.id === body.correlationId,
+    );
+    const thread = correlation
+      ? projection.threads.find((item) => item.id === correlation.threadId)
+      : null;
+    if (!correlation || !thread || thread.projectId !== body.projectId) {
+      throw new LocalStateError("The governance correlation is unavailable.", 404);
+    }
+    return context.chisei.operationReceipt(correlation.operationId, signal);
+  });
+  context.sendJson(response, 200, receipt);
   return true;
 }
