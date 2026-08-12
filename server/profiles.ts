@@ -9,6 +9,7 @@ import { defaultStateDirectory } from "./state.ts";
 const PROFILE_SCHEMA_VERSION = 1;
 const PROFILE_PROBE_TERMINATION_GRACE_MS = 1_000;
 export const MAX_ACTIVE_PROFILE_PROBES = 8;
+export const MAX_DURABLE_PROVIDER_PROFILES = 128;
 
 function execProfileProbe(
   executable: string,
@@ -194,6 +195,12 @@ export class ProfileError extends Error {
   }
 }
 
+class ProfileInventoryLimitError extends ProfileError {
+  constructor(status = 409) {
+    super("Provider profile inventory exceeds the supported limit.", status);
+  }
+}
+
 function emptyProbe(): ProfileProbe {
   return { state: "unknown", checkedAt: null, detail: null };
 }
@@ -307,12 +314,17 @@ export class ClaudeProfileStore {
   readonly #pendingProfileMutations = new Map<string, Set<object>>();
   #writeQueue: Promise<void> = Promise.resolve();
 
-  constructor(readonly directory = defaultStateDirectory()) {
+  constructor(
+    readonly directory = defaultStateDirectory(),
+    readonly maxProfiles = MAX_DURABLE_PROVIDER_PROFILES,
+  ) {
     this.#profilesPath = join(directory, "claude-profiles.v1.json");
     this.#secretsPath = join(directory, "provider-secrets.v1.json");
   }
 
-  async #documents(): Promise<{ profiles: ProfileDocument; secrets: SecretDocument }> {
+  async #documents(
+    options: { allowOversized?: boolean } = {},
+  ): Promise<{ profiles: ProfileDocument; secrets: SecretDocument }> {
     const [profiles, secrets] = await Promise.all([
       readDocument<ProfileDocument>(this.#profilesPath, {
         schemaVersion: PROFILE_SCHEMA_VERSION,
@@ -331,6 +343,9 @@ export class ClaudeProfileStore {
       secrets.values === null
     ) {
       throw new ProfileError("Provider profile storage uses an incompatible schema.", 500);
+    }
+    if (profiles.profiles.length > this.maxProfiles && !options.allowOversized) {
+      throw new ProfileInventoryLimitError();
     }
     profiles.profiles = profiles.profiles.map((profile) => normalizeProfile(profile));
     return { profiles, secrets };
@@ -420,6 +435,9 @@ export class ClaudeProfileStore {
         preferFront: boolean,
       ) => {
         if (profiles.profiles.some((profile) => profile.id === id)) return;
+        if (profiles.profiles.length >= this.maxProfiles) {
+          throw new ProfileInventoryLimitError(429);
+        }
         const profile: ClaudeProfile = {
           schemaVersion: PROFILE_SCHEMA_VERSION,
           id,
@@ -484,8 +502,51 @@ export class ClaudeProfileStore {
     return found;
   }
 
+  /** Hold profile capacity while one adapter mutation commits, then seed its default. */
+  async withProviderDefault<T>(seed: AdapterProfileSeed, operation: () => Promise<T>): Promise<T> {
+    let result!: T;
+    const queued = this.#writeQueue.then(async () => {
+      const { profiles } = await this.#documents();
+      const id = defaultProfileId(seed.provider);
+      const existing = profiles.profiles.some((profile) => profile.id === id);
+      if (!existing && profiles.profiles.length >= this.maxProfiles) {
+        throw new ProfileInventoryLimitError(429);
+      }
+      validateEnvironment(seed.environment ?? []);
+      result = await operation();
+      if (existing) return;
+      const now = new Date().toISOString();
+      profiles.profiles.push({
+        schemaVersion: PROFILE_SCHEMA_VERSION,
+        id,
+        provider: seed.provider,
+        name: seed.name,
+        binaryPath: seed.binaryPath,
+        homePath: "",
+        configPath: "",
+        environment: seed.environment ?? [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await writeDocument(this.#profilesPath, profiles);
+      this.#probes.delete(id);
+    });
+    this.#writeQueue = queued.catch(() => undefined);
+    await queued;
+    return result;
+  }
+
   async list(options?: { adapters?: AdapterProfileSeed[] }): Promise<ClaudeProfileSnapshot[]> {
-    return this.ensureDefaults(options);
+    try {
+      return await this.ensureDefaults(options);
+    } catch (error) {
+      if (!(error instanceof ProfileInventoryLimitError)) throw error;
+      const { profiles, secrets } = await this.#documents({ allowOversized: true });
+      if (profiles.profiles.length < this.maxProfiles) throw error;
+      return profiles.profiles
+        .slice(0, this.maxProfiles)
+        .map((profile) => this.#snapshot(profile, secrets));
+    }
   }
 
   async save(input: {
@@ -505,11 +566,14 @@ export class ClaudeProfileStore {
 
     let result!: ClaudeProfileSnapshot;
     const operation = this.#writeQueue.then(async () => {
-      const { profiles, secrets } = await this.#documents();
+      const { profiles, secrets } = await this.#documents({ allowOversized: Boolean(input.id) });
       const existing = input.id
         ? profiles.profiles.find((profile) => profile.id === input.id)
         : undefined;
       if (input.id && !existing) throw new ProfileError("The provider profile was not found.", 404);
+      if (!existing && profiles.profiles.length >= this.maxProfiles) {
+        throw new ProfileError("The provider profile inventory is full.", 429);
+      }
       const id = existing?.id ?? randomUUID();
       const provider = (input.provider?.trim() || existing?.provider || "claude-code").trim();
       if (!provider) throw new ProfileError("A provider is required.");
@@ -578,7 +642,7 @@ export class ClaudeProfileStore {
   async delete(id: string): Promise<void> {
     const mutation = this.#beginProfileMutation(id);
     const operation = this.#writeQueue.then(async () => {
-      const { profiles, secrets } = await this.#documents();
+      const { profiles, secrets } = await this.#documents({ allowOversized: true });
       if (!profiles.profiles.some((profile) => profile.id === id)) {
         throw new ProfileError("The provider profile was not found.", 404);
       }
@@ -607,7 +671,7 @@ export class ClaudeProfileStore {
     configPath: string;
     continuationKey: string;
   }> {
-    const { profiles, secrets } = await this.#documents();
+    const { profiles, secrets } = await this.#documents({ allowOversized: true });
     const profile = profiles.profiles.find((item) => item.id === id);
     if (!profile) throw new ProfileError("Select an available provider profile.", 404);
     const environment: NodeJS.ProcessEnv = { ...process.env };
