@@ -46,6 +46,10 @@
       "description": "A nested Aldunis Code CLI command for creating, listing, or revoking authenticated remote pairing state without starting the host."
     },
     {
+      "name": "RemoteAuthPersistenceStore",
+      "description": "The Aldunis-owned local proof-key pairing and remote-session metadata store, bounded to 1 MiB before reads and writes and validated against shrink, growth, metadata mutation, atomic pathname replacement, and post-open disappearance while treating only initial absence as first-run state."
+    },
+    {
       "name": "RemoteAccessRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates remote administration, device pairing, and descriptor route recognition, local-control and managed-host admission, configured-origin readiness, pairing-link derivation, request validation, and response mapping behind one internal dispatch interface while RemoteAuth retains credential, proof, and persistence authority within fixed live-grant, active-session, terminal-history, and proof-replay bounds."
     },
@@ -1665,6 +1669,12 @@
       "subject": "RemoteAuthCommand",
       "source": "Aldunis Code CLI command contract",
       "locator": "server/cli.ts#parseAuth; server/main.ts#RemoteAuth",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RemoteAuthPersistenceStore",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#867",
+      "locator": "server/remote-auth.ts#RemoteAuth; server/remote-auth.ts#readRemoteAuthStateFile; https://github.com/Sannrox/aldunis-code/issues/867",
       "confidence": 1.0
     },
     {
