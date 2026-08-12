@@ -23,7 +23,7 @@
     },
     {
       "name": "ProviderRunExecutionModule",
-      "description": "A deep server-side Aldunis Code module that concentrates LocalConversation run admission, accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
+      "description": "A deep server-side Aldunis Code module that admits at most eight host-wide LocalConversation runs, then concentrates accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
     },
     {
       "name": "ProviderProcessTerminationCoordinator",
@@ -2423,6 +2423,12 @@
       "subject": "ProviderRunExecutionModule",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#614 and #659",
       "locator": "server/provider-run.ts#admitProviderRun; server/provider-run.ts#handleProviderRun",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderRunExecutionModule",
+      "source": "GitHub Issue Sannrox/aldunis-code#823",
+      "locator": "server/provider-run.ts#ProviderRunAdmission",
       "confidence": 1.0
     },
     {

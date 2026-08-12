@@ -44,6 +44,26 @@ type DelegatedControlLock = <T>(operation: () => Promise<T>) => Promise<T>;
 type ProviderInputExpiryTimer = { unref(): void };
 
 export const MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS = 32;
+export const MAX_ACTIVE_PROVIDER_RUNS = 8;
+
+export class ProviderRunAdmission {
+  readonly #leases = new Set<object>();
+
+  acquire(): () => void {
+    if (this.#leases.size >= MAX_ACTIVE_PROVIDER_RUNS) {
+      throw new RepositoryError("Too many provider runs are active.", 429);
+    }
+    const lease = {};
+    this.#leases.add(lease);
+    return () => {
+      this.#leases.delete(lease);
+    };
+  }
+
+  get retainedLeaseCount(): number {
+    return this.#leases.size;
+  }
+}
 
 export class ProviderInputExpiryTimers {
   readonly #runs = new Map<string, Map<string, ProviderInputExpiryTimer>>();
@@ -217,6 +237,7 @@ export interface ProviderRunModuleContext {
   worktrees: WorktreeManager;
   adapters: ProviderAdapterStore;
   activeAcp: Map<string, AcpProviderAdapter>;
+  providerRunAdmission: ProviderRunAdmission;
   inputExpiryTimers: ProviderInputExpiryTimers;
   wake: WakeBroker;
   withDelegatedControlLock: DelegatedControlLock;
@@ -247,6 +268,19 @@ export function shouldReleaseBrowserProviderToken(
 }
 
 export async function handleProviderRun(
+  input: ProviderRunInput,
+  output: ProviderRunOutput,
+  module: ProviderRunModuleContext,
+): Promise<boolean> {
+  const release = module.providerRunAdmission.acquire();
+  try {
+    return await executeProviderRun(input, output, module);
+  } finally {
+    release();
+  }
+}
+
+async function executeProviderRun(
   input: ProviderRunInput,
   output: ProviderRunOutput,
   module: ProviderRunModuleContext,
