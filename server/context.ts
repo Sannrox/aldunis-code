@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import { lstat, mkdir, open, opendir, readFile, stat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -15,6 +16,7 @@ export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 export const MAX_TOTAL_TEXT_BYTES = 256 * 1024;
 export const MAX_CONTEXT_PACKAGE_FILES = 100;
 export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
+const CONTEXT_PACKAGE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
@@ -50,6 +52,11 @@ interface WorktreeImageFileOperations {
   open(path: string, flags: string): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
 }
 
+interface ContextPackageFileOperations {
+  open(path: string, flags: string): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
+  lstat(path: string): Promise<Stats>;
+}
+
 export interface RepositoryBrowseOperations {
   readFile(path: string, options: { signal?: AbortSignal }): Promise<Buffer>;
   inspectRepositoryFile(
@@ -62,6 +69,7 @@ export interface RepositoryBrowseOperations {
 
 const previewFileOperations: PreviewFileOperations = { readFile, open };
 const worktreeImageFileOperations: WorktreeImageFileOperations = { open };
+const contextPackageFileOperations: ContextPackageFileOperations = { open, lstat };
 
 function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
   if (mediaType === "image/png") {
@@ -105,6 +113,66 @@ function matchesImageSignature(bytes: Buffer, mediaType: string): boolean {
     );
   }
   return false;
+}
+
+function sameContextFile(left: Stats, right: Stats): boolean {
+  return (
+    left.isFile() &&
+    right.isFile() &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+/** Read one admitted package file without retaining beyond the remaining package budget. */
+export async function readBoundedContextPackageFile(
+  path: string,
+  admitted: Stats,
+  maximum: number,
+  signal?: AbortSignal,
+  operations: ContextPackageFileOperations = contextPackageFileOperations,
+): Promise<Buffer | null> {
+  signal?.throwIfAborted();
+  if (!Number.isSafeInteger(maximum) || maximum < 0 || admitted.size > maximum) return null;
+  const handle = await operations.open(path, "r");
+  try {
+    const opened = await handle.stat();
+    if (!sameContextFile(admitted, opened)) return null;
+    const chunks: Buffer[] = [];
+    const buffer = Buffer.allocUnsafe(Math.min(CONTEXT_PACKAGE_READ_BUFFER_BYTES, maximum + 1));
+    let position = 0;
+    while (position <= maximum) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, maximum + 1 - position),
+        position,
+      );
+      if (bytesRead === 0) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      position += bytesRead;
+    }
+    if (position > maximum) return null;
+    const [after, pathname] = await Promise.all([
+      handle.stat(),
+      operations.lstat(path).catch(() => null),
+    ]);
+    if (
+      !pathname ||
+      position !== admitted.size ||
+      !sameContextFile(admitted, after) ||
+      !sameContextFile(after, pathname)
+    ) {
+      return null;
+    }
+    return Buffer.concat(chunks, position);
+  } finally {
+    await handle.close();
+  }
 }
 const SECRET_NAMES =
   /(^|\/)(\.env(?:\.[^/]*)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|credentials(?:\.json)?(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?|[^/]+\.(?:key|pem|p12|pfx)(?:\.(?:bak|backup|old|orig|copy|tmp|save|swp))?)$/i;
@@ -413,14 +481,20 @@ export async function assembleContextPackage(
       );
       continue;
     }
-    if (inspectedBytes + direct.size > MAX_CONTEXT_PACKAGE_BYTES) {
+    const remainingBytes = MAX_CONTEXT_PACKAGE_BYTES - inspectedBytes;
+    if (direct.size > remainingBytes) {
       entries.push(omittedEntry(path, source, "package byte limit"));
       continue;
     }
     inspectedBytes += direct.size;
     const canonical = await constrainPath(worktree, join(worktree, path));
-    const bytes = await readFile(canonical, { signal: options.signal });
-    if (bytes.length !== direct.size) {
+    const bytes = await readBoundedContextPackageFile(
+      canonical,
+      direct,
+      remainingBytes,
+      options.signal,
+    );
+    if (!bytes) {
       entries.push(omittedEntry(path, source, "file changed during resolution"));
       continue;
     }
