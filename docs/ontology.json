@@ -51,7 +51,7 @@
     },
     {
       "name": "DesktopRemoteEnvironmentManager",
-      "description": "The Electron main-process boundary that stores named remote-environment metadata, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
+      "description": "The Electron main-process boundary that retains at most 64 named remote-environment metadata records, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
     },
     {
       "name": "RemoteEnvironment",
@@ -1667,8 +1667,8 @@
     },
     {
       "subject": "DesktopRemoteEnvironmentManager",
-      "source": "Aldunis Code desktop remote-environment contract and Issue Sannrox/aldunis-code#815",
-      "locator": "desktop/main.ts#REMOTE_ENVIRONMENT_CONNECT_CHANNEL; desktop/remote-environments.ts#RemoteEnvironmentManager; https://github.com/Sannrox/aldunis-code/issues/815",
+      "source": "Aldunis Code desktop remote-environment contract and Issues Sannrox/aldunis-code#815 and #847",
+      "locator": "desktop/main.ts#REMOTE_ENVIRONMENT_CONNECT_CHANNEL; desktop/remote-environments.ts#RemoteEnvironmentManager; https://github.com/Sannrox/aldunis-code/issues/815; https://github.com/Sannrox/aldunis-code/issues/847",
       "confidence": 1.0
     },
     {

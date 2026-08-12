@@ -1,13 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { lock } from "proper-lockfile";
 import { DEFAULT_SSH_REMOTE_PORT } from "../src/ports.ts";
 
 export const DEFAULT_REMOTE_BACKEND_PORT = DEFAULT_SSH_REMOTE_PORT;
 export const DEFAULT_REMOTE_COMMAND = "aldunis-code";
 export const MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS = 8;
+export const MAX_SAVED_REMOTE_ENVIRONMENTS = 64;
+export const MAX_RECOVERABLE_REMOTE_ENVIRONMENTS = 256;
+export const MAX_REMOTE_ENVIRONMENT_STATE_BYTES = 256 * 1024;
 
 export type RemoteEnvironmentTransport = "endpoint" | "ssh";
 
@@ -503,13 +507,52 @@ async function issueSshPairing(target: string, command: string, localUrl: string
 }
 
 export class RemoteEnvironmentStore {
-  constructor(private readonly path: string) {}
+  readonly #lockPath: string;
+  #mutationQueue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly path: string,
+    readonly maxEnvironments = MAX_SAVED_REMOTE_ENVIRONMENTS,
+    readonly maxRecoverableEnvironments = MAX_RECOVERABLE_REMOTE_ENVIRONMENTS,
+    readonly maxStateBytes = MAX_REMOTE_ENVIRONMENT_STATE_BYTES,
+  ) {
+    this.#lockPath = `${path}.lock`;
+  }
 
   async list(): Promise<RemoteEnvironmentRecord[]> {
+    return (await this.#loadAll()).slice(0, this.maxEnvironments);
+  }
+
+  async #loadAll(): Promise<RemoteEnvironmentRecord[]> {
     try {
-      const parsed = JSON.parse(await readFile(this.path, "utf8")) as PersistedState;
+      const handle = await open(this.path, "r");
+      let raw: string;
+      try {
+        const details = await handle.stat();
+        if (details.size > this.maxStateBytes) {
+          throw new Error("Remote environment state exceeds the supported size.");
+        }
+        const bytes = Buffer.alloc(details.size);
+        let offset = 0;
+        while (offset < bytes.length) {
+          const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+          if (result.bytesRead === 0) break;
+          offset += result.bytesRead;
+        }
+        const extra = Buffer.alloc(1);
+        if ((await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+          throw new Error("Remote environment state changed while it was being read.");
+        }
+        raw = bytes.subarray(0, offset).toString("utf8");
+      } finally {
+        await handle.close();
+      }
+      const parsed = JSON.parse(raw) as PersistedState;
       if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.environments))
         throw new Error("incompatible");
+      if (parsed.environments.length > this.maxRecoverableEnvironments) {
+        throw new Error("Remote environment state exceeds the recovery limit.");
+      }
       return parsed.environments.map(parseRecord);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -522,51 +565,86 @@ export class RemoteEnvironmentStore {
     input: RemoteEnvironmentInput,
   ): Promise<{ record: RemoteEnvironmentRecord; pairingUrl: string | null }> {
     const normalized = normalizeRemoteEnvironmentInput(input);
-    const environments = await this.list();
-    const now = new Date().toISOString();
-    const existing = input.id
-      ? environments.find((environment) => environment.id === input.id)
-      : undefined;
-    if (input.id && !existing) throw new Error("The remote environment no longer exists.");
-    const record: RemoteEnvironmentRecord = {
-      ...normalized.record,
-      id: existing?.id ?? randomUUID(),
-      preferredLocalPort: existing?.preferredLocalPort ?? null,
-      paired: normalized.pairingUrl ? false : (existing?.paired ?? false),
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    const next = existing
-      ? environments.map((environment) => (environment.id === record.id ? record : environment))
-      : [...environments, record];
-    await this.#write(next);
-    return { record, pairingUrl: normalized.pairingUrl };
+    return this.#mutate(async () => {
+      const environments = await this.#loadAll();
+      const now = new Date().toISOString();
+      const existing = input.id
+        ? environments.find((environment) => environment.id === input.id)
+        : undefined;
+      if (input.id && !existing) throw new Error("The remote environment no longer exists.");
+      if (!existing && environments.length >= this.maxEnvironments) {
+        throw new Error("The saved remote environment inventory is full.");
+      }
+      const record: RemoteEnvironmentRecord = {
+        ...normalized.record,
+        id: existing?.id ?? randomUUID(),
+        preferredLocalPort: existing?.preferredLocalPort ?? null,
+        paired: normalized.pairingUrl ? false : (existing?.paired ?? false),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      const next = existing
+        ? environments.map((environment) => (environment.id === record.id ? record : environment))
+        : [...environments, record];
+      await this.#write(next);
+      return { record, pairingUrl: normalized.pairingUrl };
+    });
   }
 
   async updateRuntime(
     id: string,
     values: Partial<Pick<RemoteEnvironmentRecord, "preferredLocalPort" | "paired">>,
   ): Promise<void> {
-    const environments = await this.list();
-    const next = environments.map((environment) =>
-      environment.id === id
-        ? { ...environment, ...values, updatedAt: new Date().toISOString() }
-        : environment,
-    );
-    if (!next.some((environment) => environment.id === id))
-      throw new Error("The remote environment no longer exists.");
-    await this.#write(next);
+    await this.#mutate(async () => {
+      const environments = await this.#loadAll();
+      const next = environments.map((environment) =>
+        environment.id === id
+          ? { ...environment, ...values, updatedAt: new Date().toISOString() }
+          : environment,
+      );
+      if (!next.some((environment) => environment.id === id))
+        throw new Error("The remote environment no longer exists.");
+      await this.#write(next);
+    });
   }
 
   async remove(id: string): Promise<void> {
-    const environments = await this.list();
-    await this.#write(environments.filter((environment) => environment.id !== id));
+    await this.#mutate(async () => {
+      const environments = await this.#loadAll();
+      await this.#write(environments.filter((environment) => environment.id !== id));
+    });
+  }
+
+  async #mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = this.#mutationQueue.then(async () => {
+      await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+      const release = await lock(this.#lockPath, {
+        realpath: false,
+        stale: 30_000,
+        update: 10_000,
+        retries: { retries: 1_200, factor: 1, minTimeout: 25, maxTimeout: 25 },
+      });
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+    this.#mutationQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
   }
 
   async #write(environments: RemoteEnvironmentRecord[]): Promise<void> {
+    const serialized = `${JSON.stringify({ schemaVersion: 1, environments }, null, 2)}\n`;
+    if (Buffer.byteLength(serialized, "utf8") > this.maxStateBytes) {
+      throw new Error("Remote environment state exceeds the supported size.");
+    }
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify({ schemaVersion: 1, environments }, null, 2)}\n`, {
+    await writeFile(temporary, serialized, {
       encoding: "utf8",
       mode: 0o600,
     });
