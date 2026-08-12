@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
   claudeModelCatalog,
+  copyStableProbeFile,
   discoverProviderModels,
   MAX_ACTIVE_ADAPTER_MODEL_PROBES,
   MAX_PENDING_ADAPTER_MODEL_PROBES,
@@ -19,6 +30,54 @@ import {
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 
 const execFileAsync = promisify(execFile);
+
+test("copyStableProbeFile copies the exact admitted regular file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-probe-copy-"));
+  const source = join(directory, "source");
+  const destination = join(directory, "destination");
+  await writeFile(source, "stable probe content", { mode: 0o640 });
+
+  await copyStableProbeFile(source, destination, await lstat(source));
+
+  assert.equal(await readFile(destination, "utf8"), "stable probe content");
+  assert.equal((await stat(destination)).size, 20);
+});
+
+test("copyStableProbeFile rejects an atomic replacement without retaining output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-probe-copy-"));
+  const source = join(directory, "source");
+  const replacement = join(directory, "replacement");
+  const destination = join(directory, "destination");
+  await writeFile(source, "small");
+  const admitted = await lstat(source);
+  await writeFile(replacement, "replacement is larger");
+  await rename(replacement, source);
+
+  await assert.rejects(
+    copyStableProbeFile(source, destination, admitted),
+    /changed before copying/,
+  );
+  await assert.rejects(stat(destination), (error: unknown) => {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
+  });
+});
+
+test("copyStableProbeFile rejects size changes before copying", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-probe-copy-"));
+  const source = join(directory, "source");
+  const destination = join(directory, "destination");
+  await writeFile(source, "admitted");
+  const admitted = await lstat(source);
+  await writeFile(source, "admitted then grown");
+
+  await assert.rejects(
+    copyStableProbeFile(source, destination, admitted),
+    /changed before copying/,
+  );
+  await assert.rejects(stat(destination), (error: unknown) => {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
+  });
+});
 
 function codexModel(id: string, isDefault = false) {
   return {
