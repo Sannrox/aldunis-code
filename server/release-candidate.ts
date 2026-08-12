@@ -17,6 +17,7 @@ const CANDIDATE_DOMAIN = Buffer.from("ALDUNIS-DELIVERY-CANDIDATE-V1\0", "ascii")
 const GIT_BATCH_IDLE_TIMEOUT_MS = 20_000;
 const MAX_GIT_BATCH_HEADER_BYTES = 256;
 const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
+const MAX_SOURCE_TREE_BATCH_ENTRIES = 256;
 const ARTIFACT_FILE_READ_BUFFER_BYTES = 256 * 1024;
 export const MAX_RELEASE_PACKAGE_MANIFEST_BYTES = 256 * 1024;
 export const MAX_RELEASE_MANIFEST_BYTES = 256 * 1024;
@@ -229,6 +230,7 @@ class GitBatchReader {
 }
 
 type SourceTreeBlob = { oid: string };
+type SourceTreeEntry = SourceTreeBlob & { path: Buffer; mode: Buffer };
 
 interface GitBlobBatchOptions {
   maximumBytes?: number;
@@ -266,10 +268,10 @@ export async function consumeGitBlobBatch(
   await reader.end();
 }
 
-async function hashSourceTreeBlobs(
+async function hashSourceTreeBlobs<T extends SourceTreeBlob>(
   worktree: string,
-  entries: SourceTreeBlob[],
-  consume: (digest: Buffer) => void,
+  entries: Iterable<T>,
+  consume: (entry: T, digest: Buffer) => void,
   options: GitBlobBatchOptions = {},
 ): Promise<void> {
   const child = spawn("git", ["-C", worktree, "cat-file", "--batch"], {
@@ -310,19 +312,49 @@ async function hashSourceTreeBlobs(
     }
     return Buffer.concat(chunks).toString("utf8").trim();
   })();
-  const writeRequests = (async () => {
+  try {
+    const reader = new GitBatchReader(child.stdout, resetIdleTimer);
+    let batch: T[] = [];
+    const consumeBatch = async () => {
+      const current = batch;
+      batch = [];
+      const write = async () => {
+        for (const entry of current) {
+          resetIdleTimer();
+          if (!child.stdin.write(`${entry.oid}\n`)) await once(child.stdin, "drain");
+        }
+      };
+      const read = async () => {
+        for (const entry of current) {
+          const header = await reader.line();
+          const match = header.match(/^([0-9a-f]{40}|[0-9a-f]{64}) blob ([0-9]+)$/);
+          const size = match ? Number(match[2]) : Number.NaN;
+          if (!match || match[1] !== entry.oid || !Number.isSafeInteger(size)) {
+            throw new Error("Git batch output does not match the requested blob.");
+          }
+          if (options.maximumBytes !== undefined && size > options.maximumBytes) {
+            options.oversized?.();
+            throw new Error("Git batch object exceeds its admitted size.");
+          }
+          const blobHash = createHash("sha256");
+          await reader.bytes(size, (chunk) => {
+            blobHash.update(chunk);
+            options.consumeChunk?.(chunk);
+          });
+          await reader.separator();
+          consume(entry, blobHash.digest());
+        }
+      };
+      await Promise.all([write(), read()]);
+    };
     for (const entry of entries) {
-      resetIdleTimer();
-      if (!child.stdin.write(`${entry.oid}\n`)) await once(child.stdin, "drain");
+      batch.push(entry);
+      if (batch.length === MAX_SOURCE_TREE_BATCH_ENTRIES) await consumeBatch();
     }
+    if (batch.length > 0) await consumeBatch();
     child.stdin.end();
     await finished(child.stdin);
-  })();
-  try {
-    await Promise.all([
-      writeRequests,
-      consumeGitBlobBatch(child.stdout, entries, consume, resetIdleTimer, options),
-    ]);
+    await reader.end();
     const outcome = await exit;
     const errorText = await stderr;
     if (timedOut || outcome.error || outcome.code !== 0) {
@@ -395,54 +427,62 @@ function canonicalRepositoryIdentity(raw: string): string {
 export async function sourceTreeDigest(worktree: string): Promise<string> {
   const tree = (await git(worktree, ["ls-tree", "-r", "-z", "--full-tree", "HEAD"], "buffer"))
     .stdout as Buffer;
-  const entries = tree
-    .subarray(0, tree.length - (tree.at(-1) === 0 ? 1 : 0))
-    .toString("binary")
-    .split("\0");
-  const parsed: Array<{ path: Buffer; mode: Buffer; oid: string }> = [];
   const normalized = new Set<string>();
-  for (const entry of entries) {
-    if (!entry) continue;
-    const bytes = Buffer.from(entry, "binary");
-    const tab = bytes.indexOf(0x09);
-    const metadata = bytes.subarray(0, tab).toString("ascii").split(" ");
-    const path = bytes.subarray(tab + 1);
-    if (tab < 0 || metadata.length !== 3 || metadata[1] !== "blob") {
-      throw new RepositoryError(
-        "Delivery candidates cannot contain submodules or unsupported Git entries.",
-        409,
-      );
+  function* entries(): Generator<SourceTreeEntry> {
+    let offset = 0;
+    let previousPath: Buffer | null = null;
+    while (offset < tree.length) {
+      const end = tree.indexOf(0, offset);
+      if (end < 0) throw new RepositoryError("Delivery candidate tree output is incomplete.", 409);
+      if (end === offset) {
+        offset += 1;
+        continue;
+      }
+      const bytes = tree.subarray(offset, end);
+      offset = end + 1;
+      const tab = bytes.indexOf(0x09);
+      const metadata = bytes.subarray(0, tab).toString("ascii").split(" ");
+      const path = bytes.subarray(tab + 1);
+      if (tab < 0 || metadata.length !== 3 || metadata[1] !== "blob") {
+        throw new RepositoryError(
+          "Delivery candidates cannot contain submodules or unsupported Git entries.",
+          409,
+        );
+      }
+      if (previousPath && Buffer.compare(previousPath, path) >= 0) {
+        throw new RepositoryError("Delivery candidate tree paths are not canonical.", 409);
+      }
+      if (!["100644", "100755"].includes(metadata[0])) {
+        throw new RepositoryError(
+          "Delivery candidates cannot contain symlinks or unsupported Git modes.",
+          409,
+        );
+      }
+      const text = path.toString("utf8");
+      if (
+        !Buffer.from(text, "utf8").equals(path) ||
+        text !== text.normalize("NFC") ||
+        // eslint-disable-next-line no-control-regex -- canonical paths reject ASCII control bytes.
+        /[\u0000-\u001f\u007f]/u.test(text)
+      ) {
+        throw new RepositoryError(
+          "Delivery candidates require canonical UTF-8 tracked paths.",
+          409,
+        );
+      }
+      if (normalized.has(text)) {
+        throw new RepositoryError(
+          "Delivery candidates cannot contain duplicate normalized paths.",
+          409,
+        );
+      }
+      normalized.add(text);
+      previousPath = path;
+      yield { path, mode: Buffer.from(metadata[0], "ascii"), oid: metadata[2] };
     }
-    if (!["100644", "100755"].includes(metadata[0])) {
-      throw new RepositoryError(
-        "Delivery candidates cannot contain symlinks or unsupported Git modes.",
-        409,
-      );
-    }
-    const text = path.toString("utf8");
-    if (
-      !Buffer.from(text, "utf8").equals(path) ||
-      text !== text.normalize("NFC") ||
-      // eslint-disable-next-line no-control-regex -- canonical paths reject ASCII control bytes.
-      /[\u0000-\u001f\u007f]/u.test(text)
-    ) {
-      throw new RepositoryError("Delivery candidates require canonical UTF-8 tracked paths.", 409);
-    }
-    if (normalized.has(text)) {
-      throw new RepositoryError(
-        "Delivery candidates cannot contain duplicate normalized paths.",
-        409,
-      );
-    }
-    normalized.add(text);
-    parsed.push({ path, mode: Buffer.from(metadata[0], "ascii"), oid: metadata[2] });
   }
-  parsed.sort((left, right) => Buffer.compare(left.path, right.path));
   const hash = createHash("sha256").update(SOURCE_DOMAIN);
-  let digestIndex = 0;
-  await hashSourceTreeBlobs(worktree, parsed, (blobDigest) => {
-    const entry = parsed[digestIndex];
-    digestIndex += 1;
+  await hashSourceTreeBlobs(worktree, entries(), (entry, blobDigest) => {
     hash.update(length64(entry.path.length));
     hash.update(entry.path);
     hash.update(length64(entry.mode.length));
