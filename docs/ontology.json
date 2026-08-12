@@ -115,7 +115,7 @@
     },
     {
       "name": "AutonomyTask",
-      "description": "One durable bounded step in an AutonomyRun, with retry count, timeout state, approval-gate state, and metadata-only output."
+      "description": "One durable bounded step in an AutonomyRun, with retry count, timeout state, approval-gate state, and metadata-only output; a timed-out attempt aborts and drains its exact Git and filesystem work before retry admission."
     },
     {
       "name": "AutonomyFlow",
@@ -1791,8 +1791,8 @@
     },
     {
       "subject": "AutonomyTask",
-      "source": "Aldunis Code autonomy stack",
-      "locator": "server/autonomy.ts#AutonomyTask; server/state.ts#autonomy_task_saved",
+      "source": "Aldunis Code autonomy stack and Issue #801",
+      "locator": "server/autonomy.ts#AutonomyTask; server/autonomy-engine.ts#withTimeout; server/state.ts#autonomy_task_saved; https://github.com/Sannrox/aldunis-code/issues/801",
       "confidence": 1.0
     },
     {
