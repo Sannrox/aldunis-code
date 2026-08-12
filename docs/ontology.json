@@ -102,6 +102,10 @@
       "description": "A local browser or desktop-profile presentation preference recording whether the Aldunis Code sidebar should start expanded; it grants no repository, provider, permission, or contract authority."
     },
     {
+      "name": "WorkbenchPreferences",
+      "description": "The schema-owned Aldunis Code host preference projection for theme, density, zoom, motion, shortcuts, worktree limits, beta visibility, thinking visibility, and conversation scroll behavior, persisted within a 16 KiB file bound without retaining unknown properties or granting repository, provider, permission, or contract authority."
+    },
+    {
       "name": "SidebarToggleKeybinding",
       "description": "The fixed Mod+B presentation keybinding that toggles the Aldunis Code sidebar without changing conversation, repository, provider, permission, or contract state."
     },
@@ -1807,6 +1811,12 @@
       "subject": "SidebarOpenPreference",
       "source": "Sannrox/aldunis-code",
       "locator": "src/lib/sidebar-state.ts; src/features/code/workbench.tsx",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorkbenchPreferences",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#857",
+      "locator": "server/preferences.ts; docs/local-data.md; https://github.com/Sannrox/aldunis-code/issues/857",
       "confidence": 1.0
     },
     {

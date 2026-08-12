@@ -1,7 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const PREFERENCES_SCHEMA_VERSION = 1;
+export const MAX_PREFERENCES_FILE_BYTES = 16 * 1024;
 
 export type ConversationOpenScroll = "latest" | "remember";
 
@@ -43,6 +44,50 @@ export class PreferencesError extends Error {
   }
 }
 
+export interface PreferencesFileOperations {
+  open(path: string): Promise<{
+    stat(): Promise<{ size: number }>;
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
+}
+
+const preferencesFileOperations: PreferencesFileOperations = {
+  open: (path) => open(path, "r"),
+};
+
+async function readPreferencesFile(
+  path: string,
+  operations: PreferencesFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  try {
+    const details = await handle.stat();
+    if (details.size > MAX_PREFERENCES_FILE_BYTES) {
+      throw new PreferencesError("Preferences exceed the supported size.");
+    }
+    const bytes = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if (offset !== details.size || (await handle.read(extra, 0, 1, offset)).bytesRead > 0) {
+      throw new PreferencesError("Preferences changed while being read.");
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 function parsePreferences(value: unknown): Preferences {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new PreferencesError("Preferences are invalid.");
@@ -72,13 +117,12 @@ function parsePreferences(value: unknown): Preferences {
     throw new PreferencesError("Preferences use an incompatible or invalid value.");
   }
   return {
-    ...(input as unknown as Omit<
-      Preferences,
-      | "managedWorktreeLimit"
-      | "orchestrationThreadsBeta"
-      | "showThinking"
-      | "conversationOpenScroll"
-    >),
+    schemaVersion: PREFERENCES_SCHEMA_VERSION,
+    theme: input.theme as Preferences["theme"],
+    density: input.density as Preferences["density"],
+    zoom: input.zoom as Preferences["zoom"],
+    reducedMotion: input.reducedMotion as Preferences["reducedMotion"],
+    commandPaletteShortcut: input.commandPaletteShortcut as Preferences["commandPaletteShortcut"],
     conversationSearchShortcut:
       input.conversationSearchShortcut === undefined
         ? DEFAULT_PREFERENCES.conversationSearchShortcut
@@ -99,14 +143,19 @@ function parsePreferences(value: unknown): Preferences {
 export class PreferencesStore {
   readonly #path: string;
 
-  constructor(readonly directory: string) {
+  constructor(
+    readonly directory: string,
+    readonly operations: PreferencesFileOperations = preferencesFileOperations,
+  ) {
     this.#path = join(directory, "preferences.v1.json");
   }
 
   async load(): Promise<{ preferences: Preferences; recovered: boolean }> {
     try {
       return {
-        preferences: parsePreferences(JSON.parse(await readFile(this.#path, "utf8"))),
+        preferences: parsePreferences(
+          JSON.parse(await readPreferencesFile(this.#path, this.operations)),
+        ),
         recovered: false,
       };
     } catch (error) {
@@ -119,9 +168,13 @@ export class PreferencesStore {
 
   async save(value: unknown): Promise<Preferences> {
     const preferences = parsePreferences(value);
+    const serialized = `${JSON.stringify(preferences, null, 2)}\n`;
+    if (Buffer.byteLength(serialized) > MAX_PREFERENCES_FILE_BYTES) {
+      throw new PreferencesError("Preferences exceed the supported size.");
+    }
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const temporary = `${this.#path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
+    await writeFile(temporary, serialized, {
       encoding: "utf8",
       mode: 0o600,
     });
