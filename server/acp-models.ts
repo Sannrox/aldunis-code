@@ -7,7 +7,6 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
 import type { ReasoningEffort } from "./provider.ts";
 
 export interface AcpDiscoveredModel {
@@ -154,6 +153,7 @@ export function acpSetModelRequest(
  */
 export const MAX_ACTIVE_ACP_MODEL_PROBES = 4;
 export const MAX_PENDING_ACP_MODEL_PROBES = 32;
+export const MAX_ACP_MODEL_PROBE_MESSAGE_BYTES = 1024 * 1024;
 let activeAcpModelProbes = 0;
 interface PendingAcpModelProbe {
   resolve(release: (() => void) | null): void;
@@ -328,8 +328,7 @@ export async function probeAcpModels(options: {
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
 
-      const decoder = new StringDecoder("utf8");
-      let buffer = "";
+      let buffer = Buffer.alloc(0);
       let sawInit = false;
 
       const send = (value: unknown) => {
@@ -353,12 +352,23 @@ export async function probeAcpModels(options: {
       });
 
       child.stdout.on("data", (chunk: Buffer | string) => {
-        buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
-        let newline = buffer.indexOf("\n");
+        if (settled) return;
+        const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+        let offset = 0;
+        let newline = incoming.indexOf(0x0a, offset);
         while (newline !== -1) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          newline = buffer.indexOf("\n");
+          const segment = incoming.subarray(offset, newline);
+          if (buffer.length + segment.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
+            finish([]);
+            return;
+          }
+          const line =
+            buffer.length === 0
+              ? segment.toString("utf8").trim()
+              : Buffer.concat([buffer, segment]).toString("utf8").trim();
+          buffer = Buffer.alloc(0);
+          offset = newline + 1;
+          newline = incoming.indexOf(0x0a, offset);
           if (!line) continue;
           let message: JsonRecord;
           try {
@@ -391,6 +401,15 @@ export async function probeAcpModels(options: {
             finish(parseAcpSessionModels(message.result));
             return;
           }
+        }
+        const remainder = incoming.subarray(offset);
+        if (buffer.length + remainder.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
+          finish([]);
+          return;
+        }
+        if (remainder.length > 0) {
+          buffer =
+            buffer.length === 0 ? Buffer.from(remainder) : Buffer.concat([buffer, remainder]);
         }
       });
 

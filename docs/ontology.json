@@ -540,6 +540,10 @@
     {
       "name": "DelegatedHumanControlSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates parent-routed delegated link and unlink, child-bound approval decide and input answer, busy and error coordination, optimistic approval resolution, input drafts, and acyclic candidate filtering behind one snapshot-and-intent interface while DelegatedChildrenPanel retains projection and dialog wiring and the local host retains relationship, permission, and provider authority."
+    },
+    {
+      "name": "ACPModelDiscoveryProbe",
+      "description": "A short-lived Aldunis Code provider-adapter probe that initializes a declarative ACP subprocess, retains at most one 1 MiB raw-byte-framed JSON message, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
     }
   ],
   "relations": [
@@ -1488,6 +1492,16 @@
       "description": "The delegated human-control session coordinates parent-routed child-bound approvals and inputs for explicitly linked LocalConversation children without acquiring parent provider context, permission authority, or relationship persistence authority.",
       "domain": "DelegatedHumanControlSessionModule",
       "range": "LocalConversation",
+      "cardinality": {
+        "min": 0,
+        "max": null
+      }
+    },
+    {
+      "name": "discovers_declarative_provider_models",
+      "description": "The local host uses a concurrency- and message-bounded short-lived ACP probe to project session-advertised model choices without sending a prompt or granting new provider authority.",
+      "domain": "AldunisLocalHost",
+      "range": "ACPModelDiscoveryProbe",
       "cardinality": {
         "min": 0,
         "max": null
@@ -2897,6 +2911,18 @@
       "subject": "coordinates_delegated_human_control",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#832",
       "locator": "src/lib/delegated-human-control-session.ts#DelegatedHumanControlSessionModule",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ACPModelDiscoveryProbe",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#909",
+      "locator": "server/acp-models.ts#probeAcpModels",
+      "confidence": 1.0
+    },
+    {
+      "subject": "discovers_declarative_provider_models",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#909",
+      "locator": "server/provider-discovery.ts; server/acp-models.ts#probeAcpModels",
       "confidence": 1.0
     }
   ]
