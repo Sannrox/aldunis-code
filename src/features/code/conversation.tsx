@@ -60,6 +60,7 @@ import {
 import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import { initialConversationRunState, reduceConversationRun } from "../../lib/conversation-run";
 import { ConversationTurnSessionModule } from "../../lib/conversation-turn-session";
+import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
 import { ContextWindowMeter } from "./context-window-meter";
 import {
   clearComposerDraft,
@@ -592,6 +593,9 @@ export function Conversation({
   const [historyRestoreError, setHistoryRestoreError] = useState<string | null>(null);
   const [conversationId] = useState(() => conversation?.id ?? crypto.randomUUID());
   const [threadId, setThreadId] = useState<string | null>(conversation?.id ?? null);
+  const lifecycleControl = new ConversationLifecycleControl(async () => {
+    if (threadId) onConversationAvailable?.(threadId);
+  });
   const [attachments, setAttachments] = useState<string[]>([]);
   const [folderPins, setFolderPins] = useState<string[]>([]);
   const [composerDragDepth, setComposerDragDepth] = useState(0);
@@ -3255,17 +3259,10 @@ export function Conversation({
                     className="btn btn-default btn-sm"
                     aria-label={`Settle thread, ${pane} pane`}
                     onClick={() => {
-                      void (async () => {
-                        const response = await fetch("/api/state/conversations/settle", {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({ threadId }),
-                        });
-                        if (!response.ok) return;
-                        setCompletionDismissed(true);
-                        // Refresh sidebar so the thread moves into Settled.
-                        onConversationAvailable?.(threadId);
-                      })().catch(() => undefined);
+                      void lifecycleControl
+                        .settle(threadId)
+                        .then(() => setCompletionDismissed(true))
+                        .catch(() => undefined);
                     }}
                   >
                     Settle thread
@@ -4781,24 +4778,8 @@ export function Conversation({
           settle
           onClose={() => setReleaseWorktreeOpen(false)}
           onConfirm={async () => {
-            const settle = await fetch("/api/state/conversations/settle", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ threadId }),
-            });
-            const settleResult = (await settle.json()) as { error?: string };
-            if (!settle.ok)
-              throw new Error(settleResult.error ?? "Conversation could not be settled.");
-            const release = await fetch("/api/state/conversations/release-worktree", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ threadId, confirm: true }),
-            });
-            const releaseResult = (await release.json()) as { error?: string };
-            if (!release.ok)
-              throw new Error(releaseResult.error ?? "Managed worktree release failed.");
+            await lifecycleControl.settleAndRelease(threadId);
             setCompletionDismissed(true);
-            onConversationAvailable?.(threadId);
           }}
         />
       )}

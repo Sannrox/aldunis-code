@@ -1107,8 +1107,6 @@ export function CodeWorkbench({
   }, [prStatusLookupKey]);
   const worktreeLimit = managedWorktreeLimitPreference;
   const lifecycleControl = new ConversationLifecycleControl(refreshStateProjection);
-  const postLifecycle = (route: string, body: Record<string, unknown>) =>
-    lifecycleControl.post(route, body);
   const manageConversation = async (
     conversation: ConversationSummary,
     action: "rename" | "pin" | "archive" | "restore" | "delete",
@@ -1123,12 +1121,10 @@ export function CodeWorkbench({
             : null;
         setRenameTarget(conversation);
       } else if (action === "pin") {
-        await postLifecycle("/api/state/conversations/pin", {
-          threadId: conversation.id,
-          pinned: !conversation.pinnedAt,
-        });
+        await lifecycleControl.pin(conversation.id, !conversation.pinnedAt);
       } else if (action === "archive" || action === "restore") {
-        await postLifecycle(`/api/state/conversations/${action}`, { threadId: conversation.id });
+        if (action === "archive") await lifecycleControl.archive(conversation.id);
+        else await lifecycleControl.restore(conversation.id);
         if (action === "archive") {
           if (primaryId === conversation.id) setPrimaryId(null);
           if (secondaryId === conversation.id) setSecondaryId(null);
@@ -1447,33 +1443,32 @@ export function CodeWorkbench({
           void manageConversation(conversation, action);
         }}
         onSettle={(conversation) => {
-          void postLifecycle("/api/state/conversations/settle", {
-            threadId: conversation.id,
-          }).catch((error: unknown) =>
-            setLifecycleError(error instanceof Error ? error.message : "Settle failed."),
-          );
+          void lifecycleControl
+            .settle(conversation.id)
+            .catch((error: unknown) =>
+              setLifecycleError(error instanceof Error ? error.message : "Settle failed."),
+            );
         }}
         onSnooze={(conversation, preset) => {
-          void postLifecycle("/api/state/conversations/snooze", {
-            threadId: conversation.id,
-            snoozedUntil: preset.snoozedUntil,
-          }).catch((error: unknown) =>
-            setLifecycleError(error instanceof Error ? error.message : "Snooze failed."),
-          );
+          void lifecycleControl
+            .snooze(conversation.id, preset.snoozedUntil)
+            .catch((error: unknown) =>
+              setLifecycleError(error instanceof Error ? error.message : "Snooze failed."),
+            );
         }}
         onUnsettle={(conversation) => {
-          void postLifecycle("/api/state/conversations/unsettle", {
-            threadId: conversation.id,
-          }).catch((error: unknown) =>
-            setLifecycleError(error instanceof Error ? error.message : "Unsettle failed."),
-          );
+          void lifecycleControl
+            .unsettle(conversation.id)
+            .catch((error: unknown) =>
+              setLifecycleError(error instanceof Error ? error.message : "Unsettle failed."),
+            );
         }}
         onUnsnooze={(conversation) => {
-          void postLifecycle("/api/state/conversations/unsnooze", {
-            threadId: conversation.id,
-          }).catch((error: unknown) =>
-            setLifecycleError(error instanceof Error ? error.message : "Unsnooze failed."),
-          );
+          void lifecycleControl
+            .unsnooze(conversation.id)
+            .catch((error: unknown) =>
+              setLifecycleError(error instanceof Error ? error.message : "Unsnooze failed."),
+            );
         }}
         onReleaseWorktree={(conversation) => {
           const active = document.activeElement;
@@ -1572,10 +1567,8 @@ export function CodeWorkbench({
                     size="sm"
                     aria-label={`Retry incomplete deletion of ${deletionLabel}`}
                     onClick={() => {
-                      void postLifecycle("/api/state/conversations/delete", {
-                        threadId,
-                        confirm: true,
-                      })
+                      void lifecycleControl
+                        .confirmDelete(threadId)
                         .then(() =>
                           setIncompleteDeletionIds((ids) => ids.filter((id) => id !== threadId)),
                         )
@@ -1845,10 +1838,7 @@ export function CodeWorkbench({
             window.requestAnimationFrame(() => returnFocus?.focus());
           }}
           onRename={async (title) => {
-            await postLifecycle("/api/state/conversations/rename", {
-              threadId: renameTarget.id,
-              title,
-            });
+            await lifecycleControl.rename(renameTarget.id, title);
           }}
         />
       )}
@@ -1897,10 +1887,7 @@ export function CodeWorkbench({
             );
           }}
           onConfirm={async () => {
-            await postLifecycle("/api/state/conversations/release-worktree", {
-              threadId: releaseTarget.id,
-              confirm: true,
-            });
+            await lifecycleControl.releaseWorktree(releaseTarget.id);
           }}
         />
       )}
