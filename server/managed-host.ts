@@ -4,17 +4,7 @@ import {
   verify as verifySignature,
   type KeyObject,
 } from "node:crypto";
-import {
-  mkdir,
-  open,
-  readFile,
-  rename,
-  rm,
-  lstat,
-  realpath,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, open, rename, rm, lstat, realpath, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { IncomingMessage } from "node:http";
 import {
@@ -29,7 +19,7 @@ const REQUIRED_SCOPE = "code:workbench";
 const MAX_ASSERTION_TTL_SECONDS = 300;
 const CLOCK_SKEW_SECONDS = 60;
 const MAX_REPLAY_ENTRIES = 10_000;
-const MAX_REPLAY_STATE_BYTES = 2 * 1024 * 1024;
+export const MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES = 2 * 1024 * 1024;
 const REPLAY_STATE_FILE = "managed-assertion-replay.v1.json";
 const REPLAY_LOCK_FILE = "managed-assertion-replay.v1.lock";
 const DEFAULT_MANAGED_DISPLAY_NAME = "Enterprise user";
@@ -511,6 +501,111 @@ function pruneReplayEntries(state: ManagedAssertionReplayState, nowUnixSeconds: 
   }
 }
 
+interface ManagedReplayStateFileIdentity {
+  size: bigint;
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+}
+
+interface ManagedReplayStateReadHandle {
+  stat(): Promise<ManagedReplayStateFileIdentity>;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface ManagedReplayStateFileOperations {
+  open(path: string): Promise<ManagedReplayStateReadHandle>;
+  stat(path: string): Promise<ManagedReplayStateFileIdentity>;
+}
+
+const managedReplayStateFileOperations: ManagedReplayStateFileOperations = {
+  open: async (path) => {
+    const handle = await open(path, "r");
+    return {
+      close: () => handle.close(),
+      read: async (buffer, offset, length, position) => {
+        const { bytesRead } = await handle.read(buffer, offset, length, position);
+        return { bytesRead };
+      },
+      stat: () => handle.stat({ bigint: true }),
+    };
+  },
+  stat: (path) => stat(path, { bigint: true }),
+};
+
+function sameManagedReplayStateFile(
+  left: ManagedReplayStateFileIdentity,
+  right: ManagedReplayStateFileIdentity,
+): boolean {
+  return (
+    left.size === right.size &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+export async function readManagedReplayStateFile(
+  path: string,
+  operations: ManagedReplayStateFileOperations = managedReplayStateFileOperations,
+): Promise<string> {
+  const handle = await operations.open(path);
+  let closed = false;
+  try {
+    const initial = await handle.stat();
+    const initialPath = await operations.stat(path);
+    if (!sameManagedReplayStateFile(initial, initialPath)) {
+      throw new ManagedHostError("Managed assertion replay state changed while being read.", 500);
+    }
+    if (initial.size < 0n || initial.size > BigInt(MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES)) {
+      throw new ManagedHostError("Managed assertion replay state exceeds the supported size.", 500);
+    }
+    const bytes = Buffer.alloc(Number(initial.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const requested = bytes.length - offset;
+      const { bytesRead } = await handle.read(bytes, offset, requested, offset);
+      if (bytesRead <= 0 || bytesRead > requested) {
+        throw new ManagedHostError("Managed assertion replay state changed while being read.", 500);
+      }
+      offset += bytesRead;
+    }
+    const extra = Buffer.alloc(1);
+    if ((await handle.read(extra, 0, 1, offset)).bytesRead !== 0) {
+      throw new ManagedHostError("Managed assertion replay state changed while being read.", 500);
+    }
+    const final = await handle.stat();
+    const finalPath = await operations.stat(path);
+    if (
+      !sameManagedReplayStateFile(initial, final) ||
+      !sameManagedReplayStateFile(initial, finalPath)
+    ) {
+      throw new ManagedHostError("Managed assertion replay state changed while being read.", 500);
+    }
+    try {
+      await handle.close();
+      closed = true;
+    } catch {
+      throw new ManagedHostError("Managed assertion replay state could not be closed.", 500);
+    }
+    return bytes.toString("utf8");
+  } catch (error) {
+    if (!closed) await handle.close().catch(() => undefined);
+    if (error instanceof ManagedHostError) throw error;
+    throw new ManagedHostError("Managed assertion replay state is unreadable.", 500);
+  }
+}
+
 /**
  * On-disk JTI replay protection for managed assertions. Survives process
  * restart and coordinates concurrent host processes that share the state
@@ -530,13 +625,11 @@ export class FileManagedAssertionReplayStore implements ManagedAssertionReplaySt
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     let raw: string;
     try {
-      raw = await readFile(this.#path, "utf8");
+      raw = await readManagedReplayStateFile(this.#path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyReplayState();
+      if (error instanceof ManagedHostError) throw error;
       throw new ManagedHostError("Managed assertion replay state is unreadable.", 500);
-    }
-    if (Buffer.byteLength(raw, "utf8") > MAX_REPLAY_STATE_BYTES) {
-      throw new ManagedHostError("Managed assertion replay state exceeds the supported size.", 500);
     }
     let parsed: unknown;
     try {
@@ -574,7 +667,7 @@ export class FileManagedAssertionReplayStore implements ManagedAssertionReplaySt
 
   async #save(state: ManagedAssertionReplayState): Promise<void> {
     const serialized = `${JSON.stringify(state)}\n`;
-    if (Buffer.byteLength(serialized, "utf8") > MAX_REPLAY_STATE_BYTES) {
+    if (Buffer.byteLength(serialized, "utf8") > MAX_MANAGED_ASSERTION_REPLAY_STATE_BYTES) {
       throw new ManagedHostError("Managed assertion replay state exceeds the supported size.", 500);
     }
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
