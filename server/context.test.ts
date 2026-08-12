@@ -7,6 +7,7 @@ import {
   assembleContextPackage,
   browseRepositoryFiles,
   composePrompt,
+  MAX_ACTIVE_BROWSE_INSPECTIONS,
   MAX_CONTEXT_FILES,
   previewRepositoryFile,
   resolveContextAttachments,
@@ -232,6 +233,84 @@ test("browsing searches names and bounded text deterministically", async () => {
     ["auth-token.ts"],
   );
   assert.deepEqual((await browseRepositoryFiles(root, "credentials")).files, []);
+});
+
+test("repository browse bounds parallel inspections and preserves result order", async () => {
+  const { root } = await fixture();
+  let active = 0;
+  let maximumActive = 0;
+  const result = await browseRepositoryFiles(root, "", undefined, 200, {
+    readFile: async () => {
+      throw new Error("Empty-query browsing must not content-search files.");
+    },
+    inspectRepositoryFile: async (_worktree, path, match, signal) => {
+      signal?.throwIfAborted();
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return { path, kind: "text", size: path.length, match };
+    },
+  });
+  assert.equal(maximumActive, MAX_ACTIVE_BROWSE_INSPECTIONS);
+  assert.deepEqual(
+    result.files.map(({ path }) => path),
+    [...result.files.map(({ path }) => path)].sort(),
+  );
+});
+
+test("repository browse cancellation stops queued inspections", async () => {
+  const { root } = await fixture();
+  const controller = new AbortController();
+  let started = 0;
+  let releaseInspections: () => void = () => undefined;
+  const inspectionsReleased = new Promise<void>((resolve) => {
+    releaseInspections = resolve;
+  });
+  let confirmWorkersStarted: () => void = () => undefined;
+  const workersStarted = new Promise<void>((resolve) => {
+    confirmWorkersStarted = resolve;
+  });
+  const browsing = browseRepositoryFiles(root, "", controller.signal, 200, {
+    readFile: async () => {
+      throw new Error("Empty-query browsing must not content-search files.");
+    },
+    inspectRepositoryFile: async (_worktree, path, match) => {
+      started += 1;
+      if (started === MAX_ACTIVE_BROWSE_INSPECTIONS) confirmWorkersStarted();
+      await inspectionsReleased;
+      return { path, kind: "text", size: path.length, match };
+    },
+  });
+  await workersStarted;
+  controller.abort();
+  releaseInspections();
+  await assert.rejects(
+    browsing,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(started, MAX_ACTIVE_BROWSE_INSPECTIONS);
+});
+
+test("repository content search forwards and preserves read cancellation", async () => {
+  const { root } = await fixture();
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | undefined;
+  await assert.rejects(
+    browseRepositoryFiles(root, "absent-content-query", controller.signal, 100, {
+      readFile: async (_path, options) => {
+        receivedSignal = options.signal;
+        controller.abort();
+        options.signal?.throwIfAborted();
+        return Buffer.alloc(0);
+      },
+      inspectRepositoryFile: async () => {
+        throw new Error("Canceled content search must not inspect results.");
+      },
+    }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  assert.equal(receivedSignal, controller.signal);
 });
 
 test("content search reports when its byte budget makes results incomplete", async () => {
