@@ -277,14 +277,15 @@ function omittedEntry(
 export async function assembleContextPackage(
   worktree: string,
   requestedPins: ContextPin[],
-  options: { includeProviderInstructions?: boolean } = {},
+  options: { includeProviderInstructions?: boolean; signal?: AbortSignal } = {},
 ): Promise<AssembledContextPackage> {
+  options.signal?.throwIfAborted();
   const pins = requestedPins.map((pin) => ({
     path: relativeFilePath(worktree, pin.path).replace(/\/+$/, ""),
     kind: pin.kind,
   }));
   const uniquePins = [...new Map(pins.map((pin) => [`${pin.kind}:${pin.path}`, pin])).values()];
-  const available = await repositoryPaths(worktree);
+  const available = await repositoryPaths(worktree, options.signal);
   const availableSet = new Set(available);
   const selected = new Map<string, ContextReceiptSource>();
   const entries: ContextReceiptEntry[] = [];
@@ -366,6 +367,7 @@ export async function assembleContextPackage(
     pathIndex < paths.length && pathIndex < MAX_CONTEXT_PACKAGE_INSPECTED_FILES;
     pathIndex += 1
   ) {
+    options.signal?.throwIfAborted();
     if (attachments.length >= MAX_CONTEXT_PACKAGE_FILES) break;
     const [path, source] = paths[pathIndex];
     const direct = await lstat(join(worktree, path)).catch(() => null);
@@ -389,7 +391,7 @@ export async function assembleContextPackage(
     }
     inspectedBytes += direct.size;
     const canonical = await constrainPath(worktree, join(worktree, path));
-    const bytes = await readFile(canonical);
+    const bytes = await readFile(canonical, { signal: options.signal });
     if (bytes.length !== direct.size) {
       entries.push(omittedEntry(path, source, "file changed during resolution"));
       continue;
@@ -448,6 +450,7 @@ export async function assembleContextPackage(
   }
 
   if (options.includeProviderInstructions !== false) {
+    options.signal?.throwIfAborted();
     for (const path of available.filter(isProviderInstruction)) {
       if (selected.has(path)) continue;
       entries.push({

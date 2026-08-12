@@ -114,6 +114,47 @@ test("context module propagates browse cancellation through its interface", asyn
   assert.equal(signal?.aborted, true);
 });
 
+test("context module propagates unfinished package response cancellation", async () => {
+  const incoming = request();
+  const outgoing = response();
+  let signal: AbortSignal | undefined;
+  await handleContextRoute(
+    "/api/context/package/preview",
+    incoming,
+    outgoing,
+    context({
+      readJson: async () => ({
+        root: "/repo",
+        worktree: "/repo/wt",
+        pins: [{ path: "src", kind: "folder" }],
+      }),
+      selectWorktree: async () => {
+        outgoing.emit("close");
+        return { root: "/repo", worktree: "/repo/wt" };
+      },
+      operations: {
+        assembleContextPackage: async (
+          _worktree: string,
+          pins: Array<{ path: string; kind: "file" | "folder" }>,
+          options: { includeProviderInstructions?: boolean; signal?: AbortSignal },
+        ) => {
+          signal = options.signal;
+          return {
+            pins,
+            entries: [],
+            attachments: [],
+            totalBytes: 0,
+            estimatedTokens: 0,
+            digest: "digest",
+          };
+        },
+      },
+      sendJson: () => undefined,
+    }) as never,
+  );
+  assert.equal(signal?.aborted, true);
+});
+
 test("context module denies remote absolute image paths before worktree or filesystem access", async () => {
   let maxBytes: number | undefined;
   await assert.rejects(
@@ -171,9 +212,10 @@ test("context module omits provider instructions for managed package previews", 
         assembleContextPackage: async (
           _worktree: string,
           pins: Array<{ path: string; kind: "file" | "folder" }>,
-          options: { includeProviderInstructions?: boolean },
+          options: { includeProviderInstructions?: boolean; signal?: AbortSignal },
         ) => {
           assert.equal(options.includeProviderInstructions, false);
+          assert.equal(options.signal?.aborted, false);
           return {
             pins,
             entries: [],

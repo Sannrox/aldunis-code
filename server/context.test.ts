@@ -188,6 +188,18 @@ test("file discovery cancels both Git listings through the request signal", asyn
   );
 });
 
+test("context package assembly cancels Git discovery through its request signal", async () => {
+  const { root } = await fixture();
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    assembleContextPackage(root, [{ path: ".", kind: "folder" }], {
+      signal: controller.signal,
+    }),
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+});
+
 test("browsing searches names and bounded text deterministically", async () => {
   const { root } = await fixture();
   const byName = await browseRepositoryFiles(root, "main");

@@ -1585,7 +1585,7 @@ export function Conversation({
       setDraftContextReceipt(null);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setContextPackageBusy(true);
       void fetch("/api/context/package/preview", {
@@ -1596,30 +1596,31 @@ export function Conversation({
           worktree: resourceWorktree,
           pins: contextPins,
         }),
+        signal: controller.signal,
       })
         .then(async (response) => {
           const body = (await response.json()) as { package?: ContextReceipt; error?: string };
           if (!response.ok || !body.package) {
             throw new Error(body.error ?? "The context package could not be resolved.");
           }
-          if (!cancelled) {
+          if (!controller.signal.aborted) {
             setDraftContextReceipt(body.package);
             setContextError(null);
           }
         })
         .catch((cause) => {
-          if (!cancelled) {
+          if (!controller.signal.aborted) {
             setDraftContextReceipt(null);
             setContextError(cause instanceof Error ? cause.message : "Context resolution failed.");
           }
         })
         .finally(() => {
-          if (!cancelled) setContextPackageBusy(false);
+          if (!controller.signal.aborted) setContextPackageBusy(false);
         });
     }, 150);
     return () => {
-      cancelled = true;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [resourceRoot, resourceWorktree, contextPins]);
   useEffect(() => {

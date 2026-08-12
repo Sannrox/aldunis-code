@@ -423,7 +423,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, repository search and browse cancellation, bounded image staging, context-package assembly, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, repository search, browse, and context-package cancellation, bounded image staging, context-package assembly, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -1485,7 +1485,7 @@
     },
     {
       "subject": "ConversationContextRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#635",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#635, #756, and #775",
       "locator": "server/context-routes.ts#handleContextRoute",
       "confidence": 1.0
     },

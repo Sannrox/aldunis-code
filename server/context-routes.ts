@@ -202,44 +202,49 @@ export async function handleContextRoute(
     return true;
   }
 
-  const body = (await context.readJson(request)) as {
-    root?: unknown;
-    worktree?: unknown;
-    pins?: unknown;
-  };
-  const selection = repositorySelection(body);
-  if (
-    !Array.isArray(body.pins) ||
-    body.pins.length > 100 ||
-    body.pins.some(
-      (pin) =>
-        typeof pin !== "object" ||
-        pin === null ||
-        typeof (pin as { path?: unknown }).path !== "string" ||
-        !["file", "folder"].includes(String((pin as { kind?: unknown }).kind)),
-    )
-  ) {
-    throw new RepositoryError("A repository, worktree, and bounded context pin list are required.");
-  }
-  const pins = body.pins as ContextPin[];
-  if (context.remote && pins.some((pin) => pin.kind === "folder")) {
-    throw new RepositoryError(
-      "Remote folder pinning requires an authenticated repository grant and is unavailable.",
-      403,
-    );
-  }
-  const selected = await context.selectWorktree(selection.root, selection.worktree);
-  const assembled = await operations.assembleContextPackage(selected.worktree, pins, {
-    includeProviderInstructions: !context.remote && !context.managed,
+  return await withRequestCancellation(request, response, async (signal) => {
+    const body = (await context.readJson(request)) as {
+      root?: unknown;
+      worktree?: unknown;
+      pins?: unknown;
+    };
+    const selection = repositorySelection(body);
+    if (
+      !Array.isArray(body.pins) ||
+      body.pins.length > 100 ||
+      body.pins.some(
+        (pin) =>
+          typeof pin !== "object" ||
+          pin === null ||
+          typeof (pin as { path?: unknown }).path !== "string" ||
+          !["file", "folder"].includes(String((pin as { kind?: unknown }).kind)),
+      )
+    ) {
+      throw new RepositoryError(
+        "A repository, worktree, and bounded context pin list are required.",
+      );
+    }
+    const pins = body.pins as ContextPin[];
+    if (context.remote && pins.some((pin) => pin.kind === "folder")) {
+      throw new RepositoryError(
+        "Remote folder pinning requires an authenticated repository grant and is unavailable.",
+        403,
+      );
+    }
+    const selected = await context.selectWorktree(selection.root, selection.worktree);
+    const assembled = await operations.assembleContextPackage(selected.worktree, pins, {
+      includeProviderInstructions: !context.remote && !context.managed,
+      signal,
+    });
+    context.sendJson(response, 200, {
+      package: {
+        pins: assembled.pins,
+        entries: assembled.entries,
+        totalBytes: assembled.totalBytes,
+        estimatedTokens: assembled.estimatedTokens,
+        digest: assembled.digest,
+      },
+    });
+    return true;
   });
-  context.sendJson(response, 200, {
-    package: {
-      pins: assembled.pins,
-      entries: assembled.entries,
-      totalBytes: assembled.totalBytes,
-      estimatedTokens: assembled.estimatedTokens,
-      digest: assembled.digest,
-    },
-  });
-  return true;
 }
