@@ -67,6 +67,37 @@ test("workspace panels stay behind conversation intent", () => {
   assert.match(conversationSource, /label="Changes"/);
 });
 
+test("conversation lifecycle dialogs stay behind renderer intent", () => {
+  const workbenchPaths = [
+    "../dialogs/delete-conversation-dialog",
+    "../dialogs/release-worktree-dialog",
+    "../dialogs/rename-conversation-dialog",
+    "../dialogs/start-delegated-conversation-dialog",
+  ];
+  for (const path of workbenchPaths) {
+    assert.doesNotMatch(
+      workbenchSource,
+      new RegExp(`import\\s+(?!type\\b)[^;]+from ["']${path}["']`),
+    );
+    assert.match(workbenchSource, new RegExp(`import\\(["']${path}["']\\)`));
+  }
+  const conversationPaths = [
+    "../dialogs/conversation-workspace-dialog",
+    "../dialogs/release-worktree-dialog",
+  ];
+  for (const path of conversationPaths) {
+    assert.doesNotMatch(
+      conversationSource,
+      new RegExp(`import\\s+(?!type\\b)[^;]+from ["']${path}["']`),
+    );
+    assert.match(conversationSource, new RegExp(`import\\(["']${path}["']\\)`));
+  }
+  assert.match(workbenchSource, /label="Rename conversation"\s+onDismiss=\{closeRenameDialog\}/);
+  assert.match(workbenchSource, /label="Delete conversation"\s+onDismiss=\{closeDeleteDialog\}/);
+  assert.match(workbenchSource, /label="Release worktree"\s+onDismiss=\{closeReleaseDialog\}/);
+  assert.match(conversationSource, /label="Conversation workspace"/);
+});
+
 test("cross-product screens stay behind non-Code selection intent", () => {
   const path = "../shell/domain-page";
   assert.doesNotMatch(

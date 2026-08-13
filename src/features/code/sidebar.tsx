@@ -118,6 +118,7 @@ export function CodeSidebar({
   onConversationAction: (
     conversation: ConversationSummary,
     action: "rename" | "pin" | "archive" | "restore" | "delete",
+    returnFocus: HTMLElement | null,
   ) => void;
   onSettle: (conversation: ConversationSummary) => void;
   onSnooze: (conversation: ConversationSummary, preset: SnoozePreset) => void;
@@ -599,7 +600,9 @@ export function CodeSidebar({
                       showBeside={!openInPane}
                       onOpenBeside={() => onOpenBeside(conversation.id)}
                       archivedView={false}
-                      onAction={(action) => onConversationAction(conversation, action)}
+                      onAction={(action, returnFocus) =>
+                        onConversationAction(conversation, action, returnFocus)
+                      }
                     />
                   );
                 })}
@@ -638,7 +641,9 @@ export function CodeSidebar({
                     showBeside={!showingArchived && !openInPane}
                     onOpenBeside={() => onOpenBeside(conversation.id)}
                     archivedView={showingArchived}
-                    onAction={(action) => onConversationAction(conversation, action)}
+                    onAction={(action, returnFocus) =>
+                      onConversationAction(conversation, action, returnFocus)
+                    }
                   />
                 );
               })}
