@@ -3,8 +3,49 @@ import test from "node:test";
 import {
   canonicalizeDiscoveredWorktreePaths,
   classifyDiscoveredWorktrees,
+  openRepository,
   WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY,
 } from "./repository.ts";
+
+test("repository opening reuses one discovered worktree inventory", async () => {
+  const calls: string[] = [];
+  const worktrees = [
+    { path: "/repo", head: "head", branch: "main", state: "available" as const },
+    { path: "/repo-linked", head: "other", branch: "topic", state: "available" as const },
+  ];
+  const repository = await openRepository("/repo-linked", {
+    canonicalize: async (input) => {
+      calls.push(`canonicalize:${input}`);
+      return input;
+    },
+    discover: async (root) => {
+      calls.push(`discover:${root}`);
+      return worktrees;
+    },
+    resolveMainRoot: async (root, discovered) => {
+      calls.push(`main:${root}:${discovered.length}`);
+      return discovered[0]?.path ?? root;
+    },
+    defaultBranch: async (root) => {
+      calls.push(`default:${root}`);
+      return "main";
+    },
+    localBranches: async (root) => {
+      calls.push(`branches:${root}`);
+      return ["main", "topic"];
+    },
+  });
+
+  assert.equal(calls.filter((call) => call.startsWith("discover:")).length, 1);
+  assert.deepEqual(repository, {
+    name: "repo",
+    root: "/repo",
+    defaultBranch: "main",
+    localBranches: ["main", "topic"],
+    selectedWorktree: "/repo-linked",
+    worktrees,
+  });
+});
 
 test("worktree discovery bounds classification and preserves Git order", async () => {
   const count = WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY * 3;
