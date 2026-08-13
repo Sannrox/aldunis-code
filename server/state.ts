@@ -491,6 +491,42 @@ function emptyProjection(): StateProjection {
   };
 }
 
+/**
+ * Isolate every mutable collection for a journal rewrite while sharing the
+ * immutable records it contains. Rewrite callbacks must replace records rather
+ * than mutate them in place.
+ */
+export function isolateProjectionCollections(projection: StateProjection): StateProjection {
+  return {
+    ...projection,
+    projects: [...projection.projects],
+    threads: [...projection.threads],
+    turns: [...projection.turns],
+    messages: [...projection.messages],
+    activities: [...projection.activities],
+    plans: [...projection.plans],
+    contextReceipts: [...projection.contextReceipts],
+    usageReceipts: [...projection.usageReceipts],
+    governanceCorrelations: [...projection.governanceCorrelations],
+    providerSessions: [...projection.providerSessions],
+    checkpoints: [...projection.checkpoints],
+    annotations: [...projection.annotations],
+    fileReviews: [...projection.fileReviews],
+    conversationDeletions: [...projection.conversationDeletions],
+    forks: [...projection.forks],
+    delegatedRelationships: [...projection.delegatedRelationships],
+    inputRequests: [...projection.inputRequests],
+    inputReceipts: [...projection.inputReceipts],
+    automationFires: [...projection.automationFires],
+    autonomyRuns: [...projection.autonomyRuns],
+    autonomyTasks: [...projection.autonomyTasks],
+    autonomyFlows: [...projection.autonomyFlows],
+    heartbeatMonitors: [...projection.heartbeatMonitors],
+    standingOrders: [...projection.standingOrders],
+    autonomyHooks: [...projection.autonomyHooks],
+  };
+}
+
 type AutomationFireTerminalStatus = Exclude<AutomationFireStatus, "started" | "skipped_busy">;
 
 function automationFireOutcome(
@@ -4711,7 +4747,7 @@ export class LocalStateStore {
     await this.#ensureLoaded();
     const operation = this.#writeQueue.then(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
-      const next = structuredClone(this.#projection);
+      const next = isolateProjectionCollections(this.#projection);
       change(next);
       // History rewrites always collapse stream-token rows so deletion and
       // retention reclaim fsync-heavy assistant logs from earlier hosts.

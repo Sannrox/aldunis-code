@@ -531,7 +531,7 @@
     },
     {
       "name": "LocalEventHistoryProjectionStore",
-      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection through replay-local identity indexes while retaining bounded chunk slices and copying each complete record at most once, without retaining complete raw history, parsed-envelope arrays, or permanent duplicate indexes, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
+      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection through replay-local identity indexes while retaining bounded chunk slices and copying each complete record at most once, without retaining complete raw history, parsed-envelope arrays, or permanent duplicate indexes, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through collection-isolated immutable-record replacement and a 256 KiB serialization buffer before atomic replacement."
     },
     {
       "name": "ApplicationShellBootstrapModule",
@@ -2869,8 +2869,8 @@
     },
     {
       "subject": "LocalEventHistoryProjectionStore",
-      "source": "Aldunis Code Issues Sannrox/aldunis-code#869 and #871",
-      "locator": "server/state.ts#LocalStateStore; server/state.ts#streamEventEnvelopes; server/state.ts#writeEventHistory; src/lib/assistant-text.ts#joinAssistantTextChunks; https://github.com/Sannrox/aldunis-code/issues/869; https://github.com/Sannrox/aldunis-code/issues/871",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#869, #871, and #1084",
+      "locator": "server/state.ts#LocalStateStore; server/state.ts#streamEventEnvelopes; server/state.ts#writeEventHistory; server/state.ts#isolateProjectionCollections; src/lib/assistant-text.ts#joinAssistantTextChunks; https://github.com/Sannrox/aldunis-code/issues/869; https://github.com/Sannrox/aldunis-code/issues/871; https://github.com/Sannrox/aldunis-code/issues/1084",
       "confidence": 1.0
     },
     {
