@@ -8,6 +8,10 @@ const conversationSource = readFileSync(
   fileURLToPath(new URL("./features/code/conversation.tsx", import.meta.url)),
   "utf8",
 );
+const workbenchSource = readFileSync(
+  fileURLToPath(new URL("./features/code/workbench.tsx", import.meta.url)),
+  "utf8",
+);
 
 test("optional control dialogs stay behind renderer intent boundaries", () => {
   const paths = [
@@ -43,4 +47,16 @@ test("fork controls stay behind conversation intent", () => {
   assert.match(conversationSource, new RegExp(`import\\(["']${path}["']\\)`));
   assert.match(conversationSource, /\{forkOpen && threadId && !managedMode && repository && \(/);
   assert.match(conversationSource, /<OptionalControlBoundary/);
+});
+
+test("cross-product screens stay behind non-Code selection intent", () => {
+  const path = "../shell/domain-page";
+  assert.doesNotMatch(
+    workbenchSource,
+    new RegExp(`import\\s+(?!type\\b)[^;]+from ["']${path}["']`),
+  );
+  assert.match(workbenchSource, new RegExp(`import\\(["']${path}["']\\)`));
+  assert.match(workbenchSource, /product !== "code" \? \(/);
+  assert.match(workbenchSource, /onDismiss=\{\(\) => onProductChange\("code"\)\}/);
+  assert.match(workbenchSource, /<OptionalControlBoundary/);
 });
