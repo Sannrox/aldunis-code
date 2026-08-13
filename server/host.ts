@@ -1297,15 +1297,22 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
     autonomyScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();
-    resourceCleanup = Promise.allSettled([
-      previews.stopAll(),
-      state.flushPendingAssistantHistory(),
-    ]).then((results) => {
-      const failure = results.find(
+    const finishStartupAndFlush = async () => {
+      const startup = await Promise.allSettled([profileBootstrap, recovery]);
+      const flush = await Promise.allSettled([state.flushPendingAssistantHistory()]);
+      const failure = [...startup, ...flush].find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
       if (failure) throw failure.reason;
-    });
+    };
+    resourceCleanup = Promise.allSettled([previews.stopAll(), finishStartupAndFlush()]).then(
+      (results) => {
+        const failure = results.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (failure) throw failure.reason;
+      },
+    );
     return resourceCleanup;
   };
   server.once("close", () => {
