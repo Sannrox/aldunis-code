@@ -124,6 +124,46 @@ export function filterManagedProjection(
   };
 }
 
+export function filterManagedWorkbenchListProjection(
+  projection: StateProjection,
+  managedHost: Pick<ManagedHost, "repositoryForRoot">,
+): StateProjection {
+  const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
+  const threadIds = new Set(threads.map((thread) => thread.id));
+  return {
+    ...projection,
+    projects,
+    threads,
+    turns: projection.turns.filter((turn) => threadIds.has(turn.threadId)),
+    messages: [],
+    activities: [],
+    plans: [],
+    contextReceipts: [],
+    usageReceipts: [],
+    governanceCorrelations: [],
+    providerSessions: projection.providerSessions.filter((session) =>
+      threadIds.has(session.threadId),
+    ),
+    checkpoints: [],
+    annotations: [],
+    fileReviews: [],
+    conversationDeletions: projection.conversationDeletions.filter((deletion) =>
+      threadIds.has(deletion.threadId),
+    ),
+    forks: [],
+    delegatedRelationships: [],
+    inputRequests: [],
+    inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
+  };
+}
+
 /**
  * Dispatch Workbench projection reads behind one interface. The module owns
  * coherent snapshot assembly, managed visibility, bounded history and search,
@@ -151,12 +191,14 @@ export async function handleWorkbenchProjectionRoute(
     // Preferences first so orchestration-disabled installs skip transcript scans.
     const { preferences: currentPreferences } = await preferences.load();
     const projection = (await state.inspect()) as StateProjection;
+    const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
     const visibleProjection = managedHost
-      ? filterManagedProjection(projection, managedHost)
+      ? orchestrationEnabled
+        ? filterManagedProjection(projection, managedHost)
+        : filterManagedWorkbenchListProjection(projection, managedHost)
       : projection;
     // Derive transcript-backed values before the Workbench projection strips them,
     // and before later awaits can observe a newer live-state mutation.
-    const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
     const delegatedOutcomes = orchestrationEnabled
       ? projectDelegatedConversationOutcomes(visibleProjection)
       : [];
