@@ -1803,6 +1803,7 @@ export class LocalStateStore {
   #delegatedChildTurnIds = new Set<string>();
   #conversationHistory = buildConversationHistoryIndex(this.#projection, this.#turnsByThread);
   #writeQueue: Promise<void> = Promise.resolve();
+  #writeFailure: unknown | null = null;
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
   /**
@@ -2170,38 +2171,52 @@ export class LocalStateStore {
     await this.#ensureLoaded();
     let result!: T;
     const operation = this.#writeQueue.then(async () => {
+      if (this.#writeFailure) throw this.#writeFailure;
       const computed = compute(this.#projection);
       result = computed.value;
       if (!computed.event) return;
       const events = Array.isArray(computed.event) ? computed.event : [computed.event];
-      for (const event of events) {
+      if (events.length === 0) return;
+      const pending = events.map((event, index) => {
         const envelope: EventEnvelope = {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-          sequence: this.#projection.sequence + 1,
+          sequence: this.#projection.sequence + index + 1,
           id: randomUUID(),
           recordedAt: new Date().toISOString(),
           event,
         };
         const serialized = JSON.stringify(envelope);
         assertEventEnvelopeSize(serialized);
-        const handle = await open(this.#eventPath, "a", 0o600);
-        try {
+        return { envelope, serialized };
+      });
+      let handle: FileHandle | null = null;
+      let writeMayHaveBegun = false;
+      try {
+        handle = await open(this.#eventPath, "a", 0o600);
+        for (const { serialized } of pending) {
+          writeMayHaveBegun = true;
           await handle.writeFile(`${serialized}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
         }
-        applyEvent(
-          this.#projection,
-          envelope,
-          undefined,
-          this.#turnsByThread,
-          this.#messagesByTurn,
-          this.#activitiesByTurn,
-          this.#delegatedChildTurnIds,
-          false,
-          this.#conversationHistory,
-        );
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        for (const { envelope } of pending) {
+          applyEvent(
+            this.#projection,
+            envelope,
+            undefined,
+            this.#turnsByThread,
+            this.#messagesByTurn,
+            this.#activitiesByTurn,
+            this.#delegatedChildTurnIds,
+            false,
+            this.#conversationHistory,
+          );
+        }
+      } catch (error) {
+        await handle?.close().catch(() => undefined);
+        if (writeMayHaveBegun) this.#writeFailure ??= error;
+        throw error;
       }
     });
     this.#writeQueue = operation.catch(() => undefined);
@@ -2219,30 +2234,38 @@ export class LocalStateStore {
     };
     const serialized = JSON.stringify(envelope);
     assertEventEnvelopeSize(serialized);
-    const handle = await open(this.#eventPath, "a", 0o600);
+    let handle: FileHandle | null = null;
+    let writeMayHaveBegun = false;
     try {
+      handle = await open(this.#eventPath, "a", 0o600);
+      writeMayHaveBegun = true;
       await handle.writeFile(`${serialized}\n`, "utf8");
       await handle.sync();
-    } finally {
       await handle.close();
+      handle = null;
+      applyEvent(
+        this.#projection,
+        envelope,
+        undefined,
+        this.#turnsByThread,
+        this.#messagesByTurn,
+        this.#activitiesByTurn,
+        this.#delegatedChildTurnIds,
+        false,
+        this.#conversationHistory,
+      );
+    } catch (error) {
+      await handle?.close().catch(() => undefined);
+      if (writeMayHaveBegun) this.#writeFailure ??= error;
+      throw error;
     }
-    applyEvent(
-      this.#projection,
-      envelope,
-      undefined,
-      this.#turnsByThread,
-      this.#messagesByTurn,
-      this.#activitiesByTurn,
-      this.#delegatedChildTurnIds,
-      false,
-      this.#conversationHistory,
-    );
   }
 
   async #bufferAssistantText(turnId: string, text: string, createdAt: string): Promise<void> {
     if (!text) return;
     await this.#ensureLoaded();
     const operation = this.#writeQueue.then(async () => {
+      if (this.#writeFailure) throw this.#writeFailure;
       let segment = this.#openAssistantByTurn.get(turnId);
       if (!segment) {
         segment = {
@@ -2278,6 +2301,7 @@ export class LocalStateStore {
   async #flushOpenAssistant(turnId: string): Promise<void> {
     await this.#ensureLoaded();
     const operation = this.#writeQueue.then(async () => {
+      if (this.#writeFailure) throw this.#writeFailure;
       const segment = this.#openAssistantByTurn.get(turnId);
       if (!segment) return;
       if (!segment.text) {
@@ -4616,6 +4640,7 @@ export class LocalStateStore {
     await this.#flushAllOpenAssistants();
     await this.#ensureLoaded();
     const operation = this.#writeQueue.then(async () => {
+      if (this.#writeFailure) throw this.#writeFailure;
       const next = structuredClone(this.#projection);
       change(next);
       // History rewrites always collapse stream-token rows so deletion and
