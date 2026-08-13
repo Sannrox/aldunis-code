@@ -229,3 +229,99 @@ test("cancel and decideApproval and answerInput use the same dispatch seam", asy
   });
   assert.deepEqual(actions[2], { type: "input_answered", id: "input-1" });
 });
+
+test("delegated child start posts parentThreadId and drains without run dispatch", async () => {
+  let posted: unknown;
+  let pullCount = 0;
+  const session = new ConversationTurnSessionModule({
+    request: async (input, init) => {
+      assert.equal(input, "/api/provider/runs");
+      posted = JSON.parse(String(init?.body ?? "{}"));
+      const headers = new Headers({
+        "x-provider-run-id": "run-child",
+        "x-thread-id": "child-1",
+        "x-turn-id": "turn-child",
+      });
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream({
+          pull(controller) {
+            pullCount += 1;
+            if (pullCount === 1) {
+              controller.enqueue(encoder.encode('{"kind":"assistant_text","text":"hi"}\n'));
+              return;
+            }
+            controller.close();
+          },
+        }),
+        { status: 200, headers },
+      );
+    },
+  });
+
+  const created: string[] = [];
+  const result = await session.startDelegatedChild({
+    providerName: "Codex CLI",
+    onCreated: (threadId) => created.push(threadId),
+    body: {
+      ...startBody(),
+      parentThreadId: "parent-1",
+      prompt: "focused child task",
+      workspaceMode: "aldunis-managed",
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "completed",
+    runId: "run-child",
+    threadId: "child-1",
+    turnId: "turn-child",
+  });
+  assert.deepEqual(created, ["child-1"]);
+  assert.equal((posted as { parentThreadId: string }).parentThreadId, "parent-1");
+  assert.ok(pullCount >= 1);
+});
+
+test("delegated child start reports an existing thread when the run is rejected", async () => {
+  const session = new ConversationTurnSessionModule({
+    request: async () =>
+      new Response(JSON.stringify({ error: "The parent relationship is not available." }), {
+        status: 409,
+        headers: {
+          "content-type": "application/json",
+          "x-thread-id": "child-partial",
+        },
+      }),
+  });
+  const created: string[] = [];
+  const result = await session.startDelegatedChild({
+    providerName: "Codex CLI",
+    onCreated: (threadId) => created.push(threadId),
+    body: { ...startBody(), parentThreadId: "parent-1" },
+  });
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") {
+    assert.equal(result.accepted, false);
+    assert.equal(result.threadId, "child-partial");
+    assert.match(result.message, /parent relationship/);
+  }
+  assert.deepEqual(created, ["child-partial"]);
+});
+
+test("delegated child start keeps the fallback when the error payload is malformed", async () => {
+  const session = new ConversationTurnSessionModule({
+    request: async () =>
+      new Response("null", {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  const result = await session.startDelegatedChild({
+    providerName: "Codex CLI",
+    body: { ...startBody(), parentThreadId: "parent-1" },
+  });
+  assert.equal(result.status, "failed");
+  if (result.status === "failed") {
+    assert.equal(result.message, "Codex CLI could not start the child conversation.");
+  }
+});
