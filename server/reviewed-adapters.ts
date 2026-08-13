@@ -1,14 +1,24 @@
 import { constants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
-import { delimiter, isAbsolute, join, normalize, parse as parsePath, resolve, sep } from "node:path";
+import { access } from "node:fs/promises";
+import {
+  delimiter,
+  isAbsolute,
+  join,
+  normalize,
+  parse as parsePath,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   adapterDigest,
+  MAX_MANIFEST_BYTES,
   parseProviderAdapterManifest,
   ProviderAdapterError,
   type InstalledProviderAdapter,
   type ProviderAdapterManifest,
   ProviderAdapterStore,
+  readProviderAdapterRecordFile,
 } from "./provider-adapters.ts";
 
 /** Reviewed, first-party manifests shipped with Aldunis Code. */
@@ -103,8 +113,10 @@ async function loadReviewedPackage(slug: ReviewedAdapterSlug): Promise<{
   let raw: string;
   let expectedDigest: string;
   try {
-    raw = await readFile(manifestPath, "utf8");
-    expectedDigest = (await readFile(digestPath, "utf8")).trim();
+    raw = await readProviderAdapterRecordFile(manifestPath, undefined, MAX_MANIFEST_BYTES);
+    expectedDigest = (
+      await readProviderAdapterRecordFile(digestPath, undefined, MAX_MANIFEST_BYTES)
+    ).trim();
   } catch {
     throw new ProviderAdapterError(
       `The reviewed ${slug} adapter package is missing from this Aldunis install.`,
@@ -143,7 +155,8 @@ function resolveAction(
   }
   // Updates require a higher semver; otherwise offer reinstall of the reviewed package.
   const compare = (left: string, right: string): number => {
-    const parts = (value: string) => value.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+    const parts = (value: string) =>
+      value.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
     const a = parts(left);
     const b = parts(right);
     for (let i = 0; i < 3; i += 1) {
@@ -186,9 +199,10 @@ export async function listReviewedAdapters(
       installedDigest: current?.digest ?? null,
       enabled: current?.enabled ?? null,
       action,
-      installLabel: action === "update" || action === "reinstall-same"
-        ? definition.updateLabel
-        : definition.installLabel,
+      installLabel:
+        action === "update" || action === "reinstall-same"
+          ? definition.updateLabel
+          : definition.installLabel,
       requiresCliHint: definition.requiresCliHint,
       package: {
         source: pack.source,
