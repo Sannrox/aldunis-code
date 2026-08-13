@@ -12,6 +12,7 @@ import {
   MAX_THREADS_PER_PROJECT,
   projectDelegatedConversationOutcomes,
   projectThreadStatus,
+  projectThreadStatuses,
   writeEventHistory,
 } from "./state.ts";
 
@@ -2408,6 +2409,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   let projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "running");
+  assert.deepEqual(projectThreadStatuses(projection), [projectThreadStatus(projection, thread.id)]);
 
   await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "approval_pending",
@@ -2425,6 +2427,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   projection = await store.load();
   const approvalStatus = projectThreadStatus(projection, thread.id);
   assert.equal(approvalStatus.status, "pending_approval");
+  assert.deepEqual(projectThreadStatuses(projection), [approvalStatus]);
   assert.ok(projection.threads[0].wokeAt);
   assert.equal(approvalStatus.since, projection.threads[0].wokeAt);
 
@@ -2439,6 +2442,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "failed");
+  assert.deepEqual(projectThreadStatuses(projection), [projectThreadStatus(projection, thread.id)]);
   assert.ok(projection.threads[0].wokeAt);
 
   await store.markConversationVisited(thread.id);

@@ -521,8 +521,25 @@ export function projectThreadStatus(
     .filter((turn) => turn.threadId === threadId)
     .slice()
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return projectThreadStatusFromTurns(thread, turns, threadId);
+}
+
+function projectThreadStatusFromTurns(
+  thread: Thread | undefined,
+  turns: readonly Turn[],
+  threadId: string,
+): ThreadStatusProjection {
   const latest = turns.at(-1);
-  const approval = [...turns].reverse().find((turn) => turn.status === "waiting_for_approval");
+  let approval: Turn | undefined;
+  let awaiting: Turn | undefined;
+  let running: Turn | undefined;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (!approval && turn.status === "waiting_for_approval") approval = turn;
+    if (!awaiting && turn.status === "waiting_for_user") awaiting = turn;
+    if (!running && (turn.status === "active" || turn.status === "running")) running = turn;
+    if (approval && awaiting && running) break;
+  }
   if (approval) {
     return {
       threadId,
@@ -531,7 +548,6 @@ export function projectThreadStatus(
         thread?.wokeAt && thread.wokeAt >= approval.createdAt ? thread.wokeAt : approval.createdAt,
     };
   }
-  const awaiting = [...turns].reverse().find((turn) => turn.status === "waiting_for_user");
   if (awaiting) {
     return {
       threadId,
@@ -540,9 +556,6 @@ export function projectThreadStatus(
         thread?.wokeAt && thread.wokeAt >= awaiting.createdAt ? thread.wokeAt : awaiting.createdAt,
     };
   }
-  const running = [...turns]
-    .reverse()
-    .find((turn) => turn.status === "active" || turn.status === "running");
   if (running) {
     return { threadId, status: "running", since: running.createdAt };
   }
@@ -575,7 +588,18 @@ export function projectThreadStatus(
 }
 
 export function projectThreadStatuses(projection: StateProjection): ThreadStatusProjection[] {
-  return projection.threads.map((thread) => projectThreadStatus(projection, thread.id));
+  const turnsByThread = new Map<string, Turn[]>();
+  for (const turn of projection.turns) {
+    const turns = turnsByThread.get(turn.threadId);
+    if (turns) turns.push(turn);
+    else turnsByThread.set(turn.threadId, [turn]);
+  }
+  for (const turns of turnsByThread.values()) {
+    turns.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+  return projection.threads.map((thread) =>
+    projectThreadStatusFromTurns(thread, turnsByThread.get(thread.id) ?? [], thread.id),
+  );
 }
 
 export function projectDelegatedConversationOutcomes(
