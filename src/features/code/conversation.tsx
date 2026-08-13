@@ -30,10 +30,9 @@ import type {
 import { Button } from "../../components/ui";
 import { Icon } from "../../components/icon";
 import { OptionalControlBoundary } from "../../components/optional-control-boundary";
-import { ChangesPanel, type ChangesPanelMode } from "../changes/changes-panel";
-import { FileBrowserPanel } from "../files/file-browser-panel";
+import type { ChangesPanelMode } from "../changes/changes-panel";
 import { EnvironmentControl } from "./environment-control";
-import { PreviewPanel, type PreviewPanelStatus } from "../preview/preview-panel";
+import type { PreviewPanelStatus } from "../preview/preview-panel";
 import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
@@ -179,6 +178,15 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 
 const ForkConversationDialog = React.lazy(async () => ({
   default: (await import("../dialogs/fork-conversation-dialog")).ForkConversationDialog,
+}));
+const ChangesPanel = React.lazy(async () => ({
+  default: (await import("../changes/changes-panel")).ChangesPanel,
+}));
+const FileBrowserPanel = React.lazy(async () => ({
+  default: (await import("../files/file-browser-panel")).FileBrowserPanel,
+}));
+const PreviewPanel = React.lazy(async () => ({
+  default: (await import("../preview/preview-panel")).PreviewPanel,
 }));
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
@@ -1203,6 +1211,9 @@ export function Conversation({
   };
   const closePreview = () => {
     dispatchWorkspacePanel({ type: "close_preview" });
+  };
+  const dismissPreview = () => {
+    dispatchWorkspacePanel({ type: "dismiss_preview" });
   };
   const togglePreviewFloating = () => {
     dispatchWorkspacePanel({ type: "toggle_preview_floating" });
@@ -4537,60 +4548,69 @@ export function Conversation({
               activePanel === "preview" ||
               previewFloating ||
               agentBrowserViewOpen) && (
-              <PreviewPanel
-                key={`${repository.root}:${repository.selectedWorktree}`}
-                repository={repository}
-                pane={pane}
-                active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
-                floating={previewFloating}
-                conversationId={conversation?.id ?? threadId}
-                agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
-                onClose={closePreview}
-                onToggleFloating={togglePreviewFloating}
-                onReference={(reference) =>
-                  setElementReferences((current) => [...current.slice(-2), reference])
-                }
-                onStatusChange={updatePreviewStatus}
-              />
+              <OptionalControlBoundary label="Preview" onDismiss={dismissPreview}>
+                <PreviewPanel
+                  key={`${repository.root}:${repository.selectedWorktree}`}
+                  repository={repository}
+                  pane={pane}
+                  active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
+                  floating={previewFloating}
+                  conversationId={conversation?.id ?? threadId}
+                  agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+                  onClose={closePreview}
+                  onToggleFloating={togglePreviewFloating}
+                  onReference={(reference) =>
+                    setElementReferences((current) => [...current.slice(-2), reference])
+                  }
+                  onStatusChange={updatePreviewStatus}
+                />
+              </OptionalControlBoundary>
             )}
           {activePanel === "files" && repository && (
-            <FileBrowserPanel
-              repository={repository}
-              pane={pane}
-              attached={attachments}
-              maxAttachments={100}
-              onAttach={(path) => {
-                if (!attachments.includes(path) && contextPins.length < 100) {
-                  setAttachments((current) => [...current, path]);
-                  setContextError(null);
-                }
-              }}
-              onClose={() => closeWorkspacePanel("files")}
-            />
+            <OptionalControlBoundary label="Files" onDismiss={() => closeWorkspacePanel("files")}>
+              <FileBrowserPanel
+                repository={repository}
+                pane={pane}
+                attached={attachments}
+                maxAttachments={100}
+                onAttach={(path) => {
+                  if (!attachments.includes(path) && contextPins.length < 100) {
+                    setAttachments((current) => [...current, path]);
+                    setContextError(null);
+                  }
+                }}
+                onClose={() => closeWorkspacePanel("files")}
+              />
+            </OptionalControlBoundary>
           )}
         </div>
         {activePanel === "changes" && repository && (
           <aside className="rv review-dock" aria-label={`Review changes, ${pane} pane`}>
-            <ChangesPanel
-              repository={repository}
-              threadId={threadId}
-              pane={pane}
-              files={turnChangesReview?.files ?? changes}
-              loading={turnChangesReview ? false : changesLoading}
-              error={turnChangesReview ? null : changesError}
-              onClose={() => closeWorkspacePanel("changes")}
-              onRefresh={onRefreshChanges}
-              canSendRevision={historyRestored && !runActive && providerReady}
-              mode={changesMode}
-              onModeChange={(mode) => dispatchWorkspacePanel({ type: "set_changes_mode", mode })}
-              checkpointId={turnChangesReview?.checkpointId ?? null}
-              readOnly={turnChangesReview !== null}
-              panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
-              onSendRevision={(prompt) => {
-                closeWorkspacePanel("changes", false);
-                void send(prompt);
-              }}
-            />
+            <OptionalControlBoundary
+              label="Changes"
+              onDismiss={() => closeWorkspacePanel("changes")}
+            >
+              <ChangesPanel
+                repository={repository}
+                threadId={threadId}
+                pane={pane}
+                files={turnChangesReview?.files ?? changes}
+                loading={turnChangesReview ? false : changesLoading}
+                error={turnChangesReview ? null : changesError}
+                onClose={() => closeWorkspacePanel("changes")}
+                onRefresh={onRefreshChanges}
+                canSendRevision={historyRestored && !runActive && providerReady}
+                mode={changesMode}
+                onModeChange={(mode) => dispatchWorkspacePanel({ type: "set_changes_mode", mode })}
+                checkpointId={turnChangesReview?.checkpointId ?? null}
+                readOnly={turnChangesReview !== null}
+                panelTitle={turnChangesReview ? "Turn changes" : "Changes"}
+                onSendRevision={(prompt) => {
+                  closeWorkspacePanel("changes", false);
+                  void send(prompt);
+                }}
+              />
+            </OptionalControlBoundary>
           </aside>
         )}
         {planOpen &&

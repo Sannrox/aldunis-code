@@ -59,6 +59,25 @@ test("workspace lifecycle coordinates floating preview and browser observations"
   assert.equal(transition.state.browserObservationOpen, false);
 });
 
+test("workspace lifecycle unmounts a failed preview when dismissed", () => {
+  let state = initialWorkspacePanelLifecycle("preview");
+  state = apply(state, { type: "browser_observation", present: true }).state;
+  const transition = apply(state, { type: "dismiss_preview" });
+  assert.deepEqual(
+    {
+      active: transition.state.activePanel,
+      mounted: transition.state.previewMounted,
+      floating: transition.state.previewFloating,
+      observation: transition.state.browserObservationOpen,
+    },
+    { active: "none", mounted: false, floating: false, observation: false },
+  );
+  assert.deepEqual(transition.effects, [
+    { type: "change_panel", panel: "none" },
+    { type: "focus_panel", destination: "preview", defer: true },
+  ]);
+});
+
 test("workspace lifecycle keeps current and immutable turn review distinct", () => {
   let state = initialWorkspacePanelLifecycle("changes");
   let transition = apply(state, {

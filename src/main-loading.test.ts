@@ -49,6 +49,24 @@ test("fork controls stay behind conversation intent", () => {
   assert.match(conversationSource, /<OptionalControlBoundary/);
 });
 
+test("workspace panels stay behind conversation intent", () => {
+  const paths = [
+    "../changes/changes-panel",
+    "../files/file-browser-panel",
+    "../preview/preview-panel",
+  ];
+  for (const path of paths) {
+    assert.doesNotMatch(
+      conversationSource,
+      new RegExp(`import\\s+(?!type\\b)[^;]+from ["']${path}["']`),
+    );
+    assert.match(conversationSource, new RegExp(`import\\(["']${path}["']\\)`));
+  }
+  assert.match(conversationSource, /label="Preview" onDismiss=\{dismissPreview\}/);
+  assert.match(conversationSource, /label="Files"/);
+  assert.match(conversationSource, /label="Changes"/);
+});
+
 test("cross-product screens stay behind non-Code selection intent", () => {
   const path = "../shell/domain-page";
   assert.doesNotMatch(
