@@ -13,31 +13,37 @@ export function projectDelegatedInputs(projection: StateProjection): DelegatedIn
       relationship,
     ]),
   );
-  return projection.inputRequests.flatMap((request) => {
-    const unavailableNativeResume = request.responseMode === "native_resume"
-      && request.resumeState === "unavailable";
-    if (request.state !== "pending" && !unavailableNativeResume) return [];
-    const relationship = relationshipByChild.get(request.threadId);
-    const turn = projection.turns.find((item) => (
-      item.id === request.turnId
-      && item.providerRunId === request.providerRunId
-      && (
-        item.status === "waiting_for_user"
-        || (
-          unavailableNativeResume
-          && ["interrupted", "failed", "cancelled"].includes(item.status)
-        )
-      )
-    ));
-    return relationship && turn ? [{
-      parentThreadId: relationship.parentThreadId,
-      childThreadId: relationship.childThreadId,
-      request,
-    }] : [];
-  }).sort((left, right) => (
-    left.request.createdAt.localeCompare(right.request.createdAt)
-    || left.request.id.localeCompare(right.request.id)
-  ));
+  const turnById = new Map(projection.turns.map((turn) => [turn.id, turn]));
+  return projection.inputRequests
+    .flatMap((request) => {
+      const unavailableNativeResume =
+        request.responseMode === "native_resume" && request.resumeState === "unavailable";
+      if (request.state !== "pending" && !unavailableNativeResume) return [];
+      const relationship = relationshipByChild.get(request.threadId);
+      const candidate = turnById.get(request.turnId);
+      const turn =
+        candidate &&
+        candidate.providerRunId === request.providerRunId &&
+        (candidate.status === "waiting_for_user" ||
+          (unavailableNativeResume &&
+            ["interrupted", "failed", "cancelled"].includes(candidate.status)))
+          ? candidate
+          : undefined;
+      return relationship && turn
+        ? [
+            {
+              parentThreadId: relationship.parentThreadId,
+              childThreadId: relationship.childThreadId,
+              request,
+            },
+          ]
+        : [];
+    })
+    .sort(
+      (left, right) =>
+        left.request.createdAt.localeCompare(right.request.createdAt) ||
+        left.request.id.localeCompare(right.request.id),
+    );
 }
 
 export function assertParentRoutedInput(
@@ -46,12 +52,12 @@ export function assertParentRoutedInput(
   childThreadId: string,
   requestId: string,
 ): ChildInputRequest {
-  const relationship = projection.delegatedRelationships.find((item) => (
-    item.parentThreadId === parentThreadId && item.childThreadId === childThreadId
-  ));
-  const request = projection.inputRequests.find((item) => (
-    item.id === requestId && item.threadId === childThreadId
-  ));
+  const relationship = projection.delegatedRelationships.find(
+    (item) => item.parentThreadId === parentThreadId && item.childThreadId === childThreadId,
+  );
+  const request = projection.inputRequests.find(
+    (item) => item.id === requestId && item.threadId === childThreadId,
+  );
   if (!relationship || !request) {
     throw new LocalStateError(
       "The input request is not pending for an explicitly related child.",
