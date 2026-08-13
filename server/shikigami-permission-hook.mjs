@@ -8,6 +8,7 @@
  * Exit 0 allow / non-mutating; exit 1 deny or broker failure.
  */
 import process from "node:process";
+import { requestApproval } from "./approval-response.mjs";
 import { readPermissionHookConfig } from "./permission-hook-config.mjs";
 
 const MAX_HOOK_INPUT_BYTES = 1024 * 1024;
@@ -94,7 +95,7 @@ if (!approvalUrl || !runId || !token) {
 
 const input = parseArgsJson(payload?.args_json);
 try {
-  const response = await fetch(approvalUrl, {
+  const { response, result } = await requestApproval(approvalUrl, {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
@@ -106,7 +107,6 @@ try {
       input,
     }),
   });
-  const result = await response.json().catch(() => ({}));
   if (!response.ok) {
     process.stderr.write(
       `shikigami permission hook: broker HTTP ${response.status}: ${result.error ?? "failed"}\n`,

@@ -1,4 +1,5 @@
 import process from "node:process";
+import { requestApproval } from "./approval-response.mjs";
 
 const approvalUrl = process.env.ALDUNIS_APPROVAL_URL;
 const runId = process.env.ALDUNIS_PROVIDER_RUN_ID;
@@ -49,7 +50,7 @@ async function handle(message) {
   if (message.method === "tools/call") {
     try {
       if (!approvalUrl || !runId || !token) throw new Error("Permission broker is not configured.");
-      const response = await fetch(approvalUrl, {
+      const { response, result } = await requestApproval(approvalUrl, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
@@ -61,7 +62,6 @@ async function handle(message) {
           input: message.params?.arguments?.input,
         }),
       });
-      const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Permission broker failed.");
       send({
         jsonrpc: "2.0",
