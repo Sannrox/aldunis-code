@@ -2691,6 +2691,8 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
 
   const live = await store.inspect();
   const index = await store.turnsByThreadIndex();
+  const messagesByTurn = await store.delegatedMessagesByTurnIndex();
+  const activitiesByTurn = await store.delegatedActivitiesByTurnIndex();
   assert.equal(
     index.get(noisy.thread.id)?.length,
     live.turns.filter((turn) => turn.threadId === noisy.thread.id).length,
@@ -2699,12 +2701,24 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   assert.equal(index.get(child.thread.id)?.[0]?.status, "completed");
   assert.deepEqual(projectThreadStatuses(live, index), projectThreadStatuses(live));
   assert.deepEqual(
-    projectDelegatedConversationOutcomes(live, index),
+    projectDelegatedConversationOutcomes(live, index, messagesByTurn, activitiesByTurn),
     projectDelegatedConversationOutcomes(live),
   );
+  assert.deepEqual(
+    [...(messagesByTurn.get(child.turn.id)?.values() ?? [])],
+    [...live.messages.filter((message) => message.turnId === child.turn.id)],
+  );
+  assert.deepEqual(
+    [...(activitiesByTurn.get(child.turn.id)?.values() ?? [])],
+    [...live.activities.filter((activity) => activity.turnId === child.turn.id)],
+  );
+  assert.equal(messagesByTurn.has(currentTurnId), false);
+  assert.equal(activitiesByTurn.has(currentTurnId), false);
 
   const reloaded = new LocalStateStore(directory);
   const reloadedIndex = await reloaded.turnsByThreadIndex();
+  assert.deepEqual(await reloaded.delegatedMessagesByTurnIndex(), messagesByTurn);
+  assert.deepEqual(await reloaded.delegatedActivitiesByTurnIndex(), activitiesByTurn);
   assert.deepEqual(
     [...reloadedIndex.entries()].map(([threadId, turns]) => [
       threadId,
@@ -2716,6 +2730,8 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   await store.deleteConversation(child.thread.id);
   const afterDelete = await store.turnsByThreadIndex();
   assert.equal(afterDelete.has(child.thread.id), false);
+  assert.equal((await store.delegatedMessagesByTurnIndex()).has(child.turn.id), false);
+  assert.equal((await store.delegatedActivitiesByTurnIndex()).has(child.turn.id), false);
   assert.ok(afterDelete.has(noisy.thread.id));
   assert.deepEqual(
     projectThreadStatuses(await store.inspect(), afterDelete),

@@ -593,6 +593,14 @@ function projectThreadStatusFromTurns(
 }
 
 export type TurnsByThreadIndex = ReadonlyMap<string, readonly Turn[]>;
+export type DelegatedMessagesByTurnIndex = ReadonlyMap<string, ReadonlyMap<string, Message>>;
+export type DelegatedActivitiesByTurnIndex = ReadonlyMap<string, ReadonlyMap<string, Activity>>;
+export interface WorkbenchProjectionIndexes {
+  projection: Readonly<StateProjection>;
+  turnsByThread: TurnsByThreadIndex;
+  delegatedMessagesByTurn: DelegatedMessagesByTurnIndex;
+  delegatedActivitiesByTurn: DelegatedActivitiesByTurnIndex;
+}
 
 function groupTurnsByThread(turns: readonly Turn[]): Map<string, Turn[]> {
   const turnsByThread = new Map<string, Turn[]>();
@@ -640,6 +648,8 @@ function rememberLatestCompletedTurn(latestByChild: Map<string, Turn>, turn: Tur
 export function projectDelegatedConversationOutcomes(
   projection: StateProjection,
   turnsByThread?: TurnsByThreadIndex,
+  messagesByTurn?: DelegatedMessagesByTurnIndex,
+  activitiesByTurn?: DelegatedActivitiesByTurnIndex,
 ): DelegatedConversationOutcomeProjection[] {
   const childIds = new Set(
     projection.delegatedRelationships.map((relationship) => relationship.childThreadId),
@@ -661,7 +671,12 @@ export function projectDelegatedConversationOutcomes(
     [...latestByChild].map(([childThreadId, turn]) => [turn.id, childThreadId]),
   );
   const lastToolStartByTurn = new Map<string, number>();
-  for (const activity of projection.activities) {
+  const relevantActivities = activitiesByTurn
+    ? [...childByTurn.keys()].flatMap((turnId) => [
+        ...(activitiesByTurn.get(turnId)?.values() ?? []),
+      ])
+    : projection.activities;
+  for (const activity of relevantActivities) {
     if (
       !childByTurn.has(activity.turnId) ||
       activity.kind !== "tool_started" ||
@@ -703,7 +718,10 @@ export function projectDelegatedConversationOutcomes(
   };
   const allAssistantByChild = new Map<string, BoundedSummary>();
   const finalAssistantByChild = new Map<string, BoundedSummary>();
-  for (const message of projection.messages) {
+  const relevantMessages = messagesByTurn
+    ? [...childByTurn.keys()].flatMap((turnId) => [...(messagesByTurn.get(turnId)?.values() ?? [])])
+    : projection.messages;
+  for (const message of relevantMessages) {
     const childThreadId = childByTurn.get(message.turnId);
     if (!childThreadId || message.role !== "assistant") continue;
     allAssistantByChild.set(
@@ -1065,11 +1083,47 @@ function indexSavedTurn(
   else bucket[existingIndex] = next;
 }
 
+function indexSavedRow<T extends { id: string; turnId: string }>(
+  rowsByTurn: Map<string, Map<string, T>>,
+  next: T,
+): void {
+  const bucket = rowsByTurn.get(next.turnId);
+  if (!bucket) rowsByTurn.set(next.turnId, new Map([[next.id, next]]));
+  else bucket.set(next.id, next);
+}
+
+function rebuildDelegatedTranscriptIndexes(
+  projection: StateProjection,
+  messagesByTurn: Map<string, Map<string, Message>>,
+  activitiesByTurn: Map<string, Map<string, Activity>>,
+  delegatedChildTurnIds: Set<string>,
+): void {
+  messagesByTurn.clear();
+  activitiesByTurn.clear();
+  delegatedChildTurnIds.clear();
+  const childThreadIds = new Set(
+    projection.delegatedRelationships.map((relationship) => relationship.childThreadId),
+  );
+  for (const turn of projection.turns) {
+    if (childThreadIds.has(turn.threadId)) delegatedChildTurnIds.add(turn.id);
+  }
+  for (const message of projection.messages) {
+    if (delegatedChildTurnIds.has(message.turnId)) indexSavedRow(messagesByTurn, message);
+  }
+  for (const activity of projection.activities) {
+    if (delegatedChildTurnIds.has(activity.turnId)) indexSavedRow(activitiesByTurn, activity);
+  }
+}
+
 function applyEvent(
   projection: StateProjection,
   envelope: EventEnvelope,
   replayIndexes?: ReplayIndexes,
   turnsByThread?: Map<string, Turn[]>,
+  messagesByTurn?: Map<string, Map<string, Message>>,
+  activitiesByTurn?: Map<string, Map<string, Activity>>,
+  delegatedChildTurnIds?: Set<string>,
+  deferDelegatedIndexBuild = false,
 ): void {
   if (envelope.sequence !== projection.sequence + 1) {
     throw new LocalStateError(
@@ -1085,18 +1139,24 @@ function applyEvent(
     const previous = previousTurnDuringApply(projection.turns, event.turn.id, replayIndexes);
     replaceByIdDuringReplay(projection.turns, event.turn, replayIndexes);
     if (turnsByThread) indexSavedTurn(turnsByThread, previous, event.turn);
+    if (
+      delegatedChildTurnIds &&
+      projection.delegatedRelationships.some(
+        (relationship) => relationship.childThreadId === event.turn.threadId,
+      )
+    ) {
+      delegatedChildTurnIds.add(event.turn.id);
+    }
   } else if (event.type === "message_saved") {
-    replaceByIdDuringReplay(
-      projection.messages,
-      { ...event.message, eventSequence: envelope.sequence },
-      replayIndexes,
-    );
+    const next = { ...event.message, eventSequence: envelope.sequence };
+    replaceByIdDuringReplay(projection.messages, next, replayIndexes);
+    if (messagesByTurn && delegatedChildTurnIds?.has(next.turnId))
+      indexSavedRow(messagesByTurn, next);
   } else if (event.type === "activity_saved") {
-    replaceByIdDuringReplay(
-      projection.activities,
-      { ...event.activity, eventSequence: envelope.sequence },
-      replayIndexes,
-    );
+    const next = { ...event.activity, eventSequence: envelope.sequence };
+    replaceByIdDuringReplay(projection.activities, next, replayIndexes);
+    if (activitiesByTurn && delegatedChildTurnIds?.has(next.turnId))
+      indexSavedRow(activitiesByTurn, next);
   } else if (event.type === "plan_saved") {
     const existingIndex = replayIndexes
       ? replayIndex(projection.plans, replayIndexes).get(event.plan.id)
@@ -1152,6 +1212,21 @@ function applyEvent(
       event.delegatedRelationship,
       replayIndexes,
     );
+    if (!deferDelegatedIndexBuild && delegatedChildTurnIds && messagesByTurn && activitiesByTurn) {
+      const childTurns =
+        turnsByThread?.get(event.delegatedRelationship.childThreadId) ??
+        projection.turns.filter(
+          (turn) => turn.threadId === event.delegatedRelationship.childThreadId,
+        );
+      for (const turn of childTurns) delegatedChildTurnIds.add(turn.id);
+      const childTurnIds = new Set(childTurns.map((turn) => turn.id));
+      for (const message of projection.messages) {
+        if (childTurnIds.has(message.turnId)) indexSavedRow(messagesByTurn, message);
+      }
+      for (const activity of projection.activities) {
+        if (childTurnIds.has(activity.turnId)) indexSavedRow(activitiesByTurn, activity);
+      }
+    }
   } else if (event.type === "input_request_saved") {
     replaceByIdDuringReplay(projection.inputRequests, event.inputRequest, replayIndexes);
   } else if (event.type === "input_receipt_saved") {
@@ -1432,6 +1507,9 @@ export class LocalStateStore {
   readonly #options: LocalStateStoreOptions;
   #projection = emptyProjection();
   #turnsByThread = new Map<string, Turn[]>();
+  #messagesByTurn = new Map<string, Map<string, Message>>();
+  #activitiesByTurn = new Map<string, Map<string, Activity>>();
+  #delegatedChildTurnIds = new Set<string>();
   #writeQueue: Promise<void> = Promise.resolve();
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
@@ -1458,6 +1536,9 @@ export class LocalStateStore {
     envelopes: EventEnvelope[];
     projection: StateProjection;
     turnsByThread: Map<string, Turn[]>;
+    messagesByTurn: Map<string, Map<string, Message>>;
+    activitiesByTurn: Map<string, Map<string, Activity>>;
+    delegatedChildTurnIds: Set<string>;
     repaired: boolean;
     sourceIdentity: Awaited<ReturnType<FileHandle["stat"]>> | null;
   }> {
@@ -1470,6 +1551,9 @@ export class LocalStateStore {
           envelopes: [],
           projection: emptyProjection(),
           turnsByThread: new Map(),
+          messagesByTurn: new Map(),
+          activitiesByTurn: new Map(),
+          delegatedChildTurnIds: new Set(),
           repaired: false,
           sourceIdentity: null,
         };
@@ -1486,6 +1570,9 @@ export class LocalStateStore {
       let forkSequences: Set<number> | null = null;
       const replayIndexes: ReplayIndexes = new Map();
       const turnsByThread = new Map<string, Turn[]>();
+      const messagesByTurn = new Map<string, Map<string, Message>>();
+      const activitiesByTurn = new Map<string, Map<string, Activity>>();
+      const delegatedChildTurnIds = new Set<string>();
       for await (const envelope of streamEventEnvelopes(handle)) {
         parsedCount += 1;
         maximumSequence = Math.max(maximumSequence, envelope.sequence);
@@ -1497,10 +1584,35 @@ export class LocalStateStore {
           }
         }
         if (forkSequences) forkSequences.add(envelope.sequence);
-        if (!firstMismatch) applyEvent(projection, envelope, replayIndexes, turnsByThread);
+        if (!firstMismatch)
+          applyEvent(
+            projection,
+            envelope,
+            replayIndexes,
+            turnsByThread,
+            messagesByTurn,
+            activitiesByTurn,
+            delegatedChildTurnIds,
+            true,
+          );
       }
       if (!firstMismatch) {
-        return { envelopes: [], projection, turnsByThread, repaired: false, sourceIdentity };
+        rebuildDelegatedTranscriptIndexes(
+          projection,
+          messagesByTurn,
+          activitiesByTurn,
+          delegatedChildTurnIds,
+        );
+        return {
+          envelopes: [],
+          projection,
+          turnsByThread,
+          messagesByTurn,
+          activitiesByTurn,
+          delegatedChildTurnIds,
+          repaired: false,
+          sourceIdentity,
+        };
       }
       const isCompleteFork =
         Number.isSafeInteger(maximumSequence) &&
@@ -1521,6 +1633,9 @@ export class LocalStateStore {
       const envelopes: EventEnvelope[] = [];
       const repairIndexes: ReplayIndexes = new Map();
       const repairTurnsByThread = new Map<string, Turn[]>();
+      const repairMessagesByTurn = new Map<string, Map<string, Message>>();
+      const repairActivitiesByTurn = new Map<string, Map<string, Activity>>();
+      const repairDelegatedChildTurnIds = new Set<string>();
       const repairHandle = await open(this.#eventPath, "r");
       try {
         const repairIdentity = await repairHandle.stat();
@@ -1533,7 +1648,16 @@ export class LocalStateStore {
         for await (const parsed of streamEventEnvelopes(repairHandle)) {
           const envelope = { ...parsed, sequence: envelopes.length + 1 };
           envelopes.push(envelope);
-          applyEvent(projection, envelope, repairIndexes, repairTurnsByThread);
+          applyEvent(
+            projection,
+            envelope,
+            repairIndexes,
+            repairTurnsByThread,
+            repairMessagesByTurn,
+            repairActivitiesByTurn,
+            repairDelegatedChildTurnIds,
+            true,
+          );
         }
         if (!sameEventHistoryFile(sourceIdentity, await stat(this.#eventPath))) {
           throw new LocalStateError("Local history changed while it was being repaired.");
@@ -1541,10 +1665,19 @@ export class LocalStateStore {
       } finally {
         await repairHandle.close().catch(() => undefined);
       }
+      rebuildDelegatedTranscriptIndexes(
+        projection,
+        repairMessagesByTurn,
+        repairActivitiesByTurn,
+        repairDelegatedChildTurnIds,
+      );
       return {
         envelopes,
         projection,
         turnsByThread: repairTurnsByThread,
+        messagesByTurn: repairMessagesByTurn,
+        activitiesByTurn: repairActivitiesByTurn,
+        delegatedChildTurnIds: repairDelegatedChildTurnIds,
         repaired: true,
         sourceIdentity,
       };
@@ -1631,6 +1764,9 @@ export class LocalStateStore {
     }
     this.#projection = history.projection;
     this.#turnsByThread = history.turnsByThread;
+    this.#messagesByTurn = history.messagesByTurn;
+    this.#activitiesByTurn = history.activitiesByTurn;
+    this.#delegatedChildTurnIds = history.delegatedChildTurnIds;
     this.#loaded = true;
   }
 
@@ -1648,6 +1784,18 @@ export class LocalStateStore {
     return this.#projection;
   }
 
+  /** Capture the live projection and its derived indexes from one write generation. */
+  async inspectWorkbenchProjection(): Promise<WorkbenchProjectionIndexes> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    return {
+      projection: this.#projection,
+      turnsByThread: this.#turnsByThread,
+      delegatedMessagesByTurn: this.#messagesByTurn,
+      delegatedActivitiesByTurn: this.#activitiesByTurn,
+    };
+  }
+
   /**
    * Live turns grouped by conversation, maintained as events apply.
    * Callers must not mutate the returned map or its arrays.
@@ -1655,6 +1803,18 @@ export class LocalStateStore {
   async turnsByThreadIndex(): Promise<TurnsByThreadIndex> {
     await this.#ensureLoaded();
     return this.#turnsByThread;
+  }
+
+  /** Transcript rows retained only for turns belonging to delegated children. */
+  async delegatedMessagesByTurnIndex(): Promise<DelegatedMessagesByTurnIndex> {
+    await this.#ensureLoaded();
+    return this.#messagesByTurn;
+  }
+
+  /** Activity rows retained only for turns belonging to delegated children. */
+  async delegatedActivitiesByTurnIndex(): Promise<DelegatedActivitiesByTurnIndex> {
+    await this.#ensureLoaded();
+    return this.#activitiesByTurn;
   }
 
   async #append(event: StateEvent): Promise<void> {
@@ -1690,7 +1850,15 @@ export class LocalStateStore {
         } finally {
           await handle.close();
         }
-        applyEvent(this.#projection, envelope, undefined, this.#turnsByThread);
+        applyEvent(
+          this.#projection,
+          envelope,
+          undefined,
+          this.#turnsByThread,
+          this.#messagesByTurn,
+          this.#activitiesByTurn,
+          this.#delegatedChildTurnIds,
+        );
       }
     });
     this.#writeQueue = operation.catch(() => undefined);
@@ -1715,7 +1883,15 @@ export class LocalStateStore {
     } finally {
       await handle.close();
     }
-    applyEvent(this.#projection, envelope, undefined, this.#turnsByThread);
+    applyEvent(
+      this.#projection,
+      envelope,
+      undefined,
+      this.#turnsByThread,
+      this.#messagesByTurn,
+      this.#activitiesByTurn,
+      this.#delegatedChildTurnIds,
+    );
   }
 
   async #bufferAssistantText(turnId: string, text: string, createdAt: string): Promise<void> {
@@ -4096,6 +4272,10 @@ export class LocalStateStore {
         ...next.projects.map((project): StateEvent => ({ type: "project_saved", project })),
         ...next.threads.map((thread): StateEvent => ({ type: "thread_saved", thread })),
         ...next.turns.map((turn): StateEvent => ({ type: "turn_saved", turn })),
+        ...next.delegatedRelationships.map((delegatedRelationship): StateEvent => ({
+          type: "delegated_relationship_saved",
+          delegatedRelationship,
+        })),
         ...transcriptEvents.map(({ event }) => event),
         ...next.providerSessions.map((providerSession): StateEvent => ({
           type: "provider_session_saved",
@@ -4118,10 +4298,6 @@ export class LocalStateStore {
           conversationDeletion,
         })),
         ...next.forks.map((fork): StateEvent => ({ type: "fork_saved", fork })),
-        ...next.delegatedRelationships.map((delegatedRelationship): StateEvent => ({
-          type: "delegated_relationship_saved",
-          delegatedRelationship,
-        })),
         ...next.inputRequests.map((inputRequest): StateEvent => ({
           type: "input_request_saved",
           inputRequest,
@@ -4161,6 +4337,9 @@ export class LocalStateStore {
       ];
       const rebuilt = emptyProjection();
       const rebuiltTurnsByThread = new Map<string, Turn[]>();
+      const rebuiltMessagesByTurn = new Map<string, Map<string, Message>>();
+      const rebuiltActivitiesByTurn = new Map<string, Map<string, Activity>>();
+      const rebuiltDelegatedChildTurnIds = new Set<string>();
       const envelopes = events.map((event, index) => {
         const envelope: EventEnvelope = {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -4169,12 +4348,30 @@ export class LocalStateStore {
           recordedAt: new Date().toISOString(),
           event,
         };
-        applyEvent(rebuilt, envelope, undefined, rebuiltTurnsByThread);
+        applyEvent(
+          rebuilt,
+          envelope,
+          undefined,
+          rebuiltTurnsByThread,
+          rebuiltMessagesByTurn,
+          rebuiltActivitiesByTurn,
+          rebuiltDelegatedChildTurnIds,
+          true,
+        );
         return envelope;
       });
+      rebuildDelegatedTranscriptIndexes(
+        rebuilt,
+        rebuiltMessagesByTurn,
+        rebuiltActivitiesByTurn,
+        rebuiltDelegatedChildTurnIds,
+      );
       await this.#replaceHistory(envelopes);
       this.#projection = rebuilt;
       this.#turnsByThread = rebuiltTurnsByThread;
+      this.#messagesByTurn = rebuiltMessagesByTurn;
+      this.#activitiesByTurn = rebuiltActivitiesByTurn;
+      this.#delegatedChildTurnIds = rebuiltDelegatedChildTurnIds;
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;

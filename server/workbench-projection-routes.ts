@@ -9,6 +9,8 @@ import {
   type LocalStateStore,
   projectDelegatedConversationOutcomes,
   projectThreadStatuses,
+  type DelegatedActivitiesByTurnIndex,
+  type DelegatedMessagesByTurnIndex,
   type StateProjection,
   type TurnsByThreadIndex,
 } from "./state.ts";
@@ -16,7 +18,16 @@ import { projectConversationHistory, projectWorkbenchState } from "./state-proje
 import type { WorktreeManager } from "./worktrees.ts";
 
 export interface WorkbenchProjectionRouteContext {
-  state: Pick<LocalStateStore, "inspect"> & Partial<Pick<LocalStateStore, "turnsByThreadIndex">>;
+  state: Pick<LocalStateStore, "inspect"> &
+    Partial<
+      Pick<
+        LocalStateStore,
+        | "inspectWorkbenchProjection"
+        | "turnsByThreadIndex"
+        | "delegatedMessagesByTurnIndex"
+        | "delegatedActivitiesByTurnIndex"
+      >
+    >;
   preferences: Pick<PreferencesStore, "load">;
   permissions: Pick<PermissionBroker, "approvals">;
   worktrees: Pick<WorktreeManager, "countActiveManaged" | "listActiveManagedPaths">;
@@ -200,8 +211,21 @@ export async function handleWorkbenchProjectionRoute(
   if (route === "/api/state/load") {
     // Preferences first so orchestration-disabled installs skip transcript scans.
     const { preferences: currentPreferences } = await preferences.load();
-    const projection = (await state.inspect()) as StateProjection;
-    const turnsByThread = state.turnsByThreadIndex ? await state.turnsByThreadIndex() : undefined;
+    const indexed = state.inspectWorkbenchProjection
+      ? await state.inspectWorkbenchProjection()
+      : undefined;
+    const projection = (indexed?.projection ?? (await state.inspect())) as StateProjection;
+    const turnsByThread =
+      indexed?.turnsByThread ??
+      (state.turnsByThreadIndex ? await state.turnsByThreadIndex() : undefined);
+    const messagesByTurn: DelegatedMessagesByTurnIndex | undefined =
+      indexed?.delegatedMessagesByTurn ??
+      (state.delegatedMessagesByTurnIndex ? await state.delegatedMessagesByTurnIndex() : undefined);
+    const activitiesByTurn: DelegatedActivitiesByTurnIndex | undefined =
+      indexed?.delegatedActivitiesByTurn ??
+      (state.delegatedActivitiesByTurnIndex
+        ? await state.delegatedActivitiesByTurnIndex()
+        : undefined);
     const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
     const visibleProjection = managedHost
       ? orchestrationEnabled
@@ -211,7 +235,12 @@ export async function handleWorkbenchProjectionRoute(
     // Derive transcript-backed values before the Workbench projection strips them,
     // and before later awaits can observe a newer live-state mutation.
     const delegatedOutcomes = orchestrationEnabled
-      ? projectDelegatedConversationOutcomes(visibleProjection, turnsByThread)
+      ? projectDelegatedConversationOutcomes(
+          visibleProjection,
+          turnsByThread,
+          messagesByTurn,
+          activitiesByTurn,
+        )
       : [];
     const delegatedInputs = orchestrationEnabled ? projectDelegatedInputs(visibleProjection) : [];
     const delegatedApprovals = orchestrationEnabled
