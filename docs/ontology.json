@@ -551,7 +551,7 @@
     },
     {
       "name": "ACPModelDiscoveryProbe",
-      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, retains at most one 1 MiB raw-byte-framed JSON message, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
+      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, retains bounded chunk slices for at most one 1 MiB raw-byte-framed JSON message and copies each complete message at most once, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
     }
   ],
   "relations": [

@@ -328,8 +328,24 @@ export async function probeAcpModels(options: {
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
 
-      let buffer = Buffer.alloc(0);
+      let bufferedChunks: Buffer[] = [];
+      let bufferedBytes = 0;
       let sawInit = false;
+
+      const appendBuffered = (chunk: Buffer) => {
+        if (chunk.length === 0) return;
+        bufferedChunks.push(chunk);
+        bufferedBytes += chunk.length;
+      };
+      const takeBuffered = () => {
+        const line =
+          bufferedChunks.length === 1
+            ? bufferedChunks[0]
+            : Buffer.concat(bufferedChunks, bufferedBytes);
+        bufferedChunks = [];
+        bufferedBytes = 0;
+        return line;
+      };
 
       const send = (value: unknown) => {
         if (!child.stdin.destroyed && !child.stdin.writableEnded) {
@@ -358,15 +374,12 @@ export async function probeAcpModels(options: {
         let newline = incoming.indexOf(0x0a, offset);
         while (newline !== -1) {
           const segment = incoming.subarray(offset, newline);
-          if (buffer.length + segment.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
+          if (bufferedBytes + segment.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
             finish([]);
             return;
           }
-          const line =
-            buffer.length === 0
-              ? segment.toString("utf8").trim()
-              : Buffer.concat([buffer, segment]).toString("utf8").trim();
-          buffer = Buffer.alloc(0);
+          appendBuffered(segment);
+          const line = takeBuffered().toString("utf8").trim();
           offset = newline + 1;
           newline = incoming.indexOf(0x0a, offset);
           if (!line) continue;
@@ -403,14 +416,11 @@ export async function probeAcpModels(options: {
           }
         }
         const remainder = incoming.subarray(offset);
-        if (buffer.length + remainder.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
+        if (bufferedBytes + remainder.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
           finish([]);
           return;
         }
-        if (remainder.length > 0) {
-          buffer =
-            buffer.length === 0 ? Buffer.from(remainder) : Buffer.concat([buffer, remainder]);
-        }
+        appendBuffered(remainder);
       });
 
       child.stdout.on("end", () => {

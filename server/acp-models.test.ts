@@ -120,6 +120,56 @@ rl.on("line", (line) => {
   assert.equal(models.find((model) => model.id === "model-a")?.displayName, "Model A");
 });
 
+test("probeAcpModels assembles a fragmented bounded response", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-models-fragmented-"));
+  const executable = join(directory, "fragmented-acp");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  const response = msg.method === "initialize"
+    ? { jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }
+    : {
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: {
+          sessionId: "sess-fragmented",
+          padding: "x".repeat(256 * 1024),
+          models: {
+            currentModelId: "model-a",
+            availableModels: [{ modelId: "model-a", name: "Model A" }],
+          },
+        },
+      };
+  const output = Buffer.from(JSON.stringify(response) + "\\n");
+  let offset = 0;
+  const write = () => {
+    if (offset >= output.length) return;
+    process.stdout.write(output.subarray(offset, offset + 1024));
+    offset += 1024;
+    setImmediate(write);
+  };
+  write();
+});
+`,
+  );
+  await chmod(executable, 0o700);
+
+  const models = await probeAcpModels({
+    executable,
+    arguments: [],
+    cwd: directory,
+    timeoutMs: 5_000,
+  });
+  assert.deepEqual(
+    models.map((model) => model.id),
+    ["model-a"],
+  );
+});
+
 test("probeAcpModels force-terminates a fixture that ignores SIGTERM", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-models-"));
   const executable = join(directory, "stubborn-acp");
