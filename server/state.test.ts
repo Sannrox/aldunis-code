@@ -571,8 +571,34 @@ test("automation fires are durable, idempotent, and bind turn and provider ident
   const originalInspect = store.inspect.bind(store);
   let projectionInspections = 0;
   store.load = async () => {
-    throw new Error("batch latest-fire projection must not clone full state");
+    throw new Error("automation fire reads must not clone full state");
   };
+  const indexedByKey = await store.getAutomationFire(key.automationId, key.key);
+  const indexedById = await store.getAutomationFireById(claimed.fire.id);
+  assert.equal(indexedByKey?.id, claimed.fire.id);
+  assert.equal(indexedById?.providerRunId, "provider-run-1");
+  assert.deepEqual(await store.automationFireOutcome(claimed.fire.id), {
+    status: "completed",
+    error: null,
+  });
+  assert.equal(await store.getAutomationFire("missing", "missing"), null);
+  assert.equal(await store.getAutomationFireById("missing"), null);
+  await assert.rejects(
+    store.automationFireOutcome("missing"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
+  if (indexedByKey) indexedByKey.status = "failed";
+  assert.equal((await store.getAutomationFireById(claimed.fire.id))?.status, "completed");
+  const fireIndexes = (await store.inspectWorkbenchProjection()).conversationHistory;
+  assert.equal(fireIndexes.automationFireById.get(claimed.fire.id)?.id, claimed.fire.id);
+  assert.equal(
+    fireIndexes.automationFireByKey.get(`${key.automationId}\0${key.key}`)?.id,
+    claimed.fire.id,
+  );
+  assert.equal(
+    fireIndexes.automationFireByTurnId.get(started.turn.id)?.providerRunId,
+    "provider-run-1",
+  );
   store.inspect = async () => {
     projectionInspections += 1;
     const projection = structuredClone(await originalInspect());
@@ -642,6 +668,12 @@ test("automation fires become explicit unknown after an interrupted host", async
   assert.equal(rebuilt.turns[0].status, "interrupted");
   assert.equal(rebuilt.automationFires[0].status, "unknown");
   assert.match(rebuilt.automationFires[0].error ?? "", /could not be proven/);
+  const restarted = new LocalStateStore(directory);
+  assert.equal((await restarted.getAutomationFireById(claim.fire.id))?.status, "unknown");
+  assert.deepEqual(await restarted.automationFireOutcome(claim.fire.id), {
+    status: "unknown",
+    error: rebuilt.automationFires[0].error,
+  });
 });
 
 test("governed Shikigami correlation receipts survive restart without sensitive run content", async () => {

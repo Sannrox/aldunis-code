@@ -626,6 +626,9 @@ export interface ConversationHistoryIndex {
   forkByDestinationThread: ReadonlyMap<string, ConversationFork>;
   annotationById: ReadonlyMap<string, DiffAnnotation>;
   fileReviewByIdentity: ReadonlyMap<string, FileReview>;
+  automationFireById: ReadonlyMap<string, AutomationFire>;
+  automationFireByKey: ReadonlyMap<string, AutomationFire>;
+  automationFireByTurnId: ReadonlyMap<string, AutomationFire>;
   delegatedRelationshipByChild: ReadonlyMap<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
@@ -662,6 +665,9 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   forkByDestinationThread: Map<string, ConversationFork>;
   annotationById: Map<string, DiffAnnotation>;
   fileReviewByIdentity: Map<string, FileReview>;
+  automationFireById: Map<string, AutomationFire>;
+  automationFireByKey: Map<string, AutomationFire>;
+  automationFireByTurnId: Map<string, AutomationFire>;
   delegatedRelationshipByChild: Map<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
@@ -683,6 +689,10 @@ function fileReviewIdentity(
   review: Pick<FileReview, "threadId" | "path" | "diffIdentity">,
 ): string {
   return `${review.threadId}\0${review.path}\0${review.diffIdentity}`;
+}
+
+function automationFireIdentity(fire: Pick<AutomationFire, "automationId" | "key">): string {
+  return `${fire.automationId}\0${fire.key}`;
 }
 
 function buildConversationHistoryIndex(
@@ -712,6 +722,13 @@ function buildConversationHistoryIndex(
     ),
     fileReviewByIdentity: new Map(
       projection.fileReviews.map((review) => [fileReviewIdentity(review), review]),
+    ),
+    automationFireById: new Map(projection.automationFires.map((fire) => [fire.id, fire])),
+    automationFireByKey: new Map(
+      projection.automationFires.map((fire) => [automationFireIdentity(fire), fire]),
+    ),
+    automationFireByTurnId: new Map(
+      projection.automationFires.flatMap((fire) => (fire.turnId ? [[fire.turnId, fire]] : [])),
     ),
     delegatedRelationshipByChild: new Map(
       projection.delegatedRelationships.map((relationship) => [
@@ -1483,7 +1500,25 @@ function applyEvent(
   } else if (event.type === "input_receipt_saved") {
     replaceByIdDuringReplay(projection.inputReceipts, event.inputReceipt, replayIndexes);
   } else if (event.type === "automation_fire_saved") {
+    const previous = conversationHistory?.automationFireById.get(event.automationFire.id);
     replaceByIdDuringReplay(projection.automationFires, event.automationFire, replayIndexes);
+    if (conversationHistory) {
+      if (previous) {
+        conversationHistory.automationFireByKey.delete(automationFireIdentity(previous));
+        if (previous.turnId) conversationHistory.automationFireByTurnId.delete(previous.turnId);
+      }
+      conversationHistory.automationFireById.set(event.automationFire.id, event.automationFire);
+      conversationHistory.automationFireByKey.set(
+        automationFireIdentity(event.automationFire),
+        event.automationFire,
+      );
+      if (event.automationFire.turnId) {
+        conversationHistory.automationFireByTurnId.set(
+          event.automationFire.turnId,
+          event.automationFire,
+        );
+      }
+    }
   } else if (event.type === "autonomy_run_saved") {
     replaceByIdDuringReplay(projection.autonomyRuns, event.autonomyRun, replayIndexes);
   } else if (event.type === "autonomy_task_saved") {
@@ -2654,10 +2689,13 @@ export class LocalStateStore {
   }
 
   async bindProviderRun(turnId: string, providerRunId: string): Promise<void> {
-    await this.#appendComputed((projection) => {
-      const turn = projection.turns.find((item) => item.id === turnId);
+    await this.#appendComputed(() => {
+      const threadId = this.#conversationHistory.threadIdByTurn.get(turnId);
+      const turn = threadId
+        ? this.#turnsByThread.get(threadId)?.find((item) => item.id === turnId)
+        : undefined;
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.", 404);
-      const fire = projection.automationFires.find((item) => item.turnId === turnId);
+      const fire = this.#conversationHistory.automationFireByTurnId.get(turnId);
       if (fire?.providerRunId && fire.providerRunId !== providerRunId) {
         throw new LocalStateError(
           "The automation fire is already bound to another provider run.",
@@ -2685,17 +2723,19 @@ export class LocalStateStore {
   }
 
   async getAutomationFire(automationId: string, key: string): Promise<AutomationFire | null> {
-    const projection = await this.load();
-    return (
-      projection.automationFires.find(
-        (fire) => fire.automationId === automationId && fire.key === key,
-      ) ?? null
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const fire = this.#conversationHistory.automationFireByKey.get(
+      automationFireIdentity({ automationId, key }),
     );
+    return fire ? structuredClone(fire) : null;
   }
 
   async getAutomationFireById(fireId: string): Promise<AutomationFire | null> {
-    const projection = await this.load();
-    return projection.automationFires.find((fire) => fire.id === fireId) ?? null;
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const fire = this.#conversationHistory.automationFireById.get(fireId);
+    return fire ? structuredClone(fire) : null;
   }
 
   async latestAutomationFire(automationId: string): Promise<AutomationFire | null> {
@@ -2720,9 +2760,9 @@ export class LocalStateStore {
   }
 
   async recordAutomationFireSkippedBusy(input: AutomationFireKey): Promise<AutomationFire> {
-    return this.#appendComputed((projection) => {
-      const existing = projection.automationFires.find(
-        (fire) => fire.automationId === input.automationId && fire.key === input.key,
+    return this.#appendComputed(() => {
+      const existing = this.#conversationHistory.automationFireByKey.get(
+        automationFireIdentity(input),
       );
       if (existing) return { event: null, value: existing };
       const now = new Date().toISOString();
@@ -2749,9 +2789,9 @@ export class LocalStateStore {
   async claimAutomationFire(
     input: AutomationFireKey,
   ): Promise<{ fire: AutomationFire; claimed: boolean }> {
-    return this.#appendComputed((projection) => {
-      const existing = projection.automationFires.find(
-        (fire) => fire.automationId === input.automationId && fire.key === input.key,
+    return this.#appendComputed(() => {
+      const existing = this.#conversationHistory.automationFireByKey.get(
+        automationFireIdentity(input),
       );
       const now = new Date().toISOString();
       if (existing) {
@@ -2798,8 +2838,8 @@ export class LocalStateStore {
   }
 
   async bindAutomationFireTurn(fireId: string, turnId: string): Promise<void> {
-    await this.#appendComputed((projection) => {
-      const fire = projection.automationFires.find((item) => item.id === fireId);
+    await this.#appendComputed(() => {
+      const fire = this.#conversationHistory.automationFireById.get(fireId);
       if (!fire)
         throw new LocalStateError("The automation fire is missing from local history.", 404);
       if (fire.turnId && fire.turnId !== turnId) {
@@ -2820,8 +2860,8 @@ export class LocalStateStore {
     status: AutomationFireTerminalStatus,
     error: string | null = null,
   ): Promise<AutomationFire> {
-    return this.#appendComputed((projection) => {
-      const fire = projection.automationFires.find((item) => item.id === fireId);
+    return this.#appendComputed(() => {
+      const fire = this.#conversationHistory.automationFireById.get(fireId);
       if (!fire)
         throw new LocalStateError("The automation fire is missing from local history.", 404);
       if (fire.status !== "started" && fire.status !== "skipped_busy") {
@@ -2842,13 +2882,21 @@ export class LocalStateStore {
     status: AutomationFireTerminalStatus;
     error: string | null;
   }> {
-    const projection = await this.load();
-    const fire = projection.automationFires.find((item) => item.id === fireId);
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const fire = this.#conversationHistory.automationFireById.get(fireId);
     if (!fire) throw new LocalStateError("The automation fire is missing from local history.", 404);
     if (fire.status !== "started" && fire.status !== "skipped_busy") {
       return { status: fire.status, error: fire.error };
     }
-    return automationFireOutcome(projection, fire);
+    const threadId = fire.turnId
+      ? this.#conversationHistory.threadIdByTurn.get(fire.turnId)
+      : undefined;
+    const turn =
+      fire.turnId && threadId
+        ? this.#turnsByThread.get(threadId)?.find((item) => item.id === fire.turnId)
+        : undefined;
+    return automationFireOutcome(this.#projection, fire, new Map(turn ? [[turn.id, turn]] : []));
   }
 
   async reconcileAutomationFires(): Promise<void> {
