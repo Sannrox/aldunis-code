@@ -1,6 +1,4 @@
-import { execFile } from "node:child_process";
 import { isIP } from "node:net";
-import { promisify } from "node:util";
 import packageJson from "../package.json" with { type: "json" };
 import { createLocalHost, assertLoopbackHost } from "./host.ts";
 import { CliUsageError, formatCliHelp, parseCliArgs, type CliInvocation } from "./cli.ts";
@@ -9,8 +7,7 @@ import { RemoteAuth } from "./remote-auth.ts";
 import { defaultStateDirectory, LocalStateStore } from "./state.ts";
 import { DEFAULT_HOST_PORT, DEFAULT_SSH_REMOTE_PORT } from "../src/ports.ts";
 import { readTlsMaterial } from "./tls-material.ts";
-
-const execFileAsync = promisify(execFile);
+import { runTailscaleCommand } from "./tailscale-command.ts";
 
 let cliInvocation: CliInvocation;
 try {
@@ -162,10 +159,10 @@ async function disableTailscaleServe(): Promise<void> {
   if (!tailscaleConfigured) return;
   tailscaleConfigured = false;
   try {
-    await execFileAsync("tailscale", ["serve", "--https=443", "off"]);
+    await runTailscaleCommand(["serve", "--https=443", "off"]);
   } catch (flaggedError) {
     try {
-      await execFileAsync("tailscale", ["serve", "off"]);
+      await runTailscaleCommand(["serve", "off"]);
     } catch (bareError) {
       console.error(
         "Tailscale Serve cleanup failed; run `tailscale serve --https=443 off` locally.",
@@ -202,14 +199,14 @@ server.listen(port, host, async () => {
   }
   if (remoteMode === "tailscale") {
     try {
-      const before = await execFileAsync("tailscale", ["serve", "status", "--json"]);
-      const existing = JSON.parse(before.stdout) as { Web?: Record<string, unknown> };
+      const before = await runTailscaleCommand(["serve", "status", "--json"]);
+      const existing = JSON.parse(before) as { Web?: Record<string, unknown> };
       if (Object.keys(existing.Web ?? {}).length > 0) {
         throw new Error("Tailscale Serve already has an endpoint; refusing to overwrite it.");
       }
-      await execFileAsync("tailscale", ["serve", "--bg", "--https=443", localUrl]);
+      await runTailscaleCommand(["serve", "--bg", "--https=443", localUrl]);
       tailscaleConfigured = true;
-      const { stdout } = await execFileAsync("tailscale", ["serve", "status", "--json"]);
+      const stdout = await runTailscaleCommand(["serve", "status", "--json"]);
       const status = JSON.parse(stdout) as { Web?: Record<string, unknown> };
       const endpoint = Object.keys(status.Web ?? {})[0];
       if (!endpoint) throw new Error("Tailscale Serve did not publish an HTTPS endpoint.");

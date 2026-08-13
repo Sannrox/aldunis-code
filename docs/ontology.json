@@ -261,7 +261,7 @@
     },
     {
       "name": "LocalApplicationHost",
-      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
+      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, request routing, and Tailscale lifecycle commands within fixed runtime and output budgets inside its implementation."
     },
     {
       "name": "LocalUsageReceipt",
@@ -2170,7 +2170,7 @@
     {
       "subject": "LocalApplicationHost",
       "source": "Aldunis Code local host composition interface",
-      "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; Issue #575",
+      "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; server/tailscale-command.ts#runTailscaleCommand; Issue #575",
       "confidence": 1.0
     },
     {
