@@ -278,8 +278,9 @@ export class AutonomyEngine {
   }
 
   async snapshot(limit = 50): Promise<AutonomyStateSnapshot> {
-    // Public API surface: clone so callers cannot mutate live journaled records.
-    const projection = await this.state.load();
+    // Public API surface: clone only bounded Autonomy records so periodic ledger
+    // refreshes do not copy unrelated conversation history.
+    const projection = await this.state.loadAutonomyProjection();
     return {
       runs: projection.autonomyRuns
         .slice()
