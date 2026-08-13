@@ -29,7 +29,6 @@ import {
   type SplitWorkspacePane,
 } from "../../split-workspace";
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
-import { UsagePage } from "./usage-page";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { branchFromWorktree, conversationListFromProjection } from "./conversation-list";
@@ -85,6 +84,9 @@ import {
 
 const DomainPage = React.lazy(async () => ({
   default: (await import("../shell/domain-page")).DomainPage,
+}));
+const UsagePage = React.lazy(async () => ({
+  default: (await import("./usage-page")).UsagePage,
 }));
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
@@ -1547,7 +1549,9 @@ export function CodeWorkbench({
             />
           </OptionalControlBoundary>
         ) : usageOpen ? (
-          <UsagePage onBack={() => setUsageOpen(false)} />
+          <OptionalControlBoundary label="Usage" onDismiss={() => setUsageOpen(false)}>
+            <UsagePage onBack={() => setUsageOpen(false)} />
+          </OptionalControlBoundary>
         ) : (
           <div
             className="code-view conversation-workspace"
