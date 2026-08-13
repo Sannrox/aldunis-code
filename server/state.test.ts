@@ -2412,15 +2412,22 @@ test("cross-provider fork previews and persists only allowlisted conversation co
     (await store.load()).plans.some((plan) => plan.threadId === created.thread.id),
     false,
   );
-  assert.equal(await store.pendingForkPrompt(created.thread.id), preview.prompt);
+  class ForkIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("fork startup must not clone the full projection");
+    }
+  }
+  const forkIndexStore = new ForkIndexOnlyStore(directory);
+  assert.equal(await forkIndexStore.pendingForkPrompt(created.thread.id), preview.prompt);
   assert.deepEqual((await store.load()).threads[0], sourceBefore);
 
-  await store.markForkStarted(created.thread.id);
-  assert.equal(await store.pendingForkPrompt(created.thread.id), null);
-  const rebuilt = await new LocalStateStore(directory).load();
+  await forkIndexStore.markForkStarted(created.thread.id);
+  assert.equal(await forkIndexStore.pendingForkPrompt(created.thread.id), null);
+  const rebuiltStore = new LocalStateStore(directory);
+  const rebuilt = await rebuiltStore.load();
   assert.equal(rebuilt.forks[0].status, "started");
-  await store.deleteConversation(created.thread.id);
-  const afterDeletion = await store.load();
+  await rebuiltStore.deleteConversation(created.thread.id);
+  const afterDeletion = await rebuiltStore.load();
   assert.equal(afterDeletion.forks.length, 0);
   assert.equal(afterDeletion.threads.length, 1);
 });

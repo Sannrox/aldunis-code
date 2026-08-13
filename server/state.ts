@@ -623,6 +623,7 @@ export interface ConversationHistoryIndex {
   inputRequestsByThread: RowsByThread<InputRequest>;
   providerSessionsByThread: RowsByThread<ProviderSession>;
   conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
+  forkByDestinationThread: ReadonlyMap<string, ConversationFork>;
   delegatedRelationshipByChild: ReadonlyMap<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
@@ -656,6 +657,7 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   inputRequestsByThread: Map<string, InputRequest[]>;
   providerSessionsByThread: Map<string, ProviderSession[]>;
   conversationDeletionByThread: Map<string, ConversationDeletion>;
+  forkByDestinationThread: Map<string, ConversationFork>;
   delegatedRelationshipByChild: Map<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
@@ -691,6 +693,9 @@ function buildConversationHistoryIndex(
     providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
     conversationDeletionByThread: new Map(
       projection.conversationDeletions.map((deletion) => [deletion.threadId, deletion]),
+    ),
+    forkByDestinationThread: new Map(
+      projection.forks.map((fork) => [fork.destinationThreadId, fork]),
     ),
     delegatedRelationshipByChild: new Map(
       projection.delegatedRelationships.map((relationship) => [
@@ -1401,8 +1406,16 @@ function applyEvent(
     replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
     conversationHistory?.threadById.set(event.thread.id, event.thread);
+    conversationHistory?.forkByDestinationThread.set(event.fork.destinationThreadId, event.fork);
   } else if (event.type === "fork_saved") {
+    const previous = projection.forks.find((fork) => fork.id === event.fork.id);
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
+    if (conversationHistory) {
+      if (previous && previous.destinationThreadId !== event.fork.destinationThreadId) {
+        conversationHistory.forkByDestinationThread.delete(previous.destinationThreadId);
+      }
+      conversationHistory.forkByDestinationThread.set(event.fork.destinationThreadId, event.fork);
+    }
   } else if (event.type === "delegated_relationship_saved") {
     const previous = projection.delegatedRelationships.find(
       (relationship) => relationship.id === event.delegatedRelationship.id,
@@ -2593,20 +2606,25 @@ export class LocalStateStore {
   }
 
   async pendingForkPrompt(threadId: string): Promise<string | null> {
-    const fork = (await this.load()).forks.find(
-      (candidate) => candidate.destinationThreadId === threadId && candidate.status === "pending",
-    );
-    return fork?.prompt ?? null;
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const fork = this.#conversationHistory.forkByDestinationThread.get(threadId);
+    return fork?.status === "pending" ? fork.prompt : null;
   }
 
   async markForkStarted(threadId: string): Promise<void> {
-    const fork = (await this.load()).forks.find(
-      (candidate) => candidate.destinationThreadId === threadId && candidate.status === "pending",
-    );
-    if (!fork) return;
-    await this.#append({
-      type: "fork_saved",
-      fork: { ...fork, status: "started", startedAt: new Date().toISOString() },
+    await this.#appendComputed(() => {
+      const fork = this.#conversationHistory.forkByDestinationThread.get(threadId);
+      return {
+        event:
+          fork?.status === "pending"
+            ? {
+                type: "fork_saved" as const,
+                fork: { ...fork, status: "started" as const, startedAt: new Date().toISOString() },
+              }
+            : null,
+        value: undefined,
+      };
     });
   }
 
