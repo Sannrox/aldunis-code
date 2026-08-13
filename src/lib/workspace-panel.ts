@@ -101,14 +101,14 @@ export function transitionWorkspacePanelLifecycle(
   }
   if (event.type === "toggle") {
     const activePanel = current.activePanel === event.destination ? "none" : event.destination;
+    const previewFloating = event.destination === "preview" ? false : current.previewFloating;
     return {
       state: {
         ...current,
         activePanel,
         focusedPanel: event.destination,
-        previewFloating: event.destination === "preview" ? false : current.previewFloating,
-        previewMounted:
-          activePanel === "preview" || current.previewMounted || current.previewFloating,
+        previewFloating,
+        previewMounted: activePanel === "preview" || previewFloating,
       },
       effects: [
         ...(activePanel === "changes" && current.activePanel !== "changes"
@@ -170,7 +170,12 @@ export function transitionWorkspacePanelLifecycle(
     if (current.activePanel !== destination) {
       const state =
         event.type === "close_preview"
-          ? { ...current, previewFloating: false, browserObservationOpen: false }
+          ? {
+              ...current,
+              previewMounted: false,
+              previewFloating: false,
+              browserObservationOpen: false,
+            }
           : current;
       return { state, effects: [] };
     }
@@ -179,6 +184,7 @@ export function transitionWorkspacePanelLifecycle(
       state: {
         ...current,
         activePanel: "none",
+        previewMounted: destination === "preview" ? false : current.previewMounted,
         previewFloating: destination === "preview" ? false : current.previewFloating,
         browserObservationOpen: destination === "preview" ? false : current.browserObservationOpen,
         turnReview: destination === "changes" ? null : current.turnReview,
@@ -238,7 +244,12 @@ export function transitionWorkspacePanelLifecycle(
   }
   if (event.type === "workspace_reset") {
     return {
-      state: { ...current, previewFloating: false, browserObservationOpen: false },
+      state: {
+        ...current,
+        previewMounted: false,
+        previewFloating: false,
+        browserObservationOpen: false,
+      },
       effects: [],
     };
   }

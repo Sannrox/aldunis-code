@@ -1144,7 +1144,6 @@ export function Conversation({
   const workspacePanelLifecycleRef = useRef(workspacePanelLifecycle);
   workspacePanelLifecycleRef.current = workspacePanelLifecycle;
   const {
-    previewMounted,
     previewFloating,
     browserObservationOpen: agentBrowserViewOpen,
     changesMode,
@@ -4547,29 +4546,25 @@ export function Conversation({
           </div>
           {/* File browser and preview stay inside .conv; the selector guarantees
           only one workspace destination is visible at a time. */}
-          {repository &&
-            (previewMounted ||
-              activePanel === "preview" ||
-              previewFloating ||
-              agentBrowserViewOpen) && (
-              <OptionalControlBoundary label="Preview" onDismiss={dismissPreview}>
-                <PreviewPanel
-                  key={`${repository.root}:${repository.selectedWorktree}`}
-                  repository={repository}
-                  pane={pane}
-                  active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
-                  floating={previewFloating}
-                  conversationId={conversation?.id ?? threadId}
-                  agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
-                  onClose={closePreview}
-                  onToggleFloating={togglePreviewFloating}
-                  onReference={(reference) =>
-                    setElementReferences((current) => [...current.slice(-2), reference])
-                  }
-                  onStatusChange={updatePreviewStatus}
-                />
-              </OptionalControlBoundary>
-            )}
+          {repository && (activePanel === "preview" || previewFloating || agentBrowserViewOpen) && (
+            <OptionalControlBoundary label="Preview" onDismiss={dismissPreview}>
+              <PreviewPanel
+                key={`${repository.root}:${repository.selectedWorktree}`}
+                repository={repository}
+                pane={pane}
+                active={activePanel === "preview" || previewFloating || agentBrowserViewOpen}
+                floating={previewFloating}
+                conversationId={conversation?.id ?? threadId}
+                agentObservation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+                onClose={closePreview}
+                onToggleFloating={togglePreviewFloating}
+                onReference={(reference) =>
+                  setElementReferences((current) => [...current.slice(-2), reference])
+                }
+                onStatusChange={updatePreviewStatus}
+              />
+            </OptionalControlBoundary>
+          )}
           {activePanel === "files" && repository && (
             <OptionalControlBoundary label="Files" onDismiss={() => closeWorkspacePanel("files")}>
               <FileBrowserPanel
