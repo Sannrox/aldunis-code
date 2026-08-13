@@ -462,6 +462,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned git delivery inspect, pull-request draft, prepare, and single-use execute, stale-inspect suppression, plan invalidation, and selected-path admission behind one snapshot-and-command interface while ChangesPanel retains chrome, DeliveryRouteDispatchModule retains host git authority, and Tenkai remains the owner of release delivery."
     },
     {
+      "name": "ReviewedForkSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned reviewed cross-provider fork preview and create, expected-digest stamping, stale-preview suppression, and validated error fallback behind one snapshot-and-command interface while ForkConversationDialog retains destination, workspace, and review chrome and CrossProviderConversationForkRouteDispatchModule retains host fork admission."
+    },
+    {
       "name": "ConversationLifecycleRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation lifecycle route recognition, request validation, managed-host admission, explicit managed-worktree release guards, deletion ordering, delegated relationship admission, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, or approval authority."
     },
@@ -676,6 +680,16 @@
       "description": "The conversation review surface delegates renderer-owned git delivery inspect, draft, prepare, and execute to one session module without transferring Tenkai release, repository, worktree, or permission authority.",
       "domain": "ConversationComposer",
       "range": "ReviewedDeliverySessionModule",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "uses_reviewed_fork_session",
+      "description": "The conversation composer delegates renderer-owned reviewed fork preview and create to one session module without transferring host fork admission, worktree exclusivity, or provider-process authority.",
+      "domain": "ConversationComposer",
+      "range": "ReviewedForkSessionModule",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -2997,6 +3011,18 @@
       "subject": "uses_reviewed_delivery_session",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#944",
       "locator": "src/features/changes/delivery-session.ts#useReviewedDeliverySession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ReviewedForkSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#946",
+      "locator": "src/features/dialogs/fork-session.ts#ReviewedForkSessionModule; src/features/dialogs/fork-conversation-dialog.tsx#ForkConversationDialog",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_reviewed_fork_session",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#946",
+      "locator": "src/features/dialogs/fork-session.ts#useReviewedForkSession",
       "confidence": 1.0
     }
   ]
