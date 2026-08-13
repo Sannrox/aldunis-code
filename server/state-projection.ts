@@ -1,4 +1,4 @@
-import type { StateProjection } from "./state.ts";
+import type { ConversationHistoryIndex, StateProjection } from "./state.ts";
 
 /**
  * Workbench/list payload: keep lifecycle metadata, drop transcript bodies.
@@ -48,6 +48,7 @@ export function projectWorkbenchState(projection: StateProjection): StateProject
 export function projectConversationHistory(
   projection: StateProjection,
   threadId: string,
+  index?: ConversationHistoryIndex,
 ): Pick<
   StateProjection,
   | "sequence"
@@ -62,8 +63,24 @@ export function projectConversationHistory(
   | "governanceCorrelations"
   | "checkpoints"
 > | null {
-  const thread = projection.threads.find((item) => item.id === threadId);
+  const thread =
+    index?.threadById.get(threadId) ?? projection.threads.find((item) => item.id === threadId);
   if (!thread) return null;
+  if (index) {
+    return {
+      sequence: projection.sequence,
+      threads: [thread],
+      turns: [...(index.turnsByThread.get(threadId) ?? [])],
+      messages: [...(index.messagesByThread.get(threadId) ?? [])],
+      activities: [...(index.activitiesByThread.get(threadId) ?? [])],
+      plans: [...(index.plansByThread.get(threadId) ?? [])],
+      contextReceipts: [...(index.contextReceiptsByThread.get(threadId) ?? [])],
+      inputRequests: [...(index.inputRequestsByThread.get(threadId) ?? [])],
+      providerSessions: [...(index.providerSessionsByThread.get(threadId) ?? [])],
+      governanceCorrelations: [...(index.governanceCorrelationsByThread.get(threadId) ?? [])],
+      checkpoints: [...(index.checkpointsByThread.get(threadId) ?? [])],
+    };
+  }
   const turns = projection.turns.filter((turn) => turn.threadId === threadId);
   const turnIds = new Set(turns.map((turn) => turn.id));
   return {

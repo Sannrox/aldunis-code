@@ -16,6 +16,7 @@ import {
   type StateProjection,
   writeEventHistory,
 } from "./state.ts";
+import { projectConversationHistory } from "./state-projection.ts";
 
 async function fixtureStore(): Promise<{ directory: string; store: LocalStateStore }> {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
@@ -2690,6 +2691,7 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   });
 
   const live = await store.inspect();
+  const liveSnapshot = await store.inspectWorkbenchProjection();
   const index = await store.turnsByThreadIndex();
   const messagesByTurn = await store.delegatedMessagesByTurnIndex();
   const activitiesByTurn = await store.delegatedActivitiesByTurnIndex();
@@ -2700,6 +2702,15 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   assert.equal(index.get(child.thread.id)?.length, 1);
   assert.equal(index.get(child.thread.id)?.[0]?.status, "completed");
   assert.deepEqual(projectThreadStatuses(live, index), projectThreadStatuses(live));
+  assert.deepEqual(
+    projectConversationHistory(
+      live as StateProjection,
+      noisy.thread.id,
+      liveSnapshot.conversationHistory,
+    ),
+    projectConversationHistory(live as StateProjection, noisy.thread.id),
+  );
+  assert.equal(liveSnapshot.conversationHistory.messagesByThread.has("missing-thread"), false);
   assert.deepEqual(
     projectDelegatedConversationOutcomes(live, index, messagesByTurn, activitiesByTurn),
     projectDelegatedConversationOutcomes(live),
@@ -2717,8 +2728,17 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
 
   const reloaded = new LocalStateStore(directory);
   const reloadedIndex = await reloaded.turnsByThreadIndex();
+  const reloadedSnapshot = await reloaded.inspectWorkbenchProjection();
   assert.deepEqual(await reloaded.delegatedMessagesByTurnIndex(), messagesByTurn);
   assert.deepEqual(await reloaded.delegatedActivitiesByTurnIndex(), activitiesByTurn);
+  assert.deepEqual(
+    projectConversationHistory(
+      reloadedSnapshot.projection as StateProjection,
+      child.thread.id,
+      reloadedSnapshot.conversationHistory,
+    ),
+    projectConversationHistory(reloadedSnapshot.projection as StateProjection, child.thread.id),
+  );
   assert.deepEqual(
     [...reloadedIndex.entries()].map(([threadId, turns]) => [
       threadId,
@@ -2732,6 +2752,10 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   assert.equal(afterDelete.has(child.thread.id), false);
   assert.equal((await store.delegatedMessagesByTurnIndex()).has(child.turn.id), false);
   assert.equal((await store.delegatedActivitiesByTurnIndex()).has(child.turn.id), false);
+  assert.equal(
+    (await store.inspectWorkbenchProjection()).conversationHistory.threadById.has(child.thread.id),
+    false,
+  );
   assert.ok(afterDelete.has(noisy.thread.id));
   assert.deepEqual(
     projectThreadStatuses(await store.inspect(), afterDelete),
@@ -2872,6 +2896,13 @@ test("assistant stream tokens buffer into one durable message per segment", asyn
   );
   assert.equal(liveAssistants.length, 1);
   assert.equal(liveAssistants[0]?.text, "Hello world");
+  const liveIndexed = await store.inspectWorkbenchProjection();
+  assert.equal(
+    liveIndexed.conversationHistory.messagesByThread
+      .get(thread.id)
+      ?.find((message) => message.role === "assistant")?.text,
+    "Hello world",
+  );
   // Short segments stay RAM-only until a boundary (below the soft-checkpoint size).
   const midLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal([...midLog.matchAll(/"type":"message_saved"/g)].length, 1); // user only
@@ -2902,6 +2933,15 @@ test("assistant stream tokens buffer into one durable message per segment", asyn
   assert.deepEqual(
     assistants.map((message) => message.text),
     ["Hello world", "After tool."],
+  );
+  const completedIndexed = await store.inspectWorkbenchProjection();
+  assert.deepEqual(
+    projectConversationHistory(
+      completedIndexed.projection as StateProjection,
+      thread.id,
+      completedIndexed.conversationHistory,
+    ),
+    projectConversationHistory(completedIndexed.projection as StateProjection, thread.id),
   );
   const log = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   // user + two assistant segments (not one row per token)
