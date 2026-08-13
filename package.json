@@ -95,7 +95,8 @@
       "contracts/**/*",
       "vendor/sekai-chisei-sdk/**/*",
       "provider-adapters/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*.map"
     ],
     "protocols": [
       {

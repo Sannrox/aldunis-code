@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import {
-  CliUsageError,
-  formatCliHelp,
-  parseCliArgs,
-} from "./cli.ts";
+import { CliUsageError, formatCliHelp, parseCliArgs } from "./cli.ts";
 
 test("the root command defaults to start and accepts host flags", () => {
   assert.deepEqual(parseCliArgs(["--host", "127.0.0.1", "--port=4175"]), {
@@ -47,7 +43,9 @@ test("SSH remote serving is an explicit loopback-authenticated host mode", () =>
 });
 
 test("the CLI build emits provider approval helpers beside the host bundle", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
     scripts?: { "build:cli"?: string };
   };
   const command = packageJson.scripts?.["build:cli"] ?? "";
@@ -56,6 +54,16 @@ test("the CLI build emits provider approval helpers beside the host bundle", asy
   assert.match(command, /--outfile=dist-cli\/permission-mcp\.mjs/);
   assert.match(command, /esbuild server\/shikigami-permission-hook\.mjs/);
   assert.match(command, /--outfile=dist-cli\/shikigami-permission-hook\.mjs/);
+});
+
+test("desktop packaging excludes dependency source maps", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as {
+    build?: { files?: string[] };
+  };
+
+  assert.ok(packageJson.build?.files?.includes("!node_modules/**/*.map"));
 });
 
 test("legacy remote-auth flags remain compatible", () => {
