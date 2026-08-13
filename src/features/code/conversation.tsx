@@ -22,7 +22,6 @@ import type {
   ProviderBrowserObservation,
   ChangedFile,
   TurnCheckpoint,
-  CheckpointFile,
   ElementReference,
   ContextPin,
   ContextReceipt,
@@ -61,6 +60,7 @@ import { joinAssistantTextChunks } from "../../lib/assistant-text";
 import { initialConversationRunState, reduceConversationRun } from "../../lib/conversation-run";
 import { ConversationTurnSessionModule } from "../../lib/conversation-turn-session";
 import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
+import { useWorkspaceRewindSession } from "./workspace-rewind-session";
 import { ContextWindowMeter } from "./context-window-meter";
 import {
   clearComposerDraft,
@@ -1235,13 +1235,12 @@ export function Conversation({
       : null;
   const [elementReferences, setElementReferences] = useState<ElementReference[]>([]);
   const [checkpoint, setCheckpoint] = useState<TurnCheckpoint | null>(null);
-  const [rewindPreview, setRewindPreview] = useState<{
-    currentIdentity: string;
-    currentIndexIdentity: string;
-    files: CheckpointFile[];
-  } | null>(null);
-  const [checkpointBusy, setCheckpointBusy] = useState(false);
-  const [checkpointError, setCheckpointError] = useState<string | null>(null);
+  const { snapshot: rewindState, session: rewindSession } = useWorkspaceRewindSession({
+    checkpointId: checkpoint?.id ?? null,
+    root: repository?.root ?? "",
+    worktree: repository?.selectedWorktree ?? "",
+  });
+  const { preview: rewindPreview, error: checkpointError, busy: checkpointBusy } = rewindState;
   /** Hides the post-turn settle prompt until the next completed turn. */
   const [completionDismissed, setCompletionDismissed] = useState(false);
   const [releaseWorktreeOpen, setReleaseWorktreeOpen] = useState(false);
@@ -1258,11 +1257,11 @@ export function Conversation({
       if (checkpointBusy) return;
       event.preventDefault();
       event.stopPropagation();
-      setRewindPreview(null);
+      rewindSession.clearPreview();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [rewindPreview, checkpointBusy]);
+  }, [checkpointBusy, rewindPreview, rewindSession]);
   const boundConversationId = conversation?.id ?? null;
   const boundConversationProvider = conversation?.provider;
   const boundConversationWorkspaceMode = conversation?.workspaceMode;
@@ -1303,7 +1302,6 @@ export function Conversation({
     setCheckpoint(null);
     dispatchWorkspacePanel({ type: "conversation_reset" });
     setCompletionDismissed(false);
-    setRewindPreview(null);
     setMessages([]);
     setArchivedTurns([]);
     setAttachments([]);
@@ -1930,8 +1928,6 @@ export function Conversation({
     setCurrentContextReceipt(draftContextReceipt);
     setRunId(null);
     setCheckpoint(null);
-    setRewindPreview(null);
-    setCheckpointError(null);
     let activeTurnId: string | null = null;
     let createdThreadId: string | null = null;
     const draftKeyAtSend = activeDraftKey;
@@ -2038,63 +2034,17 @@ export function Conversation({
   }, [workspaceApprovalPending, preparedWorkspaceRepository]);
   const previewRewind = async () => {
     if (!checkpoint || !repository || !worktree) return;
-    setCheckpointBusy(true);
-    setCheckpointError(null);
-    try {
-      const response = await fetch(`/api/checkpoints/${checkpoint.id}/preview`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, worktree: worktree.path }),
-      });
-      const body = (await response.json()) as {
-        currentIdentity?: string;
-        currentIndexIdentity?: string;
-        files?: CheckpointFile[];
-        error?: string;
-      };
-      if (!response.ok || !body.currentIdentity || !body.currentIndexIdentity || !body.files) {
-        throw new Error(body.error ?? "The rewind preview could not be prepared.");
-      }
-      setRewindPreview({
-        currentIdentity: body.currentIdentity,
-        currentIndexIdentity: body.currentIndexIdentity,
-        files: body.files,
-      });
-    } catch (error) {
-      setCheckpointError(error instanceof Error ? error.message : "The rewind preview failed.");
-    } finally {
-      setCheckpointBusy(false);
-    }
+    await rewindSession.preview(checkpoint.id, repository.root, worktree.path);
   };
   const confirmRewind = async () => {
     if (!checkpoint || !rewindPreview || !repository || !worktree) return;
-    setCheckpointBusy(true);
-    setCheckpointError(null);
-    try {
-      const response = await fetch(`/api/checkpoints/${checkpoint.id}/rewind`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: worktree.path,
-          currentIdentity: rewindPreview.currentIdentity,
-          currentIndexIdentity: rewindPreview.currentIndexIdentity,
-          confirm: true,
-        }),
-      });
-      const body = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(body.error ?? "The workspace could not be rewound.");
-      setCheckpoint({
-        ...checkpoint,
-        state: "superseded",
-        message: "Workspace rewound to the turn baseline.",
-      });
-      setRewindPreview(null);
-    } catch (error) {
-      setCheckpointError(error instanceof Error ? error.message : "The workspace rewind failed.");
-    } finally {
-      setCheckpointBusy(false);
-    }
+    const rewound = await rewindSession.confirm(checkpoint.id, repository.root, worktree.path);
+    if (!rewound) return;
+    setCheckpoint({
+      ...checkpoint,
+      state: "superseded",
+      message: "Workspace rewound to the turn baseline.",
+    });
   };
   const cancel = async () => {
     if (!runId) return;
@@ -3194,7 +3144,7 @@ export function Conversation({
                               <Button
                                 type="button"
                                 size="sm"
-                                onClick={() => setRewindPreview(null)}
+                                onClick={() => rewindSession.clearPreview()}
                                 disabled={checkpointBusy}
                                 aria-label={`Cancel workspace rewind, ${pane} pane`}
                               >

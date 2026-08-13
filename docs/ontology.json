@@ -466,6 +466,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned reviewed cross-provider fork preview and create, expected-digest stamping, stale-preview suppression, and validated error fallback behind one snapshot-and-command interface while ForkConversationDialog retains destination, workspace, and review chrome and CrossProviderConversationForkRouteDispatchModule retains host fork admission."
     },
     {
+      "name": "WorkspaceRewindSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned workspace checkpoint rewind preview and confirm, identity stamping, stale-preview suppression, and validated error fallback behind one snapshot-and-command interface while ConversationComposer retains checkpoint chrome and CheckpointRewindRouteDispatchModule retains host Git rewind authority."
+    },
+    {
       "name": "ConversationLifecycleRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates LocalConversation lifecycle route recognition, request validation, managed-host admission, explicit managed-worktree release guards, deletion ordering, delegated relationship admission, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, or approval authority."
     },
@@ -690,6 +694,16 @@
       "description": "The conversation composer delegates renderer-owned reviewed fork preview and create to one session module without transferring host fork admission, worktree exclusivity, or provider-process authority.",
       "domain": "ConversationComposer",
       "range": "ReviewedForkSessionModule",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "uses_workspace_rewind_session",
+      "description": "The conversation composer delegates renderer-owned checkpoint rewind preview and confirm to one session module without transferring Git rewind, repository, or permission authority.",
+      "domain": "ConversationComposer",
+      "range": "WorkspaceRewindSessionModule",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -3023,6 +3037,18 @@
       "subject": "uses_reviewed_fork_session",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#946",
       "locator": "src/features/dialogs/fork-session.ts#useReviewedForkSession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorkspaceRewindSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#949",
+      "locator": "src/features/code/workspace-rewind-session.ts#WorkspaceRewindSessionModule; src/features/code/conversation.tsx#Conversation",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_workspace_rewind_session",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#949",
+      "locator": "src/features/code/workspace-rewind-session.ts#useWorkspaceRewindSession",
       "confidence": 1.0
     }
   ]
