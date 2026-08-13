@@ -516,6 +516,12 @@ const WAKE_THREAD_STATUSES = new Set<ThreadStatus>([
   "awaiting_input",
   "failed",
 ]);
+const BUSY_TURN_STATUSES = new Set<Turn["status"]>([
+  "active",
+  "running",
+  "waiting_for_user",
+  "waiting_for_approval",
+]);
 
 export function projectThreadStatus(
   projection: StateProjection,
@@ -1988,6 +1994,15 @@ export class LocalStateStore {
       this.#conversationHistory.threadById.get(threadId),
       this.#turnsByThread.get(threadId) ?? [],
       threadId,
+    );
+  }
+
+  /** Read automation admission state from the live per-thread turn index. */
+  async inspectThreadBusy(threadId: string): Promise<boolean> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    return (this.#turnsByThread.get(threadId) ?? []).some((turn) =>
+      BUSY_TURN_STATUSES.has(turn.status),
     );
   }
 

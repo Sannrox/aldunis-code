@@ -1065,12 +1065,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
   });
 
   async function isThreadBusy(threadId: string): Promise<boolean> {
-    const projection = await state.inspect();
-    return projection.turns.some(
-      (turn) =>
-        turn.threadId === threadId &&
-        ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
-    );
+    return state.inspectThreadBusy(threadId);
   }
 
   async function runChildFollowUp(body: Record<string, unknown>): Promise<void> {
