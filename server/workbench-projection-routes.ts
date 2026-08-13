@@ -43,7 +43,10 @@ type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
 type UsageProjection = Pick<StateProjection, "projects" | "threads" | "turns" | "usageReceipts">;
 type ManagedAuxiliaryIndexes = Pick<
   ConversationHistoryIndex,
-  "providerSessionsByThread" | "conversationDeletionByThread" | "inputRequestsByThread"
+  | "providerSessionsByThread"
+  | "conversationDeletionByThread"
+  | "inputRequestsByThread"
+  | "delegatedRelationshipByChild"
 >;
 
 function indexedRowsForThreads<T>(
@@ -68,6 +71,21 @@ function indexedDeletionsForThreads(
     if (deletion) deletions.push(deletion);
   }
   return deletions;
+}
+
+function indexedRelationshipsForThreads(
+  threads: StateProjection["threads"],
+  relationshipByChild: ConversationHistoryIndex["delegatedRelationshipByChild"],
+  visibleThreadIds: ReadonlySet<string>,
+): StateProjection["delegatedRelationships"] {
+  const relationships: StateProjection["delegatedRelationships"] = [];
+  for (const thread of threads) {
+    const relationship = relationshipByChild.get(thread.id);
+    if (relationship && visibleThreadIds.has(relationship.parentThreadId)) {
+      relationships.push(relationship);
+    }
+  }
+  return relationships;
 }
 
 function visibleTurnsForThreads(
@@ -149,10 +167,16 @@ export function filterManagedOrchestrationProjection(
       ? indexedDeletionsForThreads(threads, auxiliaryIndexes.conversationDeletionByThread)
       : projection.conversationDeletions.filter((deletion) => threadIds.has(deletion.threadId)),
     forks: [],
-    delegatedRelationships: projection.delegatedRelationships.filter(
-      (relationship) =>
-        threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
-    ),
+    delegatedRelationships: auxiliaryIndexes
+      ? indexedRelationshipsForThreads(
+          threads,
+          auxiliaryIndexes.delegatedRelationshipByChild,
+          threadIds,
+        )
+      : projection.delegatedRelationships.filter(
+          (relationship) =>
+            threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
+        ),
     inputRequests: auxiliaryIndexes
       ? indexedRowsForThreads(threads, auxiliaryIndexes.inputRequestsByThread)
       : projection.inputRequests.filter((item) => threadIds.has(item.threadId)),
