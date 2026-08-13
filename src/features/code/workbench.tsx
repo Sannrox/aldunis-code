@@ -33,7 +33,7 @@ import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { branchFromWorktree, conversationListFromProjection } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
-import { Button, CloseButton } from "../../components/ui";
+import { Button, CloseButton, WorkbenchDialog } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_MOBILE_SIDEBAR_OPEN,
@@ -65,13 +65,7 @@ import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files
 import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
 import { OptionalControlBoundary } from "../../components/optional-control-boundary";
 import type { SavedProject } from "../dialogs/repository-dialog";
-import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
-import { StartDelegatedConversationDialog } from "../dialogs/start-delegated-conversation-dialog";
-import {
-  DeleteConversationDialog,
-  type ConversationDeletionPreview,
-} from "../dialogs/delete-conversation-dialog";
-import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
+import type { ConversationDeletionPreview } from "../dialogs/delete-conversation-dialog";
 import { delegatedConversationLabels } from "./delegated-conversation-labels";
 import { DelegatedHumanControlSessionModule } from "../../lib/delegated-human-control-session";
 import {
@@ -87,6 +81,19 @@ const DomainPage = React.lazy(async () => ({
 }));
 const UsagePage = React.lazy(async () => ({
   default: (await import("./usage-page")).UsagePage,
+}));
+const DeleteConversationDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/delete-conversation-dialog")).DeleteConversationDialog,
+}));
+const ReleaseWorktreeDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/release-worktree-dialog")).ReleaseWorktreeDialog,
+}));
+const RenameConversationDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/rename-conversation-dialog")).RenameConversationDialog,
+}));
+const StartDelegatedConversationDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/start-delegated-conversation-dialog"))
+    .StartDelegatedConversationDialog,
 }));
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
@@ -164,7 +171,10 @@ export function DelegatedChildrenPanel({
   onOpen: (id: string) => void;
   onChanged: () => Promise<void>;
 }) {
-  const [startOpen, setStartOpen] = useState(false);
+  const [startTarget, setStartTarget] = useState<{
+    parent: ConversationSummary;
+    repository: RepositoryMetadata | null;
+  } | null>(null);
   const refreshRef = useRef(onChanged);
   refreshRef.current = onChanged;
   const session = useMemo(
@@ -224,7 +234,7 @@ export function DelegatedChildrenPanel({
               type="button"
               size="sm"
               variant="primary"
-              onClick={() => setStartOpen(true)}
+              onClick={() => setStartTarget({ parent, repository })}
               aria-label={`Start a child conversation from ${parent.title}`}
             >
               Start child
@@ -500,19 +510,25 @@ export function DelegatedChildrenPanel({
           </ul>
         )}
       </section>
-      {startOpen && (
-        <StartDelegatedConversationDialog
-          parent={parent}
-          repository={repository}
-          profiles={profiles}
-          onRepositoryChanged={onRepositoryChanged}
-          onClose={() => setStartOpen(false)}
-          onCreated={(threadId) => {
-            setStartOpen(false);
-            onOpen(threadId);
-            void onChanged();
-          }}
-        />
+      {startTarget && (
+        <OptionalControlBoundary
+          label="Delegated conversation"
+          onDismiss={() => setStartTarget(null)}
+          pendingDialog
+        >
+          <StartDelegatedConversationDialog
+            parent={startTarget.parent}
+            repository={startTarget.repository}
+            profiles={profiles}
+            onRepositoryChanged={onRepositoryChanged}
+            onClose={() => setStartTarget(null)}
+            onCreated={(threadId) => {
+              setStartTarget(null);
+              onOpen(threadId);
+              void onChanged();
+            }}
+          />
+        </OptionalControlBoundary>
       )}
     </>
   );
@@ -736,6 +752,7 @@ export function CodeWorkbench({
     conversation: ConversationSummary;
     preview: ConversationDeletionPreview;
   } | null>(null);
+  const [deletionPreviewPending, setDeletionPreviewPending] = useState(false);
   const [releaseTarget, setReleaseTarget] = useState<ConversationSummary | null>(null);
   const [bulkReleaseTargets, setBulkReleaseTargets] = useState<ConversationSummary[] | null>(null);
   const [managedWorktreeCount, setManagedWorktreeCount] = useState(0);
@@ -791,6 +808,35 @@ export function CodeWorkbench({
   const renameReturnFocusReference = useRef<HTMLElement | null>(null);
   const deleteReturnFocusReference = useRef<HTMLElement | null>(null);
   const releaseReturnFocusReference = useRef<HTMLElement | null>(null);
+  const deletionPreviewSequenceReference = useRef(0);
+  const closeRenameDialog = () => {
+    setRenameTarget(null);
+    const returnFocus = renameReturnFocusReference.current;
+    renameReturnFocusReference.current = null;
+    window.requestAnimationFrame(() => returnFocus?.focus());
+  };
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    const returnFocus = deleteReturnFocusReference.current;
+    deleteReturnFocusReference.current = null;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => returnFocus?.focus());
+    });
+  };
+  const cancelDeletionPreview = () => {
+    deletionPreviewSequenceReference.current += 1;
+    setDeletionPreviewPending(false);
+    const returnFocus = deleteReturnFocusReference.current;
+    deleteReturnFocusReference.current = null;
+    window.requestAnimationFrame(() => returnFocus?.focus());
+  };
+  const closeReleaseDialog = () => {
+    setReleaseTarget(null);
+    setBulkReleaseTargets(null);
+    const returnFocus = releaseReturnFocusReference.current;
+    releaseReturnFocusReference.current = null;
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => returnFocus?.focus()));
+  };
   const [restoreState, setRestoreState] = useState<"idle" | "loading" | "ready" | "failed">(() =>
     repository ? "loading" : "idle",
   );
@@ -1117,15 +1163,16 @@ export function CodeWorkbench({
   const manageConversation = async (
     conversation: ConversationSummary,
     action: "rename" | "pin" | "archive" | "restore" | "delete",
+    returnFocus: HTMLElement | null,
   ) => {
     setLifecycleError(null);
+    let deletionPreviewSequence: number | null = null;
     try {
       if (action === "rename") {
-        const active = document.activeElement;
-        renameReturnFocusReference.current =
-          active instanceof HTMLElement
-            ? (active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null)
-            : null;
+        renameReturnFocusReference.current = returnFocus;
+        setDeleteTarget(null);
+        setReleaseTarget(null);
+        setBulkReleaseTargets(null);
         setRenameTarget(conversation);
       } else if (action === "pin") {
         await lifecycleControl.pin(conversation.id, !conversation.pinnedAt);
@@ -1137,18 +1184,41 @@ export function CodeWorkbench({
           if (secondaryId === conversation.id) setSecondaryId(null);
         }
       } else {
-        const active = document.activeElement;
-        deleteReturnFocusReference.current =
-          active instanceof HTMLElement
-            ? (active.closest(".row-menu")?.querySelector<HTMLElement>(".row-more") ?? null)
-            : null;
+        deleteReturnFocusReference.current = returnFocus;
+        setRenameTarget(null);
+        setDeleteTarget(null);
+        setReleaseTarget(null);
+        setBulkReleaseTargets(null);
+        deletionPreviewSequence = ++deletionPreviewSequenceReference.current;
+        setDeletionPreviewPending(true);
         const preview = await lifecycleControl.previewDeletion(conversation.id);
+        if (deletionPreviewSequenceReference.current !== deletionPreviewSequence) return;
         setDeleteTarget({ conversation, preview });
       }
     } catch (error) {
+      if (
+        deletionPreviewSequence !== null &&
+        deletionPreviewSequenceReference.current !== deletionPreviewSequence
+      ) {
+        return;
+      }
       setLifecycleError(
         error instanceof Error ? error.message : "Conversation lifecycle action failed.",
       );
+      if (action === "delete") {
+        const returnFocus = deleteReturnFocusReference.current;
+        deleteReturnFocusReference.current = null;
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => returnFocus?.focus());
+        });
+      }
+    } finally {
+      if (
+        deletionPreviewSequence !== null &&
+        deletionPreviewSequenceReference.current === deletionPreviewSequence
+      ) {
+        setDeletionPreviewPending(false);
+      }
     }
   };
   const worktreeForActive = (() => {
@@ -1446,8 +1516,8 @@ export function CodeWorkbench({
         }}
         showingArchived={showingArchived}
         onToggleArchived={() => setShowingArchived((value) => !value)}
-        onConversationAction={(conversation, action) => {
-          void manageConversation(conversation, action);
+        onConversationAction={(conversation, action, returnFocus) => {
+          void manageConversation(conversation, action, returnFocus);
         }}
         onSettle={(conversation) => {
           void lifecycleControl
@@ -1480,6 +1550,8 @@ export function CodeWorkbench({
         onReleaseWorktree={(conversation) => {
           const active = document.activeElement;
           releaseReturnFocusReference.current = active instanceof HTMLElement ? active : null;
+          setRenameTarget(null);
+          setDeleteTarget(null);
           setBulkReleaseTargets(null);
           setReleaseTarget(conversation);
         }}
@@ -1487,6 +1559,8 @@ export function CodeWorkbench({
           if (conversations.length === 0) return;
           const active = document.activeElement;
           releaseReturnFocusReference.current = active instanceof HTMLElement ? active : null;
+          setRenameTarget(null);
+          setDeleteTarget(null);
           setReleaseTarget(null);
           setBulkReleaseTargets(conversations);
         }}
@@ -1842,86 +1916,97 @@ export function CodeWorkbench({
           </div>
         )}
       </main>
+      {deletionPreviewPending && (
+        <WorkbenchDialog
+          open
+          ariaLabel="Delete conversation loading"
+          className="ui-dialog optional-control-error"
+          onClose={cancelDeletionPreview}
+          closeLabel="Cancel deletion preview"
+        >
+          <p role="status">Preparing deletion preview…</p>
+        </WorkbenchDialog>
+      )}
       {renameTarget && (
-        <RenameConversationDialog
-          conversation={renameTarget}
-          onClose={() => {
-            setRenameTarget(null);
-            const returnFocus = renameReturnFocusReference.current;
-            renameReturnFocusReference.current = null;
-            window.requestAnimationFrame(() => returnFocus?.focus());
-          }}
-          onRename={async (title) => {
-            await lifecycleControl.rename(renameTarget.id, title);
-          }}
-        />
+        <OptionalControlBoundary
+          label="Rename conversation"
+          onDismiss={closeRenameDialog}
+          pendingDialog
+        >
+          <RenameConversationDialog
+            conversation={renameTarget}
+            onClose={closeRenameDialog}
+            onRename={async (title) => {
+              await lifecycleControl.rename(renameTarget.id, title);
+            }}
+          />
+        </OptionalControlBoundary>
       )}
       {deleteTarget && (
-        <DeleteConversationDialog
-          conversation={deleteTarget.conversation}
-          preview={deleteTarget.preview}
-          onClose={() => {
-            setDeleteTarget(null);
-            const returnFocus = deleteReturnFocusReference.current;
-            deleteReturnFocusReference.current = null;
-            window.requestAnimationFrame(() => {
-              window.requestAnimationFrame(() => returnFocus?.focus());
-            });
-          }}
-          onDelete={async () => {
-            const conversation = deleteTarget.conversation;
-            const outcome = await lifecycleControl.deleteConversation(conversation.id, {
-              primaryId,
-              secondaryId,
-            });
-            setPrimaryId(outcome.selection.primaryId);
-            setSecondaryId(outcome.selection.secondaryId);
-            setConversations((current) => current.filter((item) => item.id !== conversation.id));
-            if (outcome.refreshFailed) {
-              setLifecycleError(
-                "Conversation deleted, but the conversation list could not be refreshed.",
-              );
-            }
-          }}
-        />
+        <OptionalControlBoundary
+          label="Delete conversation"
+          onDismiss={closeDeleteDialog}
+          pendingDialog
+        >
+          <DeleteConversationDialog
+            conversation={deleteTarget.conversation}
+            preview={deleteTarget.preview}
+            onClose={closeDeleteDialog}
+            onDelete={async () => {
+              const conversation = deleteTarget.conversation;
+              const outcome = await lifecycleControl.deleteConversation(conversation.id, {
+                primaryId,
+                secondaryId,
+              });
+              setPrimaryId(outcome.selection.primaryId);
+              setSecondaryId(outcome.selection.secondaryId);
+              setConversations((current) => current.filter((item) => item.id !== conversation.id));
+              if (outcome.refreshFailed) {
+                setLifecycleError(
+                  "Conversation deleted, but the conversation list could not be refreshed.",
+                );
+              }
+            }}
+          />
+        </OptionalControlBoundary>
       )}
       {releaseTarget && (
-        <ReleaseWorktreeDialog
-          title={releaseTarget.title}
-          provider={
-            releaseTarget.provider ? providerListLabel(releaseTarget.provider) : "Unknown provider"
-          }
-          worktree={releaseTarget.worktree}
-          onClose={() => {
-            setReleaseTarget(null);
-            const returnFocus = releaseReturnFocusReference.current;
-            releaseReturnFocusReference.current = null;
-            window.requestAnimationFrame(() =>
-              window.requestAnimationFrame(() => returnFocus?.focus()),
-            );
-          }}
-          onConfirm={async () => {
-            await lifecycleControl.releaseWorktree(releaseTarget.id);
-          }}
-        />
+        <OptionalControlBoundary
+          label="Release worktree"
+          onDismiss={closeReleaseDialog}
+          pendingDialog
+        >
+          <ReleaseWorktreeDialog
+            title={releaseTarget.title}
+            provider={
+              releaseTarget.provider
+                ? providerListLabel(releaseTarget.provider)
+                : "Unknown provider"
+            }
+            worktree={releaseTarget.worktree}
+            onClose={closeReleaseDialog}
+            onConfirm={async () => {
+              await lifecycleControl.releaseWorktree(releaseTarget.id);
+            }}
+          />
+        </OptionalControlBoundary>
       )}
       {bulkReleaseTargets && bulkReleaseTargets.length > 0 && (
-        <ReleaseWorktreeDialog
-          title={`${bulkReleaseTargets.length} settled conversations`}
-          provider="Aldunis-managed worktrees"
-          bulkCount={bulkReleaseTargets.length}
-          onClose={() => {
-            setBulkReleaseTargets(null);
-            const returnFocus = releaseReturnFocusReference.current;
-            releaseReturnFocusReference.current = null;
-            window.requestAnimationFrame(() =>
-              window.requestAnimationFrame(() => returnFocus?.focus()),
-            );
-          }}
-          onConfirm={async () => {
-            await lifecycleControl.releaseSettled(bulkReleaseTargets, setManagedWorktreeCount);
-          }}
-        />
+        <OptionalControlBoundary
+          label="Release worktrees"
+          onDismiss={closeReleaseDialog}
+          pendingDialog
+        >
+          <ReleaseWorktreeDialog
+            title={`${bulkReleaseTargets.length} settled conversations`}
+            provider="Aldunis-managed worktrees"
+            bulkCount={bulkReleaseTargets.length}
+            onClose={closeReleaseDialog}
+            onConfirm={async () => {
+              await lifecycleControl.releaseSettled(bulkReleaseTargets, setManagedWorktreeCount);
+            }}
+          />
+        </OptionalControlBoundary>
       )}
     </>
   );
