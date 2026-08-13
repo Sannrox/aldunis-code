@@ -27,6 +27,7 @@ export interface WorkbenchProjectionRouteContext {
 }
 
 type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
+type UsageProjection = Pick<StateProjection, "projects" | "threads" | "turns" | "usageReceipts">;
 
 const ROUTES = new Set([
   "/api/state/load",
@@ -122,6 +123,20 @@ export function filterManagedProjection(
       (hook) => hook.projectId === null || projectIds.has(hook.projectId),
     ),
   };
+}
+
+export function filterManagedUsageReceipts(
+  projection: UsageProjection,
+  managedHost: Pick<ManagedHost, "repositoryForRoot">,
+): StateProjection["usageReceipts"] {
+  const { threads } = filterManagedThreadSearchProjection(projection, managedHost);
+  const threadIds = new Set(threads.map((thread) => thread.id));
+  const turnIds = new Set(
+    projection.turns.filter((turn) => threadIds.has(turn.threadId)).map((turn) => turn.id),
+  );
+  return projection.usageReceipts.filter(
+    (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
+  );
 }
 
 export function filterManagedWorkbenchListProjection(
