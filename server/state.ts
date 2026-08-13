@@ -3107,37 +3107,48 @@ export class LocalStateStore {
   }
 
   async renameConversation(threadId: string, title: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const trimmed = title.trim();
-    if (!trimmed) throw new LocalStateError("A conversation title is required.", 400);
-    const saved = { ...thread, title: trimmed.slice(0, 120), updatedAt: new Date().toISOString() };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      const trimmed = title.trim();
+      if (!trimmed) throw new LocalStateError("A conversation title is required.", 400);
+      const saved = {
+        ...thread,
+        title: trimmed.slice(0, 120),
+        updatedAt: new Date().toISOString(),
+      };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   async setConversationPinned(threadId: string, pinned: boolean): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const now = new Date().toISOString();
-    const saved = { ...thread, pinnedAt: pinned ? now : null, updatedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      const now = new Date().toISOString();
+      const saved = { ...thread, pinnedAt: pinned ? now : null, updatedAt: now };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   async archiveConversation(threadId: string): Promise<Thread> {
-    const projection = await this.load();
-    const thread = this.#requireThread(projection, threadId);
-    this.#assertConversationSettled(projection, threadId, "archived");
-    const now = new Date().toISOString();
-    const saved = { ...thread, archivedAt: now, updatedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      this.#assertConversationSettled(
+        this.#turnsByThread.get(threadId) ?? [],
+        threadId,
+        "archived",
+      );
+      const now = new Date().toISOString();
+      const saved = { ...thread, archivedAt: now, updatedAt: now };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   async restoreConversation(threadId: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const saved = { ...thread, archivedAt: null, updatedAt: new Date().toISOString() };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      const saved = { ...thread, archivedAt: null, updatedAt: new Date().toISOString() };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   /**
@@ -3146,9 +3157,9 @@ export class LocalStateStore {
    * Settling clears any active snooze so presentation stays mutually exclusive.
    */
   async settleConversation(threadId: string): Promise<Thread> {
-    return this.#appendComputed((projection) => {
-      const thread = this.#requireThread(projection, threadId);
-      this.#assertConversationSettled(projection, threadId, "settled");
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      this.#assertConversationSettled(this.#turnsByThread.get(threadId) ?? [], threadId, "settled");
       if (thread.settledAt && !thread.snoozedUntil && !thread.snoozedAt) {
         return { event: null, value: thread };
       }
@@ -3166,8 +3177,8 @@ export class LocalStateStore {
 
   /** Clear settle. Idempotent — an unsettled thread is returned unchanged. */
   async unsettleConversation(threadId: string): Promise<Thread> {
-    return this.#appendComputed((projection) => {
-      const thread = this.#requireThread(projection, threadId);
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
       if (!thread.settledAt) return { event: null, value: thread };
       const saved = { ...thread, settledAt: null, updatedAt: new Date().toISOString() };
       return { event: { type: "thread_saved", thread: saved }, value: saved };
@@ -3194,9 +3205,9 @@ export class LocalStateStore {
       throw new LocalStateError("Snooze wake time must be within 60 days.", 400);
     }
     const snoozedUntil = new Date(wakeMs).toISOString();
-    return this.#appendComputed((projection) => {
-      const thread = this.#requireThread(projection, threadId);
-      this.#assertConversationSnoozable(projection, threadId);
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
+      this.#assertConversationSnoozable(this.#turnsByThread.get(threadId) ?? [], threadId);
       const at = new Date().toISOString();
       if (thread.snoozedUntil === snoozedUntil && thread.snoozedAt && !thread.settledAt) {
         return { event: null, value: thread };
@@ -3214,8 +3225,8 @@ export class LocalStateStore {
 
   /** Clear snooze. Idempotent — an unsnoozed thread is returned unchanged. */
   async unsnoozeConversation(threadId: string): Promise<Thread> {
-    return this.#appendComputed((projection) => {
-      const thread = this.#requireThread(projection, threadId);
+    return this.#appendComputed(() => {
+      const thread = this.#requireIndexedThread(threadId);
       if (!thread.snoozedUntil && !thread.snoozedAt) {
         return { event: null, value: thread };
       }
@@ -3231,10 +3242,7 @@ export class LocalStateStore {
 
   async markConversationVisited(threadId: string): Promise<Thread> {
     return this.#appendComputed(() => {
-      const thread = this.#conversationHistory.threadById.get(threadId);
-      if (!thread) {
-        throw new LocalStateError("The selected conversation is not available.", 404);
-      }
+      const thread = this.#requireIndexedThread(threadId);
       // Visit is read-tracking only — do not bump updatedAt or the inbox resorts on every click.
       const saved = { ...thread, lastVisitedAt: new Date().toISOString() };
       return { event: { type: "thread_saved", thread: saved }, value: saved };
@@ -3246,7 +3254,7 @@ export class LocalStateStore {
   ): Promise<ConversationDeletion["affectedRecords"]> {
     const projection = await this.load();
     this.#requireThread(projection, threadId);
-    this.#assertConversationSettled(projection, threadId, "deleted");
+    this.#assertConversationSettled(projection.turns, threadId, "deleted");
     return this.#conversationRecordCounts(projection, threadId);
   }
 
@@ -3570,7 +3578,7 @@ export class LocalStateStore {
     if (!thread && !existingDeletion) {
       throw new LocalStateError("The selected conversation is not available.", 404);
     }
-    if (thread) this.#assertConversationSettled(projection, threadId, "deleted");
+    if (thread) this.#assertConversationSettled(projection.turns, threadId, "deleted");
     const requestedAt = new Date().toISOString();
     const pending: ConversationDeletion = existingDeletion ?? {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -3613,12 +3621,18 @@ export class LocalStateStore {
     return thread;
   }
 
+  #requireIndexedThread(threadId: string): Thread {
+    const thread = this.#conversationHistory.threadById.get(threadId);
+    if (!thread) throw new LocalStateError("The selected conversation is not available.", 404);
+    return thread;
+  }
+
   #assertConversationSettled(
-    projection: StateProjection,
+    turns: readonly Turn[],
     threadId: string,
     action: "archived" | "deleted" | "settled",
   ): void {
-    const blocking = projection.turns.find(
+    const blocking = turns.find(
       (turn) =>
         turn.threadId === threadId &&
         ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(turn.status),
@@ -3640,8 +3654,8 @@ export class LocalStateStore {
    * Snooze hides the row only. Running turns may continue; unresolved approval
    * or input must stay visible so the operator is never asked in the dark.
    */
-  #assertConversationSnoozable(projection: StateProjection, threadId: string): void {
-    const blocking = projection.turns.find(
+  #assertConversationSnoozable(turns: readonly Turn[], threadId: string): void {
+    const blocking = turns.find(
       (turn) =>
         turn.threadId === threadId &&
         (turn.status === "waiting_for_user" || turn.status === "waiting_for_approval"),
