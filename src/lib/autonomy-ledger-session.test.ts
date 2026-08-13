@@ -35,7 +35,7 @@ const ledger = (id = "run-1"): AutonomyLedger => ({
 function harness(overrides: Partial<AutonomyLedgerSessionAdapters> = {}) {
   let visibilityState: DocumentVisibilityState = "visible";
   let visibilityListener: (() => void) | null = null;
-  let interval: (() => void) | null = null;
+  let timeout: (() => void) | null = null;
   const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
   const adapters: AutonomyLedgerSessionAdapters = {
     managed: false,
@@ -51,13 +51,13 @@ function harness(overrides: Partial<AutonomyLedgerSessionAdapters> = {}) {
       },
     },
     timers: {
-      setInterval: (handler, timeout) => {
-        assert.equal(timeout, AUTONOMY_REFRESH_INTERVAL_MS);
-        interval = handler;
+      setTimeout: (handler, delay) => {
+        assert.equal(delay, AUTONOMY_REFRESH_INTERVAL_MS);
+        timeout = handler;
         return 1;
       },
-      clearInterval: () => {
-        interval = null;
+      clearTimeout: () => {
+        timeout = null;
       },
     },
     request: async (path, body) => {
@@ -74,9 +74,11 @@ function harness(overrides: Partial<AutonomyLedgerSessionAdapters> = {}) {
       visibilityListener?.();
     },
     tick() {
-      interval?.();
+      const pending = timeout;
+      timeout = null;
+      pending?.();
     },
-    hasInterval: () => interval !== null,
+    hasTimer: () => timeout !== null,
     hasVisibilityListener: () => visibilityListener !== null,
   };
 }
@@ -91,17 +93,37 @@ test("session owns visible polling and close cleanup", async () => {
   session.open({ projectId: "project-1", worktree: "/repo" });
   await settle();
   assert.equal(testHarness.requests.length, 1);
-  assert.equal(testHarness.hasInterval(), true);
+  assert.equal(testHarness.hasTimer(), true);
   assert.equal(session.getSnapshot().draft.projectId, "project-1");
 
   testHarness.tick();
   await settle();
   assert.equal(testHarness.requests.length, 2);
   testHarness.setVisibility("hidden");
-  assert.equal(testHarness.hasInterval(), false);
+  assert.equal(testHarness.hasTimer(), false);
 
   session.close();
   assert.equal(testHarness.hasVisibilityListener(), false);
+});
+
+test("visibility restart cannot retain an in-flight poll timer", async () => {
+  const testHarness = harness();
+  let releaseLoad: ((value: AutonomyLedger) => void) | null = null;
+  testHarness.adapters.request = async () =>
+    new Promise<AutonomyLedger>((resolve) => {
+      releaseLoad = resolve;
+    });
+  const session = new AutonomyLedgerSessionModule(testHarness.adapters);
+  session.open({ projectId: "project-1" });
+  testHarness.setVisibility("hidden");
+  testHarness.setVisibility("visible");
+  releaseLoad!(ledger());
+  await settle();
+
+  assert.equal(testHarness.hasTimer(), true);
+  testHarness.setVisibility("hidden");
+  assert.equal(testHarness.hasTimer(), false);
+  session.close();
 });
 
 test("mutation forces a post-mutation load after an active poll", async () => {

@@ -131,8 +131,8 @@ interface VisibilityAdapter {
 }
 
 interface TimerAdapter {
-  setInterval(handler: () => void, timeout: number): number;
-  clearInterval(handle: number): void;
+  setTimeout(handler: () => void, timeout: number): number;
+  clearTimeout(handle: number): void;
 }
 
 export interface AutonomyLedgerSessionAdapters {
@@ -186,6 +186,7 @@ export class AutonomyLedgerSessionModule {
   private loadSequence = 0;
   private loadInFlight: Promise<void> | null = null;
   private pollingHandle: number | null = null;
+  private pollingGeneration = 0;
   private readonly onVisibilityChange = () => this.restartPolling();
 
   constructor(private readonly adapters: AutonomyLedgerSessionAdapters) {}
@@ -359,15 +360,27 @@ export class AutonomyLedgerSessionModule {
   private restartPolling(): void {
     this.stopPolling();
     if (this.adapters.visibility.visibilityState !== "visible") return;
-    void this.refresh();
-    this.pollingHandle = this.adapters.timers.setInterval(
-      () => void this.refresh(),
-      AUTONOMY_REFRESH_INTERVAL_MS,
-    );
+    void this.poll(this.pollingGeneration);
+  }
+
+  private async poll(generation: number): Promise<void> {
+    if (generation !== this.pollingGeneration) return;
+    await this.refresh();
+    if (
+      generation !== this.pollingGeneration ||
+      !this.active ||
+      this.adapters.visibility.visibilityState !== "visible"
+    )
+      return;
+    this.pollingHandle = this.adapters.timers.setTimeout(() => {
+      this.pollingHandle = null;
+      void this.poll(generation);
+    }, AUTONOMY_REFRESH_INTERVAL_MS);
   }
 
   private stopPolling(): void {
-    if (this.pollingHandle !== null) this.adapters.timers.clearInterval(this.pollingHandle);
+    this.pollingGeneration += 1;
+    if (this.pollingHandle !== null) this.adapters.timers.clearTimeout(this.pollingHandle);
     this.pollingHandle = null;
   }
 
@@ -379,29 +392,4 @@ export class AutonomyLedgerSessionModule {
     this.snapshot = { ...this.snapshot, ...patch };
     for (const listener of this.listeners) listener();
   }
-}
-
-export function startAutonomyRefreshPolling(
-  load: () => void,
-  visibility: VisibilityAdapter,
-  timers: TimerAdapter = window,
-): () => void {
-  let refresh: number | undefined;
-  const stop = () => {
-    if (refresh !== undefined) timers.clearInterval(refresh);
-    refresh = undefined;
-  };
-  const start = () => {
-    stop();
-    if (visibility.visibilityState !== "visible") return;
-    load();
-    refresh = timers.setInterval(load, AUTONOMY_REFRESH_INTERVAL_MS);
-  };
-  const onVisibilityChange = () => start();
-  start();
-  visibility.addEventListener("visibilitychange", onVisibilityChange);
-  return () => {
-    stop();
-    visibility.removeEventListener("visibilitychange", onVisibilityChange);
-  };
 }
