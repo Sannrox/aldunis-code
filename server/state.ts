@@ -4437,12 +4437,10 @@ export class LocalStateStore {
             checkpoint.id !== exceptId &&
             checkpoint.state === "completed",
         )
-        .map(
-          (checkpoint): StateEvent => ({
-            type: "checkpoint_saved",
-            checkpoint: { ...checkpoint, state: "superseded", updatedAt: now },
-          }),
-        );
+        .map((checkpoint): StateEvent => ({
+          type: "checkpoint_saved",
+          checkpoint: { ...checkpoint, state: "superseded", updatedAt: now },
+        }));
       return { event: events.length > 0 ? events : null, value: undefined };
     });
   }
