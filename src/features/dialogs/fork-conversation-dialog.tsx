@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type {
   ClaudeProfile,
-  ForkPreview,
   ProviderDiscovery,
   ProviderId,
   RepositoryMetadata,
@@ -19,6 +18,7 @@ import { OverlayDialog } from "./overlay-dialog";
 import { ConversationWorkspaceDialog } from "./conversation-workspace-dialog";
 import { WorktreeDialog } from "./worktree-dialog";
 import { ContextPackageSummary } from "../code/context-package";
+import { useReviewedForkSession } from "./fork-session";
 
 export function ForkConversationDialog({
   sourceThreadId,
@@ -87,7 +87,8 @@ export function ForkConversationDialog({
     defaultShikigamiProfileId,
   );
   const [destination, setDestination] = useState<ProviderId>(defaultDestination);
-  const [preview, setPreview] = useState<ForkPreview | null>(null);
+  const { snapshot: forkState, session: forkSession } = useReviewedForkSession({ sourceThreadId });
+  const { preview, error, busy } = forkState;
   const [profileId, setProfileId] = useState(
     defaultDestination === "shikigami" ? defaultShikigamiProfileId : defaultClaudeProfileId,
   );
@@ -99,8 +100,6 @@ export function ForkConversationDialog({
         : providers.find((p) => p.id === defaultDestination),
     ),
   );
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(true);
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
   const [preparedWorkspaceRepository, setPreparedWorkspaceRepository] =
@@ -132,49 +131,17 @@ export function ForkConversationDialog({
     shikigamiProfiles,
     shikigamiProvider,
   ]);
-  useEffect(() => {
-    void fetch("/api/forks/preview", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sourceThreadId }),
-    })
-      .then(async (response) => {
-        const body = (await response.json()) as ForkPreview & { error?: string };
-        if (!response.ok) throw new Error(body.error ?? "The fork preview could not be prepared.");
-        setPreview(body);
-      })
-      .catch((cause) =>
-        setError(cause instanceof Error ? cause.message : "The fork preview failed."),
-      )
-      .finally(() => setBusy(false));
-  }, [sourceThreadId]);
   const create = async () => {
     if (!preview || (requiresManagedWorkspace && !preparedWorkspaceRepository)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/forks/create", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sourceThreadId,
-          provider: destination,
-          profileId:
-            destination === "claude-code" || destination === "shikigami" ? profileId : null,
-          model,
-          expectedDigest: preview.digest,
-          worktree: preparedWorkspaceRepository?.selectedWorktree,
-          workspaceMode: requiresManagedWorkspace ? "aldunis-managed" : "shared",
-        }),
-      });
-      const body = (await response.json()) as { thread?: { id: string }; error?: string };
-      if (!response.ok || !body.thread)
-        throw new Error(body.error ?? "The fork could not be created.");
-      onCreated(body.thread.id);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The fork failed.");
-      setBusy(false);
-    }
+    const threadId = await forkSession.create({
+      sourceThreadId,
+      provider: destination,
+      profileId: destination === "claude-code" || destination === "shikigami" ? profileId : null,
+      model,
+      worktree: preparedWorkspaceRepository?.selectedWorktree,
+      workspaceMode: requiresManagedWorkspace ? "aldunis-managed" : "shared",
+    });
+    if (threadId) onCreated(threadId);
   };
   const destinationDiscovery =
     destination === "codex-cli"
