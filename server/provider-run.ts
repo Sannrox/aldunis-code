@@ -23,12 +23,7 @@ import {
   deleteCheckpointReferences,
   RepositoryError,
 } from "./repository.ts";
-import {
-  LocalStateError,
-  LocalStateStore,
-  projectThreadStatus,
-  type ThreadStatus,
-} from "./state.ts";
+import { LocalStateError, LocalStateStore, type ThreadStatus } from "./state.ts";
 import { ClaudeProfileStore, ProfileError } from "./profiles.ts";
 import { assembleContextPackage, composePrompt, type ContextPin } from "./context.ts";
 import { PreferencesStore } from "./preferences.ts";
@@ -1059,10 +1054,10 @@ async function executeProviderRun(
     });
     let completed = false;
     let historyFailed = false;
-    let previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
+    let previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
     // Starting a turn moves the thread to running before the first event.
     await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
-    previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
+    previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
     for await (const event of run.events) {
       let outgoingEvent = event;
       try {
@@ -1123,7 +1118,7 @@ async function executeProviderRun(
             event.kind === "input_requested" ||
             event.kind === "input_resolved",
         );
-        previousStatus = projectThreadStatus(await state.inspect(), persisted.thread.id).status;
+        previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
         if (event.kind === "governance_correlation") {
           const correlation = (await state.inspect()).governanceCorrelations.find(
             (item) => item.turnId === persisted.turn.id,

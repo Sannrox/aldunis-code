@@ -6,7 +6,6 @@ import { PermissionError, type PermissionBroker } from "./permission.ts";
 import type { PreferencesStore } from "./preferences.ts";
 import {
   LocalStateError,
-  projectThreadStatus,
   type LocalStateStore,
   type StateProjection,
   type ThreadStatus,
@@ -98,9 +97,8 @@ export async function handleDelegatedControlRoute(
           approvalId: approvalMatch[1],
         });
       }
-      const previousStatus = projectThreadStatus(
-        await context.state.inspect(),
-        body.conversationId as string,
+      const previousStatus = (
+        await context.state.inspectThreadStatus(body.conversationId as string)
       ).status;
       const decided = await context.permissions.decideAfter(
         approvalMatch[1],

@@ -32,7 +32,6 @@ import {
 import {
   LocalStateError,
   LocalStateStore,
-  projectThreadStatus,
   type StateProjection,
   type ThreadStatus,
 } from "./state.ts";
@@ -189,7 +188,7 @@ async function publishThreadStatusTransition(
 ): Promise<void> {
   // inspect(): status projection is read-only; avoid structuredClone on every
   // provider event and wake publish during long turns.
-  const next = projectThreadStatus(await state.inspect(), threadId);
+  const next = await state.inspectThreadStatus(threadId);
   if (!force && previous !== null && previous === next.status) return;
   wake.publish({
     threadId,
