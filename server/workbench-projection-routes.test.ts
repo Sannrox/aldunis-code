@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import {
   filterManagedProjection,
+  filterManagedWorkbenchListProjection,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
 import { LocalStateError, type StateProjection } from "./state.ts";
@@ -246,6 +247,32 @@ test("managed projection derives task visibility from one filtered run index", (
     filtered.autonomyTasks.map((task) => task.id),
     ["visible-task", "global-task"],
   );
+});
+
+test("managed list projection skips transcript and durable-history filtering", () => {
+  const value = projection();
+  value.autonomyRuns = [{ id: "run", projectId: "p1" }] as StateProjection["autonomyRuns"];
+  const filtered = filterManagedWorkbenchListProjection(value, {
+    repositoryForRoot(root) {
+      if (root !== "/alpha") throw new Error("outside catalogue");
+      return {} as never;
+    },
+  });
+
+  assert.deepEqual(
+    filtered.projects.map((project) => project.id),
+    ["p1"],
+  );
+  assert.deepEqual(
+    filtered.threads.map((thread) => thread.id),
+    ["active", "archived"],
+  );
+  assert.deepEqual(
+    filtered.turns.map((turn) => turn.id),
+    ["turn-active"],
+  );
+  assert.deepEqual(filtered.messages, []);
+  assert.deepEqual(filtered.autonomyRuns, []);
 });
 
 test("history validates identity and applies managed admission", async () => {
