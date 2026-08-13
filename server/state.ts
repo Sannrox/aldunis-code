@@ -520,9 +520,11 @@ const WAKE_THREAD_STATUSES = new Set<ThreadStatus>([
 export function projectThreadStatus(
   projection: StateProjection,
   threadId: string,
+  turnsByThread?: TurnsByThreadIndex,
 ): ThreadStatusProjection {
   const thread = projection.threads.find((item) => item.id === threadId);
-  const turns = projection.turns.filter((turn) => turn.threadId === threadId);
+  const turns =
+    turnsByThread?.get(threadId) ?? projection.turns.filter((turn) => turn.threadId === threadId);
   return projectThreadStatusFromTurns(thread, turns, threadId);
 }
 
@@ -1976,6 +1978,17 @@ export class LocalStateStore {
   async inspect(): Promise<Readonly<StateProjection>> {
     await this.#ensureLoaded();
     return this.#projection;
+  }
+
+  /** Read one thread status from the same live projection/index generation. */
+  async inspectThreadStatus(threadId: string): Promise<ThreadStatusProjection> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    return projectThreadStatusFromTurns(
+      this.#conversationHistory.threadById.get(threadId),
+      this.#turnsByThread.get(threadId) ?? [],
+      threadId,
+    );
   }
 
   /** Capture the live projection and its derived indexes from one write generation. */

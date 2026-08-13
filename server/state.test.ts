@@ -2475,7 +2475,7 @@ test("snooze is visibility-only, clears settle, and rejects unresolved operator 
 });
 
 test("thread status projection and wokeAt track operator-attention transitions", async () => {
-  const { store } = await fixtureStore();
+  const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
   const { thread, turn } = await store.startTurn({
     projectId: "project-1",
@@ -2486,6 +2486,10 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   let projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "running");
+  assert.deepEqual(
+    await store.inspectThreadStatus(thread.id),
+    projectThreadStatus(projection, thread.id),
+  );
   assert.deepEqual(projectThreadStatuses(projection), [projectThreadStatus(projection, thread.id)]);
 
   await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
@@ -2504,6 +2508,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   projection = await store.load();
   const approvalStatus = projectThreadStatus(projection, thread.id);
   assert.equal(approvalStatus.status, "pending_approval");
+  assert.deepEqual(await store.inspectThreadStatus(thread.id), approvalStatus);
   assert.deepEqual(projectThreadStatuses(projection), [approvalStatus]);
   assert.ok(projection.threads[0].wokeAt);
   assert.equal(approvalStatus.since, projection.threads[0].wokeAt);
@@ -2519,6 +2524,10 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "failed");
+  assert.deepEqual(
+    await store.inspectThreadStatus(thread.id),
+    projectThreadStatus(projection, thread.id),
+  );
   assert.deepEqual(projectThreadStatuses(projection), [projectThreadStatus(projection, thread.id)]);
   assert.ok(projection.threads[0].wokeAt);
 
@@ -2529,6 +2538,10 @@ test("thread status projection and wokeAt track operator-attention transitions",
   assert.deepEqual(
     projectThreadStatuses(projection, await store.turnsByThreadIndex()),
     projectThreadStatuses(projection),
+  );
+  assert.deepEqual(
+    await new LocalStateStore(directory).inspectThreadStatus(thread.id),
+    projectThreadStatus(projection, thread.id),
   );
 });
 
@@ -2708,6 +2721,10 @@ test("thread status and delegated outcomes use indexed turns instead of scanning
     autonomyHooks: [],
   };
   const scanned: StateProjection = { ...projection, turns };
+  assert.deepEqual(
+    projectThreadStatus(projection, "parent", index),
+    projectThreadStatus(scanned, "parent"),
+  );
   assert.deepEqual(projectThreadStatuses(projection, index), projectThreadStatuses(scanned));
   assert.deepEqual(
     projectDelegatedConversationOutcomes(projection, index),
@@ -2845,6 +2862,10 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   assert.deepEqual(
     projectThreadStatuses(await store.inspect(), afterDelete),
     projectThreadStatuses(await store.load()),
+  );
+  assert.deepEqual(
+    await store.inspectThreadStatus(noisy.thread.id),
+    projectThreadStatus(await store.load(), noisy.thread.id),
   );
 });
 
