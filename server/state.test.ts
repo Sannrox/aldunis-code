@@ -1873,12 +1873,47 @@ test("child input requests and parent coordination receipts persist and resolve 
   assert.equal((await store.load()).inputRequests.length, 2);
   assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
 
-  const resolved = await store.resolveInputRequest("request-1", "Continue", parent.thread.id);
+  class InputValidationIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("input validation must not clone the full projection");
+    }
+  }
+  const validationStore = new InputValidationIndexOnlyStore(directory);
+  const validated = await validationStore.validateInputResponse("request-1", "Continue");
+  assert.equal(validated.id, "request-1");
+  validated.state = "cancelled";
+  assert.equal(
+    (await validationStore.validateInputResponse("request-1", "Continue")).state,
+    "pending",
+  );
+  assert.equal(
+    (await validationStore.inspectWorkbenchProjection()).conversationHistory.inputRequestById.get(
+      "request-1",
+    )?.id,
+    "request-1",
+  );
+  await assert.rejects(
+    validationStore.validateInputResponse("request-1", "Invalid"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 400,
+  );
+  await assert.rejects(
+    validationStore.validateInputResponse("missing-request", "Continue"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
+
+  const resolved = await validationStore.resolveInputRequest(
+    "request-1",
+    "Continue",
+    parent.thread.id,
+  );
   assert.equal(resolved.receipt.parentThreadId, parent.thread.id);
   assert.equal(resolved.receipt.answerDigest.length, 64);
-  assert.equal(projectThreadStatus(await store.load(), child.thread.id).status, "awaiting_input");
+  assert.equal(
+    projectThreadStatus(await new LocalStateStore(directory).load(), child.thread.id).status,
+    "awaiting_input",
+  );
   await assert.rejects(
-    () => store.resolveInputRequest("request-1", "Again", parent.thread.id),
+    () => validationStore.resolveInputRequest("request-1", "Again", parent.thread.id),
     (error: unknown) => error instanceof LocalStateError && error.status === 409,
   );
 

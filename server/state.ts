@@ -621,6 +621,7 @@ export interface ConversationHistoryIndex {
   contextReceiptsByThread: RowsByThread<ContextReceipt>;
   usageReceiptsByThread: RowsByThread<UsageReceipt>;
   inputRequestsByThread: RowsByThread<InputRequest>;
+  inputRequestById: ReadonlyMap<string, InputRequest>;
   providerSessionsByThread: RowsByThread<ProviderSession>;
   conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
   forkByDestinationThread: ReadonlyMap<string, ConversationFork>;
@@ -660,6 +661,7 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   contextReceiptsByThread: Map<string, ContextReceipt[]>;
   usageReceiptsByThread: Map<string, UsageReceipt[]>;
   inputRequestsByThread: Map<string, InputRequest[]>;
+  inputRequestById: Map<string, InputRequest>;
   providerSessionsByThread: Map<string, ProviderSession[]>;
   conversationDeletionByThread: Map<string, ConversationDeletion>;
   forkByDestinationThread: Map<string, ConversationFork>;
@@ -710,6 +712,7 @@ function buildConversationHistoryIndex(
     contextReceiptsByThread: groupRowsByThread(projection.contextReceipts, (row) => row.threadId),
     usageReceiptsByThread: groupRowsByThread(projection.usageReceipts, (row) => row.threadId),
     inputRequestsByThread: groupRowsByThread(projection.inputRequests, (row) => row.threadId),
+    inputRequestById: new Map(projection.inputRequests.map((request) => [request.id, request])),
     providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
     conversationDeletionByThread: new Map(
       projection.conversationDeletions.map((deletion) => [deletion.threadId, deletion]),
@@ -1491,12 +1494,14 @@ function applyEvent(
     }
   } else if (event.type === "input_request_saved") {
     replaceByIdDuringReplay(projection.inputRequests, event.inputRequest, replayIndexes);
-    if (conversationHistory)
+    if (conversationHistory) {
       indexSavedThreadRow(
         conversationHistory.inputRequestsByThread,
         event.inputRequest.threadId,
         event.inputRequest,
       );
+      conversationHistory.inputRequestById.set(event.inputRequest.id, event.inputRequest);
+    }
   } else if (event.type === "input_receipt_saved") {
     replaceByIdDuringReplay(projection.inputReceipts, event.inputReceipt, replayIndexes);
   } else if (event.type === "automation_fire_saved") {
@@ -3406,13 +3411,14 @@ export class LocalStateStore {
     if (!trimmed || Array.from(trimmed).length > 4_000) {
       throw new LocalStateError("An answer between 1 and 4,000 characters is required.", 400);
     }
-    const projection = await this.load();
-    const request = projection.inputRequests.find((item) => item.id === requestId);
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const request = this.#conversationHistory.inputRequestById.get(requestId);
     if (!request) throw new LocalStateError("The input request is not available.", 404);
     if (request.state !== "pending") {
       throw new LocalStateError("The input request has already been resolved.", 409);
     }
-    const thread = projection.threads.find((item) => item.id === request.threadId);
+    const thread = this.#conversationHistory.threadById.get(request.threadId);
     if (
       request.responseMode === "native_resume" &&
       thread?.provider === "shikigami" &&
@@ -3426,13 +3432,13 @@ export class LocalStateStore {
     if (!request.allowFreeForm && !request.choices.some((choice) => choice.label === trimmed)) {
       throw new LocalStateError("Select one of the available answers.", 400);
     }
-    const turn = projection.turns.find(
+    const turn = (this.#turnsByThread.get(request.threadId) ?? []).find(
       (item) => item.id === request.turnId && item.providerRunId === request.providerRunId,
     );
     if (!turn || turn.status !== "waiting_for_user") {
       throw new LocalStateError("The input request is stale.", 409);
     }
-    return request;
+    return structuredClone(request);
   }
 
   async claimNativeShikigamiResume(
