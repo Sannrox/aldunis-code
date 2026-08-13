@@ -455,7 +455,11 @@
     },
     {
       "name": "ChangedFileReviewSessionModule",
-      "description": "A deep renderer module that concentrates current-versus-checkpoint review scope, changed-file selection repair, at most one active diff read plus one latest-selection follow-up per pane, stale diff and annotation response suppression, local comment and revision-preview transitions, read-only resets, and nested dismissal priority behind one hook interface while ChangesPanel retains rendering and delivery state and the host retains repository and persistence authority."
+      "description": "A deep renderer module that concentrates current-versus-checkpoint review scope, changed-file selection repair, at most one active diff read plus one latest-selection follow-up per pane, stale diff and annotation response suppression, local comment and revision-preview transitions, read-only resets, and nested dismissal priority behind one hook interface while ChangesPanel retains rendering, ReviewedDeliverySessionModule retains git-delivery transport, and the host retains repository and persistence authority."
+    },
+    {
+      "name": "ReviewedDeliverySessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned git delivery inspect, pull-request draft, prepare, and single-use execute, stale-inspect suppression, plan invalidation, and selected-path admission behind one snapshot-and-command interface while ChangesPanel retains chrome, DeliveryRouteDispatchModule retains host git authority, and Tenkai remains the owner of release delivery."
     },
     {
       "name": "ConversationLifecycleRouteDispatchModule",
@@ -662,6 +666,16 @@
       "description": "The conversation review surface delegates renderer-owned changed-file review lifetime to one session module without transferring delivery, repository, worktree, annotation persistence, or permission authority.",
       "domain": "ConversationComposer",
       "range": "ChangedFileReviewSessionModule",
+      "cardinality": {
+        "min": 0,
+        "max": 1
+      }
+    },
+    {
+      "name": "uses_reviewed_delivery_session",
+      "description": "The conversation review surface delegates renderer-owned git delivery inspect, draft, prepare, and execute to one session module without transferring Tenkai release, repository, worktree, or permission authority.",
+      "domain": "ConversationComposer",
+      "range": "ReviewedDeliverySessionModule",
       "cardinality": {
         "min": 0,
         "max": 1
@@ -2971,6 +2985,18 @@
       "subject": "discovers_declarative_provider_models",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#909",
       "locator": "server/provider-discovery.ts; server/acp-models.ts#probeAcpModels",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ReviewedDeliverySessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#944",
+      "locator": "src/features/changes/delivery-session.ts#ReviewedDeliverySessionModule; src/features/changes/changes-panel.tsx#ChangesPanel",
+      "confidence": 1.0
+    },
+    {
+      "subject": "uses_reviewed_delivery_session",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#944",
+      "locator": "src/features/changes/delivery-session.ts#useReviewedDeliverySession",
       "confidence": 1.0
     }
   ]

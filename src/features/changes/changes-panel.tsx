@@ -1,14 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
-import type {
-  ChangedFile,
-  DeliveryContext,
-  DeliveryPlan,
-  DeliveryAction,
-  PullRequestDraft,
-  RepositoryMetadata,
-} from "../../types";
+import type { ChangedFile, DeliveryAction, RepositoryMetadata } from "../../types";
 import { Button, CloseButton, handleNestedEscape } from "../../components/ui";
 import { useChangedFileReviewSession } from "./review-session";
+import { useReviewedDeliverySession } from "./delivery-session";
 
 export type ChangesPanelMode = "review" | "deliver";
 
@@ -71,81 +65,25 @@ export function ChangesPanel({
     selectedAnnotationIds,
     revisionPreview,
   } = review.state;
-  const [delivery, setDelivery] = useState<DeliveryContext | null>(null);
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
-  const [deliveryAction, setDeliveryAction] = useState<DeliveryAction>("stage");
-  const [message, setMessage] = useState("");
-  const [remote, setRemote] = useState("");
-  const [base, setBase] = useState("main");
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [plan, setPlan] = useState<DeliveryPlan | null>(null);
-  const [deliveryError, setDeliveryError] = useState<string | null>(null);
-  const [deliveryBusy, setDeliveryBusy] = useState(false);
-  const [deliveryLoading, setDeliveryLoading] = useState(false);
-  const generatePullRequestDraft = async () => {
-    setDeliveryBusy(true);
-    setDeliveryError(null);
-    try {
-      const response = await fetch("/api/delivery/pr-draft", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          base,
-        }),
-      });
-      const result = (await response.json()) as PullRequestDraft | { error?: string };
-      if (!response.ok)
-        throw new Error(
-          "error" in result ? result.error : "The pull-request draft could not be generated.",
-        );
-      const draft = result as PullRequestDraft;
-      setTitle(draft.title);
-      setBody(draft.body);
-    } catch (cause) {
-      setDeliveryError(
-        cause instanceof Error ? cause.message : "The pull-request draft could not be generated.",
-      );
-    } finally {
-      setDeliveryBusy(false);
-    }
-  };
-  const inspectDelivery = async () => {
-    setDeliveryLoading(true);
-    try {
-      const response = await fetch("/api/delivery/inspect", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
-      });
-      const result = (await response.json()) as DeliveryContext | { error?: string };
-      if (!response.ok)
-        throw new Error(
-          "error" in result ? result.error : "Delivery state could not be inspected.",
-        );
-      const context = result as DeliveryContext;
-      setDelivery(context);
-      setRemote((current) => current || context.remotes[0]?.name || "");
-    } finally {
-      setDeliveryLoading(false);
-    }
-  };
-  useEffect(() => {
-    setSelectedPaths([]);
-    setPlan(null);
-    setRemote("");
-    setDeliveryError(null);
-    setDelivery(null);
-    setDeliveryLoading(false);
-    if (panelMode !== "deliver") return;
-    void inspectDelivery().catch((cause) =>
-      setDeliveryError(
-        cause instanceof Error ? cause.message : "Delivery state could not be inspected.",
-      ),
-    );
-  }, [panelMode, repository.root, repository.selectedWorktree]);
+  const { snapshot: deliveryState, session: deliverySession } = useReviewedDeliverySession({
+    root: repository.root,
+    worktree: repository.selectedWorktree,
+    active: panelMode === "deliver",
+  });
+  const {
+    context: delivery,
+    selectedPaths,
+    action: deliveryAction,
+    message,
+    remote,
+    base,
+    title,
+    body,
+    plan,
+    error: deliveryError,
+    busy: deliveryBusy,
+    loading: deliveryLoading,
+  } = deliveryState;
   // Match file-browser Escape: dismiss nested review first, then the dock.
   // Skip when a true modal dialog owns the key (command palette, etc.).
   useEffect(() => {
@@ -159,69 +97,14 @@ export function ChangesPanel({
         return;
       }
       if (plan) {
-        setPlan(null);
+        deliverySession.clearPlan();
         return;
       }
       onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose, revisionPreview, commentLineIndex, plan]);
-  const prepareDelivery = async () => {
-    setDeliveryBusy(true);
-    setDeliveryError(null);
-    try {
-      const input =
-        deliveryAction === "stage"
-          ? { paths: selectedPaths }
-          : deliveryAction === "commit"
-            ? { message }
-            : deliveryAction === "push"
-              ? { remote }
-              : { remote, base, title, body };
-      const response = await fetch("/api/delivery/plans", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          root: repository.root,
-          worktree: repository.selectedWorktree,
-          action: deliveryAction,
-          input,
-        }),
-      });
-      const result = (await response.json()) as DeliveryPlan | { error?: string };
-      if (!response.ok)
-        throw new Error("error" in result ? result.error : "The action could not be prepared.");
-      setPlan(result as DeliveryPlan);
-    } catch (cause) {
-      setDeliveryError(
-        cause instanceof Error ? cause.message : "The action could not be prepared.",
-      );
-    } finally {
-      setDeliveryBusy(false);
-    }
-  };
-  const executeDelivery = async () => {
-    if (!plan) return;
-    setDeliveryBusy(true);
-    setDeliveryError(null);
-    try {
-      const response = await fetch(`/api/delivery/plans/${plan.id}/execute`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ root: repository.root, worktree: repository.selectedWorktree }),
-      });
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error ?? "The approved action failed.");
-      setPlan(null);
-      setSelectedPaths([]);
-      await Promise.all([inspectDelivery(), Promise.resolve(onRefresh())]);
-    } catch (cause) {
-      setDeliveryError(cause instanceof Error ? cause.message : "The approved action failed.");
-    } finally {
-      setDeliveryBusy(false);
-    }
-  };
+  }, [deliverySession, onClose, revisionPreview, commentLineIndex, plan]);
   useEffect(() => {
     if (revisionPreview) revisionPreviewRef.current?.focus();
   }, [revisionPreview]);
@@ -233,7 +116,7 @@ export function ChangesPanel({
     if (next === "deliver") {
       review.dispatch({ type: "leave_review" });
     } else {
-      setPlan(null);
+      deliverySession.clearPlan();
     }
     setUncontrolledMode(next);
     onModeChange?.(next);
@@ -328,11 +211,7 @@ export function ChangesPanel({
                       const stagedPaths = file.previousPath
                         ? [file.path, file.previousPath]
                         : [file.path];
-                      setSelectedPaths((paths) =>
-                        event.target.checked
-                          ? [...new Set([...paths, ...stagedPaths])]
-                          : paths.filter((path) => !stagedPaths.includes(path)),
-                      );
+                      deliverySession.toggleSelectedPaths(stagedPaths, event.target.checked);
                     }}
                   />
                 </label>
@@ -673,8 +552,7 @@ export function ChangesPanel({
                     name={`${pane}-delivery-action`}
                     value={deliveryAction}
                     onChange={(event) => {
-                      setDeliveryAction(event.target.value as DeliveryAction);
-                      setPlan(null);
+                      deliverySession.setAction(event.target.value as DeliveryAction);
                     }}
                   >
                     <option value="stage">Stage selected files</option>
@@ -690,7 +568,7 @@ export function ChangesPanel({
                       id={`${pane}-delivery-commit-message`}
                       name={`${pane}-delivery-commit-message`}
                       value={message}
-                      onChange={(event) => setMessage(event.target.value)}
+                      onChange={(event) => deliverySession.setMessage(event.target.value)}
                     />
                   </label>
                 )}
@@ -701,7 +579,7 @@ export function ChangesPanel({
                       id={`${pane}-delivery-remote`}
                       name={`${pane}-delivery-remote`}
                       value={remote}
-                      onChange={(event) => setRemote(event.target.value)}
+                      onChange={(event) => deliverySession.setRemote(event.target.value)}
                     >
                       {delivery?.remotes.map((item) => (
                         <option key={item.name} value={item.name}>
@@ -719,14 +597,19 @@ export function ChangesPanel({
                         id={`${pane}-delivery-pr-base`}
                         name={`${pane}-delivery-pr-base`}
                         value={base}
-                        onChange={(event) => setBase(event.target.value)}
+                        onChange={(event) => deliverySession.setBase(event.target.value)}
                       />
                     </label>
                     <div className="delivery-draft-actions">
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => void generatePullRequestDraft()}
+                        onClick={() =>
+                          void deliverySession.generatePullRequestDraft(
+                            repository.root,
+                            repository.selectedWorktree,
+                          )
+                        }
                         disabled={
                           deliveryBusy ||
                           deliveryLoading ||
@@ -746,7 +629,7 @@ export function ChangesPanel({
                         id={`${pane}-delivery-pr-title`}
                         name={`${pane}-delivery-pr-title`}
                         value={title}
-                        onChange={(event) => setTitle(event.target.value)}
+                        onChange={(event) => deliverySession.setTitle(event.target.value)}
                       />
                     </label>
                     <label className="delivery-body" htmlFor={`${pane}-delivery-pr-body`}>
@@ -755,7 +638,7 @@ export function ChangesPanel({
                         id={`${pane}-delivery-pr-body`}
                         name={`${pane}-delivery-pr-body`}
                         value={body}
-                        onChange={(event) => setBody(event.target.value)}
+                        onChange={(event) => deliverySession.setBody(event.target.value)}
                       />
                     </label>
                   </>
@@ -765,7 +648,9 @@ export function ChangesPanel({
                     type="button"
                     size="sm"
                     className="prepare-delivery"
-                    onClick={() => void prepareDelivery()}
+                    onClick={() =>
+                      void deliverySession.prepare(repository.root, repository.selectedWorktree)
+                    }
                     disabled={deliveryBusy || deliveryLoading || !delivery || delivery.detached}
                     aria-label={`Preview ${deliveryAction} action for delivery, ${pane} pane`}
                   >
@@ -796,7 +681,7 @@ export function ChangesPanel({
                   </ul>
                   <footer>
                     <Button
-                      onClick={() => setPlan(null)}
+                      onClick={() => deliverySession.clearPlan()}
                       aria-label={`Cancel delivery plan, ${pane} pane`}
                     >
                       Cancel
@@ -806,7 +691,13 @@ export function ChangesPanel({
                       size="sm"
                       disabled={deliveryBusy}
                       aria-label={`Approve once: ${plan.summary}`}
-                      onClick={() => void executeDelivery()}
+                      onClick={() =>
+                        void deliverySession.execute(
+                          repository.root,
+                          repository.selectedWorktree,
+                          onRefresh,
+                        )
+                      }
                     >
                       Approve once
                     </Button>
