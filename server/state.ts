@@ -595,11 +595,74 @@ function projectThreadStatusFromTurns(
 export type TurnsByThreadIndex = ReadonlyMap<string, readonly Turn[]>;
 export type DelegatedMessagesByTurnIndex = ReadonlyMap<string, ReadonlyMap<string, Message>>;
 export type DelegatedActivitiesByTurnIndex = ReadonlyMap<string, ReadonlyMap<string, Activity>>;
+type RowsByThread<T> = ReadonlyMap<string, readonly T[]>;
+export interface ConversationHistoryIndex {
+  threadById: ReadonlyMap<string, Thread>;
+  turnsByThread: TurnsByThreadIndex;
+  messagesByThread: RowsByThread<Message>;
+  activitiesByThread: RowsByThread<Activity>;
+  plansByThread: RowsByThread<Plan>;
+  contextReceiptsByThread: RowsByThread<ContextReceipt>;
+  inputRequestsByThread: RowsByThread<InputRequest>;
+  providerSessionsByThread: RowsByThread<ProviderSession>;
+  governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
+  checkpointsByThread: RowsByThread<Checkpoint>;
+}
 export interface WorkbenchProjectionIndexes {
   projection: Readonly<StateProjection>;
   turnsByThread: TurnsByThreadIndex;
   delegatedMessagesByTurn: DelegatedMessagesByTurnIndex;
   delegatedActivitiesByTurn: DelegatedActivitiesByTurnIndex;
+  conversationHistory: ConversationHistoryIndex;
+}
+
+interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
+  threadById: Map<string, Thread>;
+  turnsByThread: Map<string, Turn[]>;
+  messagesByThread: Map<string, Message[]>;
+  activitiesByThread: Map<string, Activity[]>;
+  plansByThread: Map<string, Plan[]>;
+  contextReceiptsByThread: Map<string, ContextReceipt[]>;
+  inputRequestsByThread: Map<string, InputRequest[]>;
+  providerSessionsByThread: Map<string, ProviderSession[]>;
+  governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
+  checkpointsByThread: Map<string, Checkpoint[]>;
+  threadIdByTurn: Map<string, string>;
+}
+
+function groupRowsByThread<T>(rows: readonly T[], threadId: (row: T) => string): Map<string, T[]> {
+  const rowsByThread = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = threadId(row);
+    const group = rowsByThread.get(id);
+    if (group) group.push(row);
+    else rowsByThread.set(id, [row]);
+  }
+  return rowsByThread;
+}
+
+function buildConversationHistoryIndex(
+  projection: StateProjection,
+  turnsByThread = groupTurnsByThread(projection.turns),
+): MutableConversationHistoryIndex {
+  const threadIdByTurn = new Map(projection.turns.map((turn) => [turn.id, turn.threadId]));
+  const threadForTurn = (row: { turnId: string }) => threadIdByTurn.get(row.turnId) ?? "";
+  return {
+    threadById: new Map(projection.threads.map((thread) => [thread.id, thread])),
+    turnsByThread,
+    messagesByThread: groupRowsByThread(projection.messages, threadForTurn),
+    activitiesByThread: groupRowsByThread(projection.activities, threadForTurn),
+    plansByThread: groupRowsByThread(projection.plans, (row) => row.threadId),
+    contextReceiptsByThread: groupRowsByThread(projection.contextReceipts, (row) => row.threadId),
+    inputRequestsByThread: groupRowsByThread(projection.inputRequests, (row) => row.threadId),
+    providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
+    governanceCorrelationsByThread: groupRowsByThread(
+      projection.governanceCorrelations,
+      (row) => row.threadId,
+    ),
+    checkpointsByThread: groupRowsByThread(projection.checkpoints, (row) => row.threadId),
+    threadIdByTurn,
+  };
 }
 
 function groupTurnsByThread(turns: readonly Turn[]): Map<string, Turn[]> {
@@ -1092,6 +1155,47 @@ function indexSavedRow<T extends { id: string; turnId: string }>(
   else bucket.set(next.id, next);
 }
 
+function indexSavedThreadRow<T extends { id: string }>(
+  rowsByThread: Map<string, T[]>,
+  threadId: string,
+  next: T,
+): void {
+  const bucket = rowsByThread.get(threadId);
+  if (!bucket) {
+    rowsByThread.set(threadId, [next]);
+    return;
+  }
+  const index = bucket.findIndex((row) => row.id === next.id);
+  if (index === -1) bucket.push(next);
+  else bucket[index] = next;
+}
+
+function indexSavedProviderSession(
+  sessionsByThread: Map<string, ProviderSession[]>,
+  next: ProviderSession,
+): void {
+  const bucket = sessionsByThread.get(next.threadId);
+  if (!bucket) {
+    sessionsByThread.set(next.threadId, [next]);
+    return;
+  }
+  const index = bucket.findIndex((session) => session.provider === next.provider);
+  if (index === -1) bucket.push(next);
+  else bucket[index] = next;
+}
+
+function removeIndexedThreadRow<T extends { id: string }>(
+  rowsByThread: Map<string, T[]>,
+  threadId: string,
+  rowId: string,
+): void {
+  const bucket = rowsByThread.get(threadId);
+  if (!bucket) return;
+  const remaining = bucket.filter((row) => row.id !== rowId);
+  if (remaining.length === 0) rowsByThread.delete(threadId);
+  else if (remaining.length !== bucket.length) rowsByThread.set(threadId, remaining);
+}
+
 function rebuildDelegatedTranscriptIndexes(
   projection: StateProjection,
   messagesByTurn: Map<string, Map<string, Message>>,
@@ -1124,6 +1228,7 @@ function applyEvent(
   activitiesByTurn?: Map<string, Map<string, Activity>>,
   delegatedChildTurnIds?: Set<string>,
   deferDelegatedIndexBuild = false,
+  conversationHistory?: MutableConversationHistoryIndex,
 ): void {
   if (envelope.sequence !== projection.sequence + 1) {
     throw new LocalStateError(
@@ -1133,12 +1238,18 @@ function applyEvent(
   const event = envelope.event;
   if (event.type === "project_saved")
     replaceByIdDuringReplay(projection.projects, event.project, replayIndexes);
-  else if (event.type === "thread_saved")
+  else if (event.type === "thread_saved") {
     replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
-  else if (event.type === "turn_saved") {
+    conversationHistory?.threadById.set(event.thread.id, event.thread);
+  } else if (event.type === "turn_saved") {
     const previous = previousTurnDuringApply(projection.turns, event.turn.id, replayIndexes);
     replaceByIdDuringReplay(projection.turns, event.turn, replayIndexes);
     if (turnsByThread) indexSavedTurn(turnsByThread, previous, event.turn);
+    if (conversationHistory) {
+      conversationHistory.threadIdByTurn.set(event.turn.id, event.turn.threadId);
+      if (conversationHistory.turnsByThread !== turnsByThread)
+        indexSavedTurn(conversationHistory.turnsByThread, previous, event.turn);
+    }
     if (
       delegatedChildTurnIds &&
       projection.delegatedRelationships.some(
@@ -1150,11 +1261,17 @@ function applyEvent(
   } else if (event.type === "message_saved") {
     const next = { ...event.message, eventSequence: envelope.sequence };
     replaceByIdDuringReplay(projection.messages, next, replayIndexes);
+    const threadId = conversationHistory?.threadIdByTurn.get(next.turnId);
+    if (conversationHistory && threadId)
+      indexSavedThreadRow(conversationHistory.messagesByThread, threadId, next);
     if (messagesByTurn && delegatedChildTurnIds?.has(next.turnId))
       indexSavedRow(messagesByTurn, next);
   } else if (event.type === "activity_saved") {
     const next = { ...event.activity, eventSequence: envelope.sequence };
     replaceByIdDuringReplay(projection.activities, next, replayIndexes);
+    const threadId = conversationHistory?.threadIdByTurn.get(next.turnId);
+    if (conversationHistory && threadId)
+      indexSavedThreadRow(conversationHistory.activitiesByThread, threadId, next);
     if (activitiesByTurn && delegatedChildTurnIds?.has(next.turnId))
       indexSavedRow(activitiesByTurn, next);
   } else if (event.type === "plan_saved") {
@@ -1166,13 +1283,18 @@ function applyEvent(
         ? undefined
         : projection.plans[existingIndex]
       : projection.plans.find((plan) => plan.id === event.plan.id);
-    replaceByIdDuringReplay(
-      projection.plans,
-      { ...event.plan, eventSequence: existing?.eventSequence ?? envelope.sequence },
-      replayIndexes,
-    );
+    const next = { ...event.plan, eventSequence: existing?.eventSequence ?? envelope.sequence };
+    replaceByIdDuringReplay(projection.plans, next, replayIndexes);
+    if (conversationHistory)
+      indexSavedThreadRow(conversationHistory.plansByThread, next.threadId, next);
   } else if (event.type === "context_receipt_saved") {
     replaceByIdDuringReplay(projection.contextReceipts, event.contextReceipt, replayIndexes);
+    if (conversationHistory)
+      indexSavedThreadRow(
+        conversationHistory.contextReceiptsByThread,
+        event.contextReceipt.threadId,
+        event.contextReceipt,
+      );
   } else if (event.type === "usage_receipt_saved") {
     replaceByIdDuringReplay(projection.usageReceipts, event.usageReceipt, replayIndexes);
   } else if (event.type === "governance_correlation_saved") {
@@ -1181,6 +1303,12 @@ function applyEvent(
       event.governanceCorrelation,
       replayIndexes,
     );
+    if (conversationHistory)
+      indexSavedThreadRow(
+        conversationHistory.governanceCorrelationsByThread,
+        event.governanceCorrelation.threadId,
+        event.governanceCorrelation,
+      );
   } else if (event.type === "provider_session_saved") {
     const index = projection.providerSessions.findIndex(
       (item) =>
@@ -1189,8 +1317,19 @@ function applyEvent(
     );
     if (index === -1) projection.providerSessions.push(event.providerSession);
     else projection.providerSessions[index] = event.providerSession;
+    if (conversationHistory)
+      indexSavedProviderSession(
+        conversationHistory.providerSessionsByThread,
+        event.providerSession,
+      );
   } else if (event.type === "checkpoint_saved") {
     replaceByIdDuringReplay(projection.checkpoints, event.checkpoint, replayIndexes);
+    if (conversationHistory)
+      indexSavedThreadRow(
+        conversationHistory.checkpointsByThread,
+        event.checkpoint.threadId,
+        event.checkpoint,
+      );
   } else if (event.type === "annotation_saved") {
     replaceByIdDuringReplay(projection.annotations, event.annotation, replayIndexes);
   } else if (event.type === "file_review_saved") {
@@ -1204,6 +1343,7 @@ function applyEvent(
   } else if (event.type === "fork_created") {
     replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
+    conversationHistory?.threadById.set(event.thread.id, event.thread);
   } else if (event.type === "fork_saved") {
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
   } else if (event.type === "delegated_relationship_saved") {
@@ -1229,6 +1369,12 @@ function applyEvent(
     }
   } else if (event.type === "input_request_saved") {
     replaceByIdDuringReplay(projection.inputRequests, event.inputRequest, replayIndexes);
+    if (conversationHistory)
+      indexSavedThreadRow(
+        conversationHistory.inputRequestsByThread,
+        event.inputRequest.threadId,
+        event.inputRequest,
+      );
   } else if (event.type === "input_receipt_saved") {
     replaceByIdDuringReplay(projection.inputReceipts, event.inputReceipt, replayIndexes);
   } else if (event.type === "automation_fire_saved") {
@@ -1510,6 +1656,7 @@ export class LocalStateStore {
   #messagesByTurn = new Map<string, Map<string, Message>>();
   #activitiesByTurn = new Map<string, Map<string, Activity>>();
   #delegatedChildTurnIds = new Set<string>();
+  #conversationHistory = buildConversationHistoryIndex(this.#projection, this.#turnsByThread);
   #writeQueue: Promise<void> = Promise.resolve();
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
@@ -1539,6 +1686,7 @@ export class LocalStateStore {
     messagesByTurn: Map<string, Map<string, Message>>;
     activitiesByTurn: Map<string, Map<string, Activity>>;
     delegatedChildTurnIds: Set<string>;
+    conversationHistory: MutableConversationHistoryIndex;
     repaired: boolean;
     sourceIdentity: Awaited<ReturnType<FileHandle["stat"]>> | null;
   }> {
@@ -1547,13 +1695,16 @@ export class LocalStateStore {
       handle = await open(this.#eventPath, "r");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        const projection = emptyProjection();
+        const turnsByThread = new Map<string, Turn[]>();
         return {
           envelopes: [],
-          projection: emptyProjection(),
-          turnsByThread: new Map(),
+          projection,
+          turnsByThread,
           messagesByTurn: new Map(),
           activitiesByTurn: new Map(),
           delegatedChildTurnIds: new Set(),
+          conversationHistory: buildConversationHistoryIndex(projection, turnsByThread),
           repaired: false,
           sourceIdentity: null,
         };
@@ -1610,6 +1761,7 @@ export class LocalStateStore {
           messagesByTurn,
           activitiesByTurn,
           delegatedChildTurnIds,
+          conversationHistory: buildConversationHistoryIndex(projection, turnsByThread),
           repaired: false,
           sourceIdentity,
         };
@@ -1678,6 +1830,7 @@ export class LocalStateStore {
         messagesByTurn: repairMessagesByTurn,
         activitiesByTurn: repairActivitiesByTurn,
         delegatedChildTurnIds: repairDelegatedChildTurnIds,
+        conversationHistory: buildConversationHistoryIndex(projection, repairTurnsByThread),
         repaired: true,
         sourceIdentity,
       };
@@ -1767,6 +1920,7 @@ export class LocalStateStore {
     this.#messagesByTurn = history.messagesByTurn;
     this.#activitiesByTurn = history.activitiesByTurn;
     this.#delegatedChildTurnIds = history.delegatedChildTurnIds;
+    this.#conversationHistory = history.conversationHistory;
     this.#loaded = true;
   }
 
@@ -1793,6 +1947,7 @@ export class LocalStateStore {
       turnsByThread: this.#turnsByThread,
       delegatedMessagesByTurn: this.#messagesByTurn,
       delegatedActivitiesByTurn: this.#activitiesByTurn,
+      conversationHistory: this.#conversationHistory,
     };
   }
 
@@ -1858,6 +2013,8 @@ export class LocalStateStore {
           this.#messagesByTurn,
           this.#activitiesByTurn,
           this.#delegatedChildTurnIds,
+          false,
+          this.#conversationHistory,
         );
       }
     });
@@ -1891,6 +2048,8 @@ export class LocalStateStore {
       this.#messagesByTurn,
       this.#activitiesByTurn,
       this.#delegatedChildTurnIds,
+      false,
+      this.#conversationHistory,
     );
   }
 
@@ -1915,6 +2074,9 @@ export class LocalStateStore {
       // Keep live projections (sidebar outcomes, mid-turn load) current without
       // fsyncing every provider token.
       replaceById(this.#projection.messages, { ...segment });
+      const threadId = this.#conversationHistory.threadIdByTurn.get(turnId);
+      if (threadId)
+        indexSavedThreadRow(this.#conversationHistory.messagesByThread, threadId, { ...segment });
       const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
       // Soft checkpoint so a long text-only reply is not only in RAM if the host
       // exits before a tool/terminal boundary. Same message id; replace-by-id.
@@ -1938,6 +2100,9 @@ export class LocalStateStore {
         this.#projection.messages = this.#projection.messages.filter(
           (message) => message.id !== segment.id,
         );
+        const threadId = this.#conversationHistory.threadIdByTurn.get(turnId);
+        if (threadId)
+          removeIndexedThreadRow(this.#conversationHistory.messagesByThread, threadId, segment.id);
         return;
       }
       const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
@@ -4372,6 +4537,7 @@ export class LocalStateStore {
       this.#messagesByTurn = rebuiltMessagesByTurn;
       this.#activitiesByTurn = rebuiltActivitiesByTurn;
       this.#delegatedChildTurnIds = rebuiltDelegatedChildTurnIds;
+      this.#conversationHistory = buildConversationHistoryIndex(rebuilt, rebuiltTurnsByThread);
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;

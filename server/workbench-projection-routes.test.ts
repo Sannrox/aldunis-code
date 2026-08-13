@@ -556,6 +556,79 @@ test("history returns its sequence when the caller snapshot changed", async () =
   assert.equal((value?.messages as unknown[]).length, 1);
 });
 
+test("history uses one atomic thread index without traversing global collections", async () => {
+  const current = projection();
+  const [thread] = current.threads;
+  const [turn] = current.turns;
+  const [message] = current.messages;
+  assert.ok(thread && turn && message);
+  const forbidden = new Proxy([], {
+    get(target, property, receiver) {
+      if (property === "then") return undefined;
+      if (property === "length") return 100_000;
+      if (property === Symbol.iterator || property === "find" || property === "filter") {
+        throw new Error("history traversed a global collection");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as never[];
+  const inspected = {
+    ...current,
+    turns: forbidden,
+    messages: forbidden,
+    activities: forbidden,
+    plans: forbidden,
+    contextReceipts: forbidden,
+    inputRequests: forbidden,
+    providerSessions: forbidden,
+    governanceCorrelations: forbidden,
+    checkpoints: forbidden,
+  } as StateProjection;
+  const conversationHistory = {
+    threadById: new Map([[thread.id, thread]]),
+    turnsByThread: new Map([[thread.id, [turn]]]),
+    messagesByThread: new Map([[thread.id, [message]]]),
+    activitiesByThread: new Map(),
+    plansByThread: new Map(),
+    contextReceiptsByThread: new Map(),
+    inputRequestsByThread: new Map(),
+    providerSessionsByThread: new Map(),
+    governanceCorrelationsByThread: new Map(),
+    checkpointsByThread: new Map(),
+  };
+  let value: Record<string, unknown> | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/conversations/history",
+    request,
+    response,
+    context({
+      readJson: async () => ({ threadId: thread.id, knownSequence: 0 }),
+      state: {
+        inspect: async () => assert.fail("history should use the atomic indexed snapshot"),
+        inspectWorkbenchProjection: async () => ({
+          projection: inspected,
+          turnsByThread: conversationHistory.turnsByThread,
+          delegatedMessagesByTurn: new Map(),
+          delegatedActivitiesByTurn: new Map(),
+          conversationHistory,
+        }),
+      },
+      sendJson: (_response: ServerResponse, status: number, body: unknown) => {
+        assert.equal(status, 200);
+        value = body as Record<string, unknown>;
+      },
+    }) as never,
+  );
+  assert.deepEqual(
+    (value?.turns as Array<{ id: string }>).map((row) => row.id),
+    [turn.id],
+  );
+  assert.deepEqual(
+    (value?.messages as Array<{ id: string }>).map((row) => row.id),
+    [message.id],
+  );
+});
+
 test("search enforces archive scope and managed visibility", async () => {
   let value: { threads: Array<{ id: string }> } | undefined;
   await handleWorkbenchProjectionRoute(

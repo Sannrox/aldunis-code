@@ -288,8 +288,12 @@ export async function handleWorkbenchProjectionRoute(
     ) {
       throw new LocalStateError("The conversation history sequence is invalid.", 400);
     }
-    const projection = (await state.inspect()) as StateProjection;
-    if (!projection.threads.some((thread) => thread.id === body.threadId)) {
+    const indexed = state.inspectWorkbenchProjection
+      ? await state.inspectWorkbenchProjection()
+      : undefined;
+    const projection = (indexed?.projection ?? (await state.inspect())) as StateProjection;
+    const thread = indexed?.conversationHistory?.threadById.get(body.threadId);
+    if (!(thread ?? projection.threads.find((candidate) => candidate.id === body.threadId))) {
       throw new LocalStateError("The conversation is unavailable.", 404);
     }
     if (managedHost) context.assertManagedThread(projection, body.threadId);
@@ -297,7 +301,11 @@ export async function handleWorkbenchProjectionRoute(
       sendStatus(response, 204);
       return true;
     }
-    const history = projectConversationHistory(projection, body.threadId);
+    const history = projectConversationHistory(
+      projection,
+      body.threadId,
+      indexed?.conversationHistory,
+    );
     if (!history) throw new LocalStateError("The conversation is unavailable.", 404);
     sendJson(response, 200, history);
     return true;
