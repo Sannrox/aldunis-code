@@ -119,6 +119,107 @@ test("versioned projects, threads, turns, messages, activities, and sessions reb
   assert.equal(rebuilt.providerSessions[0].sessionId, "session-1");
 });
 
+test("provider events read thread-local indexes without cloning the full projection", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const codex = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/codex",
+    prompt: "Exercise indexed provider context",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  const shikigami = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/shikigami",
+    prompt: "Exercise indexed governance context",
+    mode: "build",
+    provider: "shikigami",
+  });
+  await store.bindProviderRun(codex.turn.id, "codex-run");
+
+  class NoProjectionCloneStore extends LocalStateStore {
+    override async load(): Promise<StateProjection> {
+      throw new Error("provider event cloned the full projection");
+    }
+  }
+  const indexed = new NoProjectionCloneStore(directory);
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "session_started",
+    sessionId: "codex-session",
+    model: "gpt-test",
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "input_requested",
+    id: "indexed-input",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    providerRequestId: null,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "input_resolved",
+    id: "indexed-input",
+    state: "cancelled",
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "approval_pending",
+    id: "indexed-approval",
+    runId: "codex-run",
+    conversationId: codex.thread.id,
+    repository: "/fixture",
+    worktree: "/fixture/codex",
+    toolCallId: "tool-1",
+    toolName: "Write",
+    scope: { summary: "Write a file", target: "fixture.ts", details: [] },
+    state: "pending",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "approval_resolved",
+    id: "indexed-approval",
+    state: "allowed_once",
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "plan_updated",
+    artifact: { id: "indexed-plan", provider: "codex-cli", body: "Verify" },
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "context_usage",
+    usedTokens: 10,
+    maxTokens: 100,
+    totalProcessedTokens: 10,
+    inputTokens: 8,
+    outputTokens: 2,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    reasoningOutputTokens: null,
+  });
+  const runId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  await indexed.recordProviderEvent(shikigami.thread.id, shikigami.turn.id, "shikigami", {
+    kind: "governance_correlation",
+    governance: "sekai-chisei",
+    runId,
+    operationId: runId,
+  });
+  await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "codex-session",
+    costUsd: 0.01,
+  });
+
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.turns.find((turn) => turn.id === codex.turn.id)?.status, "completed");
+  assert.equal(projection.providerSessions[0]?.model, "gpt-test");
+  assert.equal(projection.inputRequests[0]?.state, "cancelled");
+  assert.equal(projection.plans[0]?.body, "Verify");
+  assert.equal(projection.usageReceipts[0]?.status, "completed");
+  assert.equal(projection.governanceCorrelations[0]?.runId, runId);
+});
+
 test("terminal events without usage do not create empty receipts", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -2817,6 +2918,10 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   );
   assert.equal(liveSnapshot.conversationHistory.messagesByThread.has("missing-thread"), false);
   assert.deepEqual(
+    liveSnapshot.conversationHistory.usageReceiptsByThread.get(child.thread.id),
+    live.usageReceipts.filter((receipt) => receipt.threadId === child.thread.id),
+  );
+  assert.deepEqual(
     projectDelegatedConversationOutcomes(live, index, messagesByTurn, activitiesByTurn),
     projectDelegatedConversationOutcomes(live),
   );
@@ -2845,6 +2950,10 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
     projectConversationHistory(reloadedSnapshot.projection as StateProjection, child.thread.id),
   );
   assert.deepEqual(
+    reloadedSnapshot.conversationHistory.usageReceiptsByThread.get(child.thread.id),
+    liveSnapshot.conversationHistory.usageReceiptsByThread.get(child.thread.id),
+  );
+  assert.deepEqual(
     [...reloadedIndex.entries()].map(([threadId, turns]) => [
       threadId,
       turns.map((turn) => turn.id),
@@ -2859,6 +2968,12 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
   assert.equal((await store.delegatedActivitiesByTurnIndex()).has(child.turn.id), false);
   assert.equal(
     (await store.inspectWorkbenchProjection()).conversationHistory.threadById.has(child.thread.id),
+    false,
+  );
+  assert.equal(
+    (await store.inspectWorkbenchProjection()).conversationHistory.usageReceiptsByThread.has(
+      child.thread.id,
+    ),
     false,
   );
   assert.ok(afterDelete.has(noisy.thread.id));

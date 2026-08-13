@@ -619,6 +619,7 @@ export interface ConversationHistoryIndex {
   activitiesByThread: RowsByThread<Activity>;
   plansByThread: RowsByThread<Plan>;
   contextReceiptsByThread: RowsByThread<ContextReceipt>;
+  usageReceiptsByThread: RowsByThread<UsageReceipt>;
   inputRequestsByThread: RowsByThread<InputRequest>;
   providerSessionsByThread: RowsByThread<ProviderSession>;
   conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
@@ -634,6 +635,16 @@ export interface WorkbenchProjectionIndexes {
   conversationHistory: ConversationHistoryIndex;
 }
 
+interface ProviderEventContext {
+  thread: Thread | undefined;
+  turn: Turn | undefined;
+  inputRequests: readonly InputRequest[];
+  plans: readonly Plan[];
+  usageReceipts: readonly UsageReceipt[];
+  governanceCorrelations: readonly GovernanceCorrelation[];
+  providerSessions: readonly ProviderSession[];
+}
+
 interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   threadById: Map<string, Thread>;
   turnsByThread: Map<string, Turn[]>;
@@ -641,6 +652,7 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   activitiesByThread: Map<string, Activity[]>;
   plansByThread: Map<string, Plan[]>;
   contextReceiptsByThread: Map<string, ContextReceipt[]>;
+  usageReceiptsByThread: Map<string, UsageReceipt[]>;
   inputRequestsByThread: Map<string, InputRequest[]>;
   providerSessionsByThread: Map<string, ProviderSession[]>;
   conversationDeletionByThread: Map<string, ConversationDeletion>;
@@ -674,6 +686,7 @@ function buildConversationHistoryIndex(
     activitiesByThread: groupRowsByThread(projection.activities, threadForTurn),
     plansByThread: groupRowsByThread(projection.plans, (row) => row.threadId),
     contextReceiptsByThread: groupRowsByThread(projection.contextReceipts, (row) => row.threadId),
+    usageReceiptsByThread: groupRowsByThread(projection.usageReceipts, (row) => row.threadId),
     inputRequestsByThread: groupRowsByThread(projection.inputRequests, (row) => row.threadId),
     providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
     conversationDeletionByThread: new Map(
@@ -1331,6 +1344,12 @@ function applyEvent(
       );
   } else if (event.type === "usage_receipt_saved") {
     replaceByIdDuringReplay(projection.usageReceipts, event.usageReceipt, replayIndexes);
+    if (conversationHistory)
+      indexSavedThreadRow(
+        conversationHistory.usageReceiptsByThread,
+        event.usageReceipt.threadId,
+        event.usageReceipt,
+      );
   } else if (event.type === "governance_correlation_saved") {
     replaceByIdDuringReplay(
       projection.governanceCorrelations,
@@ -2004,6 +2023,27 @@ export class LocalStateStore {
     return (this.#turnsByThread.get(threadId) ?? []).some((turn) =>
       BUSY_TURN_STATUSES.has(turn.status),
     );
+  }
+
+  /** Read provider-event context from one coherent thread-local index generation. */
+  async #inspectProviderEventContext(
+    threadId: string,
+    turnId?: string,
+  ): Promise<ProviderEventContext> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const history = this.#conversationHistory;
+    return {
+      thread: history.threadById.get(threadId),
+      turn: turnId
+        ? (this.#turnsByThread.get(threadId) ?? []).find((item) => item.id === turnId)
+        : undefined,
+      inputRequests: history.inputRequestsByThread.get(threadId) ?? [],
+      plans: history.plansByThread.get(threadId) ?? [],
+      usageReceipts: history.usageReceiptsByThread.get(threadId) ?? [],
+      governanceCorrelations: history.governanceCorrelationsByThread.get(threadId) ?? [],
+      providerSessions: history.providerSessionsByThread.get(threadId) ?? [],
+    };
   }
 
   /** Capture the live projection and its derived indexes from one write generation. */
@@ -3782,7 +3822,7 @@ export class LocalStateStore {
   }
 
   async #markThreadWoke(threadId: string, at: string): Promise<void> {
-    const thread = (await this.load()).threads.find((item) => item.id === threadId);
+    const { thread } = await this.#inspectProviderEventContext(threadId);
     if (!thread) return;
     if (thread.wokeAt === at) return;
     await this.#append({
@@ -3800,14 +3840,13 @@ export class LocalStateStore {
     usage?: Extract<ProviderEvent, { kind: "context_usage" }>,
     reportedCostUsd?: number | null,
   ): Promise<void> {
-    const projection = await this.load();
-    const thread = projection.threads.find((item) => item.id === threadId);
-    const turn = projection.turns.find((item) => item.id === turnId && item.threadId === threadId);
+    const context = await this.#inspectProviderEventContext(threadId, turnId);
+    const { thread, turn } = context;
     if (!thread || !turn)
       throw new LocalStateError("The provider turn is missing from local history.");
-    const existing = projection.usageReceipts.find((receipt) => receipt.turnId === turnId);
-    const providerSession = projection.providerSessions.find(
-      (session) => session.threadId === threadId && session.provider === provider,
+    const existing = context.usageReceipts.find((receipt) => receipt.turnId === turnId);
+    const providerSession = context.providerSessions.find(
+      (session) => session.provider === provider,
     );
     const boundedMetric = (value: number | null | undefined, maximum: number): number | null =>
       typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum
@@ -3912,8 +3951,11 @@ export class LocalStateStore {
     ) {
       await this.#flushOpenAssistant(turnId);
     }
+    let cachedContext: ProviderEventContext | undefined;
+    const eventContext = async () =>
+      (cachedContext ??= await this.#inspectProviderEventContext(threadId, turnId));
     if (event.kind === "input_requested") {
-      const turn = (await this.load()).turns.find((item) => item.id === turnId);
+      const { turn } = await eventContext();
       if (!turn || !turn.providerRunId) {
         throw new LocalStateError("The provider turn is missing its run binding.");
       }
@@ -3955,11 +3997,9 @@ export class LocalStateStore {
       return;
     }
     if (event.kind === "input_resolved") {
-      const projection = await this.load();
-      const request = projection.inputRequests.find(
-        (item) => item.id === event.id && item.threadId === threadId,
-      );
-      const turn = projection.turns.find((item) => item.id === turnId);
+      const context = await eventContext();
+      const request = context.inputRequests.find((item) => item.id === event.id);
+      const { turn } = context;
       if (!request || request.state !== "pending" || !turn) return;
       await this.#append({
         type: "input_request_saved",
@@ -3970,7 +4010,7 @@ export class LocalStateStore {
         },
       });
       if (!["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
-        const hasOtherPendingInput = projection.inputRequests.some(
+        const hasOtherPendingInput = context.inputRequests.some(
           (item) =>
             item.id !== request.id &&
             item.turnId === request.turnId &&
@@ -3985,7 +4025,7 @@ export class LocalStateStore {
       return;
     }
     if (event.kind === "approval_pending" || event.kind === "approval_resolved") {
-      const turn = (await this.load()).turns.find((item) => item.id === turnId);
+      const { turn } = await eventContext();
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
       if (["completed", "failed", "interrupted", "cancelled"].includes(turn.status)) {
         return;
@@ -4014,10 +4054,8 @@ export class LocalStateStore {
       return;
     }
     if (event.kind === "plan_updated") {
-      const projection = await this.load();
-      const turn = projection.turns.find(
-        (item) => item.id === turnId && item.threadId === threadId,
-      );
+      const context = await eventContext();
+      const { turn } = context;
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
       if (event.artifact.provider !== provider) {
         throw new LocalStateError("The plan artifact provider does not match the active provider.");
@@ -4025,7 +4063,7 @@ export class LocalStateStore {
       const id = createHash("sha256")
         .update(`${threadId}\n${turnId}\n${provider}\n${event.artifact.id}`, "utf8")
         .digest("hex");
-      const existing = projection.plans.find((plan) => plan.id === id);
+      const existing = context.plans.find((plan) => plan.id === id);
       const body =
         event.artifact.body === undefined
           ? existing?.body
@@ -4068,14 +4106,10 @@ export class LocalStateStore {
       ) {
         throw new LocalStateError("The provider governance correlation is incompatible.", 502);
       }
-      const projection = await this.load();
-      const turn = projection.turns.find(
-        (item) => item.id === turnId && item.threadId === threadId,
-      );
+      const context = await eventContext();
+      const { turn } = context;
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
-      const existing = projection.governanceCorrelations.find(
-        (receipt) => receipt.turnId === turnId,
-      );
+      const existing = context.governanceCorrelations.find((receipt) => receipt.turnId === turnId);
       if (
         existing &&
         (existing.runId !== event.runId || existing.operationId !== event.operationId)
@@ -4106,8 +4140,8 @@ export class LocalStateStore {
       return;
     }
     if (event.kind === "session_started" || event.kind === "turn_completed") {
-      const current = (await this.load()).providerSessions.find(
-        (item) => item.threadId === threadId && item.provider === provider,
+      const current = (await eventContext()).providerSessions.find(
+        (item) => item.provider === provider,
       );
       await this.#append({
         type: "provider_session_saved",
@@ -4152,8 +4186,7 @@ export class LocalStateStore {
       });
     }
     if (event.kind === "turn_completed" || event.kind === "cancelled" || event.kind === "failed") {
-      const projection = await this.load();
-      const turn = projection.turns.find((item) => item.id === turnId);
+      const { turn } = await eventContext();
       if (!turn) throw new LocalStateError("The provider turn is missing from local history.");
       await this.#saveUsageReceipt(
         threadId,
@@ -4182,7 +4215,7 @@ export class LocalStateStore {
           completedAt: now,
         },
       });
-      for (const request of projection.inputRequests.filter(
+      for (const request of (await eventContext()).inputRequests.filter(
         (item) => item.turnId === turnId && item.state === "pending",
       )) {
         await this.#append({
