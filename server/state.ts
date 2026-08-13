@@ -2113,6 +2113,26 @@ export class LocalStateStore {
     });
   }
 
+  /** Clone only the state required to admit a new Autonomy run. */
+  async loadAutonomyRunAdmissionProjection(): Promise<
+    Pick<StateProjection, "projects" | "autonomyFlows">
+  > {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    return structuredClone({
+      projects: this.#projection.projects,
+      autonomyFlows: this.#projection.autonomyFlows,
+    });
+  }
+
+  /** Clone one queued Autonomy run without cloning unrelated retained state. */
+  async loadAutonomyRun(runId: string): Promise<AutonomyRun | null> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const run = this.#projection.autonomyRuns.find((candidate) => candidate.id === runId);
+    return run ? structuredClone(run) : null;
+  }
+
   /**
    * Read-only live projection for request handlers that project a subset.
    * Callers must not mutate the returned object.

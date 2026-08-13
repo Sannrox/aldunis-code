@@ -341,8 +341,8 @@ export class AutonomyEngine {
 
   async startFlow(input: RunStartInput): Promise<AutonomyRun> {
     await this.ensureBuiltInFlows();
-    // load() isolates nested flow budget/step objects on the returned run.
-    const projection = await this.state.load();
+    // The narrow clone isolates nested flow budget/step objects without copying conversations.
+    const projection = await this.state.loadAutonomyRunAdmissionProjection();
     const flow = projection.autonomyFlows.find((candidate) => candidate.id === input.flowId);
     if (!flow || !flow.enabled)
       throw new AutonomyError("The requested autonomy workflow is unavailable.", 404);
@@ -388,7 +388,7 @@ export class AutonomyEngine {
 
   async resumeRun(runId: string): Promise<AutonomyRun> {
     // Return a clone so the caller cannot mutate the live queued record.
-    const run = (await this.state.load()).autonomyRuns.find((candidate) => candidate.id === runId);
+    const run = await this.state.loadAutonomyRun(runId);
     if (!run) throw new AutonomyError("The autonomy run is unavailable.", 404);
     if (run.status !== "queued")
       throw new AutonomyError("The autonomy run is not queued for resumption.", 409);

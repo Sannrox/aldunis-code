@@ -400,6 +400,24 @@ test("nightly gardener runs read-only, records tasks, and survives reload", asyn
   }
 });
 
+test("Autonomy run admission does not clone retained conversation history", async () => {
+  const { state, engine, cleanup } = await fixture();
+  const originalLoad = state.load.bind(state);
+  try {
+    await engine.ensureBuiltInFlows();
+    state.load = async () => {
+      throw new Error("run admission must not clone the full state projection");
+    };
+    const run = await engine.startGardener({ projectId: "project-1" });
+    state.load = originalLoad;
+    const completed = await waitForRun(state, run.id);
+    assert.equal(completed.status, "succeeded");
+  } finally {
+    state.load = originalLoad;
+    await cleanup();
+  }
+});
+
 test("heartbeat and standing order records are durable state records", async () => {
   const { state, engine, cleanup } = await fixture();
   try {
