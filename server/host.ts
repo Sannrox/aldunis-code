@@ -81,6 +81,7 @@ import { handleDeliveryRoute } from "./delivery-routes.ts";
 import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
 import {
   filterManagedProjection,
+  filterManagedThreadSearchProjection,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
@@ -647,7 +648,7 @@ async function handleApi(
         managed: Boolean(managedHost),
         visibleProjectIds: async () => {
           if (!managedHost) return new Set<string>();
-          const visible = filterManagedProjection(await state.inspect(), managedHost);
+          const visible = filterManagedThreadSearchProjection(await state.inspect(), managedHost);
           return new Set(visible.projects.map((project) => project.id));
         },
         readJson,
