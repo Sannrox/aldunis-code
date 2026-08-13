@@ -9,6 +9,7 @@ import {
   codexFileChangePaths,
   CodexCliAdapter,
   isRecoverableCodexResumeError,
+  MAX_IDLE_CODEX_SESSIONS,
   normalizeCodexNotification,
   pathsWithinWorktree,
 } from "./codex-provider.ts";
@@ -34,6 +35,10 @@ class FakeCodexTimers {
     handle.callback();
   }
 }
+
+test("Codex retains at most two idle app-server sessions by default", () => {
+  assert.equal(MAX_IDLE_CODEX_SESSIONS, 2);
+});
 
 const TEST_BROWSER_MCP = {
   name: "aldunis_browser",
