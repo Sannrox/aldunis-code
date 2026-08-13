@@ -342,6 +342,105 @@ test("managed orchestration projection skips unrelated durable collections", () 
   assert.deepEqual(filtered.autonomyRuns, []);
 });
 
+test("managed indexed Workbench load skips global transcript visibility scans", async () => {
+  const value = projection();
+  const childTurn = {
+    schemaVersion: 2 as const,
+    id: "turn-child",
+    threadId: "archived",
+    status: "completed" as const,
+    mode: "build" as const,
+    createdAt: "t2",
+    completedAt: "t3",
+  };
+  const childMessage = {
+    schemaVersion: 2 as const,
+    id: "child-result",
+    turnId: childTurn.id,
+    role: "assistant" as const,
+    text: "Visible result.",
+    createdAt: "t3",
+  };
+  value.turns.push(childTurn);
+  value.delegatedRelationships.push({
+    schemaVersion: 2,
+    id: "relationship",
+    parentThreadId: "active",
+    childThreadId: "archived",
+    createdAt: "t2",
+  });
+  const forbiddenTranscript = new Proxy([], {
+    get(target, property, receiver) {
+      if (property === "then") return undefined;
+      if (property === "filter" || property === Symbol.iterator) {
+        throw new Error("managed indexed load scanned global transcript rows");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as never[];
+  value.messages = forbiddenTranscript;
+  value.activities = forbiddenTranscript;
+  const turnsByThread = new Map([
+    ["active", [value.turns[0]!]],
+    ["archived", [childTurn]],
+  ]);
+  let responseValue: Record<string, unknown> | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/load",
+    request,
+    response,
+    context({
+      preferences: {
+        load: async () => ({
+          preferences: { orchestrationThreadsBeta: true, managedWorktreeLimit: 10 },
+        }),
+      },
+      state: {
+        inspect: async () => assert.fail("indexed load should use one atomic snapshot"),
+        inspectWorkbenchProjection: async () => ({
+          projection: value,
+          turnsByThread,
+          delegatedMessagesByTurn: new Map([
+            [childTurn.id, new Map([[childMessage.id, childMessage]])],
+          ]),
+          delegatedActivitiesByTurn: new Map(),
+          conversationHistory: {
+            threadById: new Map(value.threads.map((thread) => [thread.id, thread])),
+            turnsByThread,
+            messagesByThread: new Map(),
+            activitiesByThread: new Map(),
+            plansByThread: new Map(),
+            contextReceiptsByThread: new Map(),
+            inputRequestsByThread: new Map(),
+            providerSessionsByThread: new Map(),
+            governanceCorrelationsByThread: new Map(),
+            checkpointsByThread: new Map(),
+          },
+        }),
+      },
+      managedHost: {
+        repositoryForRoot: (root: string) => {
+          if (!root.startsWith("/alpha")) throw new Error("outside catalogue");
+          return {} as never;
+        },
+      },
+      worktrees: {
+        countActiveManaged: async () => 0,
+        listActiveManagedPaths: async () => [],
+      },
+      sendJson: (_response: ServerResponse, status: number, body: unknown) => {
+        assert.equal(status, 200);
+        responseValue = body as Record<string, unknown>;
+      },
+    }) as never,
+  );
+  assert.deepEqual(responseValue?.delegatedOutcomes, [
+    { childThreadId: "archived", completedAt: "t3", summary: "Visible result." },
+  ]);
+  assert.deepEqual(responseValue?.messages, []);
+  assert.deepEqual(responseValue?.activities, []);
+});
+
 function forbiddenLoadTurns(turns: StateProjection["turns"]): StateProjection["turns"] {
   return new Proxy(turns, {
     get(target, property, receiver) {
