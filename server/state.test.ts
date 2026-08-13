@@ -2486,6 +2486,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   let projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "running");
+  assert.equal(await store.inspectThreadBusy(thread.id), true);
   assert.deepEqual(
     await store.inspectThreadStatus(thread.id),
     projectThreadStatus(projection, thread.id),
@@ -2524,6 +2525,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
   });
   projection = await store.load();
   assert.equal(projectThreadStatus(projection, thread.id).status, "failed");
+  assert.equal(await store.inspectThreadBusy(thread.id), false);
   assert.deepEqual(
     await store.inspectThreadStatus(thread.id),
     projectThreadStatus(projection, thread.id),
@@ -2543,6 +2545,7 @@ test("thread status projection and wokeAt track operator-attention transitions",
     await new LocalStateStore(directory).inspectThreadStatus(thread.id),
     projectThreadStatus(projection, thread.id),
   );
+  assert.equal(await new LocalStateStore(directory).inspectThreadBusy(thread.id), false);
 });
 
 function statusFixtureThread(id: string): StateProjection["threads"][number] {
@@ -2859,6 +2862,8 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
     false,
   );
   assert.ok(afterDelete.has(noisy.thread.id));
+  assert.equal(await store.inspectThreadBusy(noisy.thread.id), true);
+  assert.equal(await store.inspectThreadBusy(child.thread.id), false);
   assert.deepEqual(
     projectThreadStatuses(await store.inspect(), afterDelete),
     projectThreadStatuses(await store.load()),
