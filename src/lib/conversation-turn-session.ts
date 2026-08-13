@@ -26,8 +26,13 @@ export interface ConversationTurnStartBody {
   provider: ProviderId;
   workspaceMode: WorkspaceMode;
   reasoningEffort?: ReasoningEffort;
-  elementReferences: Array<Omit<ElementReference, "screenshot">>;
+  parentThreadId?: string;
+  elementReferences?: Array<Omit<ElementReference, "screenshot">>;
 }
+
+export type ConversationTurnDelegatedStartBody = ConversationTurnStartBody & {
+  parentThreadId: string;
+};
 
 export interface ConversationTurnAcceptedIds {
   runId: string | null;
@@ -50,10 +55,19 @@ export interface ConversationTurnSessionAdapters {
 
 type RunDispatch = (action: ConversationRunAction) => void;
 
+function turnTransportError(body: unknown, fallback: string): string {
+  if (typeof body === "object" && body !== null && "error" in body) {
+    const error = (body as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error;
+  }
+  return fallback;
+}
+
 /**
- * Owns conversation turn transport (start/stream/cancel/decide/answer) while
- * ConversationRunModule owns normalized event-state transitions and
- * ConversationComposer retains archive, draft, and workspace UI wiring.
+ * Owns conversation turn transport (start/stream/cancel/decide/answer) and
+ * delegated-child start drain while ConversationRunModule owns normalized
+ * event-state transitions and ConversationComposer retains archive, draft,
+ * and workspace UI wiring.
  */
 export class ConversationTurnSessionModule {
   private readonly request: ConversationTurnFetch;
@@ -84,8 +98,8 @@ export class ConversationTurnSessionModule {
       });
       threadId = response.headers.get("x-thread-id");
       if (!response.ok) {
-        const errorBody = (await response.json()) as { error?: string };
-        throw new Error(errorBody.error ?? `${providerName} could not start.`);
+        const errorBody = (await response.json()) as unknown;
+        throw new Error(turnTransportError(errorBody, `${providerName} could not start.`));
       }
       accepted = true;
       runId = response.headers.get("x-provider-run-id");
@@ -107,6 +121,53 @@ export class ConversationTurnSessionModule {
         status: "failed",
         accepted,
         message,
+        runId,
+        threadId,
+        turnId,
+      };
+    }
+  }
+
+  /**
+   * Starts a delegated child on the normal provider-run path and drains the
+   * stream without dispatching parent ConversationRunModule actions.
+   */
+  async startDelegatedChild(options: {
+    body: ConversationTurnDelegatedStartBody;
+    providerName: string;
+    onCreated?: (threadId: string) => void;
+  }): Promise<ConversationTurnStartResult> {
+    const { body, providerName, onCreated } = options;
+    let accepted = false;
+    let runId: string | null = null;
+    let threadId: string | null = null;
+    let turnId: string | null = null;
+    try {
+      const response = await this.request("/api/provider/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      threadId = response.headers.get("x-thread-id");
+      runId = response.headers.get("x-provider-run-id");
+      turnId = response.headers.get("x-turn-id");
+      if (threadId) onCreated?.(threadId);
+      if (!response.ok) {
+        const errorBody = (await response.json()) as unknown;
+        throw new Error(
+          turnTransportError(errorBody, `${providerName} could not start the child conversation.`),
+        );
+      }
+      accepted = true;
+      if (!threadId) throw new Error("The child conversation did not return an identifier.");
+      if (response.body) await this.drainStream(response.body);
+      return { status: "completed", runId, threadId, turnId };
+    } catch (error) {
+      return {
+        status: "failed",
+        accepted,
+        message:
+          error instanceof Error ? error.message : "The child conversation could not be started.",
         runId,
         threadId,
         turnId,
@@ -218,6 +279,14 @@ export class ConversationTurnSessionModule {
         newline = buffer.indexOf("\n");
       }
       if (result.done) break;
+    }
+  }
+
+  private async drainStream(body: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = body.getReader();
+    while (!(await reader.read()).done) {
+      // The child conversation surface owns events; this drain only relieves
+      // browser backpressure on the host stream.
     }
   }
 }

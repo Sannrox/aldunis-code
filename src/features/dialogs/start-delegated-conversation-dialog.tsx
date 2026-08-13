@@ -11,16 +11,11 @@ import { providerListLabel } from "../../lib/provider-readiness";
 import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktree-base";
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
+import { ConversationTurnSessionModule } from "../../lib/conversation-turn-session";
+
+const conversationTurnSession = new ConversationTurnSessionModule();
 
 type WorktreePolicy = "isolated" | "parent";
-
-function responseError(body: unknown, fallback: string): string {
-  if (typeof body === "object" && body !== null && "error" in body) {
-    const error = (body as { error?: unknown }).error;
-    if (typeof error === "string" && error.trim()) return error;
-  }
-  return fallback;
-}
 
 export function StartDelegatedConversationDialog({
   parent,
@@ -192,10 +187,13 @@ export function StartDelegatedConversationDialog({
     setError(null);
     let childThreadId: string | null = null;
     try {
-      const response = await fetch("/api/provider/runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      const result = await conversationTurnSession.startDelegatedChild({
+        providerName: providerLabel,
+        onCreated: (threadId) => {
+          childThreadId = threadId;
+          onCreated(threadId);
+        },
+        body: {
           root: repository.root,
           worktree,
           prompt: prompt.trim(),
@@ -214,23 +212,10 @@ export function StartDelegatedConversationDialog({
                 : null,
           reasoningEffort: parent.reasoningEffort,
           contextPins: [],
-        }),
+        },
       });
-      childThreadId = response.headers.get("x-thread-id");
-      const body = await (response.ok ? Promise.resolve({}) : response.json());
-      if (!response.ok) {
-        if (childThreadId) onCreated(childThreadId);
-        throw new Error(responseError(body, "The child conversation could not be started."));
-      }
-      if (!childThreadId) throw new Error("The child conversation did not return an identifier.");
-      onCreated(childThreadId);
-      // Keep consuming the child stream after closing this dialog so the host
-      // can stream provider events without browser backpressure.
-      if (response.body) {
-        const reader = response.body.getReader();
-        while (!(await reader.read()).done) {
-          // The child has its own conversation surface; the parent only gets a projection.
-        }
+      if (result.status === "failed") {
+        throw new Error(result.message);
       }
     } catch (cause) {
       if (createdWorktree && !childThreadId) await cleanupCreatedWorktree(worktree);

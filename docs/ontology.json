@@ -535,7 +535,7 @@
     },
     {
       "name": "ConversationTurnSessionModule",
-      "description": "A deep renderer-side Aldunis Code module that concentrates LocalConversation turn transport—provider-run admission HTTP, NDJSON stream intake, cancellation, approval decide, and input answer—behind one interface that emits ConversationRunModule actions, while ConversationComposer retains archive, draft, workspace, and rendering authority and the local host retains provider-process, permission, and persistence authority."
+      "description": "A deep renderer-side Aldunis Code module that concentrates LocalConversation turn transport—provider-run admission HTTP, NDJSON stream intake, delegated-child start drain without parent run dispatch, cancellation, approval decide, and input answer—behind one interface that emits ConversationRunModule actions for the focused conversation, while ConversationComposer retains archive, draft, workspace, and rendering authority, StartDelegatedConversationDialog retains worktree preview and child-task chrome, and the local host retains provider-process, permission, and persistence authority."
     },
     {
       "name": "DelegatedHumanControlSessionModule",
@@ -1479,7 +1479,7 @@
     },
     {
       "name": "transports_conversation_turns",
-      "description": "The conversation turn session transports one LocalConversation turn's host HTTP and stream intake into ConversationRunModule actions without acquiring provider-process, permission, persistence, or rendering authority.",
+      "description": "The conversation turn session transports one LocalConversation turn's host HTTP and stream intake into ConversationRunModule actions, and drains a delegated child's provider-run stream without parent run dispatch, without acquiring provider-process, permission, persistence, or rendering authority.",
       "domain": "ConversationTurnSessionModule",
       "range": "LocalConversation",
       "cardinality": {
@@ -2933,13 +2933,13 @@
     },
     {
       "subject": "ConversationTurnSessionModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#828",
-      "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule; src/features/code/conversation.tsx#Conversation",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#942",
+      "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule; src/features/code/conversation.tsx#Conversation; src/features/dialogs/start-delegated-conversation-dialog.tsx#StartDelegatedConversationDialog",
       "confidence": 1.0
     },
     {
       "subject": "transports_conversation_turns",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#828",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#942",
       "locator": "src/lib/conversation-turn-session.ts#ConversationTurnSessionModule",
       "confidence": 1.0
     },
