@@ -31,6 +31,7 @@ export type WorkspacePanelLifecycleEvent =
   | { type: "set_changes_mode"; mode: WorkspaceChangesMode }
   | { type: "close"; destination: WorkspacePanelDestination; restoreFocus?: boolean }
   | { type: "close_preview" }
+  | { type: "dismiss_preview" }
   | { type: "toggle_preview_floating" }
   | { type: "browser_observation"; present: boolean }
   | { type: "workspace_reset" }
@@ -185,6 +186,23 @@ export function transitionWorkspacePanelLifecycle(
       effects: [
         { type: "change_panel", panel: "none" },
         ...(restoreFocus ? ([{ type: "focus_panel", destination, defer: true }] as const) : []),
+      ],
+    };
+  }
+  if (event.type === "dismiss_preview") {
+    return {
+      state: {
+        ...current,
+        activePanel: current.activePanel === "preview" ? "none" : current.activePanel,
+        previewMounted: false,
+        previewFloating: false,
+        browserObservationOpen: false,
+      },
+      effects: [
+        ...(current.activePanel === "preview"
+          ? ([{ type: "change_panel", panel: "none" }] as const)
+          : []),
+        { type: "focus_panel", destination: "preview", defer: true },
       ],
     };
   }
