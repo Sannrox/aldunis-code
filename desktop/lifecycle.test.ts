@@ -118,6 +118,15 @@ test("desktop ESM build leaves CommonJS runtime dependencies outside the bundle"
   assert.match(mainProcessBuild ?? "", /--external:@iarna\/toml/);
 });
 
+test("desktop packaging excludes the standalone CLI bundle", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  ) as { build?: { files?: string[] } };
+
+  assert.equal(packageJson.build?.files?.includes("dist-electron/**/*"), true);
+  assert.equal(packageJson.build?.files?.includes("dist-cli/**/*"), false);
+});
+
 test("desktop main adapts the CommonJS updater and keeps cleanup in before-quit", async () => {
   const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
 
