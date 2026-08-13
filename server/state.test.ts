@@ -2305,10 +2305,23 @@ test("checkpoint states rebuild and are removed with their conversation", async 
     completedIdentity: "other-completed",
     state: "completed",
   });
+  await store.saveCheckpoint({
+    ...(await store.load()).checkpoints[0],
+    id: "checkpoint-3",
+    worktree: "/other-worktree",
+    baselineIdentity: "older-other-baseline",
+    completedIdentity: "older-other-completed",
+    state: "completed",
+  });
+  Object.defineProperty(store, "load", {
+    value: async () => {
+      throw new Error("checkpoint supersession must not clone the full projection");
+    },
+  });
   await store.supersedeCompletedCheckpoints(thread.id, "/other-worktree", "checkpoint-2");
 
   const rebuilt = await new LocalStateStore(directory).load();
-  assert.equal(rebuilt.checkpoints.length, 2);
+  assert.equal(rebuilt.checkpoints.length, 3);
   assert.equal(rebuilt.checkpoints[0].state, "completed");
   assert.equal(rebuilt.checkpoints[0].baselineIdentity, "baseline-tree");
   assert.deepEqual(rebuilt.checkpoints[0].files, [
@@ -2321,9 +2334,10 @@ test("checkpoint states rebuild and are removed with their conversation", async 
     },
   ]);
   assert.equal(rebuilt.checkpoints[1].state, "completed");
+  assert.equal(rebuilt.checkpoints[2].state, "superseded");
 
   await store.deleteProject("project-1");
-  assert.equal((await store.load()).checkpoints.length, 0);
+  assert.equal((await new LocalStateStore(directory).load()).checkpoints.length, 0);
   assert.equal(
     (await readFile(join(directory, "events.v1.jsonl"), "utf8")).includes("baseline-tree"),
     false,

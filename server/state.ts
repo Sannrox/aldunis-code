@@ -4428,17 +4428,21 @@ export class LocalStateStore {
     worktree: string,
     exceptId: string,
   ): Promise<void> {
-    const projection = await this.load();
-    for (const checkpoint of projection.checkpoints) {
-      if (
-        checkpoint.threadId === threadId &&
-        checkpoint.worktree === worktree &&
-        checkpoint.id !== exceptId &&
-        checkpoint.state === "completed"
-      ) {
-        await this.saveCheckpoint({ ...checkpoint, state: "superseded" });
-      }
-    }
+    await this.#appendComputed(() => {
+      const now = new Date().toISOString();
+      const events = (this.#conversationHistory.checkpointsByThread.get(threadId) ?? [])
+        .filter(
+          (checkpoint) =>
+            checkpoint.worktree === worktree &&
+            checkpoint.id !== exceptId &&
+            checkpoint.state === "completed",
+        )
+        .map((checkpoint): StateEvent => ({
+          type: "checkpoint_saved",
+          checkpoint: { ...checkpoint, state: "superseded", updatedAt: now },
+        }));
+      return { event: events.length > 0 ? events : null, value: undefined };
+    });
   }
 
   async deleteProject(projectId: string): Promise<void> {
