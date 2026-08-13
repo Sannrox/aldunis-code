@@ -3261,7 +3261,9 @@ export class LocalStateStore {
   async previewConversationDeletion(
     threadId: string,
   ): Promise<ConversationDeletion["affectedRecords"]> {
-    const projection = await this.load();
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
     this.#requireThread(projection, threadId);
     this.#assertConversationSettled(projection.turns, threadId, "deleted");
     return this.#conversationRecordCounts(projection, threadId);
@@ -3310,7 +3312,9 @@ export class LocalStateStore {
   }
 
   async unlinkDelegatedConversation(parentThreadId: string, childThreadId: string): Promise<void> {
-    const projection = await this.load();
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
     const relationship = projection.delegatedRelationships.find(
       (item) => item.parentThreadId === parentThreadId && item.childThreadId === childThreadId,
     );
@@ -3580,7 +3584,9 @@ export class LocalStateStore {
   }
 
   async deleteConversation(threadId: string): Promise<ConversationDeletion> {
-    const projection = await this.load();
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
     const existingDeletion = projection.conversationDeletions.find(
       (item) => item.threadId === threadId && item.status !== "completed",
     );

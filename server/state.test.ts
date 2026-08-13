@@ -1482,6 +1482,11 @@ test("conversation deletion previews and physically compacts only conversation-o
     retryOf: null,
   });
   await store.bindAutomationFireTurn(fire.fire.id, turn.id);
+  Object.defineProperty(store, "load", {
+    value: async () => {
+      throw new Error("conversation lifecycle preflight must not clone the full projection");
+    },
+  });
 
   assert.deepEqual(await store.previewConversationDeletion(thread.id), {
     thread: 1,
@@ -1577,6 +1582,19 @@ test("delegated conversation relationships persist, enforce one parent, and deta
     () => store.linkDelegatedConversation(child.id, child.id),
     /cannot be delegated to itself/,
   );
+  Object.defineProperty(store, "load", {
+    value: async () => {
+      throw new Error("delegated unlink preflight must not clone the full projection");
+    },
+  });
+  await store.unlinkDelegatedConversation(firstParent.id, child.id);
+  assert.equal(
+    (await store.inspectWorkbenchProjection()).conversationHistory.delegatedRelationshipByChild.has(
+      child.id,
+    ),
+    false,
+  );
+  await store.linkDelegatedConversation(firstParent.id, child.id);
 
   assert.equal((await store.previewConversationDeletion(firstParent.id)).delegatedRelationships, 1);
   await store.deleteConversation(firstParent.id);
