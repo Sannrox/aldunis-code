@@ -2263,7 +2263,13 @@ test("diff annotations survive restart, resolve explicitly, and follow conversat
     mode: "ask",
     provider: "claude-code",
   });
-  await store.saveAnnotation({
+  class AnnotationIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("annotation mutations must not clone the full projection");
+    }
+  }
+  const annotationStore = new AnnotationIndexOnlyStore(directory);
+  await annotationStore.saveAnnotation({
     id: "annotation-1",
     threadId: thread.id,
     checkpointId: null,
@@ -2280,10 +2286,34 @@ test("diff annotations survive restart, resolve explicitly, and follow conversat
     resolution: "unresolved",
     createdAt: new Date().toISOString(),
   });
+  await assert.rejects(
+    annotationStore.saveAnnotation({
+      id: "missing-thread-annotation",
+      threadId: "missing-thread",
+      checkpointId: null,
+      diffIdentity: "diff-identity",
+      path: "src/example.ts",
+      previousPath: null,
+      targetState: "modified",
+      scope: "file",
+      side: null,
+      oldLine: null,
+      newLine: null,
+      text: "missing",
+      capturedContext: "",
+      resolution: "unresolved",
+      createdAt: new Date().toISOString(),
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
 
   let restarted = new LocalStateStore(directory);
   assert.equal((await restarted.load()).annotations[0].resolution, "unresolved");
-  await restarted.setAnnotationResolution("annotation-1", thread.id, "resolved");
+  await annotationStore.setAnnotationResolution("annotation-1", thread.id, "resolved");
+  await assert.rejects(
+    annotationStore.setAnnotationResolution("missing-annotation", thread.id, "resolved"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
   restarted = new LocalStateStore(directory);
   assert.equal((await restarted.load()).annotations[0].resolution, "resolved");
 
@@ -3041,7 +3071,13 @@ test("file reviews are keyed by content identity and follow conversation retenti
     mode: "ask",
     provider: "claude-code",
   });
-  const first = await store.setFileReview({
+  class FileReviewIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("file review mutations must not clone the full projection");
+    }
+  }
+  const reviewStore = new FileReviewIndexOnlyStore(directory);
+  const first = await reviewStore.setFileReview({
     threadId: thread.id,
     path: "src/example.ts",
     previousPath: null,
@@ -3051,7 +3087,7 @@ test("file reviews are keyed by content identity and follow conversation retenti
   assert.equal(first.reviewed, true);
   assert.ok(first.reviewedAt);
   // Same path with a new content identity is a new review row (rebase-safe).
-  const afterRebase = await store.setFileReview({
+  const afterRebase = await reviewStore.setFileReview({
     threadId: thread.id,
     path: "src/example.ts",
     previousPath: null,
@@ -3059,7 +3095,7 @@ test("file reviews are keyed by content identity and follow conversation retenti
     reviewed: false,
   });
   assert.notEqual(afterRebase.id, first.id);
-  const again = await store.setFileReview({
+  const again = await reviewStore.setFileReview({
     threadId: thread.id,
     path: "src/example.ts",
     previousPath: null,
@@ -3069,16 +3105,26 @@ test("file reviews are keyed by content identity and follow conversation retenti
   assert.equal(again.id, first.id);
   assert.equal(again.reviewed, false);
   assert.equal(again.reviewedAt, null);
+  await assert.rejects(
+    reviewStore.setFileReview({
+      threadId: "missing-thread",
+      path: "src/example.ts",
+      previousPath: null,
+      diffIdentity: "content-identity-a",
+      reviewed: true,
+    }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
 
   let rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.fileReviews.length, 2);
 
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+  await reviewStore.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "turn_completed",
     sessionId: "session-1",
     costUsd: 0,
   });
-  await store.deleteConversation(thread.id);
+  await new LocalStateStore(directory).deleteConversation(thread.id);
   rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.fileReviews.length, 0);
 });

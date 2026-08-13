@@ -624,6 +624,8 @@ export interface ConversationHistoryIndex {
   providerSessionsByThread: RowsByThread<ProviderSession>;
   conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
   forkByDestinationThread: ReadonlyMap<string, ConversationFork>;
+  annotationById: ReadonlyMap<string, DiffAnnotation>;
+  fileReviewByIdentity: ReadonlyMap<string, FileReview>;
   delegatedRelationshipByChild: ReadonlyMap<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
@@ -658,6 +660,8 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   providerSessionsByThread: Map<string, ProviderSession[]>;
   conversationDeletionByThread: Map<string, ConversationDeletion>;
   forkByDestinationThread: Map<string, ConversationFork>;
+  annotationById: Map<string, DiffAnnotation>;
+  fileReviewByIdentity: Map<string, FileReview>;
   delegatedRelationshipByChild: Map<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
@@ -673,6 +677,12 @@ function groupRowsByThread<T>(rows: readonly T[], threadId: (row: T) => string):
     else rowsByThread.set(id, [row]);
   }
   return rowsByThread;
+}
+
+function fileReviewIdentity(
+  review: Pick<FileReview, "threadId" | "path" | "diffIdentity">,
+): string {
+  return `${review.threadId}\0${review.path}\0${review.diffIdentity}`;
 }
 
 function buildConversationHistoryIndex(
@@ -696,6 +706,12 @@ function buildConversationHistoryIndex(
     ),
     forkByDestinationThread: new Map(
       projection.forks.map((fork) => [fork.destinationThreadId, fork]),
+    ),
+    annotationById: new Map(
+      projection.annotations.map((annotation) => [annotation.id, annotation]),
+    ),
+    fileReviewByIdentity: new Map(
+      projection.fileReviews.map((review) => [fileReviewIdentity(review), review]),
     ),
     delegatedRelationshipByChild: new Map(
       projection.delegatedRelationships.map((relationship) => [
@@ -1390,8 +1406,17 @@ function applyEvent(
       );
   } else if (event.type === "annotation_saved") {
     replaceByIdDuringReplay(projection.annotations, event.annotation, replayIndexes);
+    conversationHistory?.annotationById.set(event.annotation.id, event.annotation);
   } else if (event.type === "file_review_saved") {
+    const previous = projection.fileReviews.find((review) => review.id === event.fileReview.id);
     replaceByIdDuringReplay(projection.fileReviews, event.fileReview, replayIndexes);
+    if (conversationHistory) {
+      if (previous) conversationHistory.fileReviewByIdentity.delete(fileReviewIdentity(previous));
+      conversationHistory.fileReviewByIdentity.set(
+        fileReviewIdentity(event.fileReview),
+        event.fileReview,
+      );
+    }
   } else if (event.type === "conversation_deletion_saved") {
     const index = projection.conversationDeletions.findIndex(
       (item) => item.threadId === event.conversationDeletion.threadId,
@@ -4262,15 +4287,17 @@ export class LocalStateStore {
   async saveAnnotation(
     annotation: Omit<DiffAnnotation, "schemaVersion" | "updatedAt">,
   ): Promise<DiffAnnotation> {
-    const thread = (await this.load()).threads.find((item) => item.id === annotation.threadId);
-    if (!thread) throw new LocalStateError("The annotation conversation is unavailable.", 404);
-    const saved: DiffAnnotation = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      ...annotation,
-      updatedAt: new Date().toISOString(),
-    };
-    await this.#append({ type: "annotation_saved", annotation: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      if (!this.#conversationHistory.threadById.has(annotation.threadId)) {
+        throw new LocalStateError("The annotation conversation is unavailable.", 404);
+      }
+      const saved: DiffAnnotation = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        ...annotation,
+        updatedAt: new Date().toISOString(),
+      };
+      return { event: { type: "annotation_saved", annotation: saved }, value: saved };
+    });
   }
 
   async setAnnotationResolution(
@@ -4278,11 +4305,14 @@ export class LocalStateStore {
     threadId: string,
     resolution: AnnotationResolution,
   ): Promise<DiffAnnotation> {
-    const annotation = (await this.load()).annotations.find(
-      (item) => item.id === annotationId && item.threadId === threadId,
-    );
-    if (!annotation) throw new LocalStateError("The annotation is unavailable.", 404);
-    return this.saveAnnotation({ ...annotation, resolution });
+    return this.#appendComputed(() => {
+      const annotation = this.#conversationHistory.annotationById.get(annotationId);
+      if (!annotation || annotation.threadId !== threadId) {
+        throw new LocalStateError("The annotation is unavailable.", 404);
+      }
+      const saved = { ...annotation, resolution, updatedAt: new Date().toISOString() };
+      return { event: { type: "annotation_saved", annotation: saved }, value: saved };
+    });
   }
 
   async setFileReview(input: {
@@ -4292,39 +4322,37 @@ export class LocalStateStore {
     diffIdentity: string;
     reviewed: boolean;
   }): Promise<FileReview> {
-    const projection = await this.load();
-    const thread = projection.threads.find((item) => item.id === input.threadId);
-    if (!thread) throw new LocalStateError("The review conversation is unavailable.", 404);
     const path = input.path.trim();
     const diffIdentity = input.diffIdentity.trim();
     if (!path || !diffIdentity) {
       throw new LocalStateError("A file path and content identity are required.", 400);
     }
-    const now = new Date().toISOString();
-    const existing = projection.fileReviews.find(
-      (item) =>
-        item.threadId === input.threadId &&
-        item.path === path &&
-        item.diffIdentity === diffIdentity,
-    );
-    const saved: FileReview = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: existing?.id ?? randomUUID(),
-      threadId: input.threadId,
-      path,
-      previousPath: input.previousPath ?? existing?.previousPath ?? null,
-      diffIdentity,
-      reviewed: input.reviewed,
-      reviewedAt: input.reviewed
-        ? existing?.reviewed && existing.reviewedAt
-          ? existing.reviewedAt
-          : now
-        : null,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    await this.#append({ type: "file_review_saved", fileReview: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      if (!this.#conversationHistory.threadById.has(input.threadId)) {
+        throw new LocalStateError("The review conversation is unavailable.", 404);
+      }
+      const now = new Date().toISOString();
+      const existing = this.#conversationHistory.fileReviewByIdentity.get(
+        fileReviewIdentity({ threadId: input.threadId, path, diffIdentity }),
+      );
+      const saved: FileReview = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: existing?.id ?? randomUUID(),
+        threadId: input.threadId,
+        path,
+        previousPath: input.previousPath ?? existing?.previousPath ?? null,
+        diffIdentity,
+        reviewed: input.reviewed,
+        reviewedAt: input.reviewed
+          ? existing?.reviewed && existing.reviewedAt
+            ? existing.reviewedAt
+            : now
+          : null,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      return { event: { type: "file_review_saved", fileReview: saved }, value: saved };
+    });
   }
 
   async supersedeCompletedCheckpoints(
