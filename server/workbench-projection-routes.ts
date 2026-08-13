@@ -54,74 +54,49 @@ export function filterManagedThreadSearchProjection(
   };
 }
 
-export function filterManagedProjection(
+export function filterManagedOrchestrationProjection(
   projection: StateProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
-  const projectIds = new Set(projects.map((project) => project.id));
   const threadIds = new Set(threads.map((thread) => thread.id));
   const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
   const turnIds = new Set(turns.map((turn) => turn.id));
-  const autonomyRuns = projection.autonomyRuns.filter(
-    (run) => run.projectId === null || projectIds.has(run.projectId),
-  );
-  const visibleAutonomyRunIds = new Set(autonomyRuns.map((run) => run.id));
   return {
-    ...projection,
+    schemaVersion: projection.schemaVersion,
+    sequence: projection.sequence,
     projects,
     threads,
     turns,
     messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
     activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
-    plans: projection.plans.filter(
-      (plan) => threadIds.has(plan.threadId) && turnIds.has(plan.turnId),
-    ),
-    contextReceipts: projection.contextReceipts.filter(
-      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
-    ),
-    usageReceipts: projection.usageReceipts.filter(
-      (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
-    ),
-    governanceCorrelations: projection.governanceCorrelations.filter((receipt) =>
-      threadIds.has(receipt.threadId),
-    ),
+    plans: [],
+    contextReceipts: [],
+    usageReceipts: [],
+    governanceCorrelations: [],
     providerSessions: projection.providerSessions.filter((session) =>
       threadIds.has(session.threadId),
     ),
-    checkpoints: projection.checkpoints.filter(
-      (checkpoint) => threadIds.has(checkpoint.threadId) && turnIds.has(checkpoint.turnId),
-    ),
-    annotations: projection.annotations.filter((annotation) => threadIds.has(annotation.threadId)),
-    fileReviews: projection.fileReviews.filter((review) => threadIds.has(review.threadId)),
+    checkpoints: [],
+    annotations: [],
+    fileReviews: [],
     conversationDeletions: projection.conversationDeletions.filter((deletion) =>
       threadIds.has(deletion.threadId),
     ),
-    forks: projection.forks.filter(
-      (fork) => threadIds.has(fork.sourceThreadId) && threadIds.has(fork.destinationThreadId),
-    ),
+    forks: [],
     delegatedRelationships: projection.delegatedRelationships.filter(
       (relationship) =>
         threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
     ),
     inputRequests: projection.inputRequests.filter((item) => threadIds.has(item.threadId)),
-    inputReceipts: projection.inputReceipts.filter(
-      (receipt) =>
-        threadIds.has(receipt.childThreadId) &&
-        (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
-    ),
-    autonomyRuns,
-    autonomyTasks: projection.autonomyTasks.filter((task) => visibleAutonomyRunIds.has(task.runId)),
-    autonomyFlows: projection.autonomyFlows,
-    heartbeatMonitors: projection.heartbeatMonitors.filter(
-      (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
-    ),
-    standingOrders: projection.standingOrders.filter(
-      (order) => order.projectId === null || projectIds.has(order.projectId),
-    ),
-    autonomyHooks: projection.autonomyHooks.filter(
-      (hook) => hook.projectId === null || projectIds.has(hook.projectId),
-    ),
+    inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
   };
 }
 
@@ -209,7 +184,7 @@ export async function handleWorkbenchProjectionRoute(
     const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
     const visibleProjection = managedHost
       ? orchestrationEnabled
-        ? filterManagedProjection(projection, managedHost)
+        ? filterManagedOrchestrationProjection(projection, managedHost)
         : filterManagedWorkbenchListProjection(projection, managedHost)
       : projection;
     // Derive transcript-backed values before the Workbench projection strips them,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import {
-  filterManagedProjection,
+  filterManagedOrchestrationProjection,
   filterManagedUsageReceipts,
   filterManagedWorkbenchListProjection,
   handleWorkbenchProjectionRoute,
@@ -287,21 +287,36 @@ test("managed Workbench load filters projects and approvals through catalogue au
   assert.deepEqual(value?.delegatedApprovals, []);
 });
 
-test("managed projection derives task visibility from one filtered run index", () => {
+test("managed orchestration projection skips unrelated durable collections", () => {
   const value = projection();
-  value.autonomyRuns = [
-    { id: "visible", projectId: "p1" },
-    { id: "global", projectId: null },
-    { id: "hidden", projectId: "p2" },
-  ] as StateProjection["autonomyRuns"];
-  value.autonomyTasks = [
-    { id: "visible-task", runId: "visible" },
-    { id: "global-task", runId: "global" },
-    { id: "hidden-task", runId: "hidden" },
-    { id: "orphan-task", runId: "missing" },
-  ] as StateProjection["autonomyTasks"];
+  value.turns.push({
+    schemaVersion: 2,
+    id: "turn-hidden",
+    threadId: "hidden",
+    status: "completed",
+    mode: "build",
+    createdAt: "t0",
+    completedAt: "t1",
+  });
+  value.messages.push({
+    schemaVersion: 2,
+    id: "message-hidden",
+    turnId: "turn-hidden",
+    role: "assistant",
+    text: "hidden content",
+    createdAt: "t0",
+  });
+  value.plans = [{}] as StateProjection["plans"];
+  value.contextReceipts = [{}] as StateProjection["contextReceipts"];
+  value.usageReceipts = [{}] as StateProjection["usageReceipts"];
+  value.governanceCorrelations = [{}] as StateProjection["governanceCorrelations"];
+  value.checkpoints = [{}] as StateProjection["checkpoints"];
+  value.annotations = [{}] as StateProjection["annotations"];
+  value.fileReviews = [{}] as StateProjection["fileReviews"];
+  value.inputReceipts = [{}] as StateProjection["inputReceipts"];
+  value.autonomyRuns = [{}] as StateProjection["autonomyRuns"];
 
-  const filtered = filterManagedProjection(value, {
+  const filtered = filterManagedOrchestrationProjection(value, {
     repositoryForRoot(root) {
       if (root !== "/alpha") throw new Error("outside catalogue");
       return {} as never;
@@ -309,13 +324,22 @@ test("managed projection derives task visibility from one filtered run index", (
   });
 
   assert.deepEqual(
-    filtered.autonomyRuns.map((run) => run.id),
-    ["visible", "global"],
+    filtered.turns.map((turn) => turn.id),
+    ["turn-active"],
   );
   assert.deepEqual(
-    filtered.autonomyTasks.map((task) => task.id),
-    ["visible-task", "global-task"],
+    filtered.messages.map((message) => message.id),
+    ["message"],
   );
+  assert.deepEqual(filtered.plans, []);
+  assert.deepEqual(filtered.contextReceipts, []);
+  assert.deepEqual(filtered.usageReceipts, []);
+  assert.deepEqual(filtered.governanceCorrelations, []);
+  assert.deepEqual(filtered.checkpoints, []);
+  assert.deepEqual(filtered.annotations, []);
+  assert.deepEqual(filtered.fileReviews, []);
+  assert.deepEqual(filtered.inputReceipts, []);
+  assert.deepEqual(filtered.autonomyRuns, []);
 });
 
 test("managed list projection skips transcript and durable-history filtering", () => {
