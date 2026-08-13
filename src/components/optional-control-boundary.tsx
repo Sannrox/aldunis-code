@@ -1,4 +1,4 @@
-import React, { Component, Suspense, type ErrorInfo, type ReactNode } from "react";
+import React, { Component, Suspense, useLayoutEffect, type ErrorInfo, type ReactNode } from "react";
 import { Button, WorkbenchDialog } from "./ui";
 
 interface OptionalControlBoundaryProps {
@@ -6,11 +6,31 @@ interface OptionalControlBoundaryProps {
   onDismiss: () => void;
   onReload?: () => void;
   pendingDialog?: boolean;
+  /** Destination-shaped chrome while the optional chunk is pending. Dialogs keep `null`. */
+  fallback?: ReactNode;
+  /** True while Suspense is showing `fallback`; false once content paints or recovery opens. */
+  onPendingChange?: (pending: boolean) => void;
   children?: ReactNode;
 }
 
 interface OptionalControlBoundaryState {
   failed: boolean;
+}
+
+function OptionalControlPendingReporter({
+  pending,
+  onPendingChange,
+}: {
+  pending: boolean;
+  onPendingChange?: (pending: boolean) => void;
+}) {
+  useLayoutEffect(() => {
+    onPendingChange?.(pending);
+    return () => {
+      if (pending) onPendingChange?.(false);
+    };
+  }, [onPendingChange, pending]);
+  return null;
 }
 
 /** Keep an optional chunk failure from taking down the eager workbench. */
@@ -28,6 +48,17 @@ export class OptionalControlBoundary extends Component<
     // Lazy-load failures are intentionally projected without local paths or URLs.
   }
 
+  componentDidMount(): void {
+    if (this.state.failed) this.props.onPendingChange?.(false);
+  }
+
+  componentDidUpdate(
+    _previous: OptionalControlBoundaryProps,
+    previousState: OptionalControlBoundaryState,
+  ): void {
+    if (this.state.failed && !previousState.failed) this.props.onPendingChange?.(false);
+  }
+
   render(): ReactNode {
     if (!this.state.failed) {
       const fallback = this.props.pendingDialog ? (
@@ -40,8 +71,28 @@ export class OptionalControlBoundary extends Component<
         >
           <p role="status">Loading {this.props.label.toLowerCase()}…</p>
         </WorkbenchDialog>
-      ) : null;
-      return <Suspense fallback={fallback}>{this.props.children}</Suspense>;
+      ) : (
+        (this.props.fallback ?? null)
+      );
+      return (
+        <Suspense
+          fallback={
+            <>
+              <OptionalControlPendingReporter
+                pending
+                onPendingChange={this.props.onPendingChange}
+              />
+              {fallback}
+            </>
+          }
+        >
+          <OptionalControlPendingReporter
+            pending={false}
+            onPendingChange={this.props.onPendingChange}
+          />
+          {this.props.children}
+        </Suspense>
+      );
     }
     return (
       <WorkbenchDialog

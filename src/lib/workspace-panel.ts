@@ -67,6 +67,15 @@ export function initialWorkspacePanelLifecycle(
   };
 }
 
+/** First-open chunk load holds the pressed destination until content or recovery. */
+export function workspacePanelToggleHeld(
+  activePanel: WorkspacePanel,
+  destination: WorkspacePanelDestination,
+  pending: boolean,
+): boolean {
+  return pending && activePanel === destination;
+}
+
 export function workspacePanelTabStop(
   state: Pick<WorkspacePanelLifecycleState, "activePanel" | "focusedPanel">,
   available: readonly WorkspacePanelDestination[],
