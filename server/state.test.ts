@@ -1894,6 +1894,44 @@ test("recovery reopens a claimed child answer when no follow-up turn was persist
   assert.equal(projection.turns[0].status, "waiting_for_user");
 });
 
+test("recovery retains a claimed child answer with its exact persisted follow-up", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Work",
+    mode: "plan",
+    provider: "shikigami",
+  });
+  await store.bindProviderRun(started.turn.id, "run-persisted");
+  await store.recordProviderEvent(started.thread.id, started.turn.id, "shikigami", {
+    kind: "input_requested",
+    id: "request-persisted",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    providerRequestId: null,
+    expiresAt: null,
+    allowFreeForm: true,
+  });
+  await store.resolveInputRequest("request-persisted", "Continue", null);
+  await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Operator response to child input request request-persisted:\nContinue?\n\nContinue",
+    mode: "plan",
+    provider: "shikigami",
+    threadId: started.thread.id,
+  });
+
+  await store.recoverInterruptedTurns();
+  const projection = await store.load();
+  assert.equal(projection.inputRequests[0].state, "answered");
+  assert.equal(projection.inputReceipts.length, 1);
+});
+
 test("state compaction preserves message and activity event order", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
