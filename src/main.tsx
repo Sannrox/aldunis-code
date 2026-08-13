@@ -193,7 +193,7 @@ function App() {
       const theme = resolveTheme(preferences.theme, media.matches);
       document.documentElement.dataset.theme = theme;
       const icon = document.querySelector<HTMLLinkElement>("#app-icon");
-      if (icon) icon.href = `/aldunis-mark-${theme}.png`;
+      if (icon) icon.href = `/aldunis-mark-${theme}-web.png`;
     };
     applyTheme();
     document.documentElement.dataset.density = preferences.density;
