@@ -497,7 +497,7 @@ test("autonomy runs refresh while visible and keep row status readable", () => {
   assert.match(session, /AUTONOMY_REFRESH_INTERVAL_MS = 5_000/);
   assert.match(session, /visibility\.visibilityState !== "visible"/);
   assert.match(session, /visibility\.addEventListener\("visibilitychange"/);
-  assert.match(session, /timers\.clearInterval/);
+  assert.match(session, /timers\.clearTimeout/);
   assert.match(css, /\.autonomy-dialog-body \.row\s*\{[^}]*display:\s*flex[^}]*gap:\s*8px/s);
   assert.match(css, /\.autonomy-dialog-body \.autonomy-card > \.row\s*\{[^}]*flex-wrap:\s*wrap/s);
 });

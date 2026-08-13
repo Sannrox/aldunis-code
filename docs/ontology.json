@@ -535,7 +535,7 @@
     },
     {
       "name": "AutonomyLedgerSessionModule",
-      "description": "A deep renderer-side Aldunis Code module that concentrates Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
+      "description": "A deep renderer-side Aldunis Code module that concentrates visible-only, completion-paced Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
     },
     {
       "name": "ConversationAutomationSessionModule",
