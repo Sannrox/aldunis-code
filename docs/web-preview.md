@@ -86,7 +86,10 @@ for adapters that explicitly receive inline JPEG, PNG, or WebP bytes. Aldunis
 caps each frame, strips query strings from the displayed location, shows only
 the latest frame in the floating view, and keeps it out of messages, activity,
 checkpoints, and the local journal. The frame is read-only: it cannot be
-clicked, navigated, or used to access provider credentials.
+clicked, navigated, or used to access provider credentials. The named floating
+slot appears as soon as a frame is present and can show that image while the
+deferred Preview panel chunk is still loading, so an ephemeral agent frame is
+not missed.
 
 This is an adapter contract, not a browser attachment. The current Codex
 app-server `imageView` item contains a local filesystem path, which Aldunis

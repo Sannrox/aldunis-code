@@ -135,10 +135,12 @@ import {
   initialWorkspacePanelLifecycle,
   transitionWorkspacePanelLifecycle,
   workspacePanelTabStop,
+  workspacePanelToggleHeld,
   type WorkspacePanel,
   type WorkspacePanelDestination,
   type WorkspacePanelLifecycleEvent,
 } from "../../lib/workspace-panel";
+import { WorkspacePanelPendingFallback } from "./workspace-panel-pending";
 import { isRepositoryRelativeContextPinPath } from "../../lib/context-pins";
 import {
   presentAssistantTimeline,
@@ -1143,6 +1145,36 @@ export function Conversation({
   );
   const workspacePanelLifecycleRef = useRef(workspacePanelLifecycle);
   workspacePanelLifecycleRef.current = workspacePanelLifecycle;
+  const [pendingWorkspacePanels, setPendingWorkspacePanels] = useState({
+    files: false,
+    preview: false,
+    changes: false,
+  });
+  const pendingWorkspacePanelsRef = useRef(pendingWorkspacePanels);
+  pendingWorkspacePanelsRef.current = pendingWorkspacePanels;
+  const markWorkspacePanelPending = useCallback(
+    (destination: WorkspacePanelDestination, pending: boolean) => {
+      setPendingWorkspacePanels((current) => {
+        if (current[destination] === pending) return current;
+        const next = { ...current, [destination]: pending };
+        pendingWorkspacePanelsRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+  const onFilesPendingChange = useCallback(
+    (pending: boolean) => markWorkspacePanelPending("files", pending),
+    [markWorkspacePanelPending],
+  );
+  const onPreviewPendingChange = useCallback(
+    (pending: boolean) => markWorkspacePanelPending("preview", pending),
+    [markWorkspacePanelPending],
+  );
+  const onChangesPendingChange = useCallback(
+    (pending: boolean) => markWorkspacePanelPending("changes", pending),
+    [markWorkspacePanelPending],
+  );
   const {
     previewFloating,
     browserObservationOpen: agentBrowserViewOpen,
@@ -1197,6 +1229,15 @@ export function Conversation({
     );
   }, []);
   const activateWorkspacePanel = (destination: WorkspacePanelDestination) => {
+    if (
+      workspacePanelToggleHeld(
+        workspacePanelLifecycleRef.current.activePanel,
+        destination,
+        pendingWorkspacePanelsRef.current[destination],
+      )
+    ) {
+      return;
+    }
     dispatchWorkspacePanel({ type: "toggle", destination });
   };
   const openChanges = (mode: ChangesPanelMode) => {
@@ -2664,6 +2705,7 @@ export function Conversation({
                   : `Files unavailable, ${pane} pane: open a repository`
               }
               aria-pressed={activePanel === "files"}
+              aria-busy={pendingWorkspacePanels.files || undefined}
               onKeyDown={(event) => moveWorkspacePanel(event, "files")}
               onClick={() => activateWorkspacePanel("files")}
             >
@@ -2688,6 +2730,7 @@ export function Conversation({
                 .filter(Boolean)
                 .join(", ")}
               aria-pressed={activePanel === "preview"}
+              aria-busy={pendingWorkspacePanels.preview || undefined}
               onKeyDown={(event) => moveWorkspacePanel(event, "preview")}
               onClick={() => activateWorkspacePanel("preview")}
             >
@@ -4547,7 +4590,20 @@ export function Conversation({
           {/* File browser and preview stay inside .conv; the selector guarantees
           only one workspace destination is visible at a time. */}
           {repository && (activePanel === "preview" || previewFloating || agentBrowserViewOpen) && (
-            <OptionalControlBoundary label="Preview" onDismiss={dismissPreview}>
+            <OptionalControlBoundary
+              label="Preview"
+              onDismiss={dismissPreview}
+              onPendingChange={onPreviewPendingChange}
+              fallback={
+                <WorkspacePanelPendingFallback
+                  destination="preview"
+                  pane={pane}
+                  floating={previewFloating}
+                  observation={agentBrowserViewOpen ? latestAgentBrowserObservation : null}
+                  onClose={closePreview}
+                />
+              }
+            >
               <PreviewPanel
                 key={`${repository.root}:${repository.selectedWorktree}`}
                 repository={repository}
@@ -4566,7 +4622,18 @@ export function Conversation({
             </OptionalControlBoundary>
           )}
           {activePanel === "files" && repository && (
-            <OptionalControlBoundary label="Files" onDismiss={() => closeWorkspacePanel("files")}>
+            <OptionalControlBoundary
+              label="Files"
+              onDismiss={() => closeWorkspacePanel("files")}
+              onPendingChange={onFilesPendingChange}
+              fallback={
+                <WorkspacePanelPendingFallback
+                  destination="files"
+                  pane={pane}
+                  onClose={() => closeWorkspacePanel("files")}
+                />
+              }
+            >
               <FileBrowserPanel
                 repository={repository}
                 pane={pane}
@@ -4588,6 +4655,14 @@ export function Conversation({
             <OptionalControlBoundary
               label="Changes"
               onDismiss={() => closeWorkspacePanel("changes")}
+              onPendingChange={onChangesPendingChange}
+              fallback={
+                <WorkspacePanelPendingFallback
+                  destination="changes"
+                  pane={pane}
+                  onClose={() => closeWorkspacePanel("changes")}
+                />
+              }
             >
               <ChangesPanel
                 repository={repository}

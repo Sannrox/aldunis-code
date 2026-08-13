@@ -62,7 +62,8 @@ test("workspace panels stay behind conversation intent", () => {
     );
     assert.match(conversationSource, new RegExp(`import\\(["']${path}["']\\)`));
   }
-  assert.match(conversationSource, /label="Preview" onDismiss=\{dismissPreview\}/);
+  assert.match(conversationSource, /label="Preview"/);
+  assert.match(conversationSource, /onDismiss=\{dismissPreview\}/);
   assert.match(
     conversationSource,
     /activePanel === "preview" \|\| previewFloating \|\| agentBrowserViewOpen/,
@@ -72,6 +73,16 @@ test("workspace panels stay behind conversation intent", () => {
   assert.match(conversationSource, /label="Changes"/);
   assert.match(conversationSource, /\{activePanel === "files" && repository && \(/);
   assert.match(conversationSource, /\{activePanel === "changes" && repository && \(/);
+  assert.match(
+    conversationSource,
+    /import \{ WorkspacePanelPendingFallback \} from "\.\/workspace-panel-pending"/,
+  );
+  assert.doesNotMatch(conversationSource, /import\(["']\.\/workspace-panel-pending["']\)/);
+  assert.match(conversationSource, /workspacePanelToggleHeld/);
+  assert.match(
+    conversationSource,
+    /observation=\{agentBrowserViewOpen \? latestAgentBrowserObservation : null\}/,
+  );
 });
 
 test("conversation lifecycle dialogs stay behind renderer intent", () => {

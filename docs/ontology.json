@@ -539,7 +539,7 @@
     },
     {
       "name": "RendererOptionalControlLoadingBoundary",
-      "description": "The Aldunis Code renderer composition boundary that keeps the default conversation workbench eager while loading closed-by-default Activity, Automations, Autonomy, Command Palette, Connections, Preferences, Provider Management, Repository, Thread Search, Usage, Worktree, conversation fork controls, and cross-product Sekai, Chisei, and Tenkai contract-client screens only after explicit open or product-selection intent; each surface owns an independent suspense and error boundary that cannot hide loaded siblings, contains unavailable chunks, and offers close or application reload without exposing chunk diagnostics or changing host contracts and authority."
+      "description": "The Aldunis Code renderer composition boundary that keeps the default conversation workbench eager while loading closed-by-default Activity, Automations, Autonomy, Command Palette, Connections, Preferences, Provider Management, Repository, Thread Search, Usage, Worktree, conversation fork controls, Files, Preview, and Changes workspace panels, and cross-product Sekai, Chisei, and Tenkai contract-client screens only after explicit open or product-selection intent; each surface owns an independent suspense and error boundary that cannot hide loaded siblings, contains unavailable chunks, and offers close or application reload without exposing chunk diagnostics or changing host contracts and authority. Workspace Files, Preview, and Changes keep destination-shaped aria-busy chrome until their chunk paints or recovery is offered, including a named floating observation slot that can show the current provider frame before Preview finishes loading."
     },
     {
       "name": "ConnectionsSessionModule",
@@ -2888,7 +2888,7 @@
     {
       "subject": "RendererOptionalControlLoadingBoundary",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#977, #983, #985, and #987",
-      "locator": "src/main.tsx; src/features/code/workbench.tsx; src/features/code/conversation.tsx; src/features/code/usage-page.tsx; src/features/shell/domain-page.tsx; src/components/optional-control-boundary.tsx; src/main-loading.test.ts; src/optional-control-boundary.test.ts; vite.config.ts",
+      "locator": "src/main.tsx; src/features/code/workbench.tsx; src/features/code/conversation.tsx; src/features/code/workspace-panel-pending.tsx; src/features/code/usage-page.tsx; src/features/shell/domain-page.tsx; src/components/optional-control-boundary.tsx; src/main-loading.test.ts; src/optional-control-boundary.test.ts; vite.config.ts",
       "confidence": 1.0
     },
     {
