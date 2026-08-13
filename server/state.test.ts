@@ -23,6 +23,12 @@ async function fixtureStore(): Promise<{ directory: string; store: LocalStateSto
   return { directory, store: new LocalStateStore(directory) };
 }
 
+class LifecycleIndexOnlyStore extends LocalStateStore {
+  override async load(): Promise<never> {
+    throw new Error("conversation lifecycle mutations must not clone the full projection");
+  }
+}
+
 test("fresh stores create a missing state directory before the first write", async () => {
   const parent = await mkdtemp(join(tmpdir(), "aldunis-state-parent-"));
   const directory = join(parent, "state");
@@ -1412,22 +1418,23 @@ test("conversation lifecycle persists and rebuilds with deterministic pin orderi
     sessionId: "session-1",
     costUsd: 0,
   });
-  await store.renameConversation(thread.id, "Renamed conversation");
-  await store.setConversationPinned(thread.id, true);
-  await store.archiveConversation(thread.id);
+  const lifecycleStore = new LifecycleIndexOnlyStore(directory);
+  await lifecycleStore.renameConversation(thread.id, "Renamed conversation");
+  await lifecycleStore.setConversationPinned(thread.id, true);
+  await lifecycleStore.archiveConversation(thread.id);
 
   let rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.threads[0].title, "Renamed conversation");
   assert.ok(rebuilt.threads[0].pinnedAt);
   assert.ok(rebuilt.threads[0].archivedAt);
 
-  await store.restoreConversation(thread.id);
+  await lifecycleStore.restoreConversation(thread.id);
   rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.threads[0].archivedAt, null);
 });
 
 test("archive and delete reject active and unresolved conversations at the state boundary", async () => {
-  const { store } = await fixtureStore();
+  const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
   const { thread } = await store.startTurn({
     projectId: "project-1",
@@ -1436,7 +1443,10 @@ test("archive and delete reject active and unresolved conversations at the state
     mode: "build",
     provider: "claude-code",
   });
-  await assert.rejects(() => store.archiveConversation(thread.id), /provider work is active/);
+  await assert.rejects(
+    () => new LifecycleIndexOnlyStore(directory).archiveConversation(thread.id),
+    /provider work is active/,
+  );
   await assert.rejects(
     () => store.previewConversationDeletion(thread.id),
     /provider work is active/,
@@ -2571,20 +2581,24 @@ test("settle and unsettle are idempotent and never archive the conversation", as
     mode: "ask",
     provider: "claude-code",
   });
-  await assert.rejects(() => store.settleConversation(thread.id), /provider work is active/);
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+  const lifecycleStore = new LifecycleIndexOnlyStore(directory);
+  await assert.rejects(
+    () => lifecycleStore.settleConversation(thread.id),
+    /provider work is active/,
+  );
+  await lifecycleStore.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "turn_completed",
     sessionId: "session-1",
     costUsd: 0,
   });
-  const settled = await store.settleConversation(thread.id);
+  const settled = await lifecycleStore.settleConversation(thread.id);
   assert.ok(settled.settledAt);
   assert.equal(settled.archivedAt ?? null, null);
-  const again = await store.settleConversation(thread.id);
+  const again = await lifecycleStore.settleConversation(thread.id);
   assert.equal(again.settledAt, settled.settledAt);
-  const unsettled = await store.unsettleConversation(thread.id);
+  const unsettled = await lifecycleStore.unsettleConversation(thread.id);
   assert.equal(unsettled.settledAt, null);
-  assert.equal((await store.unsettleConversation(thread.id)).settledAt, null);
+  assert.equal((await lifecycleStore.unsettleConversation(thread.id)).settledAt, null);
   const rebuilt = await new LocalStateStore(directory).load();
   assert.equal(rebuilt.threads[0].settledAt, null);
   assert.equal(rebuilt.threads[0].worktree, "/fixture/worktree-must-remain");
@@ -2601,16 +2615,17 @@ test("snooze is visibility-only, clears settle, and rejects unresolved operator 
     mode: "build",
     provider: "claude-code",
   });
+  const lifecycleStore = new LifecycleIndexOnlyStore(directory);
 
   // Running work may be snoozed — visibility only.
   const wake = new Date(Date.now() + 3_600_000).toISOString();
-  const snoozedWhileRunning = await store.snoozeConversation(thread.id, wake);
+  const snoozedWhileRunning = await lifecycleStore.snoozeConversation(thread.id, wake);
   assert.equal(snoozedWhileRunning.snoozedUntil, wake);
   assert.ok(snoozedWhileRunning.snoozedAt);
   assert.equal(snoozedWhileRunning.settledAt ?? null, null);
   assert.equal(snoozedWhileRunning.worktree, "/fixture/worktree-must-remain");
 
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+  await lifecycleStore.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "approval_pending",
     id: "approval-snooze",
     runId: "run-snooze",
@@ -2624,41 +2639,42 @@ test("snooze is visibility-only, clears settle, and rejects unresolved operator 
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
   await assert.rejects(
-    () => store.snoozeConversation(thread.id, new Date(Date.now() + 7_200_000).toISOString()),
+    () =>
+      lifecycleStore.snoozeConversation(thread.id, new Date(Date.now() + 7_200_000).toISOString()),
     /tool approval is unresolved/,
   );
 
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+  await lifecycleStore.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "approval_resolved",
     id: "approval-snooze",
     state: "denied",
   });
-  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+  await lifecycleStore.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "turn_completed",
     sessionId: "session-snooze",
     costUsd: 0,
   });
 
-  const settled = await store.settleConversation(thread.id);
+  const settled = await lifecycleStore.settleConversation(thread.id);
   assert.ok(settled.settledAt);
   assert.equal(settled.snoozedUntil ?? null, null);
 
   const later = new Date(Date.now() + 86_400_000).toISOString();
-  const resnoozed = await store.snoozeConversation(thread.id, later);
+  const resnoozed = await lifecycleStore.snoozeConversation(thread.id, later);
   assert.equal(resnoozed.snoozedUntil, later);
   assert.equal(resnoozed.settledAt ?? null, null);
 
-  const again = await store.snoozeConversation(thread.id, later);
+  const again = await lifecycleStore.snoozeConversation(thread.id, later);
   assert.equal(again.snoozedUntil, later);
   assert.equal(again.snoozedAt, resnoozed.snoozedAt);
 
-  const unsnoozed = await store.unsnoozeConversation(thread.id);
+  const unsnoozed = await lifecycleStore.unsnoozeConversation(thread.id);
   assert.equal(unsnoozed.snoozedUntil ?? null, null);
   assert.equal(unsnoozed.snoozedAt ?? null, null);
-  assert.equal((await store.unsnoozeConversation(thread.id)).snoozedUntil ?? null, null);
+  assert.equal((await lifecycleStore.unsnoozeConversation(thread.id)).snoozedUntil ?? null, null);
 
   await assert.rejects(
-    () => store.snoozeConversation(thread.id, new Date(Date.now() - 1_000).toISOString()),
+    () => lifecycleStore.snoozeConversation(thread.id, new Date(Date.now() - 1_000).toISOString()),
     /future/,
   );
 
