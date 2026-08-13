@@ -930,6 +930,35 @@ test("oversized history events fail closed before parsing envelope JSON", async 
   );
 });
 
+test("history replay assembles a large envelope across stream chunks", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
+  const name = "x".repeat(256 * 1024);
+  await writeFile(
+    join(directory, "events.v1.jsonl"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      sequence: 1,
+      id: "event-1",
+      recordedAt: "2026-08-13T00:00:00.000Z",
+      event: {
+        type: "project_saved",
+        project: {
+          schemaVersion: 2,
+          id: "project-1",
+          name,
+          root: "/fixture",
+          createdAt: "2026-08-13T00:00:00.000Z",
+          updatedAt: "2026-08-13T00:00:00.000Z",
+        },
+      },
+    })}\r\n`,
+    "utf8",
+  );
+
+  const projection = await new LocalStateStore(directory).load();
+  assert.equal(projection.projects[0]?.name, name);
+});
+
 test("new conversations stop at the bounded per-project retention limit", async () => {
   const { store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
