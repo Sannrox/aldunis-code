@@ -346,6 +346,57 @@ test("managed orchestration projection skips unrelated durable collections", () 
 
 test("managed indexed Workbench load skips global transcript visibility scans", async () => {
   const value = projection();
+  const providerSession: StateProjection["providerSessions"][number] = {
+    schemaVersion: 2,
+    threadId: "active",
+    provider: "claude-code",
+    sessionId: "session-active",
+    model: null,
+    updatedAt: "t2",
+  };
+  const conversationDeletion: StateProjection["conversationDeletions"][number] = {
+    schemaVersion: 2,
+    threadId: "active",
+    status: "completed",
+    affectedRecords: {
+      thread: 1,
+      turns: 0,
+      messages: 0,
+      activities: 0,
+      plans: 0,
+      contextReceipts: 0,
+      usageReceipts: 0,
+      governanceCorrelations: 0,
+      providerSessions: 0,
+      checkpoints: 0,
+      annotations: 0,
+      fileReviews: 0,
+      forks: 0,
+      delegatedRelationships: 0,
+      inputRequests: 0,
+      inputReceipts: 0,
+    },
+    requestedAt: "t1",
+    completedAt: "t2",
+    error: null,
+  };
+  const inputRequest: StateProjection["inputRequests"][number] = {
+    schemaVersion: 2,
+    id: "input-active",
+    threadId: "archived",
+    turnId: "turn-input",
+    providerRunId: "run-active",
+    question: "Continue?",
+    choices: [],
+    recommendation: null,
+    responseMode: "child_follow_up",
+    providerRequestId: null,
+    expiresAt: null,
+    allowFreeForm: true,
+    state: "pending",
+    createdAt: "t1",
+    answeredAt: null,
+  };
   const childTurn = {
     schemaVersion: 2 as const,
     id: "turn-child",
@@ -354,6 +405,15 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
     mode: "build" as const,
     createdAt: "t2",
     completedAt: "t3",
+  };
+  const inputTurn: StateProjection["turns"][number] = {
+    schemaVersion: 2,
+    id: "turn-input",
+    threadId: "archived",
+    status: "waiting_for_user",
+    mode: "build",
+    providerRunId: "run-active",
+    createdAt: "t2",
   };
   const childMessage = {
     schemaVersion: 2 as const,
@@ -382,9 +442,12 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
   }) as never[];
   value.messages = forbiddenTranscript;
   value.activities = forbiddenTranscript;
+  value.providerSessions = forbiddenTranscript;
+  value.conversationDeletions = forbiddenTranscript;
+  value.inputRequests = forbiddenTranscript;
   const turnsByThread = new Map([
     ["active", [value.turns[0]!]],
-    ["archived", [childTurn]],
+    ["archived", [childTurn, inputTurn]],
   ]);
   let responseValue: Record<string, unknown> | undefined;
   await handleWorkbenchProjectionRoute(
@@ -413,8 +476,9 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
             activitiesByThread: new Map(),
             plansByThread: new Map(),
             contextReceiptsByThread: new Map(),
-            inputRequestsByThread: new Map(),
-            providerSessionsByThread: new Map(),
+            inputRequestsByThread: new Map([["archived", [inputRequest]]]),
+            providerSessionsByThread: new Map([["active", [providerSession]]]),
+            conversationDeletionByThread: new Map([["active", conversationDeletion]]),
             governanceCorrelationsByThread: new Map(),
             checkpointsByThread: new Map(),
           },
@@ -440,6 +504,15 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
   ]);
   assert.deepEqual(responseValue?.messages, []);
   assert.deepEqual(responseValue?.activities, []);
+  assert.deepEqual(responseValue?.providerSessions, [providerSession]);
+  assert.deepEqual(responseValue?.conversationDeletions, [conversationDeletion]);
+  assert.deepEqual(responseValue?.delegatedInputs, [
+    {
+      parentThreadId: "active",
+      childThreadId: "archived",
+      request: inputRequest,
+    },
+  ]);
 });
 
 function forbiddenLoadTurns(turns: StateProjection["turns"]): StateProjection["turns"] {
@@ -692,6 +765,7 @@ test("history uses one atomic thread index without traversing global collections
     contextReceiptsByThread: new Map(),
     inputRequestsByThread: new Map(),
     providerSessionsByThread: new Map(),
+    conversationDeletionByThread: new Map(),
     governanceCorrelationsByThread: new Map(),
     checkpointsByThread: new Map(),
   };

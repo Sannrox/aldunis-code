@@ -605,6 +605,7 @@ export interface ConversationHistoryIndex {
   contextReceiptsByThread: RowsByThread<ContextReceipt>;
   inputRequestsByThread: RowsByThread<InputRequest>;
   providerSessionsByThread: RowsByThread<ProviderSession>;
+  conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
 }
@@ -625,6 +626,7 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   contextReceiptsByThread: Map<string, ContextReceipt[]>;
   inputRequestsByThread: Map<string, InputRequest[]>;
   providerSessionsByThread: Map<string, ProviderSession[]>;
+  conversationDeletionByThread: Map<string, ConversationDeletion>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
   threadIdByTurn: Map<string, string>;
@@ -656,6 +658,9 @@ function buildConversationHistoryIndex(
     contextReceiptsByThread: groupRowsByThread(projection.contextReceipts, (row) => row.threadId),
     inputRequestsByThread: groupRowsByThread(projection.inputRequests, (row) => row.threadId),
     providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
+    conversationDeletionByThread: new Map(
+      projection.conversationDeletions.map((deletion) => [deletion.threadId, deletion]),
+    ),
     governanceCorrelationsByThread: groupRowsByThread(
       projection.governanceCorrelations,
       (row) => row.threadId,
@@ -1340,6 +1345,10 @@ function applyEvent(
     );
     if (index === -1) projection.conversationDeletions.push(event.conversationDeletion);
     else projection.conversationDeletions[index] = event.conversationDeletion;
+    conversationHistory?.conversationDeletionByThread.set(
+      event.conversationDeletion.threadId,
+      event.conversationDeletion,
+    );
   } else if (event.type === "fork_created") {
     replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
