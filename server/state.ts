@@ -606,6 +606,7 @@ export interface ConversationHistoryIndex {
   inputRequestsByThread: RowsByThread<InputRequest>;
   providerSessionsByThread: RowsByThread<ProviderSession>;
   conversationDeletionByThread: ReadonlyMap<string, ConversationDeletion>;
+  delegatedRelationshipByChild: ReadonlyMap<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
 }
@@ -627,6 +628,7 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   inputRequestsByThread: Map<string, InputRequest[]>;
   providerSessionsByThread: Map<string, ProviderSession[]>;
   conversationDeletionByThread: Map<string, ConversationDeletion>;
+  delegatedRelationshipByChild: Map<string, DelegatedConversationRelationship>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
   threadIdByTurn: Map<string, string>;
@@ -660,6 +662,12 @@ function buildConversationHistoryIndex(
     providerSessionsByThread: groupRowsByThread(projection.providerSessions, (row) => row.threadId),
     conversationDeletionByThread: new Map(
       projection.conversationDeletions.map((deletion) => [deletion.threadId, deletion]),
+    ),
+    delegatedRelationshipByChild: new Map(
+      projection.delegatedRelationships.map((relationship) => [
+        relationship.childThreadId,
+        relationship,
+      ]),
     ),
     governanceCorrelationsByThread: groupRowsByThread(
       projection.governanceCorrelations,
@@ -1189,6 +1197,17 @@ function indexSavedProviderSession(
   else bucket[index] = next;
 }
 
+function indexSavedDelegatedRelationship(
+  relationshipByChild: Map<string, DelegatedConversationRelationship>,
+  previous: DelegatedConversationRelationship | undefined,
+  next: DelegatedConversationRelationship,
+): void {
+  if (previous && previous.childThreadId !== next.childThreadId) {
+    relationshipByChild.delete(previous.childThreadId);
+  }
+  relationshipByChild.set(next.childThreadId, next);
+}
+
 function removeIndexedThreadRow<T extends { id: string }>(
   rowsByThread: Map<string, T[]>,
   threadId: string,
@@ -1356,11 +1375,21 @@ function applyEvent(
   } else if (event.type === "fork_saved") {
     replaceByIdDuringReplay(projection.forks, event.fork, replayIndexes);
   } else if (event.type === "delegated_relationship_saved") {
+    const previous = projection.delegatedRelationships.find(
+      (relationship) => relationship.id === event.delegatedRelationship.id,
+    );
     replaceByIdDuringReplay(
       projection.delegatedRelationships,
       event.delegatedRelationship,
       replayIndexes,
     );
+    if (conversationHistory) {
+      indexSavedDelegatedRelationship(
+        conversationHistory.delegatedRelationshipByChild,
+        previous,
+        event.delegatedRelationship,
+      );
+    }
     if (!deferDelegatedIndexBuild && delegatedChildTurnIds && messagesByTurn && activitiesByTurn) {
       const childTurns =
         turnsByThread?.get(event.delegatedRelationship.childThreadId) ??

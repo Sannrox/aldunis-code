@@ -1389,7 +1389,20 @@ test("delegated conversation relationships persist, enforce one parent, and deta
 
   const relationship = await store.linkDelegatedConversation(firstParent.id, child.id);
   assert.equal(relationship.parentThreadId, firstParent.id);
-  assert.equal((await new LocalStateStore(directory).load()).delegatedRelationships.length, 1);
+  assert.deepEqual(
+    (await store.inspectWorkbenchProjection()).conversationHistory.delegatedRelationshipByChild.get(
+      child.id,
+    ),
+    relationship,
+  );
+  const replayedStore = new LocalStateStore(directory);
+  assert.equal((await replayedStore.load()).delegatedRelationships.length, 1);
+  assert.deepEqual(
+    (
+      await replayedStore.inspectWorkbenchProjection()
+    ).conversationHistory.delegatedRelationshipByChild.get(child.id),
+    relationship,
+  );
   await assert.rejects(
     () => store.linkDelegatedConversation(secondParent.id, child.id),
     /already has a delegated parent/,
@@ -1401,8 +1414,15 @@ test("delegated conversation relationships persist, enforce one parent, and deta
 
   assert.equal((await store.previewConversationDeletion(firstParent.id)).delegatedRelationships, 1);
   await store.deleteConversation(firstParent.id);
-  const rebuilt = await new LocalStateStore(directory).load();
+  const rebuiltStore = new LocalStateStore(directory);
+  const rebuilt = await rebuiltStore.load();
   assert.equal(rebuilt.delegatedRelationships.length, 0);
+  assert.equal(
+    (
+      await rebuiltStore.inspectWorkbenchProjection()
+    ).conversationHistory.delegatedRelationshipByChild.has(child.id),
+    false,
+  );
   assert.equal(
     rebuilt.threads.some((thread) => thread.id === child.id),
     true,

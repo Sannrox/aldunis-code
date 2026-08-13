@@ -424,27 +424,29 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
     createdAt: "t3",
   };
   value.turns.push(childTurn);
-  value.delegatedRelationships.push({
+  const relationship: StateProjection["delegatedRelationships"][number] = {
     schemaVersion: 2,
     id: "relationship",
     parentThreadId: "active",
     childThreadId: "archived",
     createdAt: "t2",
-  });
-  const forbiddenTranscript = new Proxy([], {
+  };
+  value.delegatedRelationships.push(relationship);
+  const forbiddenGlobalRows = new Proxy([], {
     get(target, property, receiver) {
       if (property === "then") return undefined;
       if (property === "filter" || property === Symbol.iterator) {
-        throw new Error("managed indexed load scanned global transcript rows");
+        throw new Error("managed indexed load scanned global projection rows");
       }
       return Reflect.get(target, property, receiver);
     },
   }) as never[];
-  value.messages = forbiddenTranscript;
-  value.activities = forbiddenTranscript;
-  value.providerSessions = forbiddenTranscript;
-  value.conversationDeletions = forbiddenTranscript;
-  value.inputRequests = forbiddenTranscript;
+  value.messages = forbiddenGlobalRows;
+  value.activities = forbiddenGlobalRows;
+  value.providerSessions = forbiddenGlobalRows;
+  value.conversationDeletions = forbiddenGlobalRows;
+  value.inputRequests = forbiddenGlobalRows;
+  value.delegatedRelationships = forbiddenGlobalRows;
   const turnsByThread = new Map([
     ["active", [value.turns[0]!]],
     ["archived", [childTurn, inputTurn]],
@@ -479,6 +481,7 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
             inputRequestsByThread: new Map([["archived", [inputRequest]]]),
             providerSessionsByThread: new Map([["active", [providerSession]]]),
             conversationDeletionByThread: new Map([["active", conversationDeletion]]),
+            delegatedRelationshipByChild: new Map([["archived", relationship]]),
             governanceCorrelationsByThread: new Map(),
             checkpointsByThread: new Map(),
           },
@@ -766,6 +769,7 @@ test("history uses one atomic thread index without traversing global collections
     inputRequestsByThread: new Map(),
     providerSessionsByThread: new Map(),
     conversationDeletionByThread: new Map(),
+    delegatedRelationshipByChild: new Map(),
     governanceCorrelationsByThread: new Map(),
     checkpointsByThread: new Map(),
   };
