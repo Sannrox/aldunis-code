@@ -60,3 +60,15 @@ test("cross-product screens stay behind non-Code selection intent", () => {
   assert.match(workbenchSource, /onDismiss=\{\(\) => onProductChange\("code"\)\}/);
   assert.match(workbenchSource, /<OptionalControlBoundary/);
 });
+
+test("the usage dashboard stays behind sidebar intent", () => {
+  const path = "./usage-page";
+  assert.doesNotMatch(
+    workbenchSource,
+    new RegExp(`import\\s+(?!type\\b)[^;]+from ["']${path}["']`),
+  );
+  assert.match(workbenchSource, new RegExp(`import\\(["']${path}["']\\)`));
+  assert.match(workbenchSource, /const \[usageOpen, setUsageOpen\] = useState\(false\)/);
+  assert.match(workbenchSource, /usageOpen \? \(/);
+  assert.match(workbenchSource, /label="Usage" onDismiss=\{\(\) => setUsageOpen\(false\)\}/);
+});
