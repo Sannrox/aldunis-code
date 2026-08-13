@@ -3131,16 +3131,40 @@ export class LocalStateStore {
 
   async recoverInterruptedTurns(): Promise<void> {
     await this.#compact((current) => {
+      const inputReceiptByRequest = new Map(
+        current.inputReceipts.map((receipt) => [receipt.requestId, receipt]),
+      );
+      const turnById = new Map(current.turns.map((turn) => [turn.id, turn]));
+      const threadById = new Map(current.threads.map((thread) => [thread.id, thread]));
+      const usageReceiptByTurn = new Map(
+        current.usageReceipts.map((receipt) => [receipt.turnId, receipt]),
+      );
+      const followUpPrefix = "Operator response to child input request ";
+      const followUpAtByRequestAndThread = new Map<string, string>();
+      const followUpKey = (requestId: string, threadId: string) => `${requestId}\0${threadId}`;
+      for (const message of current.messages) {
+        if (message.role !== "user" || !message.text.startsWith(followUpPrefix)) continue;
+        const requestIdEnd = message.text.indexOf(":", followUpPrefix.length);
+        if (requestIdEnd < 0) continue;
+        const requestId = message.text.slice(followUpPrefix.length, requestIdEnd);
+        const turn = turnById.get(message.turnId);
+        if (!turn) continue;
+        const key = followUpKey(requestId, turn.threadId);
+        const previous = followUpAtByRequestAndThread.get(key);
+        if (!previous || message.createdAt > previous) {
+          followUpAtByRequestAndThread.set(key, message.createdAt);
+        }
+      }
       for (const request of current.inputRequests) {
         if (request.state !== "answered" || request.responseMode !== "child_follow_up") continue;
-        const receipt = current.inputReceipts.find((item) => item.requestId === request.id);
+        const receipt = inputReceiptByRequest.get(request.id);
         if (!receipt) continue;
-        const followUpPrefix = `Operator response to child input request ${request.id}:`;
-        const persistedFollowUp = current.messages.some((message) => {
-          if (message.role !== "user" || !message.text.startsWith(followUpPrefix)) return false;
-          const turn = current.turns.find((item) => item.id === message.turnId);
-          return turn?.threadId === request.threadId && message.createdAt >= receipt.createdAt;
-        });
+        const persistedFollowUpAt = followUpAtByRequestAndThread.get(
+          followUpKey(request.id, request.threadId),
+        );
+        const persistedFollowUp = Boolean(
+          persistedFollowUpAt && persistedFollowUpAt >= receipt.createdAt,
+        );
         if (persistedFollowUp) continue;
         replaceById(current.inputRequests, {
           ...request,
@@ -3148,26 +3172,28 @@ export class LocalStateStore {
           answeredAt: null,
         });
         current.inputReceipts = current.inputReceipts.filter((item) => item.id !== receipt.id);
-        const sourceTurn = current.turns.find((item) => item.id === request.turnId);
+        const sourceTurn = turnById.get(request.turnId);
         if (sourceTurn) {
-          replaceById(current.turns, {
+          const reopenedTurn = {
             ...sourceTurn,
             status: "waiting_for_user",
             completedAt: null,
-          });
+          } as Turn;
+          replaceById(current.turns, reopenedTurn);
+          turnById.set(reopenedTurn.id, reopenedTurn);
         }
       }
       const unavailableMessage = "Native Shikigami resume is unavailable after the host restarted.";
       for (const request of current.inputRequests) {
         if (request.responseMode !== "native_resume") continue;
-        const thread = current.threads.find((item) => item.id === request.threadId);
+        const thread = threadById.get(request.threadId);
         if (thread?.provider !== "shikigami" || request.resumeState === "unavailable") continue;
         replaceById(current.inputRequests, {
           ...request,
           resumeState: "unavailable",
           resumeError: unavailableMessage,
         });
-        const sourceTurn = current.turns.find((item) => item.id === request.turnId);
+        const sourceTurn = turnById.get(request.turnId);
         if (
           sourceTurn &&
           ["active", "running", "waiting_for_user", "waiting_for_approval"].includes(
@@ -3175,37 +3201,44 @@ export class LocalStateStore {
           )
         ) {
           const interruptedAt = new Date().toISOString();
-          replaceById(current.turns, {
+          const interruptedTurn = {
             ...sourceTurn,
             status: "interrupted",
             completedAt: interruptedAt,
-          });
-          const usageReceipt = current.usageReceipts.find(
-            (receipt) => receipt.turnId === sourceTurn.id,
-          );
+          } as Turn;
+          replaceById(current.turns, interruptedTurn);
+          turnById.set(interruptedTurn.id, interruptedTurn);
+          const usageReceipt = usageReceiptByTurn.get(sourceTurn.id);
           if (usageReceipt?.status === "running") {
-            replaceById(current.usageReceipts, {
+            const interruptedUsageReceipt = {
               ...usageReceipt,
               status: "interrupted",
               updatedAt: interruptedAt,
-            });
+            } as UsageReceipt;
+            replaceById(current.usageReceipts, interruptedUsageReceipt);
+            usageReceiptByTurn.set(interruptedUsageReceipt.turnId, interruptedUsageReceipt);
           }
         }
       }
     });
     const projection = await this.load();
+    const threadById = new Map(projection.threads.map((thread) => [thread.id, thread]));
+    const nativeInputsByTurn = new Map<string, ChildInputRequest[]>();
+    for (const request of projection.inputRequests) {
+      if (
+        request.state !== "pending" ||
+        request.responseMode !== "native_resume" ||
+        threadById.get(request.threadId)?.provider === "shikigami"
+      ) {
+        continue;
+      }
+      const requests = nativeInputsByTurn.get(request.turnId);
+      if (requests) requests.push(request);
+      else nativeInputsByTurn.set(request.turnId, [request]);
+    }
     for (const turn of projection.turns) {
       const nativeInputs =
-        turn.status === "waiting_for_user"
-          ? projection.inputRequests.filter(
-              (request) =>
-                request.turnId === turn.id &&
-                request.state === "pending" &&
-                request.responseMode === "native_resume" &&
-                projection.threads.find((thread) => thread.id === turn.threadId)?.provider !==
-                  "shikigami",
-            )
-          : [];
+        turn.status === "waiting_for_user" ? (nativeInputsByTurn.get(turn.id) ?? []) : [];
       if (
         turn.status !== "active" &&
         turn.status !== "running" &&
@@ -3229,7 +3262,7 @@ export class LocalStateStore {
           completedAt: interruptedAt,
         },
       });
-      const thread = projection.threads.find((item) => item.id === turn.threadId);
+      const thread = threadById.get(turn.threadId);
       if (thread) {
         await this.#saveUsageReceipt(
           turn.threadId,
