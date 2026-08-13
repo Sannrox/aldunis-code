@@ -2437,10 +2437,7 @@ export class LocalStateStore {
   async saveContextReceipt(
     receipt: Omit<ContextReceipt, "schemaVersion" | "id" | "createdAt">,
   ): Promise<ContextReceipt> {
-    const projection = await this.load();
-    const turn = projection.turns.find(
-      (item) => item.id === receipt.turnId && item.threadId === receipt.threadId,
-    );
+    const { turn } = await this.#inspectProviderEventContext(receipt.threadId, receipt.turnId);
     if (!turn) throw new LocalStateError("The context receipt turn is unavailable.", 404);
     const saved: ContextReceipt = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
