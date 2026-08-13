@@ -3,7 +3,7 @@ import type { ManagedHost } from "./managed-host.ts";
 import type { StateProjection } from "./state.ts";
 import type { ThreadWakeEvent } from "./wake.ts";
 import { WakeStreamCoordinator } from "./wake-stream.ts";
-import { filterManagedProjection } from "./workbench-projection-routes.ts";
+import { filterManagedThreadSearchProjection } from "./workbench-projection-routes.ts";
 
 export const WAKE_STREAM_ROUTE = "/api/state/events";
 
@@ -42,7 +42,7 @@ export async function handleWakeStreamRoute(
         response,
         loadProjection: context.loadProjection,
         selectEvents: (projection, events) => {
-          const visible = filterManagedProjection(
+          const visible = filterManagedThreadSearchProjection(
             projection as StateProjection,
             context.managedHost!,
           );
