@@ -29,11 +29,11 @@ import type {
 } from "../../types";
 import { Button } from "../../components/ui";
 import { Icon } from "../../components/icon";
+import { OptionalControlBoundary } from "../../components/optional-control-boundary";
 import { ChangesPanel, type ChangesPanelMode } from "../changes/changes-panel";
 import { FileBrowserPanel } from "../files/file-browser-panel";
 import { EnvironmentControl } from "./environment-control";
 import { PreviewPanel, type PreviewPanelStatus } from "../preview/preview-panel";
-import { ForkConversationDialog } from "../dialogs/fork-conversation-dialog";
 import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
 import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
@@ -176,6 +176,10 @@ import {
   WORKSPACE_MODE_COPY,
 } from "../../lib/workspace-mode";
 import type { SavedProject } from "../dialogs/repository-dialog";
+
+const ForkConversationDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/fork-conversation-dialog")).ForkConversationDialog,
+}));
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
@@ -4704,22 +4708,26 @@ export function Conversation({
           />
         )}
       </div>
-      {forkOpen && threadId && !managedMode && repository && (
-        <ForkConversationDialog
-          sourceThreadId={threadId}
-          sourceProvider={provider}
-          sourceWorkspaceMode={conversation?.workspaceMode ?? "shared"}
-          repository={repository}
-          profiles={profiles}
-          providers={providers}
-          onClose={() => setForkOpen(false)}
-          onRepositoryChanged={onRepositoryChanged}
-          onCreated={(id) => {
-            setForkOpen(false);
-            onConversationAvailable?.(id);
-          }}
-        />
-      )}
+      <>
+        {forkOpen && threadId && !managedMode && repository && (
+          <OptionalControlBoundary label="Conversation fork" onDismiss={() => setForkOpen(false)}>
+            <ForkConversationDialog
+              sourceThreadId={threadId}
+              sourceProvider={provider}
+              sourceWorkspaceMode={conversation?.workspaceMode ?? "shared"}
+              repository={repository}
+              profiles={profiles}
+              providers={providers}
+              onClose={() => setForkOpen(false)}
+              onRepositoryChanged={onRepositoryChanged}
+              onCreated={(id) => {
+                setForkOpen(false);
+                onConversationAvailable?.(id);
+              }}
+            />
+          </OptionalControlBoundary>
+        )}
+      </>
       {releaseWorktreeOpen && threadId && (
         <ReleaseWorktreeDialog
           title={conversation?.title?.trim() || "This conversation"}

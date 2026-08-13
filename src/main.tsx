@@ -1,4 +1,4 @@
-import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DEFAULT_PREFERENCES, resolveTheme, type Preferences } from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
@@ -13,16 +13,11 @@ import type {
   ThreadMetadata,
 } from "./types";
 import { CodeWorkbench } from "./features/code/workbench";
-import { RepositoryDialog, type SavedProject } from "./features/dialogs/repository-dialog";
-import { WorktreeDialog } from "./features/dialogs/worktree-dialog";
-import {
-  ProviderManagementDialog,
-  type ProviderManagementDestination,
-} from "./features/dialogs/provider-management-dialog";
-import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
-import { CommandPalette } from "./features/dialogs/command-palette";
+import type { SavedProject } from "./features/dialogs/repository-dialog";
+import type { ProviderManagementDestination } from "./features/dialogs/provider-management-dialog";
 import type { ActivitySelectionAction } from "./features/dialogs/activity-dialog";
 import { DesktopUpdateBanner, type DesktopUpdateControls } from "./features/updates/desktop-update";
+import { OptionalControlBoundary } from "./components/optional-control-boundary";
 import { isKeybindingCaptured, matchesModifierShortcut } from "./lib/workspace-shortcuts";
 import {
   DEFAULT_PRODUCT_AVAILABILITY,
@@ -46,6 +41,21 @@ const ActivityDialog = lazy(async () => ({
 }));
 const ConnectionsDialog = lazy(async () => ({
   default: (await import("./features/dialogs/connections-dialog")).ConnectionsDialog,
+}));
+const RepositoryDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/repository-dialog")).RepositoryDialog,
+}));
+const WorktreeDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/worktree-dialog")).WorktreeDialog,
+}));
+const ProviderManagementDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/provider-management-dialog")).ProviderManagementDialog,
+}));
+const ThreadSearchDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/thread-search-dialog")).ThreadSearchDialog,
+}));
+const CommandPalette = lazy(async () => ({
+  default: (await import("./features/dialogs/command-palette")).CommandPalette,
 }));
 
 const desktopPlatform = window.aldunisDesktop?.platform;
@@ -312,144 +322,188 @@ function App() {
         managedAccount={hostCapabilities.account}
       />
       {desktopUpdateControls && <DesktopUpdateBanner {...desktopUpdateControls} />}
-      <RepositoryDialog
-        open={repositoryDialog}
-        busy={repositoryBusy}
-        error={repositoryError}
-        projects={savedProjects}
-        currentRoot={repository?.root ?? null}
-        managedRepositories={hostCapabilities.managed ? hostCapabilities.repositories : undefined}
-        onClose={() => setRepositoryDialog(false)}
-        onSubmit={(path) => {
-          void openRepository(path);
-        }}
-      />
-      {worktreeDialog && (
-        <WorktreeDialog
-          repository={repository}
-          selectedPath={managedWorktreePath}
-          managedMode={hostCapabilities.managed}
-          onClose={() => setWorktreeDialog(false)}
-          onChanged={(next) => {
-            setRepository(next);
-            void loadThreads();
-          }}
-        />
-      )}
-      <ProviderManagementDialog
-        open={providerManagement != null && !hostCapabilities.managed}
-        profiles={profiles}
-        initialDestination={providerManagement?.destination}
-        initialProvider={providerManagement?.provider}
-        onClose={() => setProviderManagement(null)}
-        onProfilesChanged={loadProfiles}
-      />
-      <ThreadSearchDialog
-        open={searchOpen}
-        threads={threads}
-        onClose={() => setSearchOpen(false)}
-        onSelect={(threadId) => {
-          window.dispatchEvent(
-            new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
-          );
-        }}
-      />
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        onOpenRepository={showRepositoryDialog}
-        onSearch={() => setSearchOpen(true)}
-        threads={threads}
-        onOpenConversation={(threadId) => {
-          window.dispatchEvent(
-            new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
-          );
-        }}
-        onPreferences={() => setPreferencesOpen(true)}
-        onProviderManagement={() => {
-          if (hostCapabilities.managed) return;
-          setProviderManagement({ destination: "diagnostics", provider: null });
-        }}
-        onActivity={() => setActivityOpen(true)}
-        onConnections={() => setConnectionsOpen(true)}
-        onAutomations={() => setAutomationsOpen(true)}
-        onAutonomy={() => setAutonomyOpen(true)}
-        onManageWorktrees={() => {
-          setManagedWorktreePath(null);
-          setWorktreeDialog(true);
-        }}
-        hasRepository={repository != null}
-      />
-      <Suspense fallback={null}>
+      <>
+        {repositoryDialog && (
+          <OptionalControlBoundary
+            label="Repository controls"
+            onDismiss={() => setRepositoryDialog(false)}
+          >
+            <RepositoryDialog
+              open={repositoryDialog}
+              busy={repositoryBusy}
+              error={repositoryError}
+              projects={savedProjects}
+              currentRoot={repository?.root ?? null}
+              managedRepositories={
+                hostCapabilities.managed ? hostCapabilities.repositories : undefined
+              }
+              onClose={() => setRepositoryDialog(false)}
+              onSubmit={(path) => {
+                void openRepository(path);
+              }}
+            />
+          </OptionalControlBoundary>
+        )}
+        {worktreeDialog && (
+          <OptionalControlBoundary
+            label="Worktree controls"
+            onDismiss={() => setWorktreeDialog(false)}
+          >
+            <WorktreeDialog
+              repository={repository}
+              selectedPath={managedWorktreePath}
+              managedMode={hostCapabilities.managed}
+              onClose={() => setWorktreeDialog(false)}
+              onChanged={(next) => {
+                setRepository(next);
+                void loadThreads();
+              }}
+            />
+          </OptionalControlBoundary>
+        )}
+        {providerManagement != null && !hostCapabilities.managed && (
+          <OptionalControlBoundary
+            label="Provider management"
+            onDismiss={() => setProviderManagement(null)}
+          >
+            <ProviderManagementDialog
+              open
+              profiles={profiles}
+              initialDestination={providerManagement.destination}
+              initialProvider={providerManagement.provider}
+              onClose={() => setProviderManagement(null)}
+              onProfilesChanged={loadProfiles}
+            />
+          </OptionalControlBoundary>
+        )}
+        {searchOpen && (
+          <OptionalControlBoundary
+            label="Conversation search"
+            onDismiss={() => setSearchOpen(false)}
+          >
+            <ThreadSearchDialog
+              open
+              threads={threads}
+              onClose={() => setSearchOpen(false)}
+              onSelect={(threadId) => {
+                window.dispatchEvent(
+                  new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
+                );
+              }}
+            />
+          </OptionalControlBoundary>
+        )}
+        {paletteOpen && (
+          <OptionalControlBoundary label="Command palette" onDismiss={() => setPaletteOpen(false)}>
+            <CommandPalette
+              open
+              onClose={() => setPaletteOpen(false)}
+              onOpenRepository={showRepositoryDialog}
+              onSearch={() => setSearchOpen(true)}
+              threads={threads}
+              onOpenConversation={(threadId) => {
+                window.dispatchEvent(
+                  new CustomEvent("aldunis:open-conversation", { detail: { threadId } }),
+                );
+              }}
+              onPreferences={() => setPreferencesOpen(true)}
+              onProviderManagement={() => {
+                if (hostCapabilities.managed) return;
+                setProviderManagement({ destination: "diagnostics", provider: null });
+              }}
+              onActivity={() => setActivityOpen(true)}
+              onConnections={() => setConnectionsOpen(true)}
+              onAutomations={() => setAutomationsOpen(true)}
+              onAutonomy={() => setAutonomyOpen(true)}
+              onManageWorktrees={() => {
+                setManagedWorktreePath(null);
+                setWorktreeDialog(true);
+              }}
+              hasRepository={repository != null}
+            />
+          </OptionalControlBoundary>
+        )}
         {automationsOpen && (
-          <AutomationsDialog
-            open={automationsOpen}
-            threads={threads.map((thread) => ({
-              id: thread.id,
-              title: thread.title,
-              projectName: thread.projectName,
-              provider: thread.provider,
-            }))}
-            onClose={() => setAutomationsOpen(false)}
-          />
+          <OptionalControlBoundary label="Automations" onDismiss={() => setAutomationsOpen(false)}>
+            <AutomationsDialog
+              open={automationsOpen}
+              threads={threads.map((thread) => ({
+                id: thread.id,
+                title: thread.title,
+                projectName: thread.projectName,
+                provider: thread.provider,
+              }))}
+              onClose={() => setAutomationsOpen(false)}
+            />
+          </OptionalControlBoundary>
         )}
         {autonomyOpen && (
-          <AutonomyDialog
-            open={autonomyOpen}
-            repository={repository}
-            projects={savedProjects}
-            managed={hostCapabilities.managed}
-            onClose={() => setAutonomyOpen(false)}
-          />
+          <OptionalControlBoundary label="Autonomy" onDismiss={() => setAutonomyOpen(false)}>
+            <AutonomyDialog
+              open={autonomyOpen}
+              repository={repository}
+              projects={savedProjects}
+              managed={hostCapabilities.managed}
+              onClose={() => setAutonomyOpen(false)}
+            />
+          </OptionalControlBoundary>
         )}
         {preferencesOpen && (
-          <PreferencesDialog
-            open={preferencesOpen}
-            preferences={preferences}
-            recovered={preferencesRecovered}
-            onClose={() => setPreferencesOpen(false)}
-            onOpenProviderManagement={() => {
-              if (hostCapabilities.managed) return;
-              setProviderManagement({ destination: "diagnostics", provider: null });
-            }}
-            onOpenConnections={() => setConnectionsOpen(true)}
-            onOpenArchivedThreads={() => {
-              setPreferencesOpen(false);
-              window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
-            }}
-            desktopUpdates={desktopUpdateControls}
-            onSave={async (value) => {
-              const response = await fetch("/api/preferences/save", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(value),
-              });
-              if (!response.ok) return;
-              setPreferences((await response.json()) as Preferences);
-              setPreferencesRecovered(false);
-              setPreferencesOpen(false);
-            }}
-          />
+          <OptionalControlBoundary label="Preferences" onDismiss={() => setPreferencesOpen(false)}>
+            <PreferencesDialog
+              open={preferencesOpen}
+              preferences={preferences}
+              recovered={preferencesRecovered}
+              onClose={() => setPreferencesOpen(false)}
+              onOpenProviderManagement={() => {
+                if (hostCapabilities.managed) return;
+                setProviderManagement({ destination: "diagnostics", provider: null });
+              }}
+              onOpenConnections={() => setConnectionsOpen(true)}
+              onOpenArchivedThreads={() => {
+                setPreferencesOpen(false);
+                window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
+              }}
+              desktopUpdates={desktopUpdateControls}
+              onSave={async (value) => {
+                const response = await fetch("/api/preferences/save", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(value),
+                });
+                if (!response.ok) return;
+                setPreferences((await response.json()) as Preferences);
+                setPreferencesRecovered(false);
+                setPreferencesOpen(false);
+              }}
+            />
+          </OptionalControlBoundary>
         )}
         {activityOpen && (
-          <ActivityDialog
-            open={activityOpen}
-            onClose={() => setActivityOpen(false)}
-            onSelect={(conversation, action: ActivitySelectionAction) => {
-              window.dispatchEvent(
-                new CustomEvent("aldunis:open-conversation", {
-                  detail: {
-                    threadId: conversation.id,
-                    conversation,
-                    action,
-                  },
-                }),
-              );
-            }}
-          />
+          <OptionalControlBoundary label="Activity" onDismiss={() => setActivityOpen(false)}>
+            <ActivityDialog
+              open={activityOpen}
+              onClose={() => setActivityOpen(false)}
+              onSelect={(conversation, action: ActivitySelectionAction) => {
+                window.dispatchEvent(
+                  new CustomEvent("aldunis:open-conversation", {
+                    detail: {
+                      threadId: conversation.id,
+                      conversation,
+                      action,
+                    },
+                  }),
+                );
+              }}
+            />
+          </OptionalControlBoundary>
         )}
-        {connectionsOpen && <ConnectionsDialog open onClose={() => setConnectionsOpen(false)} />}
-      </Suspense>
+        {connectionsOpen && (
+          <OptionalControlBoundary label="Connections" onDismiss={() => setConnectionsOpen(false)}>
+            <ConnectionsDialog open onClose={() => setConnectionsOpen(false)} />
+          </OptionalControlBoundary>
+        )}
+      </>
     </div>
   );
 }
