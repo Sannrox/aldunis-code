@@ -8,6 +8,7 @@ import {
   MAX_ACTIVE_PROVIDER_RUNS,
   ProviderInputExpiryTimers,
   ProviderRunAdmission,
+  releaseActiveAcpRun,
   shouldReleaseBrowserProviderToken,
   type ProviderRunModuleContext,
   type ProviderRunOutput,
@@ -102,6 +103,34 @@ test("browser provider token release follows accepted Codex session ownership", 
   assert.equal(shouldReleaseBrowserProviderToken("codex-cli", false), true);
   assert.equal(shouldReleaseBrowserProviderToken("codex-cli", true), false);
   assert.equal(shouldReleaseBrowserProviderToken("claude-code", false), true);
+});
+
+test("provider run finalization releases only its active ACP adapter", () => {
+  const cancelled: string[] = [];
+  const first = { cancel: (runId: string) => cancelled.push(runId) } as never;
+  const second = {} as never;
+  const activeAcp = new Map([
+    ["run-1", first],
+    ["run-2", second],
+  ]);
+
+  releaseActiveAcpRun(activeAcp, "run-1", true);
+  releaseActiveAcpRun(activeAcp, "run-1", true);
+  releaseActiveAcpRun(activeAcp, undefined, true);
+
+  assert.deepEqual([...activeAcp], [["run-2", second]]);
+  assert.deepEqual(cancelled, ["run-1"]);
+});
+
+test("provider run finalization leaves a drained ACP child untouched", () => {
+  const cancelled: string[] = [];
+  const adapter = { cancel: (runId: string) => cancelled.push(runId) } as never;
+  const activeAcp = new Map([["run-1", adapter]]);
+
+  releaseActiveAcpRun(activeAcp, "run-1", false);
+
+  assert.equal(activeAcp.size, 0);
+  assert.deepEqual(cancelled, []);
 });
 
 test("provider run admission bounds host-wide execution and releases idempotently", () => {

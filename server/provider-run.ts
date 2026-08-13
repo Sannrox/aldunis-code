@@ -5,6 +5,7 @@ import {
   ClaudeCodeAdapter,
   type InteractionMode,
   type ProviderId,
+  type ProviderRun,
   ProviderProtocolError,
   type ReasoningEffort,
 } from "./provider.ts";
@@ -260,6 +261,19 @@ export function shouldReleaseBrowserProviderToken(
   codexOwnsToken: boolean,
 ): boolean {
   return providerId !== "codex-cli" || !codexOwnsToken;
+}
+
+export function releaseActiveAcpRun(
+  activeAcp: Map<string, AcpProviderAdapter>,
+  runId: string | undefined,
+  cancel: boolean,
+): void {
+  if (!runId) return;
+  try {
+    if (cancel) activeAcp.get(runId)?.cancel(runId);
+  } finally {
+    activeAcp.delete(runId);
+  }
 }
 
 export async function handleProviderRun(
@@ -763,6 +777,8 @@ async function executeProviderRun(
   activeCheckpointWorktrees.add(activeWorktreeKey);
   let browserProviderConversationId: string | null = null;
   let codexOwnsBrowserProviderToken = false;
+  let providerStreamDrained = false;
+  let run: ProviderRun | undefined;
   try {
     const nativeResumeClaim = nativeResumeInput
       ? await state.claimNativeShikigamiResume(
@@ -885,7 +901,6 @@ async function executeProviderRun(
     const effectiveProviderPromptWithBrowser = browserMcp
       ? `${effectiveProviderPrompt}\n\nAldunis shared browser tools are available for the local loopback preview. Use browser_snapshot before acting. Browser control is disabled until the operator explicitly enables it; if a browser action is refused, explain that and continue without repeatedly retrying.`
       : effectiveProviderPrompt;
-    let run;
     try {
       run =
         providerId === "codex-cli"
@@ -1043,7 +1058,6 @@ async function executeProviderRun(
       else if (providerId === "shikigami") shikigami.cancel(run.id);
       else if (isDeclarativeAdapter) {
         activeAcp.get(run.id)?.cancel(run.id);
-        activeAcp.delete(run.id);
       } else provider.cancel(run.id);
       throw error;
     }
@@ -1145,6 +1159,7 @@ async function executeProviderRun(
       if (event.kind === "turn_completed") completed = true;
       output.write(`${JSON.stringify(outgoingEvent)}\n`);
     }
+    providerStreamDrained = true;
     const checkpoint = (await state.inspect()).checkpoints.find((item) => item.id === checkpointId);
     if (checkpoint?.state === "baseline" && baselineIdentity) {
       if (historyFailed) {
@@ -1222,9 +1237,9 @@ async function executeProviderRun(
       .dispatch(completed ? "turn_completed" : "turn_failed", persisted.thread.projectId)
       .catch(() => undefined);
     output.end();
-    activeAcp.delete(run.id);
     return true;
   } finally {
+    releaseActiveAcpRun(activeAcp, run?.id, !providerStreamDrained);
     if (run?.id) inputExpiryTimers.clearRun(run.id);
     if (
       browserProviderConversationId &&
