@@ -1036,6 +1036,7 @@ export function CodeWorkbench({
           : loadLocalStateProjection()) as Promise<WorkbenchStateProjection>,
       createEventSource: () => new EventSource("/api/state/events"),
       accept: acceptStateProjection,
+      visibility: document,
     });
     stateProjectionSynchronizationReference.current = synchronization;
     synchronization.start();

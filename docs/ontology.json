@@ -253,7 +253,7 @@
     },
     {
       "name": "WorkbenchProjectionSynchronizationModule",
-      "description": "A deep renderer-side Aldunis Code module that concentrates local workbench projection refresh coalescing, stale-response suppression, event-stream lifetime, malformed-event rejection, optimistic visit reconciliation, and recovery-field normalization behind one refresh and snapshot interface without acquiring persistence, provider, filesystem, permission, or remote-product authority."
+      "description": "A deep renderer-side Aldunis Code module that concentrates local workbench projection refresh coalescing, stale-response suppression, visible-only event-stream lifetime, hidden-stream suspension, malformed-event rejection, optimistic visit reconciliation, and recovery-field normalization behind one refresh and snapshot interface without acquiring persistence, provider, filesystem, permission, or remote-product authority."
     },
     {
       "name": "SplitWorkspaceLifecycleModule",
