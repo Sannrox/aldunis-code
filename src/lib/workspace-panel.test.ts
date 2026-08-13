@@ -4,6 +4,7 @@ import {
   initialWorkspacePanelLifecycle,
   transitionWorkspacePanelLifecycle,
   workspacePanelTabStop,
+  workspacePanelToggleHeld,
   type WorkspacePanelLifecycleEvent,
   type WorkspacePanelLifecycleState,
 } from "./workspace-panel";
@@ -11,6 +12,13 @@ import {
 function apply(state: WorkspacePanelLifecycleState, event: WorkspacePanelLifecycleEvent) {
   return transitionWorkspacePanelLifecycle(state, event);
 }
+
+test("workspace selector stays pressed while the destination chunk is pending", () => {
+  assert.equal(workspacePanelToggleHeld("files", "files", true), true);
+  assert.equal(workspacePanelToggleHeld("files", "files", false), false);
+  assert.equal(workspacePanelToggleHeld("preview", "files", true), false);
+  assert.equal(workspacePanelToggleHeld("none", "preview", true), false);
+});
 
 test("workspace lifecycle opens, switches, refreshes, closes, and restores focus", () => {
   let state = initialWorkspacePanelLifecycle();

@@ -176,6 +176,13 @@ test("hidden workspace overlays stay hidden under the shell overrides", () => {
   );
 });
 
+test("workspace panel pending chrome occupies the destination body", () => {
+  assert.match(
+    css,
+    /\.workspace-panel-pending\s*\{[^}]*display:\s*flex[^}]*align-items:\s*center/s,
+  );
+});
+
 test("floating preview escapes the conversation overlay without losing bounds", () => {
   assert.match(
     css,
