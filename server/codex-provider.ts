@@ -34,7 +34,7 @@ const SUPPORTED_CODEX_MAJOR = 0;
 const MIN_CODEX_MINOR = 80;
 const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 export const CODEX_IDLE_SESSION_TTL_MS = 5 * 60_000;
-export const MAX_IDLE_CODEX_SESSIONS = 8;
+export const MAX_IDLE_CODEX_SESSIONS = 2;
 const APPROVED_BROWSER_TOOLS = new Set([
   "browser_status",
   "browser_snapshot",
