@@ -1146,11 +1146,14 @@ export function CodeWorkbench({
     }
     const refresh = async (signal: AbortSignal) => {
       try {
-        const results = await loadBranchPrLookupResults(items, signal);
+        const { results, complete } = await loadBranchPrLookupResults(items, signal);
         setPrStatusByWorktree(indexBranchPrResults(results));
+        if (!complete) return undefined;
+        return results.some((result) => result.pr?.state === "open");
       } catch {
-        if (signal.aborted) return;
+        if (signal.aborted) return undefined;
         // Soft-fail: missing gh or network issues leave rows without PR chrome.
+        return undefined;
       }
     };
     // Restore can settle the lookup key a few times, so the initial visible
