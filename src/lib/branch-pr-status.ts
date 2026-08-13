@@ -24,6 +24,7 @@ export function indexBranchPrResults(
 export const BRANCH_PR_CLIENT_BATCH_LIMIT = 24;
 export const BRANCH_PR_INITIAL_REFRESH_DELAY_MS = 250;
 export const BRANCH_PR_REFRESH_INTERVAL_MS = 60_000;
+export const BRANCH_PR_QUIET_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 type BranchPrStatusRequest = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -31,8 +32,9 @@ export async function loadBranchPrLookupResults(
   items: ReadonlyArray<{ root: string; worktree: string }>,
   signal: AbortSignal,
   request: BranchPrStatusRequest = globalThis.fetch,
-): Promise<BranchPrLookupResult[]> {
+): Promise<{ results: BranchPrLookupResult[]; complete: boolean }> {
   const results: BranchPrLookupResult[] = [];
+  let complete = true;
   for (const batch of chunkWorktreeRoots(items, BRANCH_PR_CLIENT_BATCH_LIMIT)) {
     signal.throwIfAborted();
     const response = await request("/api/delivery/pr-status/batch", {
@@ -41,7 +43,10 @@ export async function loadBranchPrLookupResults(
       body: JSON.stringify({ items: batch }),
       signal,
     });
-    if (!response.ok) continue;
+    if (!response.ok) {
+      complete = false;
+      continue;
+    }
     const body = (await response.json()) as {
       results?: BranchPrLookupResult[];
       error?: string;
@@ -49,7 +54,7 @@ export async function loadBranchPrLookupResults(
     if (Array.isArray(body.results)) results.push(...body.results);
   }
   signal.throwIfAborted();
-  return results;
+  return { results, complete };
 }
 
 interface PollingVisibility {
@@ -73,7 +78,7 @@ const browserPollingTimers: PollingTimers = {
  * tick never starts a second Git/GitHub inspection while one is in flight.
  */
 export function startBranchPrStatusPolling(
-  refresh: (signal: AbortSignal) => Promise<void>,
+  refresh: (signal: AbortSignal) => Promise<boolean | void>,
   visibility: PollingVisibility,
   timers: PollingTimers = browserPollingTimers,
 ): () => void {
@@ -104,8 +109,9 @@ export function startBranchPrStatusPolling(
     inFlight = true;
     const controller = new AbortController();
     activeController = controller;
+    let hasOpenPr: boolean | void = undefined;
     try {
-      await refresh(controller.signal);
+      hasOpenPr = await refresh(controller.signal);
     } finally {
       if (activeController === controller) activeController = undefined;
       inFlight = false;
@@ -113,7 +119,9 @@ export function startBranchPrStatusPolling(
         refreshAfterFlight = false;
         void run();
       } else {
-        schedule(BRANCH_PR_REFRESH_INTERVAL_MS);
+        schedule(
+          hasOpenPr === false ? BRANCH_PR_QUIET_REFRESH_INTERVAL_MS : BRANCH_PR_REFRESH_INTERVAL_MS,
+        );
       }
     }
   };

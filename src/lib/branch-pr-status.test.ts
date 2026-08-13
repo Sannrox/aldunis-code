@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BRANCH_PR_CLIENT_BATCH_LIMIT,
   BRANCH_PR_INITIAL_REFRESH_DELAY_MS,
+  BRANCH_PR_QUIET_REFRESH_INTERVAL_MS,
   BRANCH_PR_REFRESH_INTERVAL_MS,
   chunkWorktreeRoots,
   indexBranchPrResults,
@@ -128,6 +129,62 @@ test("PR status polling schedules the next batch after the active batch complete
   fireTimeout();
   await Promise.resolve();
   assert.equal(refreshes, 2);
+  dispose();
+});
+
+test("PR status polling backs off after a quiet batch", async () => {
+  let timeout: (() => void) | undefined;
+  let timeoutDelay: number | undefined;
+  const dispose = startBranchPrStatusPolling(
+    async () => false,
+    {
+      visibilityState: "visible",
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    {
+      setTimeout: (callback, delay) => {
+        timeout = callback;
+        timeoutDelay = delay;
+        return 1;
+      },
+      clearTimeout: () => {
+        timeout = undefined;
+      },
+    },
+  );
+
+  timeout?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(timeoutDelay, BRANCH_PR_QUIET_REFRESH_INTERVAL_MS);
+  dispose();
+});
+
+test("PR status polling keeps active cadence while an open PR is tracked", async () => {
+  let timeout: (() => void) | undefined;
+  let timeoutDelay: number | undefined;
+  const dispose = startBranchPrStatusPolling(
+    async () => true,
+    {
+      visibilityState: "visible",
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    },
+    {
+      setTimeout: (callback, delay) => {
+        timeout = callback;
+        timeoutDelay = delay;
+        return 1;
+      },
+      clearTimeout: () => {
+        timeout = undefined;
+      },
+    },
+  );
+
+  timeout?.();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(timeoutDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
   dispose();
 });
 
@@ -262,6 +319,29 @@ test("cancelled PR status loading stops before the next HTTP batch", async () =>
     (JSON.parse(requests[0]?.body ?? "{}") as { items?: unknown[] }).items?.length,
     BRANCH_PR_CLIENT_BATCH_LIMIT,
   );
+});
+
+test("PR status loading distinguishes partial failures from a confirmed quiet result", async () => {
+  let requests = 0;
+  const snapshot = await loadBranchPrLookupResults(
+    Array.from({ length: BRANCH_PR_CLIENT_BATCH_LIMIT + 1 }, (_, index) => ({
+      root: "/repo",
+      worktree: `/wt/${index}`,
+    })),
+    new AbortController().signal,
+    async () => {
+      requests += 1;
+      return requests === 1
+        ? new Response(JSON.stringify({ results: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        : new Response(null, { status: 503 });
+    },
+  );
+
+  assert.deepEqual(snapshot, { results: [], complete: false });
+  assert.equal(requests, 2);
 });
 
 test("index and unique helpers prepare batch sidebar lookups", () => {
