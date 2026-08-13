@@ -12,7 +12,11 @@ import { RepositoryError } from "./repository.ts";
 
 interface ReviewChangesAdapter {
   listChangedFiles: (worktree: string, signal?: AbortSignal) => Promise<ChangedFile[]>;
-  readFileDiff: (worktree: string, path: string) => Promise<FileDiff>;
+  readFileDiff: (
+    worktree: string,
+    path: string,
+    changedFiles?: readonly ChangedFile[],
+  ) => Promise<FileDiff>;
 }
 
 interface ReviewRouteContext {
@@ -182,9 +186,11 @@ export async function handleReviewRoute(
     const { selected, projection, thread } = await resolveConversation(body);
     const annotations = projection.annotations.filter((item) => item.threadId === thread.id);
     const diffs = new Map<string, FileDiff | null>();
+    const changedFiles =
+      annotations.length > 0 ? await changes.listChangedFiles(selected.worktree) : [];
     for (const path of new Set(annotations.map((item) => item.path))) {
       try {
-        diffs.set(path, await changes.readFileDiff(selected.worktree, path));
+        diffs.set(path, await changes.readFileDiff(selected.worktree, path, changedFiles));
       } catch {
         diffs.set(path, null);
       }
@@ -316,16 +322,18 @@ export async function handleReviewRoute(
     if (selected.length !== requested.size) {
       throw new LocalStateError("One or more selected annotations are unavailable.", 404);
     }
-    const views = [];
-    for (const item of selected) {
+    const diffs = new Map<string, FileDiff | null>();
+    const changedFiles = await changes.listChangedFiles(selectedWorktree.worktree);
+    for (const path of new Set(selected.map((item) => item.path))) {
       let current = null;
       try {
-        current = await changes.readFileDiff(selectedWorktree.worktree, item.path);
+        current = await changes.readFileDiff(selectedWorktree.worktree, path, changedFiles);
       } catch {
         // Missing and no-longer-changed targets are represented as stale.
       }
-      views.push(annotationView(item, current));
+      diffs.set(path, current);
     }
+    const views = selected.map((item) => annotationView(item, diffs.get(item.path) ?? null));
     sendJson(response, 200, { prompt: formatRevisionContext(views), annotations: views });
     return true;
   }

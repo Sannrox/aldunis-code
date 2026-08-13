@@ -838,9 +838,15 @@ export async function listChangedFiles(
   }
 }
 
-export async function readFileDiff(worktree: string, requestedPath: string): Promise<FileDiff> {
+export async function readFileDiff(
+  worktree: string,
+  requestedPath: string,
+  changedFiles?: readonly ChangedFile[],
+): Promise<FileDiff> {
   const path = safeRelativePath(worktree, requestedPath);
-  const change = (await listChangedFiles(worktree)).find((item) => item.path === path);
+  const change = (changedFiles ?? (await listChangedFiles(worktree))).find(
+    (item) => item.path === path,
+  );
   if (!change) throw new RepositoryError("The selected file is no longer changed.", 404);
   if (change.state === "binary") {
     return finalizeDiff(change, null, "Binary content is not rendered.");

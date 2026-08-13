@@ -166,3 +166,146 @@ test("review route module rejects annotation creation after the diff identity ch
         "The diff changed before the annotation was saved. Refresh and select it again.",
   );
 });
+
+test("annotation routes reuse one changed-file inventory per multi-diff request", async () => {
+  const changedFiles = [
+    {
+      path: "src/first.ts",
+      previousPath: null,
+      state: "modified" as const,
+      additions: 1,
+      deletions: 0,
+    },
+    {
+      path: "src/second.ts",
+      previousPath: null,
+      state: "modified" as const,
+      additions: 2,
+      deletions: 1,
+    },
+  ];
+  const annotation = (id: string, path: string) => ({
+    schemaVersion: 2 as const,
+    id,
+    threadId: "thread-1",
+    checkpointId: null,
+    diffIdentity: `identity-${id}`,
+    path,
+    previousPath: null,
+    targetState: "modified" as const,
+    scope: "file" as const,
+    side: null,
+    oldLine: null,
+    newLine: null,
+    text: `Review ${path}`,
+    capturedContext: "+changed",
+    resolution: "unresolved" as const,
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+  });
+  const projection = {
+    projects: [{ id: "project-1", root: "/repo" }],
+    threads: [{ id: "thread-1", projectId: "project-1", worktree: "/repo/wt" }],
+    annotations: [annotation("first", "src/first.ts"), annotation("second", "src/second.ts")],
+    checkpoints: [],
+  } as unknown as StateProjection;
+  let inventoryReads = 0;
+  const diffReads: string[] = [];
+  const writes: Array<{ status: number; value: unknown }> = [];
+
+  await handleReviewRoute(
+    "/api/annotations/list",
+    request,
+    response,
+    context({
+      readJson: async () => ({
+        root: "/repo",
+        worktree: "/repo/wt",
+        threadId: "thread-1",
+        annotationIds: ["first", "second"],
+      }),
+      selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+      state: {
+        inspect: async () => projection,
+        saveAnnotation: unused,
+        setAnnotationResolution: unused,
+        setFileReview: unused,
+      },
+      changes: {
+        listChangedFiles: async () => {
+          inventoryReads += 1;
+          return changedFiles;
+        },
+        readFileDiff: async (_worktree: string, path: string, inventory: unknown) => {
+          assert.equal(inventory, changedFiles);
+          diffReads.push(path);
+          const change = changedFiles.find((item) => item.path === path)!;
+          return {
+            ...change,
+            identity: `identity-${path.includes("first") ? "first" : "second"}`,
+            lines: [],
+            patch: "+changed",
+            message: null,
+          };
+        },
+      },
+      sendJson: (_response: ServerResponse, status: number, value: unknown) =>
+        writes.push({ status, value }),
+    }),
+  );
+
+  assert.equal(inventoryReads, 1);
+  assert.deepEqual(diffReads, ["src/first.ts", "src/second.ts"]);
+  assert.equal(writes[0]?.status, 200);
+  assert.deepEqual(
+    (writes[0]?.value as { annotations: Array<{ stale: boolean }> }).annotations.map(
+      (item) => item.stale,
+    ),
+    [false, false],
+  );
+
+  await handleReviewRoute(
+    "/api/annotations/preview",
+    request,
+    response,
+    context({
+      readJson: async () => ({
+        root: "/repo",
+        worktree: "/repo/wt",
+        threadId: "thread-1",
+        annotationIds: ["first", "second"],
+      }),
+      selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+      state: {
+        inspect: async () => projection,
+        saveAnnotation: unused,
+        setAnnotationResolution: unused,
+        setFileReview: unused,
+      },
+      changes: {
+        listChangedFiles: async () => {
+          inventoryReads += 1;
+          return changedFiles;
+        },
+        readFileDiff: async (_worktree: string, path: string, inventory: unknown) => {
+          assert.equal(inventory, changedFiles);
+          diffReads.push(path);
+          const change = changedFiles.find((item) => item.path === path)!;
+          return {
+            ...change,
+            identity: `identity-${path.includes("first") ? "first" : "second"}`,
+            lines: [],
+            patch: "+changed",
+            message: null,
+          };
+        },
+      },
+      sendJson: (_response: ServerResponse, status: number, value: unknown) =>
+        writes.push({ status, value }),
+    }),
+  );
+
+  assert.equal(inventoryReads, 2);
+  assert.deepEqual(diffReads, ["src/first.ts", "src/second.ts", "src/first.ts", "src/second.ts"]);
+  assert.equal(writes[1]?.status, 200);
+});
