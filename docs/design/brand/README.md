@@ -10,5 +10,5 @@ resolved application theme selects the matching in-product mark and favicon;
 system mode follows the operating-system theme.
 
 Both files are 1024 × 1024 raster extracts because the supplied artwork does not
-contain vector paths. `public/aldunis-mark.png` retains the fixed white-tile
-treatment for Electron Builder.
+contain vector paths. Electron Builder reuses the light treatment instead of
+shipping a third byte-identical mark.

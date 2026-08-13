@@ -87,13 +87,10 @@ code{font-family:var(--font-mono)}
 .sb-hd{display:flex;align-items:center;gap:9px;padding:12px 12px 8px}
 .logo{width:26px;height:26px;border-radius:7px;background:var(--primary);color:var(--primary-foreground);display:grid;place-items:center;
   font:500 16px var(--font-display, Georgia, serif);overflow:hidden}
-.aldunis-brand-mark{display:block;width:100%;height:100%}
-.aldunis-brand-mark img{display:block;width:100%;height:100%;object-fit:cover}
+.aldunis-brand-mark{display:block;width:100%;height:100%;background:center/cover no-repeat url('/aldunis-mark-light.png')}
 .aldunis-brand-mark--compact{overflow:hidden}
-.aldunis-brand-mark--compact img{transform:scale(1.16)}
-.aldunis-brand-mark__dark{display:none!important}
-[data-theme="dark"] .aldunis-brand-mark__light{display:none!important}
-[data-theme="dark"] .aldunis-brand-mark__dark{display:block!important}
+.aldunis-brand-mark--compact{background-size:116%}
+[data-theme="dark"] .aldunis-brand-mark{background-image:url('/aldunis-mark-dark.png')}
 .sb-name{font-weight:600;font-size:14px}
 .g1{padding:6px 8px 8px;display:flex;gap:6px}
 .search{flex:1;display:flex;align-items:center;gap:8px;padding:0 10px;height:32px;border-radius:var(--radius);background:var(--muted);color:var(--muted-foreground);font-size:13px}

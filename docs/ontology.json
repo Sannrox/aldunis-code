@@ -99,7 +99,7 @@
     },
     {
       "name": "CollapsibleCodeSidebar",
-      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and a fixed Mod+B keybinding to toggle it. Its compact header mark crops the supplied tile frame, and its macOS collapse/expand control lives in the native row while opting out of the drag region. On macOS Electron, the shell reserves a distinct 52px native-titlebar row above the ordinary app header, with a compact sidebar affordance and aligned sidebar boundary, while keeping the explicitly positioned hidden-inset controls and without changing repository, provider, or permission authority."
+      "description": "The shared Aldunis Code web-renderer sidebar presentation used by browser and Electron desktop clients; it can remove its layout gap while preserving the main conversation surface and a fixed Mod+B keybinding to toggle it. Its compact header mark crops the supplied tile frame while loading only the resolved theme's raster treatment, and its macOS collapse/expand control lives in the native row while opting out of the drag region. On macOS Electron, the shell reserves a distinct 52px native-titlebar row above the ordinary app header, with a compact sidebar affordance and aligned sidebar boundary, while keeping the explicitly positioned hidden-inset controls and without changing repository, provider, or permission authority."
     },
     {
       "name": "SidebarLifecycleModule",
@@ -1859,7 +1859,7 @@
     },
     {
       "subject": "ConversationComposer",
-      "source": "Sannrox/aldunis-code",
+      "source": "Sannrox/aldunis-code and Aldunis Code Issue Sannrox/aldunis-code#974",
       "locator": "src/features/code/conversation.tsx",
       "confidence": 1.0
     },

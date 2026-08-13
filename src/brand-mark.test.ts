@@ -4,10 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AldunisBrandMark } from "./components/brand-mark";
 
-test("Aldunis brand mark exposes exact light and dark theme variants", () => {
+test("Aldunis brand mark exposes one decorative theme-selected surface", () => {
   const html = renderToStaticMarkup(createElement(AldunisBrandMark));
 
-  assert.match(html, /aldunis-mark-light\.png/);
-  assert.match(html, /aldunis-mark-dark\.png/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /class="aldunis-brand-mark"/);
   assert.match(html, /aria-hidden="true"/);
 });

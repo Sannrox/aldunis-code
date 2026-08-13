@@ -83,7 +83,7 @@
     },
     "appId": "com.aldunis.code",
     "productName": "Aldunis Code",
-    "icon": "public/aldunis-mark.png",
+    "icon": "public/aldunis-mark-light.png",
     "asar": true,
     "directories": {
       "output": "release"
