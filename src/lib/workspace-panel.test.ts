@@ -57,6 +57,8 @@ test("workspace lifecycle coordinates floating preview and browser observations"
   assert.equal(state.previewFloating, false);
   transition = apply(state, { type: "close_preview" });
   assert.equal(transition.state.browserObservationOpen, false);
+  assert.equal(transition.state.previewMounted, false);
+  assert.equal(transition.state.previewFloating, false);
 });
 
 test("workspace lifecycle unmounts a failed preview when dismissed", () => {
@@ -127,6 +129,48 @@ test("workspace lifecycle derives roving focus and reset decisions", () => {
   ]);
   state = apply(state, { type: "browser_observation", present: true }).state;
   state = apply(state, { type: "workspace_reset" }).state;
+  assert.equal(state.previewMounted, false);
   assert.equal(state.previewFloating, false);
   assert.equal(state.browserObservationOpen, false);
+});
+
+test("workspace lifecycle unmounts preview on close, toggle-away, and workspace reset", () => {
+  let state = initialWorkspacePanelLifecycle();
+  state = apply(state, { type: "toggle", destination: "preview" }).state;
+  assert.equal(state.previewMounted, true);
+
+  let transition = apply(state, { type: "close_preview" });
+  assert.equal(transition.state.activePanel, "none");
+  assert.equal(transition.state.previewMounted, false);
+
+  state = apply(state, { type: "toggle", destination: "files" }).state;
+  assert.equal(state.activePanel, "files");
+  assert.equal(state.previewMounted, false);
+  assert.equal(state.previewFloating, false);
+
+  state = initialWorkspacePanelLifecycle("preview");
+  state = apply(state, { type: "toggle_preview_floating" }).state;
+  assert.equal(state.previewFloating, true);
+  transition = apply(state, { type: "close_preview" });
+  assert.equal(transition.state.activePanel, "none");
+  assert.equal(transition.state.previewMounted, false);
+  assert.equal(transition.state.previewFloating, false);
+
+  state = initialWorkspacePanelLifecycle("preview");
+  state = apply(state, { type: "toggle_preview_floating" }).state;
+  transition = apply(state, { type: "toggle", destination: "files" });
+  assert.equal(transition.state.activePanel, "files");
+  assert.equal(transition.state.previewFloating, true);
+  assert.equal(transition.state.previewMounted, true);
+
+  state = apply(state, { type: "browser_observation", present: true }).state;
+  transition = apply(state, { type: "workspace_reset" });
+  assert.deepEqual(
+    {
+      mounted: transition.state.previewMounted,
+      floating: transition.state.previewFloating,
+      observation: transition.state.browserObservationOpen,
+    },
+    { mounted: false, floating: false, observation: false },
+  );
 });

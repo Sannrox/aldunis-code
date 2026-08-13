@@ -63,8 +63,15 @@ test("workspace panels stay behind conversation intent", () => {
     assert.match(conversationSource, new RegExp(`import\\(["']${path}["']\\)`));
   }
   assert.match(conversationSource, /label="Preview" onDismiss=\{dismissPreview\}/);
+  assert.match(
+    conversationSource,
+    /activePanel === "preview" \|\| previewFloating \|\| agentBrowserViewOpen/,
+  );
+  assert.doesNotMatch(conversationSource, /previewMounted\s*\|\|/);
   assert.match(conversationSource, /label="Files"/);
   assert.match(conversationSource, /label="Changes"/);
+  assert.match(conversationSource, /\{activePanel === "files" && repository && \(/);
+  assert.match(conversationSource, /\{activePanel === "changes" && repository && \(/);
 });
 
 test("cross-product screens stay behind non-Code selection intent", () => {
