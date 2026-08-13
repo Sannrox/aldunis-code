@@ -534,6 +534,10 @@
       "description": "A deep renderer-side Aldunis Code module that concentrates application-shell boot, project request coalescing and freshness, repository-open consequences, managed-aware restoration ordering, failure recovery, and lifecycle cancellation behind one interface while the local host retains repository and filesystem authority."
     },
     {
+      "name": "RendererOptionalControlLoadingBoundary",
+      "description": "The Aldunis Code renderer composition boundary that keeps core workbench, repository, search, and navigation code eager while loading Activity, Automations, Autonomy, Connections, and Preferences controls only after explicit open intent, without changing their state, host contracts, or authority."
+    },
+    {
       "name": "ConnectionsSessionModule",
       "description": "A deep renderer-side Aldunis Code module that concentrates Connections mode admission, loading, drafts, save-and-connect, re-pairing, disconnect and removal refresh, local restoration, host pairing and revocation, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while host and desktop adapters retain authority."
     },
@@ -2869,6 +2873,12 @@
       "subject": "ApplicationShellBootstrapModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#707",
       "locator": "src/lib/application-shell-bootstrap.ts#ApplicationShellBootstrapModule; src/main.tsx#App",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RendererOptionalControlLoadingBoundary",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#977",
+      "locator": "src/main.tsx; src/main-loading.test.ts; vite.config.ts",
       "confidence": 1.0
     },
     {
