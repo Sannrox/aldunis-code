@@ -12,10 +12,12 @@ import {
   DEFAULT_REMOTE_BACKEND_PORT,
   DEFAULT_REMOTE_COMMAND,
   MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS,
+  MAX_REMOTE_DESCRIPTOR_BYTES,
   normalizeRemoteEnvironmentInput,
   RemoteEnvironmentManager,
   RemoteEnvironmentStore,
   assertSshRemoteDescriptor,
+  readRemoteDescriptor,
   terminateRemoteChild,
 } from "./remote-environments.ts";
 
@@ -115,6 +117,24 @@ test("SSH connections require the authenticated remote descriptor", () => {
   assert.throws(
     () => assertSshRemoteDescriptor({ remoteEnabled: false }),
     /did not enable authenticated remote access/,
+  );
+});
+
+test("remote descriptor reads reject declared and streamed overflow", async () => {
+  assert.deepEqual(await readRemoteDescriptor(new Response('{"remoteEnabled":true}')), {
+    remoteEnabled: true,
+  });
+  await assert.rejects(
+    readRemoteDescriptor(
+      new Response("{}", {
+        headers: { "content-length": String(MAX_REMOTE_DESCRIPTOR_BYTES + 1) },
+      }),
+    ),
+    /exceeds the 16 KiB limit/,
+  );
+  await assert.rejects(
+    readRemoteDescriptor(new Response(new Uint8Array(MAX_REMOTE_DESCRIPTOR_BYTES + 1))),
+    /exceeds the 16 KiB limit/,
   );
 });
 

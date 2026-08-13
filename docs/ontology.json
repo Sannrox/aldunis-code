@@ -59,7 +59,7 @@
     },
     {
       "name": "DesktopRemoteEnvironmentManager",
-      "description": "The Electron main-process boundary that retains at most 64 named remote-environment metadata records, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
+      "description": "The Electron main-process boundary that retains at most 64 named remote-environment metadata records, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, validates each loopback descriptor within a one-second request and 16 KiB response ceiling, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
     },
     {
       "name": "RemoteEnvironment",

@@ -12,6 +12,7 @@ export const MAX_ACTIVE_REMOTE_ENVIRONMENT_CONNECTIONS = 8;
 export const MAX_SAVED_REMOTE_ENVIRONMENTS = 64;
 export const MAX_RECOVERABLE_REMOTE_ENVIRONMENTS = 256;
 export const MAX_REMOTE_ENVIRONMENT_STATE_BYTES = 256 * 1024;
+export const MAX_REMOTE_DESCRIPTOR_BYTES = 16 * 1024;
 
 export type RemoteEnvironmentTransport = "endpoint" | "ssh";
 
@@ -425,7 +426,7 @@ async function waitForRemoteDescriptor(
         if (!response.ok) {
           lastError = `Remote descriptor returned HTTP ${response.status}.`;
         } else {
-          const body = (await response.json()) as { remoteEnabled?: unknown };
+          const body = (await readRemoteDescriptor(response)) as { remoteEnabled?: unknown };
           if (typeof body.remoteEnabled === "boolean") return { remoteEnabled: body.remoteEnabled };
           lastError = "The remote descriptor was invalid.";
         }
@@ -437,6 +438,41 @@ async function waitForRemoteDescriptor(
     throw new Error(lastError || "The remote backend did not become reachable.");
   } finally {
     for (const child of children) child.off("error", onChildError);
+  }
+}
+
+export async function readRemoteDescriptor(response: Response): Promise<unknown> {
+  const rawLength = response.headers.get("content-length");
+  const contentLength = rawLength === null ? null : Number(rawLength);
+  if (contentLength !== null && (!Number.isSafeInteger(contentLength) || contentLength < 0)) {
+    throw new Error("The remote descriptor returned an invalid response length.");
+  }
+  if (contentLength !== null && contentLength > MAX_REMOTE_DESCRIPTOR_BYTES) {
+    throw new Error("The remote descriptor exceeds the 16 KiB limit.");
+  }
+  if (!response.body) throw new Error("The remote descriptor was empty.");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_REMOTE_DESCRIPTOR_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("The remote descriptor exceeds the 16 KiB limit.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = Buffer.concat(chunks, total).toString("utf8");
+  try {
+    return JSON.parse(bytes);
+  } catch {
+    throw new Error("The remote descriptor was invalid.");
   }
 }
 
