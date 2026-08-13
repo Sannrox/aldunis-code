@@ -125,7 +125,7 @@ function sampleProjection(): StateProjection {
   return base as StateProjection;
 }
 
-test("workbench projection drops transcript bodies while keeping threads", () => {
+test("workbench projection keeps list metadata and drops durable histories", () => {
   const projection = sampleProjection();
   const workbench = projectWorkbenchState(projection);
   assert.equal(workbench.threads.length, 2);
@@ -134,6 +134,13 @@ test("workbench projection drops transcript bodies while keeping threads", () =>
   assert.equal(workbench.plans.length, 0);
   assert.equal(workbench.contextReceipts.length, 0);
   assert.equal(workbench.inputRequests.length, 0);
+  assert.equal(workbench.turns.length, 0);
+  assert.equal(workbench.usageReceipts.length, 0);
+  assert.equal(workbench.governanceCorrelations.length, 0);
+  assert.equal(workbench.checkpoints.length, 0);
+  assert.equal(workbench.automationFires.length, 0);
+  assert.equal(workbench.autonomyRuns.length, 0);
+  assert.equal(workbench.autonomyTasks.length, 0);
   // Source projection is untouched.
   assert.equal(projection.messages.length, 2);
 });
@@ -152,7 +159,7 @@ test("workbench projection freezes list membership against live array growth", (
     threadId: "thread-c",
   });
   assert.equal(workbench.threads.length, 2);
-  assert.equal(workbench.turns.length, 2);
+  assert.equal(workbench.turns.length, 0);
   assert.equal(projection.threads.length, 3);
 });
 

@@ -162,6 +162,17 @@ test("Workbench load derives one bounded response from the inspected snapshot", 
   );
   assert.deepEqual(calls, ["preferences", "inspect"]);
   assert.equal((value?.messages as unknown[]).length, 0);
+  assert.deepEqual(
+    (value?.threadStatuses as Array<{ threadId: string; status: string }>).map((item) => [
+      item.threadId,
+      item.status,
+    ]),
+    [
+      ["active", "completed"],
+      ["archived", "idle"],
+      ["hidden", "idle"],
+    ],
+  );
   assert.deepEqual(value?.delegatedRelationships, []);
   assert.equal(value?.managedWorktreeCount, 2);
   assert.equal(value?.managedWorktreeLimit, 7);

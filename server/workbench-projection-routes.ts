@@ -177,8 +177,8 @@ export async function handleWorkbenchProjectionRoute(
           }),
         )
       : [];
+    const threadStatuses = projectThreadStatuses(visibleProjection);
     const workbench = projectWorkbenchState(visibleProjection);
-    const threadStatuses = projectThreadStatuses(workbench);
     const managedWorktreeCount = await worktrees.countActiveManaged();
     const managedWorktreePaths = await worktrees.listActiveManagedPaths();
     sendJson(response, 200, {
