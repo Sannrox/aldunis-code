@@ -11,6 +11,7 @@ import {
   projectThreadStatuses,
   type DelegatedActivitiesByTurnIndex,
   type DelegatedMessagesByTurnIndex,
+  type ConversationHistoryIndex,
   type StateProjection,
   type TurnsByThreadIndex,
 } from "./state.ts";
@@ -40,6 +41,34 @@ export interface WorkbenchProjectionRouteContext {
 
 type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
 type UsageProjection = Pick<StateProjection, "projects" | "threads" | "turns" | "usageReceipts">;
+type ManagedAuxiliaryIndexes = Pick<
+  ConversationHistoryIndex,
+  "providerSessionsByThread" | "conversationDeletionByThread" | "inputRequestsByThread"
+>;
+
+function indexedRowsForThreads<T>(
+  threads: StateProjection["threads"],
+  rowsByThread: ReadonlyMap<string, readonly T[]>,
+): T[] {
+  const rows: T[] = [];
+  for (const thread of threads) {
+    const indexed = rowsByThread.get(thread.id);
+    if (indexed) rows.push(...indexed);
+  }
+  return rows;
+}
+
+function indexedDeletionsForThreads(
+  threads: StateProjection["threads"],
+  deletionByThread: ConversationHistoryIndex["conversationDeletionByThread"],
+): StateProjection["conversationDeletions"] {
+  const deletions: StateProjection["conversationDeletions"] = [];
+  for (const thread of threads) {
+    const deletion = deletionByThread.get(thread.id);
+    if (deletion) deletions.push(deletion);
+  }
+  return deletions;
+}
 
 function visibleTurnsForThreads(
   projection: Pick<StateProjection, "turns">,
@@ -88,6 +117,7 @@ export function filterManagedOrchestrationProjection(
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
   turnsByThread?: TurnsByThreadIndex,
   includeTranscriptRows = true,
+  auxiliaryIndexes?: ManagedAuxiliaryIndexes,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
   const threadIds = new Set(threads.map((thread) => thread.id));
@@ -109,21 +139,23 @@ export function filterManagedOrchestrationProjection(
     contextReceipts: [],
     usageReceipts: [],
     governanceCorrelations: [],
-    providerSessions: projection.providerSessions.filter((session) =>
-      threadIds.has(session.threadId),
-    ),
+    providerSessions: auxiliaryIndexes
+      ? indexedRowsForThreads(threads, auxiliaryIndexes.providerSessionsByThread)
+      : projection.providerSessions.filter((session) => threadIds.has(session.threadId)),
     checkpoints: [],
     annotations: [],
     fileReviews: [],
-    conversationDeletions: projection.conversationDeletions.filter((deletion) =>
-      threadIds.has(deletion.threadId),
-    ),
+    conversationDeletions: auxiliaryIndexes
+      ? indexedDeletionsForThreads(threads, auxiliaryIndexes.conversationDeletionByThread)
+      : projection.conversationDeletions.filter((deletion) => threadIds.has(deletion.threadId)),
     forks: [],
     delegatedRelationships: projection.delegatedRelationships.filter(
       (relationship) =>
         threadIds.has(relationship.parentThreadId) && threadIds.has(relationship.childThreadId),
     ),
-    inputRequests: projection.inputRequests.filter((item) => threadIds.has(item.threadId)),
+    inputRequests: auxiliaryIndexes
+      ? indexedRowsForThreads(threads, auxiliaryIndexes.inputRequestsByThread)
+      : projection.inputRequests.filter((item) => threadIds.has(item.threadId)),
     inputReceipts: [],
     automationFires: [],
     autonomyRuns: [],
@@ -153,6 +185,7 @@ export function filterManagedWorkbenchListProjection(
   projection: StateProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
   turnsByThread?: TurnsByThreadIndex,
+  auxiliaryIndexes?: ManagedAuxiliaryIndexes,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
   const threadIds = new Set(threads.map((thread) => thread.id));
@@ -167,15 +200,15 @@ export function filterManagedWorkbenchListProjection(
     contextReceipts: [],
     usageReceipts: [],
     governanceCorrelations: [],
-    providerSessions: projection.providerSessions.filter((session) =>
-      threadIds.has(session.threadId),
-    ),
+    providerSessions: auxiliaryIndexes
+      ? indexedRowsForThreads(threads, auxiliaryIndexes.providerSessionsByThread)
+      : projection.providerSessions.filter((session) => threadIds.has(session.threadId)),
     checkpoints: [],
     annotations: [],
     fileReviews: [],
-    conversationDeletions: projection.conversationDeletions.filter((deletion) =>
-      threadIds.has(deletion.threadId),
-    ),
+    conversationDeletions: auxiliaryIndexes
+      ? indexedDeletionsForThreads(threads, auxiliaryIndexes.conversationDeletionByThread)
+      : projection.conversationDeletions.filter((deletion) => threadIds.has(deletion.threadId)),
     forks: [],
     delegatedRelationships: [],
     inputRequests: [],
@@ -241,8 +274,14 @@ export async function handleWorkbenchProjectionRoute(
             managedHost,
             turnsByThread,
             !hasDelegatedTranscriptIndexes,
+            indexed?.conversationHistory,
           )
-        : filterManagedWorkbenchListProjection(projection, managedHost, turnsByThread)
+        : filterManagedWorkbenchListProjection(
+            projection,
+            managedHost,
+            turnsByThread,
+            indexed?.conversationHistory,
+          )
       : projection;
     // Derive transcript-backed values before the Workbench projection strips them,
     // and before later awaits can observe a newer live-state mutation.

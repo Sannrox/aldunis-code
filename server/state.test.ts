@@ -1337,8 +1337,15 @@ test("conversation deletion previews and physically compacts only conversation-o
   });
   const deletion = await store.deleteConversation(thread.id);
   assert.equal(deletion.status, "completed");
+  assert.deepEqual(
+    (await store.inspectWorkbenchProjection()).conversationHistory.conversationDeletionByThread.get(
+      thread.id,
+    ),
+    deletion,
+  );
 
-  const rebuilt = await new LocalStateStore(directory).load();
+  const rebuiltStore = new LocalStateStore(directory);
+  const rebuilt = await rebuiltStore.load();
   assert.equal(rebuilt.projects.length, 1);
   assert.equal(rebuilt.projects[0].root, "/fixture");
   assert.equal(rebuilt.threads.length, 0);
@@ -1347,6 +1354,12 @@ test("conversation deletion previews and physically compacts only conversation-o
   assert.equal(rebuilt.providerSessions.length, 0);
   assert.equal(rebuilt.automationFires.length, 0);
   assert.equal(rebuilt.conversationDeletions[0].status, "completed");
+  assert.deepEqual(
+    (
+      await rebuiltStore.inspectWorkbenchProjection()
+    ).conversationHistory.conversationDeletionByThread.get(thread.id),
+    deletion,
+  );
   const persisted = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal(persisted.includes("secret sentinel"), false);
   assert.equal(persisted.includes("worktree-that-must-survive"), false);
