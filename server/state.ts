@@ -522,10 +522,7 @@ export function projectThreadStatus(
   threadId: string,
 ): ThreadStatusProjection {
   const thread = projection.threads.find((item) => item.id === threadId);
-  const turns = projection.turns
-    .filter((turn) => turn.threadId === threadId)
-    .slice()
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const turns = projection.turns.filter((turn) => turn.threadId === threadId);
   return projectThreadStatusFromTurns(thread, turns, threadId);
 }
 
@@ -534,16 +531,27 @@ function projectThreadStatusFromTurns(
   turns: readonly Turn[],
   threadId: string,
 ): ThreadStatusProjection {
-  const latest = turns.at(-1);
+  let latest: Turn | undefined;
   let approval: Turn | undefined;
   let awaiting: Turn | undefined;
   let running: Turn | undefined;
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const turn = turns[index];
-    if (!approval && turn.status === "waiting_for_approval") approval = turn;
-    if (!awaiting && turn.status === "waiting_for_user") awaiting = turn;
-    if (!running && (turn.status === "active" || turn.status === "running")) running = turn;
-    if (approval && awaiting && running) break;
+  for (const turn of turns) {
+    if (!latest || turn.createdAt >= latest.createdAt) latest = turn;
+    if (
+      turn.status === "waiting_for_approval" &&
+      (!approval || turn.createdAt >= approval.createdAt)
+    ) {
+      approval = turn;
+    }
+    if (turn.status === "waiting_for_user" && (!awaiting || turn.createdAt >= awaiting.createdAt)) {
+      awaiting = turn;
+    }
+    if (
+      (turn.status === "active" || turn.status === "running") &&
+      (!running || turn.createdAt >= running.createdAt)
+    ) {
+      running = turn;
+    }
   }
   if (approval) {
     return {
@@ -688,12 +696,6 @@ function groupTurnsByThread(turns: readonly Turn[]): Map<string, Turn[]> {
   return turnsByThread;
 }
 
-function sortedTurnsForThread(turns: readonly Turn[] | undefined): readonly Turn[] {
-  if (!turns || turns.length === 0) return [];
-  if (turns.length === 1) return turns;
-  return [...turns].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-}
-
 /**
  * Batch thread status from a store-maintained turn index when provided.
  * Without an index this still groups `projection.turns` once; `/api/state/load`
@@ -705,7 +707,7 @@ export function projectThreadStatuses(
 ): ThreadStatusProjection[] {
   const index = turnsByThread ?? groupTurnsByThread(projection.turns);
   return projection.threads.map((thread) =>
-    projectThreadStatusFromTurns(thread, sortedTurnsForThread(index.get(thread.id)), thread.id),
+    projectThreadStatusFromTurns(thread, index.get(thread.id) ?? [], thread.id),
   );
 }
 
