@@ -87,16 +87,11 @@ test("Aldunis brand mark follows the resolved application theme", () => {
   const shellPath = join(dirname(fileURLToPath(import.meta.url)), "mock-shell.css");
   const shell = readFileSync(shellPath, "utf8");
   assert.match(shell, /\.aldunis-brand-mark--compact\s*\{[^}]*overflow:\s*hidden/s);
-  assert.match(shell, /\.aldunis-brand-mark--compact img\s*\{[^}]*transform:\s*scale\(1\.16\)/s);
+  assert.match(shell, /\.aldunis-brand-mark--compact\s*\{[^}]*background-size:\s*116%/s);
   assert.match(shell, /\.brandbtn:hover\s*\{[^}]*background:\s*transparent/s);
-  assert.match(shell, /\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*none/s);
   assert.match(
     shell,
-    /\[data-theme="dark"\]\s+\.aldunis-brand-mark__light\s*\{[^}]*display:\s*none/s,
-  );
-  assert.match(
-    shell,
-    /\[data-theme="dark"\]\s+\.aldunis-brand-mark__dark\s*\{[^}]*display:\s*block/s,
+    /\[data-theme="dark"\]\s+\.aldunis-brand-mark\s*\{[^}]*background-image:\s*url\('\/aldunis-mark-dark\.png'\)/s,
   );
 });
 
