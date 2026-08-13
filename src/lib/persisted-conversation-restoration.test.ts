@@ -161,6 +161,48 @@ test("restoration event ordering is deterministic for mixed record generations",
   }
 });
 
+test("multi-turn restoration keeps indexed records scoped to their owning turn", () => {
+  const input = projection();
+  input.turns.push({
+    id: "turn-2",
+    threadId: "thread-1",
+    status: "completed",
+    mode: "ask",
+    createdAt: "2026-08-10T11:00:00.000Z",
+    completedAt: "2026-08-10T11:00:02.000Z",
+  });
+  input.messages.push(
+    {
+      turnId: "turn-2",
+      role: "user",
+      text: "Explain it",
+      createdAt: "2026-08-10T11:00:00.000Z",
+    },
+    {
+      turnId: "turn-2",
+      role: "assistant",
+      text: "Only the second answer",
+      createdAt: "2026-08-10T11:00:01.000Z",
+    },
+  );
+
+  const restored = restorePersistedConversation(input, target);
+  assert.equal(restored.kind, "restored");
+  if (restored.kind !== "restored") return;
+  assert.equal(restored.archivedTurns.length, 1);
+  assert.equal(restored.archivedTurns[0]?.message.text, "Fix it");
+  assert.ok(
+    restored.archivedTurns[0]?.events.some((event) => event.kind === "governance_correlation"),
+  );
+  assert.equal(restored.currentTurn.message.text, "Explain it");
+  assert.deepEqual(
+    restored.currentTurn.events.map((event) =>
+      event.kind === "assistant_text" ? event.text : event.kind,
+    ),
+    ["Only the second answer", "turn_completed"],
+  );
+});
+
 test("restoration fails closed across identity and provider selection", () => {
   assert.deepEqual(restorePersistedConversation(projection(), { ...target, worktree: "/other" }), {
     kind: "thread_missing",

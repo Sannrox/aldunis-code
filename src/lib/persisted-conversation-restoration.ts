@@ -154,6 +154,16 @@ interface OrderedEvent {
   ordinal: number;
 }
 
+function groupByTurnId<T extends { turnId: string }>(items: readonly T[]): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const item of items) {
+    const group = grouped.get(item.turnId);
+    if (group) group.push(item);
+    else grouped.set(item.turnId, [item]);
+  }
+  return grouped;
+}
+
 /**
  * Preserve the exact order among sequenced records, then place legacy or
  * projection-only records into timestamp slots without using a non-transitive
@@ -260,110 +270,112 @@ export function restorePersistedConversation(
   if (!latest) return { kind: "empty_thread", thread: binding };
 
   const turnIds = new Set(turns.map((turn) => turn.id));
+  const turnById = new Map(turns.map((turn) => [turn.id, turn]));
   const history = projection.messages
     .filter((message) => turnIds.has(message.turnId))
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const messagesByTurn = groupByTurnId(history);
+  const activitiesByTurn = groupByTurnId(projection.activities ?? []);
+  const plansByTurn = groupByTurnId(projection.plans ?? []);
+  const inputRequestsByTurn = groupByTurnId(projection.inputRequests ?? []);
+  const correlationsByTurn = groupByTurnId(projection.governanceCorrelations ?? []);
+  const contextReceiptsByTurn = groupByTurnId(
+    (projection.contextReceipts ?? []).filter(
+      (receipt): receipt is ContextReceipt & { turnId: string } =>
+        typeof receipt.turnId === "string",
+    ),
+  );
+  const checkpointsByTurn = groupByTurnId(projection.checkpoints ?? []);
   const messages = history
     .filter((message) => message.role === "user")
     .map((message) => ({
       text: message.text,
-      mode: turns.find((turn) => turn.id === message.turnId)?.mode ?? "ask",
+      mode: turnById.get(message.turnId)?.mode ?? "ask",
       createdAt: message.createdAt,
     }));
 
   const eventsForTurn = (turnId: string): OrderedEvent[] => {
-    const turn = turns.find((item) => item.id === turnId);
+    const turn = turnById.get(turnId);
     let ordinal = 0;
     const ordered = orderEvents([
-      ...history
-        .filter(
-          (message) =>
-            message.turnId === turnId && message.role === "assistant" && message.text.length > 0,
-        )
+      ...(messagesByTurn.get(turnId) ?? [])
+        .filter((message) => message.role === "assistant" && message.text.length > 0)
         .map((message) => ({
           event: { kind: "assistant_text" as const, text: message.text },
           createdAt: message.createdAt,
           eventSequence: message.eventSequence,
           ordinal: ordinal++,
         })),
-      ...(projection.activities ?? [])
-        .filter((activity) => activity.turnId === turnId)
-        .flatMap((activity): OrderedEvent[] => {
-          let event: ProviderEvent | null = null;
-          if (activity.kind === "provider_failed") {
-            event = {
-              kind: "failed",
-              message: activity.message?.trim() || `${target.providerName} failed.`,
-            };
-          } else if (activity.kind === "tool_started" && activity.toolCallId) {
-            event = {
-              kind: "tool_started",
-              toolCallId: activity.toolCallId,
-              name: activity.name?.trim() || "Tool",
-            };
-          } else if (activity.kind === "tool_finished" && activity.toolCallId) {
-            event = {
-              kind: "tool_finished",
-              toolCallId: activity.toolCallId,
-              failed: activity.failed === true,
-            };
-          }
-          return event
-            ? [
-                {
-                  event,
-                  createdAt: activity.createdAt,
-                  eventSequence: activity.eventSequence,
-                  ordinal: ordinal++,
-                },
-              ]
-            : [];
-        }),
-      ...(projection.plans ?? [])
-        .filter((plan) => plan.turnId === turnId)
-        .map((plan) => ({
-          event: {
-            kind: "plan_updated" as const,
-            artifact: {
-              id: plan.artifactId,
-              provider: plan.provider,
-              ...(plan.title !== undefined ? { title: plan.title } : {}),
-              ...(plan.body !== undefined ? { body: plan.body } : {}),
-              ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
-              updatedAt: plan.updatedAt,
-            },
+      ...(activitiesByTurn.get(turnId) ?? []).flatMap((activity): OrderedEvent[] => {
+        let event: ProviderEvent | null = null;
+        if (activity.kind === "provider_failed") {
+          event = {
+            kind: "failed",
+            message: activity.message?.trim() || `${target.providerName} failed.`,
+          };
+        } else if (activity.kind === "tool_started" && activity.toolCallId) {
+          event = {
+            kind: "tool_started",
+            toolCallId: activity.toolCallId,
+            name: activity.name?.trim() || "Tool",
+          };
+        } else if (activity.kind === "tool_finished" && activity.toolCallId) {
+          event = {
+            kind: "tool_finished",
+            toolCallId: activity.toolCallId,
+            failed: activity.failed === true,
+          };
+        }
+        return event
+          ? [
+              {
+                event,
+                createdAt: activity.createdAt,
+                eventSequence: activity.eventSequence,
+                ordinal: ordinal++,
+              },
+            ]
+          : [];
+      }),
+      ...(plansByTurn.get(turnId) ?? []).map((plan) => ({
+        event: {
+          kind: "plan_updated" as const,
+          artifact: {
+            id: plan.artifactId,
+            provider: plan.provider,
+            ...(plan.title !== undefined ? { title: plan.title } : {}),
+            ...(plan.body !== undefined ? { body: plan.body } : {}),
+            ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
+            updatedAt: plan.updatedAt,
           },
-          createdAt: plan.createdAt,
-          eventSequence: plan.eventSequence,
-          ordinal: ordinal++,
-        })),
-      ...(projection.inputRequests ?? [])
-        .filter((request) => request.turnId === turnId)
-        .map((request) => ({
-          event:
-            request.state === "pending"
-              ? ({ ...request, kind: "input_requested" as const } satisfies ProviderEvent)
-              : ({
-                  kind: "input_resolved" as const,
-                  id: request.id,
-                  state: request.state,
-                } satisfies ProviderEvent),
-          createdAt: request.createdAt,
-          ordinal: ordinal++,
-        })),
-      ...(projection.governanceCorrelations ?? [])
-        .filter((receipt) => receipt.turnId === turnId)
-        .map((receipt) => ({
-          event: {
-            kind: "governance_correlation" as const,
-            governance: receipt.governance,
-            runId: receipt.runId,
-            operationId: receipt.operationId,
-            correlationId: receipt.id,
-          },
-          createdAt: receipt.createdAt,
-          ordinal: ordinal++,
-        })),
+        },
+        createdAt: plan.createdAt,
+        eventSequence: plan.eventSequence,
+        ordinal: ordinal++,
+      })),
+      ...(inputRequestsByTurn.get(turnId) ?? []).map((request) => ({
+        event:
+          request.state === "pending"
+            ? ({ ...request, kind: "input_requested" as const } satisfies ProviderEvent)
+            : ({
+                kind: "input_resolved" as const,
+                id: request.id,
+                state: request.state,
+              } satisfies ProviderEvent),
+        createdAt: request.createdAt,
+        ordinal: ordinal++,
+      })),
+      ...(correlationsByTurn.get(turnId) ?? []).map((receipt) => ({
+        event: {
+          kind: "governance_correlation" as const,
+          governance: receipt.governance,
+          runId: receipt.runId,
+          operationId: receipt.operationId,
+          correlationId: receipt.id,
+        },
+        createdAt: receipt.createdAt,
+        ordinal: ordinal++,
+      })),
     ]);
     const terminal = turn ? restoredTurnTerminalEvent(turn.status, binding.sessionId) : null;
     if (
@@ -386,7 +398,7 @@ export function restorePersistedConversation(
   };
 
   const restoredTurns = turns.flatMap((turn): RestoredConversationTurn[] => {
-    const user = history.find((message) => message.turnId === turn.id && message.role === "user");
+    const user = messagesByTurn.get(turn.id)?.find((message) => message.role === "user");
     if (!user) return [];
     const orderedEvents = eventsForTurn(turn.id);
     return [
@@ -395,8 +407,8 @@ export function restorePersistedConversation(
         events: orderedEvents.map(({ event }) => event),
         assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
         state: turn.status,
-        contextReceipt: projection.contextReceipts?.find((receipt) => receipt.turnId === turn.id),
-        checkpoint: projection.checkpoints?.find((checkpoint) => checkpoint.turnId === turn.id),
+        contextReceipt: contextReceiptsByTurn.get(turn.id)?.[0],
+        checkpoint: checkpointsByTurn.get(turn.id)?.[0],
       },
     ];
   });
