@@ -524,6 +524,38 @@ test("attention states and provider run identity survive reload", async () => {
   assert.equal(rebuilt.turns[0].status, "active");
 });
 
+test("provider run conversation lookup stays indexed across binding and replay", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const started = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "indexed provider run",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  assert.equal(await store.inspectProviderRunConversation("missing"), null);
+  await store.bindProviderRun(started.turn.id, "run-1");
+  assert.deepEqual(await store.inspectProviderRunConversation("run-1"), {
+    turn: { ...started.turn, providerRunId: "run-1" },
+    thread: started.thread,
+  });
+
+  await store.bindProviderRun(started.turn.id, "run-2");
+  assert.equal(await store.inspectProviderRunConversation("run-1"), null);
+  assert.equal((await store.inspectProviderRunConversation("run-2"))?.turn.id, started.turn.id);
+
+  const replayed = new LocalStateStore(directory);
+  replayed.inspect = async () => {
+    throw new Error("provider run lookup must not scan the full projection");
+  };
+  assert.equal(
+    (await replayed.inspectProviderRunConversation("run-2"))?.thread.id,
+    started.thread.id,
+  );
+});
+
 test("automation fires are durable, idempotent, and bind turn and provider identities", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

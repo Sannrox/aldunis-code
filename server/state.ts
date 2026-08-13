@@ -614,6 +614,7 @@ export type DelegatedActivitiesByTurnIndex = ReadonlyMap<string, ReadonlyMap<str
 type RowsByThread<T> = ReadonlyMap<string, readonly T[]>;
 export interface ConversationHistoryIndex {
   threadById: ReadonlyMap<string, Thread>;
+  turnByProviderRunId: ReadonlyMap<string, Turn>;
   turnsByThread: TurnsByThreadIndex;
   messagesByThread: RowsByThread<Message>;
   activitiesByThread: RowsByThread<Activity>;
@@ -654,6 +655,7 @@ interface ProviderEventContext {
 
 interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   threadById: Map<string, Thread>;
+  turnByProviderRunId: Map<string, Turn>;
   turnsByThread: Map<string, Turn[]>;
   messagesByThread: Map<string, Message[]>;
   activitiesByThread: Map<string, Activity[]>;
@@ -705,6 +707,11 @@ function buildConversationHistoryIndex(
   const threadForTurn = (row: { turnId: string }) => threadIdByTurn.get(row.turnId) ?? "";
   return {
     threadById: new Map(projection.threads.map((thread) => [thread.id, thread])),
+    turnByProviderRunId: new Map(
+      projection.turns.flatMap((turn) =>
+        turn.providerRunId ? ([[turn.providerRunId, turn]] as const) : [],
+      ),
+    ),
     turnsByThread,
     messagesByThread: groupRowsByThread(projection.messages, threadForTurn),
     activitiesByThread: groupRowsByThread(projection.activities, threadForTurn),
@@ -1334,6 +1341,12 @@ function applyEvent(
     replaceByIdDuringReplay(projection.turns, event.turn, replayIndexes);
     if (turnsByThread) indexSavedTurn(turnsByThread, previous, event.turn);
     if (conversationHistory) {
+      if (previous?.providerRunId && previous.providerRunId !== event.turn.providerRunId) {
+        conversationHistory.turnByProviderRunId.delete(previous.providerRunId);
+      }
+      if (event.turn.providerRunId) {
+        conversationHistory.turnByProviderRunId.set(event.turn.providerRunId, event.turn);
+      }
       conversationHistory.threadIdByTurn.set(event.turn.id, event.turn.threadId);
       if (conversationHistory.turnsByThread !== turnsByThread)
         indexSavedTurn(conversationHistory.turnsByThread, previous, event.turn);
@@ -2102,6 +2115,18 @@ export class LocalStateStore {
     return (this.#turnsByThread.get(threadId) ?? []).some((turn) =>
       BUSY_TURN_STATUSES.has(turn.status),
     );
+  }
+
+  /** Resolve one provider run without scanning retained conversation history. */
+  async inspectProviderRunConversation(
+    providerRunId: string,
+  ): Promise<{ turn: Readonly<Turn>; thread: Readonly<Thread> } | null> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const turn = this.#conversationHistory.turnByProviderRunId.get(providerRunId);
+    if (!turn) return null;
+    const thread = this.#conversationHistory.threadById.get(turn.threadId);
+    return thread ? { turn, thread } : null;
   }
 
   /** Read provider-event context from one coherent thread-local index generation. */

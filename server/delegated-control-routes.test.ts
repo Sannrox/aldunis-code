@@ -17,7 +17,12 @@ function request(): IncomingMessage {
 
 function context(overrides: Record<string, unknown> = {}) {
   return {
-    state: { inspect: unused },
+    state: {
+      inspect: unused,
+      inspectThreadStatus: unused,
+      inspectProviderRunConversation: unused,
+      recordProviderEvent: unused,
+    },
     preferences: { load: unused },
     permissions: { approvals: () => [], decideAfter: unused },
     codex: { answerInput: () => false },
@@ -99,4 +104,64 @@ test("delegated-control module beta-gates parent-routed input before state mutat
     ),
     (error: unknown) => error instanceof LocalStateError && error.status === 403,
   );
+});
+
+test("approval resolution uses provider-run index without scanning full history", async () => {
+  const events: unknown[] = [];
+  let responseBody: unknown;
+  const handled = await handleDelegatedControlRoute(
+    "/api/provider/approvals/00000000-0000-0000-0000-000000000000/decide",
+    request(),
+    response,
+    context({
+      readJson: async () => ({
+        runId: "run-1",
+        conversationId: "thread-1",
+        repository: "/repo",
+        worktree: "/repo/worktree",
+        toolCallId: "tool-1",
+        decision: "deny",
+      }),
+      state: {
+        inspect: async () => assert.fail("full history must not be inspected"),
+        inspectThreadStatus: async () => ({ status: "waiting_for_approval" }),
+        inspectProviderRunConversation: async () => ({
+          turn: { id: "turn-1" },
+          thread: { id: "thread-1", provider: "codex-cli" },
+        }),
+        recordProviderEvent: async (...event: unknown[]) => {
+          events.push(event);
+        },
+      },
+      permissions: {
+        approvals: () => [],
+        approvalsFor: () => [],
+        decideAfter: async (
+          _id: string,
+          _scope: unknown,
+          _decision: unknown,
+          beforeResolve: (resolution: { id: string; state: string }) => Promise<void>,
+        ) => {
+          const resolution = { id: "approval-1", state: "denied" };
+          await beforeResolve(resolution);
+          return resolution;
+        },
+      },
+      publishThreadStatusTransition: async () => {},
+      sendJson: (_response: unknown, _status: number, body: unknown) => {
+        responseBody = body;
+      },
+    }) as never,
+  );
+
+  assert.equal(handled, true);
+  assert.deepEqual(responseBody, { id: "approval-1", state: "denied" });
+  assert.deepEqual(events, [
+    [
+      "thread-1",
+      "turn-1",
+      "codex-cli",
+      { kind: "approval_resolved", id: "approval-1", state: "denied" },
+    ],
+  ]);
 });
