@@ -986,10 +986,9 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     approval: ApprovalSnapshot,
     recordResolution: boolean,
   ): Promise<void> => {
-    const projection = await state.inspect();
-    const turn = projection.turns.find((item) => item.providerRunId === approval.runId);
-    const thread = turn ? projection.threads.find((item) => item.id === turn.threadId) : undefined;
-    if (!turn || !thread) return;
+    const conversation = await state.inspectProviderRunConversation(approval.runId);
+    if (!conversation) return;
+    const { turn, thread } = conversation;
     if (recordResolution) {
       await state.recordProviderEvent(thread.id, turn.id, thread.provider ?? "claude-code", {
         kind: "approval_resolved",

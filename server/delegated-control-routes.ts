@@ -111,14 +111,13 @@ export async function handleDelegatedControlRoute(
         },
         body.decision,
         async (resolution) => {
-          const projection = await context.state.inspect();
-          const turn = projection.turns.find((item) => item.providerRunId === body.runId);
-          const thread = turn
-            ? projection.threads.find((item) => item.id === turn.threadId)
-            : undefined;
-          if (!turn || !thread) {
+          const conversation = await context.state.inspectProviderRunConversation(
+            body.runId as string,
+          );
+          if (!conversation) {
             throw new LocalStateError("The provider turn is missing from local history.", 404);
           }
+          const { turn, thread } = conversation;
           await context.state.recordProviderEvent(
             thread.id,
             turn.id,
