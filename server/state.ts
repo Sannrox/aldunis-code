@@ -2539,7 +2539,9 @@ export class LocalStateStore {
     workspaceMode?: WorkspaceMode;
     expectedDigest: string;
   }): Promise<{ thread: Thread; fork: ConversationFork }> {
-    const projection = await this.load();
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
     const source = projection.threads.find((thread) => thread.id === input.sourceThreadId);
     if (!source) throw new LocalStateError("The source conversation is unavailable.", 404);
     if (source.provider === input.provider) {
@@ -2574,7 +2576,7 @@ export class LocalStateStore {
         429,
       );
     }
-    const preview = await this.previewFork(source.id);
+    const preview = buildForkPreview(source, projection);
     const { messages, annotations, prompt, byteCount } = preview;
     if (preview.digest !== input.expectedDigest) {
       throw new LocalStateError("The source context changed after the fork preview.", 409);
@@ -2664,7 +2666,9 @@ export class LocalStateStore {
   }
 
   async previewFork(sourceThreadId: string): Promise<ReturnType<typeof buildForkPreview>> {
-    const projection = await this.load();
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
     const source = projection.threads.find((thread) => thread.id === sourceThreadId);
     if (!source) throw new LocalStateError("The source conversation is unavailable.", 404);
     return buildForkPreview(source, projection);

@@ -2505,6 +2505,12 @@ test("cross-provider fork previews and persists only allowlisted conversation co
     },
   });
 
+  const sourceBefore = structuredClone((await store.load()).threads[0]);
+  Object.defineProperty(store, "load", {
+    value: async () => {
+      throw new Error("fork preview and creation must not clone the full projection");
+    },
+  });
   const preview = await store.previewFork(thread.id);
   assert.deepEqual(
     preview.messages.map((message) => message.text),
@@ -2517,7 +2523,6 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   assert.equal(preview.files.length, 0);
   assert.equal(preview.summaries.length, 0);
 
-  const sourceBefore = structuredClone((await store.load()).threads[0]);
   const created = await store.createFork({
     sourceThreadId: thread.id,
     provider: "codex-cli",
@@ -2529,21 +2534,19 @@ test("cross-provider fork previews and persists only allowlisted conversation co
   assert.equal(created.thread.parentThreadId, thread.id);
   assert.equal(created.thread.provider, "codex-cli");
   assert.equal(created.fork.status, "pending");
+  const persistedAfterFork = await new LocalStateStore(directory).load();
   assert.equal(
-    (await store.load()).plans.some((plan) => plan.threadId === created.thread.id),
+    persistedAfterFork.plans.some((plan) => plan.threadId === created.thread.id),
     false,
   );
-  class ForkIndexOnlyStore extends LocalStateStore {
-    override async load(): Promise<never> {
-      throw new Error("fork startup must not clone the full projection");
-    }
-  }
-  const forkIndexStore = new ForkIndexOnlyStore(directory);
-  assert.equal(await forkIndexStore.pendingForkPrompt(created.thread.id), preview.prompt);
-  assert.deepEqual((await store.load()).threads[0], sourceBefore);
+  assert.equal(await store.pendingForkPrompt(created.thread.id), preview.prompt);
+  assert.deepEqual(
+    persistedAfterFork.threads.find((item) => item.id === thread.id),
+    sourceBefore,
+  );
 
-  await forkIndexStore.markForkStarted(created.thread.id);
-  assert.equal(await forkIndexStore.pendingForkPrompt(created.thread.id), null);
+  await store.markForkStarted(created.thread.id);
+  assert.equal(await store.pendingForkPrompt(created.thread.id), null);
   const rebuiltStore = new LocalStateStore(directory);
   const rebuilt = await rebuiltStore.load();
   assert.equal(rebuilt.forks[0].status, "started");
