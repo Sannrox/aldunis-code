@@ -496,8 +496,13 @@ type AutomationFireTerminalStatus = Exclude<AutomationFireStatus, "started" | "s
 function automationFireOutcome(
   projection: StateProjection,
   fire: AutomationFire,
+  turnById?: ReadonlyMap<string, Turn>,
 ): { status: AutomationFireTerminalStatus; error: string | null } {
-  const turn = fire.turnId ? projection.turns.find((item) => item.id === fire.turnId) : undefined;
+  const turn = fire.turnId
+    ? turnById
+      ? turnById.get(fire.turnId)
+      : projection.turns.find((item) => item.id === fire.turnId)
+    : undefined;
   if (turn?.status === "completed") return { status: "completed", error: null };
   if (turn?.status === "failed") return { status: "failed", error: "The provider turn failed." };
   return {
@@ -2269,9 +2274,10 @@ export class LocalStateStore {
   async reconcileAutomationFires(): Promise<void> {
     await this.#appendComputed((projection) => {
       const events: StateEvent[] = [];
+      const turnById = new Map(projection.turns.map((turn) => [turn.id, turn]));
       for (const fire of projection.automationFires) {
         if (fire.status !== "started") continue;
-        const outcome = automationFireOutcome(projection, fire);
+        const outcome = automationFireOutcome(projection, fire, turnById);
         events.push({
           type: "automation_fire_saved",
           automationFire: {
