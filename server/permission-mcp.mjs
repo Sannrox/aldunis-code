@@ -1,4 +1,6 @@
 import process from "node:process";
+import { requestApproval } from "./approval-response.mjs";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 
 const approvalUrl = process.env.ALDUNIS_APPROVAL_URL;
 const runId = process.env.ALDUNIS_PROVIDER_RUN_ID;
@@ -49,7 +51,7 @@ async function handle(message) {
   if (message.method === "tools/call") {
     try {
       if (!approvalUrl || !runId || !token) throw new Error("Permission broker is not configured.");
-      const response = await fetch(approvalUrl, {
+      const { response, result } = await requestApproval(approvalUrl, {
         method: "POST",
         headers: {
           authorization: `Bearer ${token}`,
@@ -61,7 +63,6 @@ async function handle(message) {
           input: message.params?.arguments?.input,
         }),
       });
-      const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Permission broker failed.");
       send({
         jsonrpc: "2.0",
@@ -95,7 +96,6 @@ async function handle(message) {
 
 async function processInput() {
   const active = new Set();
-  let buffer = Buffer.alloc(0);
 
   const dispatch = async (line) => {
     while (active.size >= MAX_ACTIVE_REQUESTS) await Promise.race(active);
@@ -103,25 +103,14 @@ async function processInput() {
     active.add(request);
   };
 
-  for await (const rawChunk of process.stdin) {
-    const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-    buffer = Buffer.concat([buffer, chunk]);
-
-    let newline = buffer.indexOf(0x0a);
-    while (newline !== -1) {
-      if (newline > MAX_MESSAGE_BYTES) throw new Error("message exceeds the 1024 KiB limit");
-      const line = buffer.subarray(0, newline).toString("utf8").trim();
-      buffer = buffer.subarray(newline + 1);
-      if (line) await dispatch(line);
-      newline = buffer.indexOf(0x0a);
-    }
-
-    if (buffer.byteLength > MAX_MESSAGE_BYTES) {
-      throw new Error("message exceeds the 1024 KiB limit");
-    }
+  for await (const rawLine of readBoundedLines(
+    process.stdin,
+    MAX_MESSAGE_BYTES,
+    "message exceeds the 1024 KiB limit",
+  )) {
+    const line = rawLine.toString("utf8").trim();
+    if (line) await dispatch(line);
   }
-
-  if (buffer.toString("utf8").trim()) throw new Error("incomplete JSON-RPC message");
   await Promise.all(active);
 }
 

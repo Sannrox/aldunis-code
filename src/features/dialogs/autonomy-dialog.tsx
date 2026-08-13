@@ -8,11 +8,6 @@ import {
   type AutonomyHookEvent,
 } from "../../lib/autonomy-ledger-session";
 
-export {
-  AUTONOMY_REFRESH_INTERVAL_MS,
-  startAutonomyRefreshPolling,
-} from "../../lib/autonomy-ledger-session";
-
 function formatAge(value: string | null): string {
   if (!value) return "never";
   const date = new Date(value);

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
-import { lstat, mkdir, open, opendir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, realpath, stat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -691,7 +691,8 @@ async function inspectRepositoryFile(
     if (details.size > MAX_PREVIEW_BYTES) {
       return { path, kind: "oversized", size: details.size, match };
     }
-    const bytes = await readFile(canonical, { signal });
+    const bytes = await readStableRepositorySearchFile(canonical, details, signal);
+    if (!bytes) return { path, kind: "inaccessible", size: null, match };
     signal?.throwIfAborted();
     return {
       path,
@@ -1383,7 +1384,10 @@ export async function resolveContextAttachments(
           413,
         );
       }
-      const bytes = await readFile(canonical);
+      const bytes = await readStableRepositorySearchFile(canonical, details);
+      if (!bytes) {
+        throw new RepositoryError(`${path} changed while being attached.`, 409);
+      }
       if (bytes.includes(0)) throw new RepositoryError(`${path} is binary and cannot be attached.`);
       totalTextBytes += bytes.length;
       if (totalTextBytes > MAX_TOTAL_TEXT_BYTES) {

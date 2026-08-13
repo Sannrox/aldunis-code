@@ -1,3 +1,5 @@
+import { readBoundedLines } from "./bounded-line-reader.mjs";
+
 const endpoint = process.env.ALDUNIS_BROWSER_TOOL_URL;
 const conversationId = process.env.ALDUNIS_BROWSER_CONVERSATION_ID;
 const token = process.env.ALDUNIS_BROWSER_TOKEN;
@@ -269,37 +271,23 @@ async function handle(message) {
 }
 
 async function processInput() {
-  let buffer = Buffer.alloc(0);
-
-  for await (const rawChunk of process.stdin) {
-    const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-    buffer = Buffer.concat([buffer, chunk]);
-
-    let newline = buffer.indexOf(0x0a);
-    while (newline !== -1) {
-      if (newline > MAX_MESSAGE_BYTES) throw new Error("message exceeds the 1024 KiB limit");
-      const line = buffer.subarray(0, newline).toString("utf8").trim();
-      buffer = buffer.subarray(newline + 1);
-      if (line) {
-        let message;
-        try {
-          message = JSON.parse(line);
-        } catch {
-          errorReply(null, -32700, "Invalid JSON.");
-          newline = buffer.indexOf(0x0a);
-          continue;
-        }
-        await handle(message);
+  for await (const rawLine of readBoundedLines(
+    process.stdin,
+    MAX_MESSAGE_BYTES,
+    "message exceeds the 1024 KiB limit",
+  )) {
+    const line = rawLine.toString("utf8").trim();
+    if (line) {
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        errorReply(null, -32700, "Invalid JSON.");
+        continue;
       }
-      newline = buffer.indexOf(0x0a);
-    }
-
-    if (buffer.byteLength > MAX_MESSAGE_BYTES) {
-      throw new Error("message exceeds the 1024 KiB limit");
+      await handle(message);
     }
   }
-
-  if (buffer.toString("utf8").trim()) throw new Error("incomplete JSON-RPC message");
 }
 
 try {

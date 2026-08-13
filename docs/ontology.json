@@ -35,7 +35,7 @@
     },
     {
       "name": "PermissionMcpBoundary",
-      "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding and applies stdin backpressure while at most eight broker requests are active."
+      "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding, retains bounded chunk slices and copies each complete line at most once, applies stdin backpressure while at most eight broker requests are active, and reads each broker decision within the five-minute approval window plus a fixed transport margin and a 64 KiB response ceiling."
     },
     {
       "name": "ProviderControlRouteDispatchModule",
@@ -59,7 +59,7 @@
     },
     {
       "name": "DesktopRemoteEnvironmentManager",
-      "description": "The Electron main-process boundary that retains at most 64 named remote-environment metadata records, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
+      "description": "The Electron main-process boundary that retains at most 64 named remote-environment metadata records, coalesces equivalent same-environment connection attempts within a fixed eight-connection host bound, rejects concurrent pairing-semantic conflicts, launches the fixed SSH server and local-forward processes, validates each loopback descriptor within a one-second request and 16 KiB response ceiling, approves remote origins, and returns the renderer to the local loopback host without storing private keys, provider credentials, or pairing credentials."
     },
     {
       "name": "RemoteEnvironment",
@@ -159,7 +159,7 @@
     },
     {
       "name": "ProviderDiscovery",
-      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound, native Shikigami config reads stay within 4 MiB, both fail closed on unstable files, fixed worker bounds cover adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
+      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound, reads shipped reviewed manifests and digests through stable descriptors within 64 KiB each, native Shikigami config reads stay within 4 MiB, all fail closed on unstable files, fixed worker bounds cover adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
     },
     {
       "name": "RendererProviderDiscoveryCoordinator",
@@ -207,7 +207,7 @@
     },
     {
       "name": "ShikigamiPermissionHookBoundary",
-      "description": "The Aldunis-owned pre-tool hook boundary that loads its generated permission gate from a stable regular file of at most 64 KiB, accepts at most 1 MiB of provider-supplied JSON before parsing, and delegates mutating Shikigami operations to the existing fail-closed PermissionBroker approval contract."
+      "description": "The Aldunis-owned pre-tool hook boundary that loads its generated permission gate from a stable regular file of at most 64 KiB, accepts at most 1 MiB of provider-supplied JSON before parsing, and delegates mutating Shikigami operations to the fail-closed PermissionBroker through the five-minute approval window plus a fixed transport margin and a 64 KiB response ceiling."
     },
     {
       "name": "ShikigamiParkedRunResume",
@@ -261,7 +261,7 @@
     },
     {
       "name": "LocalApplicationHost",
-      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, and request routing inside its implementation."
+      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, request routing, and Tailscale lifecycle commands within fixed runtime and output budgets inside its implementation."
     },
     {
       "name": "LocalUsageReceipt",
@@ -277,7 +277,7 @@
     },
     {
       "name": "PreviewHostContractModule",
-      "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal."
+      "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal; visible status refreshes are serialized and completion-paced with a one-second quiet period while hidden surfaces perform no polling."
     },
     {
       "name": "ConstrainedPreviewRouteDispatchModule",
@@ -297,7 +297,7 @@
     },
     {
       "name": "BrowserAutomationBroker",
-      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, accepts provider JSON-RPC messages within a 1 MiB ceiling, authenticates one conversation-scoped provider token, streams broker responses within a 2 MiB ceiling, and rejects actions when agent control is disabled or human input has advanced the control epoch."
+      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, accepts provider JSON-RPC messages within a 1 MiB ceiling while retaining bounded chunk slices and copying each complete line at most once, authenticates one conversation-scoped provider token, streams broker responses within a 2 MiB ceiling, and rejects actions when agent control is disabled or human input has advanced the control epoch."
     },
     {
       "name": "PictureInPictureBrowserMirror",
@@ -479,7 +479,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search with nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file and 4 MiB aggregate ceilings, concurrency-bounded browse inspection, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, and context-package cancellation, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search with nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file and 4 MiB aggregate ceilings, concurrency-bounded browse inspection with descriptor-pinned text classification, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, context attachment reads pinned to stable descriptors within 64 KiB per-file and 256 KiB aggregate ceilings, and context-package cancellation, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -527,7 +527,7 @@
     },
     {
       "name": "LocalEventHistoryProjectionStore",
-      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection through replay-local identity indexes without retaining complete raw history, parsed-envelope arrays, or permanent duplicate indexes, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
+      "description": "The append-only Aldunis Code conversation and autonomy JSONL store that single-flight initializes, streams ordered envelopes with an 8 MiB per-record ceiling directly into one live projection through replay-local identity indexes while retaining bounded chunk slices and copying each complete record at most once, without retaining complete raw history, parsed-envelope arrays, or permanent duplicate indexes, coalesces legacy assistant segments in linear time, and performs compaction, deletion, retention, and verified intact-fork rewrites through a 256 KiB serialization buffer before atomic replacement."
     },
     {
       "name": "ApplicationShellBootstrapModule",
@@ -539,7 +539,7 @@
     },
     {
       "name": "AutonomyLedgerSessionModule",
-      "description": "A deep renderer-side Aldunis Code module that concentrates Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
+      "description": "A deep renderer-side Aldunis Code module that concentrates visible-only, completion-paced Autonomy ledger polling, load coalescing, forced post-mutation refresh, managed inspect-only admission, typed drafts and commands, error recovery, and lifecycle cancellation behind one snapshot-and-intent interface while the local host retains ledger, workflow, filesystem, provider, and approval authority."
     },
     {
       "name": "ConversationAutomationSessionModule",
@@ -555,7 +555,7 @@
     },
     {
       "name": "ACPModelDiscoveryProbe",
-      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, retains at most one 1 MiB raw-byte-framed JSON message, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
+      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, retains bounded chunk slices for at most one 1 MiB raw-byte-framed JSON message and copies each complete message at most once, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
     }
   ],
   "relations": [
@@ -2184,7 +2184,7 @@
     {
       "subject": "LocalApplicationHost",
       "source": "Aldunis Code local host composition interface",
-      "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; Issue #575",
+      "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; server/tailscale-command.ts#runTailscaleCommand; Issue #575",
       "confidence": 1.0
     },
     {

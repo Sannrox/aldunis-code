@@ -1213,7 +1213,8 @@ async function* streamEventEnvelopes(
   maxBytes = MAX_EVENT_ENVELOPE_BYTES,
 ): AsyncGenerator<EventEnvelope> {
   const input = handle.createReadStream({ start: 0, autoClose: false });
-  let pending = Buffer.alloc(0);
+  let pendingChunks: Buffer[] = [];
+  let pendingBytes = 0;
   let lineNumber = 0;
   const emitLine = function* (raw: Buffer): Generator<EventEnvelope> {
     lineNumber += 1;
@@ -1227,26 +1228,37 @@ async function* streamEventEnvelopes(
     }
     yield parseEnvelope(lineBuffer.toString("utf8"), lineNumber);
   };
+  const appendPending = (chunk: Buffer): void => {
+    if (chunk.length === 0) return;
+    pendingChunks.push(chunk);
+    pendingBytes += chunk.length;
+  };
+  const takePending = (): Buffer => {
+    const pending =
+      pendingChunks.length === 1 ? pendingChunks[0] : Buffer.concat(pendingChunks, pendingBytes);
+    pendingChunks = [];
+    pendingBytes = 0;
+    return pending;
+  };
   try {
-    for await (const chunk of input) {
-      pending = pending.length ? Buffer.concat([pending, chunk]) : Buffer.from(chunk);
-      while (true) {
-        const newline = pending.indexOf(0x0a);
-        if (newline === -1) {
-          if (pending.length > maxBytes + 1) {
-            throw new LocalStateError(
-              `Local history event exceeds the supported size at line ${lineNumber + 1}.`,
-            );
-          }
-          break;
+    for await (const rawChunk of input) {
+      let chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      while (chunk.length > 0) {
+        const newline = chunk.indexOf(0x0a);
+        const segment = newline === -1 ? chunk : chunk.subarray(0, newline);
+        appendPending(segment);
+        if (pendingBytes > maxBytes + 1) {
+          throw new LocalStateError(
+            `Local history event exceeds the supported size at line ${lineNumber + 1}.`,
+          );
         }
-        const raw = pending.subarray(0, newline);
-        pending = pending.subarray(newline + 1);
-        yield* emitLine(raw);
+        if (newline === -1) break;
+        yield* emitLine(takePending());
+        chunk = chunk.subarray(newline + 1);
       }
     }
-    if (pending.length > 0) {
-      yield* emitLine(pending);
+    if (pendingBytes > 0) {
+      yield* emitLine(takePending());
     }
   } finally {
     input.destroy();
