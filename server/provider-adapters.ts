@@ -9,7 +9,7 @@ export const ACP_PROTOCOL_VERSION = 1;
 export const MAX_DURABLE_PROVIDER_ADAPTERS = 64;
 export const MAX_PROVIDER_ADAPTER_DIRECTORY_ENTRIES = 256;
 const ALDUNIS_VERSION = "0.1.0";
-const MAX_MANIFEST_BYTES = 64 * 1024;
+export const MAX_MANIFEST_BYTES = 64 * 1024;
 export const MAX_PROVIDER_ADAPTER_RECORD_BYTES = MAX_MANIFEST_BYTES * 3;
 const ADAPTER_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$/;
 const VERSION =
@@ -91,6 +91,7 @@ const providerAdapterRecordFileOperations: ProviderAdapterRecordFileOperations =
 export async function readProviderAdapterRecordFile(
   path: string,
   operations: ProviderAdapterRecordFileOperations = providerAdapterRecordFileOperations,
+  maxBytes = MAX_PROVIDER_ADAPTER_RECORD_BYTES,
 ): Promise<string> {
   const handle = await operations.open(path);
   try {
@@ -98,7 +99,7 @@ export async function readProviderAdapterRecordFile(
     if (!details.isFile()) {
       throw new ProviderAdapterError("Stored adapter metadata is not a file.", 500);
     }
-    if (details.size > MAX_PROVIDER_ADAPTER_RECORD_BYTES) {
+    if (details.size > maxBytes) {
       throw new ProviderAdapterError("Stored adapter metadata is oversized.");
     }
     if (!Number.isSafeInteger(details.size) || details.size < 0) {

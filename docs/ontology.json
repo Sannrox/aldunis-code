@@ -159,7 +159,7 @@
     },
     {
       "name": "ProviderDiscovery",
-      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound, native Shikigami config reads stay within 4 MiB, both fail closed on unstable files, fixed worker bounds cover adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
+      "description": "The Aldunis Code host-owned deep module that projects locally available provider adapters, authentication state, versions, and models through one authorized-worktree interface; the local store admits at most 64 durable declarative adapters, reads and writes each adapter record within a 192 KiB bound, reads shipped reviewed manifests and digests through stable descriptors within 64 KiB each, native Shikigami config reads stay within 4 MiB, all fail closed on unstable files, fixed worker bounds cover adapter inspection and profile-specific Shikigami discovery, request cancellation stops queued and active readiness work, and managed mode exposes only its fixed Shikigami model."
     },
     {
       "name": "RendererProviderDiscoveryCoordinator",
