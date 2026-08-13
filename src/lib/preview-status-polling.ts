@@ -7,13 +7,13 @@ export interface PreviewPollingVisibility {
 }
 
 export interface PreviewPollingTimers {
-  setInterval(callback: () => void, delay: number): number;
-  clearInterval(handle: number): void;
+  setTimeout(callback: () => void, delay: number): number;
+  clearTimeout(handle: number): void;
 }
 
 const browserPreviewPollingTimers: PreviewPollingTimers = {
-  setInterval: (callback, delay) => window.setInterval(callback, delay),
-  clearInterval: (handle) => window.clearInterval(handle),
+  setTimeout: (callback, delay) => window.setTimeout(callback, delay),
+  clearTimeout: (handle) => window.clearTimeout(handle),
 };
 
 /**
@@ -26,41 +26,40 @@ export function startPreviewStatusPolling(
   visibility: PreviewPollingVisibility,
   timers: PreviewPollingTimers = browserPreviewPollingTimers,
 ): () => void {
-  let interval: number | null = null;
+  let timer: number | null = null;
   let inFlight = false;
-  let refreshAfterFlight = false;
   let disposed = false;
 
   const clear = () => {
-    if (interval !== null) timers.clearInterval(interval);
-    interval = null;
+    if (timer !== null) timers.clearTimeout(timer);
+    timer = null;
+  };
+  const schedule = () => {
+    clear();
+    if (disposed || visibility.visibilityState !== "visible") return;
+    timer = timers.setTimeout(() => {
+      timer = null;
+      void run();
+    }, PREVIEW_STATUS_REFRESH_INTERVAL_MS);
   };
   const run = async () => {
     if (disposed || visibility.visibilityState !== "visible") return;
-    if (inFlight) {
-      refreshAfterFlight = true;
-      return;
-    }
+    if (inFlight) return;
     inFlight = true;
     try {
       await refresh();
     } finally {
       inFlight = false;
-      if (refreshAfterFlight && !disposed && visibility.visibilityState === "visible") {
-        refreshAfterFlight = false;
-        void run();
-      }
+      schedule();
     }
   };
   const start = () => {
     clear();
     if (disposed || visibility.visibilityState !== "visible") return;
     void run();
-    interval = timers.setInterval(() => void run(), PREVIEW_STATUS_REFRESH_INTERVAL_MS);
   };
   const onVisibilityChange = () => {
     if (visibility.visibilityState === "hidden") {
-      refreshAfterFlight = false;
       clear();
       return;
     }
@@ -71,7 +70,6 @@ export function startPreviewStatusPolling(
   start();
   return () => {
     disposed = true;
-    refreshAfterFlight = false;
     clear();
     visibility.removeEventListener("visibilitychange", onVisibilityChange);
   };
