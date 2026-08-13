@@ -144,6 +144,15 @@ test("provider events read thread-local indexes without cloning the full project
     }
   }
   const indexed = new NoProjectionCloneStore(directory);
+  await indexed.saveContextReceipt({
+    threadId: codex.thread.id,
+    turnId: codex.turn.id,
+    pins: [],
+    entries: [],
+    totalBytes: 0,
+    estimatedTokens: 0,
+    digest: "c".repeat(64),
+  });
   await indexed.recordProviderEvent(codex.thread.id, codex.turn.id, "codex-cli", {
     kind: "session_started",
     sessionId: "codex-session",
@@ -215,6 +224,7 @@ test("provider events read thread-local indexes without cloning the full project
   assert.equal(projection.turns.find((turn) => turn.id === codex.turn.id)?.status, "completed");
   assert.equal(projection.providerSessions[0]?.model, "gpt-test");
   assert.equal(projection.inputRequests[0]?.state, "cancelled");
+  assert.equal(projection.contextReceipts[0]?.digest, "c".repeat(64));
   assert.equal(projection.plans[0]?.body, "Verify");
   assert.equal(projection.usageReceipts[0]?.status, "completed");
   assert.equal(projection.governanceCorrelations[0]?.runId, runId);
@@ -454,6 +464,19 @@ test("context receipts retain immutable metadata without repository content", as
   assert.deepEqual(rebuilt.threads[0].contextPins, [{ path: "src", kind: "folder" }]);
   assert.equal(rebuilt.contextReceipts.length, 1);
   assert.equal(rebuilt.contextReceipts[0].entries[0].digest, "a".repeat(64));
+  await assert.rejects(
+    () =>
+      store.saveContextReceipt({
+        threadId: "other-thread",
+        turnId: turn.id,
+        pins: [],
+        entries: [],
+        totalBytes: 0,
+        estimatedTokens: 0,
+        digest: "c".repeat(64),
+      }),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
   const journal = await readFile(join(directory, "events.v1.jsonl"), "utf8");
   assert.equal(journal.includes("repository source sentinel"), false);
 });
