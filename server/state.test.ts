@@ -2589,6 +2589,58 @@ function forbiddenTurns(turns: StateProjection["turns"]): StateProjection["turns
   });
 }
 
+test("thread status selects unordered and equal-time turns without sorting indexed buckets", () => {
+  const latestFailed = statusFixtureTurn("failed", "unordered", "failed", "t3", "t4");
+  const unordered = [
+    latestFailed,
+    statusFixtureTurn("old", "unordered", "completed", "t1", "t2"),
+    statusFixtureTurn("middle", "unordered", "completed", "t2", "t3"),
+  ];
+  const equalTime = [
+    statusFixtureTurn("equal-first", "equal", "completed", "t5", "first-completion"),
+    statusFixtureTurn("equal-last", "equal", "completed", "t5", "last-completion"),
+  ];
+  const prioritized = [
+    statusFixtureTurn("approval", "priority", "waiting_for_approval", "t1"),
+    statusFixtureTurn("running", "priority", "running", "t9"),
+  ];
+  const forbidSorting = (turns: StateProjection["turns"]): StateProjection["turns"] =>
+    new Proxy(turns, {
+      get(target, property, receiver) {
+        if (property === "sort" || property === "slice") {
+          throw new Error(`copied or sorted indexed turns via ${String(property)}`);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  const threads = [
+    statusFixtureThread("unordered"),
+    statusFixtureThread("equal"),
+    statusFixtureThread("priority"),
+  ];
+  const projection = {
+    threads,
+    turns: [...unordered, ...equalTime, ...prioritized],
+  } as StateProjection;
+  const statuses = projectThreadStatuses(
+    projection,
+    new Map([
+      ["unordered", forbidSorting(unordered)],
+      ["equal", forbidSorting(equalTime)],
+      ["priority", forbidSorting(prioritized)],
+    ]),
+  );
+
+  assert.deepEqual(
+    statuses.map(({ status, since }) => ({ status, since })),
+    [
+      { status: "failed", since: "t4" },
+      { status: "completed", since: "last-completion" },
+      { status: "pending_approval", since: "t1" },
+    ],
+  );
+});
+
 test("thread status and delegated outcomes use indexed turns instead of scanning all turns", () => {
   const childTurn = statusFixtureTurn("turn-child", "child", "completed", "t2", "t3");
   const parentTurn = statusFixtureTurn("turn-parent", "parent", "running", "t1");
