@@ -277,7 +277,7 @@
     },
     {
       "name": "PreviewHostContractModule",
-      "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal."
+      "description": "A scope-bound renderer module that hides constrained-preview and shared-browser routes, request payloads, host-issued identifiers, response validation, transition ordering, and cleanup semantics behind one command interface and idempotent disposal; visible status refreshes are serialized and completion-paced with a one-second quiet period while hidden surfaces perform no polling."
     },
     {
       "name": "ConstrainedPreviewRouteDispatchModule",

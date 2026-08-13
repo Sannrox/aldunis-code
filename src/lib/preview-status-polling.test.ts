@@ -31,20 +31,22 @@ class FakeVisibility implements PreviewPollingVisibility {
 
 class FakeTimers implements PreviewPollingTimers {
   nextHandle = 1;
-  intervals = new Map<number, { callback: () => void; delay: number }>();
+  timeouts = new Map<number, { callback: () => void; delay: number }>();
 
-  setInterval(callback: () => void, delay: number): number {
+  setTimeout(callback: () => void, delay: number): number {
     const handle = this.nextHandle++;
-    this.intervals.set(handle, { callback, delay });
+    this.timeouts.set(handle, { callback, delay });
     return handle;
   }
 
-  clearInterval(handle: number): void {
-    this.intervals.delete(handle);
+  clearTimeout(handle: number): void {
+    this.timeouts.delete(handle);
   }
 
   tick(): void {
-    for (const { callback } of [...this.intervals.values()]) callback();
+    const pending = [...this.timeouts.values()];
+    this.timeouts.clear();
+    for (const { callback } of pending) callback();
   }
 }
 
@@ -66,13 +68,13 @@ test("preview status polling stays idle while hidden and refreshes immediately o
   );
 
   assert.equal(refreshes, 0);
-  assert.equal(timers.intervals.size, 0);
+  assert.equal(timers.timeouts.size, 0);
 
   visibility.set("visible");
   await settle();
   assert.equal(refreshes, 1);
   assert.deepEqual(
-    [...timers.intervals.values()].map(({ delay }) => delay),
+    [...timers.timeouts.values()].map(({ delay }) => delay),
     [PREVIEW_STATUS_REFRESH_INTERVAL_MS],
   );
 
@@ -84,7 +86,7 @@ test("preview status polling stays idle while hidden and refreshes immediately o
   timers.tick();
   await settle();
   assert.equal(refreshes, 2);
-  assert.equal(timers.intervals.size, 0);
+  assert.equal(timers.timeouts.size, 0);
 
   stop();
   visibility.set("visible");
@@ -116,6 +118,10 @@ test("preview status polling serializes interval and visibility refreshes", asyn
 
   releases.shift()?.();
   await settle();
+  assert.equal(refreshes, 1);
+  assert.equal(timers.timeouts.size, 1);
+
+  timers.tick();
   assert.equal(refreshes, 2);
 
   visibility.set("hidden");
