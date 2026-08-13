@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import {
   filterManagedProjection,
+  filterManagedUsageReceipts,
   filterManagedWorkbenchListProjection,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
@@ -102,6 +103,74 @@ function projection(): StateProjection {
     autonomyHooks: [],
   };
 }
+
+test("managed usage filtering traverses only usage-scoped state", () => {
+  const value = projection();
+  value.turns.push({
+    schemaVersion: 2,
+    id: "turn-hidden",
+    threadId: "hidden",
+    status: "completed",
+    mode: "build",
+    createdAt: "t0",
+    completedAt: "t1",
+  });
+  value.usageReceipts.push(
+    {
+      schemaVersion: 2,
+      id: "usage-visible",
+      threadId: "active",
+      turnId: "turn-active",
+      provider: "codex-cli",
+      model: "gpt-5-codex",
+      status: "completed",
+      createdAt: "t0",
+      updatedAt: "t1",
+    },
+    {
+      schemaVersion: 2,
+      id: "usage-hidden",
+      threadId: "hidden",
+      turnId: "turn-hidden",
+      provider: "codex-cli",
+      model: "gpt-5-codex",
+      status: "completed",
+      createdAt: "t0",
+      updatedAt: "t1",
+    },
+    {
+      schemaVersion: 2,
+      id: "usage-missing-turn",
+      threadId: "active",
+      turnId: "missing",
+      provider: "codex-cli",
+      model: "gpt-5-codex",
+      status: "completed",
+      createdAt: "t0",
+      updatedAt: "t1",
+    },
+  );
+
+  const filtered = filterManagedUsageReceipts(
+    {
+      projects: value.projects,
+      threads: value.threads,
+      turns: value.turns,
+      usageReceipts: value.usageReceipts,
+    },
+    {
+      repositoryForRoot(root) {
+        if (root !== "/alpha") throw new Error("not managed");
+        return {} as never;
+      },
+    },
+  );
+
+  assert.deepEqual(
+    filtered.map((receipt) => receipt.id),
+    ["usage-visible"],
+  );
+});
 
 function context(overrides: Record<string, unknown> = {}) {
   return {

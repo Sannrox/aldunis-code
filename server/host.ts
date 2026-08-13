@@ -80,8 +80,8 @@ import { handleAutomationRoute } from "./automation-routes.ts";
 import { handleDeliveryRoute } from "./delivery-routes.ts";
 import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
 import {
-  filterManagedProjection,
   filterManagedThreadSearchProjection,
+  filterManagedUsageReceipts,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
@@ -442,10 +442,10 @@ async function handleApi(
         throw new LocalStateError("Usage range must be 7, 30, or 90 days.", 400);
       }
       const projection = await state.inspect();
-      const visibleProjection = managedHost
-        ? filterManagedProjection(projection, managedHost)
-        : projection;
-      sendJson(response, 200, buildUsageReport(visibleProjection.usageReceipts, rangeDays));
+      const visibleUsageReceipts = managedHost
+        ? filterManagedUsageReceipts(projection, managedHost)
+        : projection.usageReceipts;
+      sendJson(response, 200, buildUsageReport(visibleUsageReceipts, rangeDays));
       return true;
     }
     if (
