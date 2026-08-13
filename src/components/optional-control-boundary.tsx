@@ -5,6 +5,7 @@ interface OptionalControlBoundaryProps {
   label: string;
   onDismiss: () => void;
   onReload?: () => void;
+  pendingDialog?: boolean;
   children?: ReactNode;
 }
 
@@ -28,7 +29,20 @@ export class OptionalControlBoundary extends Component<
   }
 
   render(): ReactNode {
-    if (!this.state.failed) return <Suspense fallback={null}>{this.props.children}</Suspense>;
+    if (!this.state.failed) {
+      const fallback = this.props.pendingDialog ? (
+        <WorkbenchDialog
+          open
+          ariaLabel={`${this.props.label} loading`}
+          className="ui-dialog optional-control-error"
+          onClose={this.props.onDismiss}
+          showClose={false}
+        >
+          <p role="status">Loading {this.props.label.toLowerCase()}…</p>
+        </WorkbenchDialog>
+      ) : null;
+      return <Suspense fallback={fallback}>{this.props.children}</Suspense>;
+    }
     return (
       <WorkbenchDialog
         open

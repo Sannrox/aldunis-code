@@ -69,10 +69,16 @@ test("optional control failures preserve the renderer and expose bounded recover
             { label: "Pending", onDismiss: () => undefined },
             createElement(PendingControl),
           ),
+          createElement(
+            OptionalControlBoundary,
+            { label: "Lifecycle dialog", onDismiss: () => undefined, pendingDialog: true },
+            createElement(PendingControl),
+          ),
         ),
       );
     });
     assert.match(container.textContent ?? "", /Loaded control remains visible/);
+    assert.match(dom.window.document.body.textContent ?? "", /Loading lifecycle dialog…/);
 
     await act(async () => {
       root.render(

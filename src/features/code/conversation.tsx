@@ -33,8 +33,6 @@ import { OptionalControlBoundary } from "../../components/optional-control-bound
 import type { ChangesPanelMode } from "../changes/changes-panel";
 import { EnvironmentControl } from "./environment-control";
 import type { PreviewPanelStatus } from "../preview/preview-panel";
-import { ConversationWorkspaceDialog } from "../dialogs/conversation-workspace-dialog";
-import { ReleaseWorktreeDialog } from "../dialogs/release-worktree-dialog";
 import {
   BUILTIN_NEW_CONVERSATION_PROVIDER_ORDER,
   assessProviderRunReadiness,
@@ -187,6 +185,12 @@ const FileBrowserPanel = React.lazy(async () => ({
 }));
 const PreviewPanel = React.lazy(async () => ({
   default: (await import("../preview/preview-panel")).PreviewPanel,
+}));
+const ConversationWorkspaceDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/conversation-workspace-dialog")).ConversationWorkspaceDialog,
+}));
+const ReleaseWorktreeDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/release-worktree-dialog")).ReleaseWorktreeDialog,
 }));
 
 export function readyComposerPlaceholder(providerName: string, threadId: string | null): string {
@@ -4704,28 +4708,38 @@ export function Conversation({
           />
         )}
         {workspaceDialogOpen && !conversation && repository && (
-          <ConversationWorkspaceDialog
-            repository={repository}
-            conversationId={conversationId}
-            onClose={() => setWorkspaceDialogOpen(false)}
-            onUseCurrentWorkspace={() => {
-              setPreparedWorkspaceRepository(null);
-              setWorkspaceApprovalPending(false);
-              setWorkspaceMode("shared");
-              setWorkspaceDialogOpen(false);
-            }}
-            onCreated={(next) => {
-              setPreparedWorkspaceRepository(next);
-              onRepositoryChanged?.(next);
-              setWorkspaceDialogOpen(false);
-              setWorkspaceApprovalPending(true);
-            }}
-          />
+          <OptionalControlBoundary
+            label="Conversation workspace"
+            onDismiss={() => setWorkspaceDialogOpen(false)}
+            pendingDialog
+          >
+            <ConversationWorkspaceDialog
+              repository={repository}
+              conversationId={conversationId}
+              onClose={() => setWorkspaceDialogOpen(false)}
+              onUseCurrentWorkspace={() => {
+                setPreparedWorkspaceRepository(null);
+                setWorkspaceApprovalPending(false);
+                setWorkspaceMode("shared");
+                setWorkspaceDialogOpen(false);
+              }}
+              onCreated={(next) => {
+                setPreparedWorkspaceRepository(next);
+                onRepositoryChanged?.(next);
+                setWorkspaceDialogOpen(false);
+                setWorkspaceApprovalPending(true);
+              }}
+            />
+          </OptionalControlBoundary>
         )}
       </div>
       <>
         {forkOpen && threadId && !managedMode && repository && (
-          <OptionalControlBoundary label="Conversation fork" onDismiss={() => setForkOpen(false)}>
+          <OptionalControlBoundary
+            label="Conversation fork"
+            onDismiss={() => setForkOpen(false)}
+            pendingDialog
+          >
             <ForkConversationDialog
               sourceThreadId={threadId}
               sourceProvider={provider}
@@ -4744,17 +4758,23 @@ export function Conversation({
         )}
       </>
       {releaseWorktreeOpen && threadId && (
-        <ReleaseWorktreeDialog
-          title={conversation?.title?.trim() || "This conversation"}
-          provider={providerListLabel(provider)}
-          worktree={worktree?.path ?? conversation?.worktree}
-          settle
-          onClose={() => setReleaseWorktreeOpen(false)}
-          onConfirm={async () => {
-            await lifecycleControl.settleAndRelease(threadId);
-            setCompletionDismissed(true);
-          }}
-        />
+        <OptionalControlBoundary
+          label="Release worktree"
+          onDismiss={() => setReleaseWorktreeOpen(false)}
+          pendingDialog
+        >
+          <ReleaseWorktreeDialog
+            title={conversation?.title?.trim() || "This conversation"}
+            provider={providerListLabel(provider)}
+            worktree={worktree?.path ?? conversation?.worktree}
+            settle
+            onClose={() => setReleaseWorktreeOpen(false)}
+            onConfirm={async () => {
+              await lifecycleControl.settleAndRelease(threadId);
+              setCompletionDismissed(true);
+            }}
+          />
+        </OptionalControlBoundary>
       )}
     </div>
   );

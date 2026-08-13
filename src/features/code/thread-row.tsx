@@ -35,7 +35,7 @@ export function ThreadRow({
   onSettle?: () => void;
   onSnooze?: (preset: SnoozePreset) => void;
   onOpenBeside?: () => void;
-  onAction?: (action: ConversationLifecycleAction) => void;
+  onAction?: (action: ConversationLifecycleAction, returnFocus: HTMLElement | null) => void;
   /** Live GitHub PR for this worktree branch, if known. */
   prStatus?: BranchPrStatus | null;
   showSettle?: boolean;
@@ -342,7 +342,7 @@ export function ThreadRow({
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuOpen(false);
-                          onAction("rename");
+                          onAction("rename", menuTriggerRef.current);
                         }}
                       >
                         Rename
@@ -353,7 +353,7 @@ export function ThreadRow({
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuOpen(false);
-                          onAction("pin");
+                          onAction("pin", menuTriggerRef.current);
                         }}
                       >
                         {conversation.pinnedAt ? "Unpin" : "Pin"}
@@ -384,7 +384,7 @@ export function ThreadRow({
                           onClick={(event) => {
                             event.stopPropagation();
                             setMenuOpen(false);
-                            onAction("restore");
+                            onAction("restore", menuTriggerRef.current);
                           }}
                         >
                           Restore
@@ -396,7 +396,7 @@ export function ThreadRow({
                           onClick={(event) => {
                             event.stopPropagation();
                             setMenuOpen(false);
-                            onAction("archive");
+                            onAction("archive", menuTriggerRef.current);
                           }}
                         >
                           Archive
@@ -409,7 +409,7 @@ export function ThreadRow({
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuOpen(false);
-                          onAction("delete");
+                          onAction("delete", menuTriggerRef.current);
                         }}
                       >
                         Delete
