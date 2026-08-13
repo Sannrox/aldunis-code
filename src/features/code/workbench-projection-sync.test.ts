@@ -105,6 +105,110 @@ test("synchronization serializes startup and coalesces event bursts", async () =
   assert.equal(requests.length, 4);
 });
 
+test("synchronization releases hidden streams and reconnects fresh when visible", async () => {
+  let visibilityState: DocumentVisibilityState = "visible";
+  let visibilityListener: (() => void) | undefined;
+  const requests: boolean[] = [];
+  const streams: Array<{
+    listeners: Map<string, (event: { data: string }) => void>;
+    closed: boolean;
+  }> = [];
+  const synchronization = createWorkbenchProjectionSynchronization({
+    load: async (fresh) => {
+      requests.push(fresh);
+      return projection(`request-${requests.length}`);
+    },
+    createEventSource: () => {
+      const stream = {
+        listeners: new Map<string, (event: { data: string }) => void>(),
+        closed: false,
+      };
+      streams.push(stream);
+      return {
+        addEventListener: (type, listener) =>
+          stream.listeners.set(type, listener as (event: { data: string }) => void),
+        close: () => {
+          stream.closed = true;
+        },
+      };
+    },
+    accept: () => undefined,
+    visibility: {
+      get visibilityState() {
+        return visibilityState;
+      },
+      addEventListener: (_type, listener) => {
+        visibilityListener = listener;
+      },
+      removeEventListener: (_type, listener) => {
+        if (visibilityListener === listener) visibilityListener = undefined;
+      },
+    },
+  });
+
+  synchronization.start();
+  await Promise.resolve();
+  assert.deepEqual(requests, [false]);
+  assert.equal(streams.length, 1);
+
+  visibilityState = "hidden";
+  visibilityListener?.();
+  assert.equal(streams[0]?.closed, true);
+  streams[0]?.listeners.get("thread_status")?.({
+    data: JSON.stringify({ threadId: "thread", status: "running", at: "2026-01-01" }),
+  });
+  await Promise.resolve();
+  assert.deepEqual(requests, [false]);
+
+  await synchronization.refresh();
+  assert.deepEqual(requests, [false, true]);
+  assert.equal(streams.length, 1);
+
+  visibilityState = "visible";
+  visibilityListener?.();
+  assert.equal(streams.length, 2);
+  streams[1]?.listeners.get("open")?.({ data: "" });
+  await Promise.resolve();
+  assert.deepEqual(requests, [false, true, true]);
+
+  synchronization.dispose();
+  assert.equal(streams[1]?.closed, true);
+  assert.equal(visibilityListener, undefined);
+});
+
+test("hidden startup loads the cached projection without opening a stream", async () => {
+  let visibilityListener: (() => void) | undefined;
+  const requests: boolean[] = [];
+  let streams = 0;
+  const synchronization = createWorkbenchProjectionSynchronization({
+    load: async (fresh) => {
+      requests.push(fresh);
+      return projection("hidden");
+    },
+    createEventSource: () => {
+      streams += 1;
+      return { addEventListener: () => undefined, close: () => undefined };
+    },
+    accept: () => undefined,
+    visibility: {
+      visibilityState: "hidden",
+      addEventListener: (_type, listener) => {
+        visibilityListener = listener;
+      },
+      removeEventListener: (_type, listener) => {
+        if (visibilityListener === listener) visibilityListener = undefined;
+      },
+    },
+  });
+
+  synchronization.start();
+  await Promise.resolve();
+  assert.deepEqual(requests, [false]);
+  assert.equal(streams, 0);
+  synchronization.dispose();
+  assert.equal(visibilityListener, undefined);
+});
+
 test("explicit refresh waits behind background work and owns its failure", async () => {
   const requests: Array<{
     resolve(value: WorkbenchStateProjection): void;

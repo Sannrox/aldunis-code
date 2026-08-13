@@ -81,10 +81,17 @@ type ProjectionEventSource = {
   close(): void;
 };
 
+type ProjectionVisibility = {
+  readonly visibilityState: DocumentVisibilityState;
+  addEventListener(type: "visibilitychange", listener: () => void): void;
+  removeEventListener(type: "visibilitychange", listener: () => void): void;
+};
+
 type WorkbenchProjectionSynchronizationOptions = {
   load(fresh: boolean): Promise<WorkbenchStateProjection>;
   createEventSource(): ProjectionEventSource;
   accept(snapshot: WorkbenchProjectionSnapshot): void;
+  visibility?: ProjectionVisibility;
 };
 
 export type WorkbenchProjectionSynchronization = {
@@ -157,26 +164,50 @@ export function createWorkbenchProjectionSynchronization(
   };
 
   const synchronizeInBackground = (fresh: boolean): void => {
-    if (!active) return;
+    if (!active || options.visibility?.visibilityState === "hidden") return;
     backgroundQueued = true;
     backgroundFresh ||= fresh;
     pump();
   };
 
+  const closeEvents = (): void => {
+    events?.close();
+    events = null;
+  };
+  const connectEvents = (): void => {
+    if (!active || events || options.visibility?.visibilityState === "hidden") return;
+    const source = options.createEventSource();
+    events = source;
+    source.addEventListener("open", () => {
+      if (events === source) synchronizeInBackground(true);
+    });
+    source.addEventListener("thread_status", (event) => {
+      if (events !== source) return;
+      try {
+        if (!isThreadStatusEvent(JSON.parse(event.data) as unknown)) return;
+        synchronizeInBackground(true);
+      } catch {
+        // Malformed events cannot replace the last accepted snapshot.
+      }
+    });
+  };
+  const onVisibilityChange = (): void => {
+    if (options.visibility?.visibilityState === "hidden") {
+      closeEvents();
+      backgroundQueued = false;
+      backgroundFresh = false;
+    } else {
+      connectEvents();
+    }
+  };
+
   return {
     start() {
       if (!active || events) return;
-      synchronizeInBackground(false);
-      events = options.createEventSource();
-      events.addEventListener("open", () => synchronizeInBackground(true));
-      events.addEventListener("thread_status", (event) => {
-        try {
-          if (!isThreadStatusEvent(JSON.parse(event.data) as unknown)) return;
-          synchronizeInBackground(true);
-        } catch {
-          // Malformed events cannot replace the last accepted snapshot.
-        }
-      });
+      backgroundQueued = true;
+      pump();
+      options.visibility?.addEventListener("visibilitychange", onVisibilityChange);
+      connectEvents();
     },
     refresh() {
       if (!active) return Promise.resolve();
@@ -190,8 +221,8 @@ export function createWorkbenchProjectionSynchronization(
       backgroundQueued = false;
       backgroundFresh = false;
       for (const completion of explicitQueue.splice(0)) completion.resolve();
-      events?.close();
-      events = null;
+      options.visibility?.removeEventListener("visibilitychange", onVisibilityChange);
+      closeEvents();
     },
   };
 }
