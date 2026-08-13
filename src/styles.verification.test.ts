@@ -91,7 +91,7 @@ test("Aldunis brand mark follows the resolved application theme", () => {
   assert.match(shell, /\.brandbtn:hover\s*\{[^}]*background:\s*transparent/s);
   assert.match(
     shell,
-    /\[data-theme="dark"\]\s+\.aldunis-brand-mark\s*\{[^}]*background-image:\s*url\('\/aldunis-mark-dark\.png'\)/s,
+    /\[data-theme="dark"\]\s+\.aldunis-brand-mark\s*\{[^}]*background-image:\s*url\('\/aldunis-mark-dark-web\.png'\)/s,
   );
 });
 
