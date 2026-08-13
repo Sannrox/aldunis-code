@@ -87,6 +87,7 @@ export function filterManagedOrchestrationProjection(
   projection: StateProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
   turnsByThread?: TurnsByThreadIndex,
+  includeTranscriptRows = true,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
   const threadIds = new Set(threads.map((thread) => thread.id));
@@ -98,8 +99,12 @@ export function filterManagedOrchestrationProjection(
     projects,
     threads,
     turns,
-    messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
-    activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
+    messages: includeTranscriptRows
+      ? projection.messages.filter((message) => turnIds.has(message.turnId))
+      : [],
+    activities: includeTranscriptRows
+      ? projection.activities.filter((activity) => turnIds.has(activity.turnId))
+      : [],
     plans: [],
     contextReceipts: [],
     usageReceipts: [],
@@ -227,9 +232,16 @@ export async function handleWorkbenchProjectionRoute(
         ? await state.delegatedActivitiesByTurnIndex()
         : undefined);
     const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
+    const hasDelegatedTranscriptIndexes =
+      messagesByTurn !== undefined && activitiesByTurn !== undefined;
     const visibleProjection = managedHost
       ? orchestrationEnabled
-        ? filterManagedOrchestrationProjection(projection, managedHost, turnsByThread)
+        ? filterManagedOrchestrationProjection(
+            projection,
+            managedHost,
+            turnsByThread,
+            !hasDelegatedTranscriptIndexes,
+          )
         : filterManagedWorkbenchListProjection(projection, managedHost, turnsByThread)
       : projection;
     // Derive transcript-backed values before the Workbench projection strips them,
