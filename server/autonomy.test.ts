@@ -424,3 +424,28 @@ test("heartbeat and standing order records are durable state records", async () 
     await cleanup();
   }
 });
+
+test("Autonomy snapshots clone only ledger records, not full conversation history", async () => {
+  const { state, engine, cleanup } = await fixture();
+  try {
+    await engine.addStandingOrder({
+      name: "Keep snapshots narrow",
+      scope: "project",
+      projectId: "project-1",
+      instruction: "Do not clone conversation history for ledger refreshes.",
+    });
+    state.load = async () => {
+      throw new Error("Autonomy snapshots must not clone the full state projection");
+    };
+
+    const snapshot = await engine.snapshot();
+    assert.equal(snapshot.standingOrders[0]?.name, "Keep snapshots narrow");
+    snapshot.standingOrders[0]!.name = "mutated by caller";
+    assert.equal(
+      (await state.loadAutonomyProjection()).standingOrders[0]?.name,
+      "Keep snapshots narrow",
+    );
+  } finally {
+    await cleanup();
+  }
+});

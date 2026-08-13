@@ -2088,6 +2088,31 @@ export class LocalStateStore {
     return structuredClone(this.#projection);
   }
 
+  /** Clone only the bounded Autonomy ledger, excluding conversation history. */
+  async loadAutonomyProjection(): Promise<
+    Pick<
+      StateProjection,
+      | "autonomyRuns"
+      | "autonomyTasks"
+      | "autonomyFlows"
+      | "heartbeatMonitors"
+      | "standingOrders"
+      | "autonomyHooks"
+    >
+  > {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const projection = this.#projection;
+    return structuredClone({
+      autonomyRuns: projection.autonomyRuns,
+      autonomyTasks: projection.autonomyTasks,
+      autonomyFlows: projection.autonomyFlows,
+      heartbeatMonitors: projection.heartbeatMonitors,
+      standingOrders: projection.standingOrders,
+      autonomyHooks: projection.autonomyHooks,
+    });
+  }
+
   /**
    * Read-only live projection for request handlers that project a subset.
    * Callers must not mutate the returned object.
