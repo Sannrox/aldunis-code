@@ -177,7 +177,7 @@ function context(overrides: Record<string, unknown> = {}) {
     state: { inspect: unused },
     preferences: { load: unused },
     permissions: { approvals: () => [] },
-    worktrees: { countActiveManaged: unused, listActiveManagedPaths: unused },
+    worktrees: { inspectActiveManaged: unused },
     assertManagedThread: () => assert.fail("managed admission must not run"),
     readJson: unused,
     sendJson: () => assert.fail("response must not be written"),
@@ -221,8 +221,10 @@ test("Workbench load derives one bounded response from the inspected snapshot", 
         },
       },
       worktrees: {
-        countActiveManaged: async () => 2,
-        listActiveManagedPaths: async () => ["/alpha/one", "/alpha/two"],
+        inspectActiveManaged: async () => {
+          calls.push("worktrees");
+          return { count: 2, paths: ["/alpha/one", "/alpha/two"] };
+        },
       },
       sendJson: (_response: ServerResponse, status: number, body: unknown) => {
         assert.equal(status, 200);
@@ -230,7 +232,7 @@ test("Workbench load derives one bounded response from the inspected snapshot", 
       },
     }) as never,
   );
-  assert.deepEqual(calls, ["preferences", "inspect"]);
+  assert.deepEqual(calls, ["preferences", "inspect", "worktrees"]);
   assert.equal((value?.messages as unknown[]).length, 0);
   assert.deepEqual(
     (value?.threadStatuses as Array<{ threadId: string; status: string }>).map((item) => [
@@ -273,7 +275,7 @@ test("managed Workbench load filters projects and approvals through catalogue au
           { repository: "/alpha", conversationId: "active" },
         ],
       },
-      worktrees: { countActiveManaged: async () => 0, listActiveManagedPaths: async () => [] },
+      worktrees: { inspectActiveManaged: async () => ({ count: 0, paths: [] }) },
       sendJson: (_response: ServerResponse, _status: number, body: unknown) => {
         value = body as Record<string, unknown>;
       },
@@ -425,8 +427,7 @@ test("managed indexed Workbench load skips global transcript visibility scans", 
         },
       },
       worktrees: {
-        countActiveManaged: async () => 0,
-        listActiveManagedPaths: async () => [],
+        inspectActiveManaged: async () => ({ count: 0, paths: [] }),
       },
       sendJson: (_response: ServerResponse, status: number, body: unknown) => {
         assert.equal(status, 200);
@@ -500,8 +501,7 @@ test("Workbench load uses the turn index instead of scanning inspect().turns", a
         turnsByThreadIndex: async () => turnsByThread,
       },
       worktrees: {
-        countActiveManaged: async () => 0,
-        listActiveManagedPaths: async () => [],
+        inspectActiveManaged: async () => ({ count: 0, paths: [] }),
       },
       sendJson: (_response: ServerResponse, status: number, body: unknown) => {
         assert.equal(status, 200);

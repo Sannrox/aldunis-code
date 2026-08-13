@@ -30,7 +30,7 @@ export interface WorkbenchProjectionRouteContext {
     >;
   preferences: Pick<PreferencesStore, "load">;
   permissions: Pick<PermissionBroker, "approvals">;
-  worktrees: Pick<WorktreeManager, "countActiveManaged" | "listActiveManagedPaths">;
+  worktrees: Pick<WorktreeManager, "inspectActiveManaged">;
   managedHost?: Pick<ManagedHost, "repositoryForRoot">;
   assertManagedThread: (projection: StateProjection, threadId: string) => unknown;
   readJson: (request: IncomingMessage) => Promise<unknown>;
@@ -273,8 +273,7 @@ export async function handleWorkbenchProjectionRoute(
       : [];
     const threadStatuses = projectThreadStatuses(visibleProjection, turnsByThread);
     const workbench = projectWorkbenchState(visibleProjection);
-    const managedWorktreeCount = await worktrees.countActiveManaged();
-    const managedWorktreePaths = await worktrees.listActiveManagedPaths();
+    const managedWorktrees = await worktrees.inspectActiveManaged();
     sendJson(response, 200, {
       ...workbench,
       delegatedRelationships: orchestrationEnabled ? workbench.delegatedRelationships : [],
@@ -282,9 +281,9 @@ export async function handleWorkbenchProjectionRoute(
       delegatedApprovals,
       delegatedInputs,
       threadStatuses,
-      managedWorktreeCount,
+      managedWorktreeCount: managedWorktrees.count,
       managedWorktreeLimit: currentPreferences.managedWorktreeLimit,
-      managedWorktreePaths,
+      managedWorktreePaths: managedWorktrees.paths,
     });
     return true;
   }
