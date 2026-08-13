@@ -168,7 +168,7 @@ export async function handleAutonomyRoute(
     assertLocalMutation("Remote clients cannot update heartbeats.");
     const body = (await readJson(request)) as Record<string, unknown>;
     if (typeof body.id !== "string") throw new AutonomyError("A heartbeat is required.");
-    const current = (await state.load()).heartbeatMonitors.find((item) => item.id === body.id);
+    const current = (await state.inspect()).heartbeatMonitors.find((item) => item.id === body.id);
     if (!current) throw new AutonomyError("Heartbeat not found.", 404);
     const updated = parseHeartbeatMonitor({
       ...current,
@@ -206,7 +206,7 @@ export async function handleAutonomyRoute(
       sendJson(response, 200, { ok: true });
       return true;
     }
-    const monitor = (await state.load()).heartbeatMonitors.find((item) => item.id === body.id);
+    const monitor = (await state.inspect()).heartbeatMonitors.find((item) => item.id === body.id);
     if (!monitor) throw new AutonomyError("Heartbeat not found.", 404);
     const run = await autonomy.startHeartbeat(monitor, "manual");
     const timestamp = now();
@@ -251,7 +251,7 @@ export async function handleAutonomyRoute(
     assertLocalMutation("Remote clients cannot update standing orders.");
     const body = (await readJson(request)) as Record<string, unknown>;
     if (typeof body.id !== "string") throw new AutonomyError("A standing order is required.");
-    const current = (await state.load()).standingOrders.find((item) => item.id === body.id);
+    const current = (await state.inspect()).standingOrders.find((item) => item.id === body.id);
     if (!current) throw new AutonomyError("Standing order not found.", 404);
     const updated = parseStandingOrder({
       ...current,
@@ -303,7 +303,7 @@ export async function handleAutonomyRoute(
     assertLocalMutation("Remote clients cannot update autonomy hooks.");
     const body = (await readJson(request)) as Record<string, unknown>;
     if (typeof body.id !== "string") throw new AutonomyError("A hook is required.");
-    const projection = await state.load();
+    const projection = await state.inspect();
     const current = projection.autonomyHooks.find((item) => item.id === body.id);
     if (!current) throw new AutonomyError("Hook not found.", 404);
     const updated = parseAutonomyHook({

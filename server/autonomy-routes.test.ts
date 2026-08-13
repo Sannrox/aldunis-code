@@ -113,7 +113,10 @@ test("scheduled Autonomy mutations reconcile the scheduler", async () => {
       addHook: async () => hook,
     } as unknown as AutonomyRouteContext["autonomy"],
     state: {
-      load: async () => ({
+      load: async () => {
+        throw new Error("Autonomy mutations must not clone the full state projection");
+      },
+      inspect: async () => ({
         heartbeatMonitors: [heartbeat],
         autonomyHooks: [hook],
         autonomyFlows: [{ id: "heartbeat-awareness.v1", readOnly: true }],
@@ -138,6 +141,72 @@ test("scheduled Autonomy mutations reconcile the scheduler", async () => {
     await handleAutonomyRoute(route, request(body), response(), module);
   }
   assert.equal(refreshes, calls.length);
+});
+
+test("heartbeat runs and standing-order updates inspect live state without cloning history", async () => {
+  const heartbeat = {
+    schemaVersion: 2,
+    id: "heartbeat-1",
+    name: "Heartbeat",
+    projectId: null,
+    worktree: null,
+    goal: "Check",
+    enabled: true,
+    everySeconds: 60,
+    activeHours: null,
+    flowId: "heartbeat-awareness.v1",
+    lastRunAt: null,
+    lastRunId: null,
+    lastStatus: null,
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  };
+  const standingOrder = {
+    schemaVersion: 2,
+    id: "order-1",
+    name: "Bound reports",
+    scope: "global",
+    projectId: null,
+    instruction: "Stay concise.",
+    enabled: true,
+    createdAt: "2026-08-11T00:00:00.000Z",
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  };
+  const saved: unknown[] = [];
+  const module = context({
+    autonomy: {
+      startHeartbeat: async () => ({ id: "run-1" }),
+    } as unknown as AutonomyRouteContext["autonomy"],
+    state: {
+      load: async () => {
+        throw new Error("Autonomy mutations must not clone the full state projection");
+      },
+      inspect: async () => ({
+        heartbeatMonitors: [heartbeat],
+        standingOrders: [standingOrder],
+      }),
+      saveAutonomyRecords: async (records: unknown) => {
+        saved.push(records);
+      },
+    } as unknown as AutonomyRouteContext["state"],
+  });
+
+  await handleAutonomyRoute(
+    "/api/autonomy/heartbeats/run-now",
+    request({ id: heartbeat.id }),
+    response(),
+    module,
+  );
+  await handleAutonomyRoute(
+    "/api/autonomy/standing-orders/update",
+    request({ id: standingOrder.id, enabled: false }),
+    response(),
+    module,
+  );
+
+  assert.equal(saved.length, 2);
+  assert.equal(module.sent[0]?.status, 202);
+  assert.equal(module.sent[1]?.status, 200);
 });
 
 test("filters managed snapshots to visible projects and their tasks", async () => {
