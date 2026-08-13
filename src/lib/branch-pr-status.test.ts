@@ -34,10 +34,9 @@ test("PR status polling pauses while hidden and refreshes immediately on return"
   let visibilityState: DocumentVisibilityState = "visible";
   let visibilityListener: (() => void) | undefined;
   let timeout: (() => void) | undefined;
-  let interval: (() => void) | undefined;
   let timeoutDelay: number | undefined;
-  let intervalDelay: number | undefined;
   let refreshes = 0;
+  const fireTimeout = () => timeout?.();
   const visibility = {
     get visibilityState() {
       return visibilityState;
@@ -58,14 +57,6 @@ test("PR status polling pauses while hidden and refreshes immediately on return"
     clearTimeout: () => {
       timeout = undefined;
     },
-    setInterval: (callback: () => void, delay: number) => {
-      interval = callback;
-      intervalDelay = delay;
-      return 2;
-    },
-    clearInterval: () => {
-      interval = undefined;
-    },
   };
   const dispose = startBranchPrStatusPolling(
     async () => {
@@ -77,32 +68,32 @@ test("PR status polling pauses while hidden and refreshes immediately on return"
 
   assert.equal(refreshes, 0);
   assert.equal(timeoutDelay, BRANCH_PR_INITIAL_REFRESH_DELAY_MS);
-  assert.equal(intervalDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
-  timeout?.();
+  fireTimeout();
   await Promise.resolve();
   assert.equal(refreshes, 1);
+  assert.equal(timeoutDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
 
   visibilityState = "hidden";
   visibilityListener?.();
   assert.equal(timeout, undefined);
-  assert.equal(interval, undefined);
 
   visibilityState = "visible";
   visibilityListener?.();
   await Promise.resolve();
   assert.equal(refreshes, 2);
-  assert.equal(timeout, undefined);
-  assert.equal(intervalDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
+  assert.equal(typeof timeout, "function");
+  assert.equal(timeoutDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
 
   dispose();
-  assert.equal(interval, undefined);
   assert.equal(visibilityListener, undefined);
 });
 
-test("PR status polling suppresses overlapping refresh batches", async () => {
+test("PR status polling schedules the next batch after the active batch completes", async () => {
   let release: (() => void) | undefined;
-  let interval: (() => void) | undefined;
+  let timeout: (() => void) | undefined;
+  let timeoutDelay: number | undefined;
   let refreshes = 0;
+  const fireTimeout = () => timeout?.();
   const dispose = startBranchPrStatusPolling(
     async () => {
       refreshes += 1;
@@ -116,27 +107,26 @@ test("PR status polling suppresses overlapping refresh batches", async () => {
       removeEventListener: () => undefined,
     },
     {
-      setTimeout: (callback) => {
-        callback();
+      setTimeout: (callback, delay) => {
+        timeout = callback;
+        timeoutDelay = delay;
         return 1;
       },
-      clearTimeout: () => undefined,
-      setInterval: (callback) => {
-        interval = callback;
-        return 2;
-      },
-      clearInterval: () => {
-        interval = undefined;
+      clearTimeout: () => {
+        timeout = undefined;
       },
     },
   );
 
+  assert.equal(timeoutDelay, BRANCH_PR_INITIAL_REFRESH_DELAY_MS);
+  fireTimeout();
   assert.equal(refreshes, 1);
-  interval?.();
-  assert.equal(refreshes, 1);
+  timeout = undefined;
   release?.();
   await new Promise<void>((resolve) => setImmediate(resolve));
-  interval?.();
+  assert.equal(timeoutDelay, BRANCH_PR_REFRESH_INTERVAL_MS);
+  fireTimeout();
+  await Promise.resolve();
   assert.equal(refreshes, 2);
   dispose();
 });
@@ -145,6 +135,7 @@ test("PR status polling queues a visibility refresh behind an active batch", asy
   let visibilityState: DocumentVisibilityState = "visible";
   let visibilityListener: (() => void) | undefined;
   let release: (() => void) | undefined;
+  let timeout: (() => void) | undefined;
   let refreshes = 0;
   const dispose = startBranchPrStatusPolling(
     async () => {
@@ -168,15 +159,16 @@ test("PR status polling queues a visibility refresh behind an active batch", asy
     },
     {
       setTimeout: (callback) => {
-        callback();
+        timeout = callback;
         return 1;
       },
-      clearTimeout: () => undefined,
-      setInterval: () => 2,
-      clearInterval: () => undefined,
+      clearTimeout: () => {
+        timeout = undefined;
+      },
     },
   );
 
+  timeout?.();
   assert.equal(refreshes, 1);
   visibilityState = "hidden";
   visibilityListener?.();
@@ -222,8 +214,6 @@ test("PR status polling aborts active work while hidden and on disposal", async 
       clearTimeout: () => {
         begin = undefined;
       },
-      setInterval: () => 2,
-      clearInterval: () => undefined,
     },
   );
 

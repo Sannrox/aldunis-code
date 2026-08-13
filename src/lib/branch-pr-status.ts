@@ -61,15 +61,11 @@ interface PollingVisibility {
 interface PollingTimers {
   setTimeout(callback: () => void, delay: number): number;
   clearTimeout(handle: number): void;
-  setInterval(callback: () => void, delay: number): number;
-  clearInterval(handle: number): void;
 }
 
 const browserPollingTimers: PollingTimers = {
   setTimeout: (callback, delay) => window.setTimeout(callback, delay),
   clearTimeout: (handle) => window.clearTimeout(handle),
-  setInterval: (callback, delay) => window.setInterval(callback, delay),
-  clearInterval: (handle) => window.clearInterval(handle),
 };
 
 /**
@@ -81,18 +77,23 @@ export function startBranchPrStatusPolling(
   visibility: PollingVisibility,
   timers: PollingTimers = browserPollingTimers,
 ): () => void {
-  let initialRefresh: number | undefined;
-  let interval: number | undefined;
+  let timer: number | undefined;
   let inFlight = false;
   let refreshAfterFlight = false;
   let disposed = false;
   let activeController: AbortController | undefined;
 
   const stopTimers = () => {
-    if (initialRefresh !== undefined) timers.clearTimeout(initialRefresh);
-    if (interval !== undefined) timers.clearInterval(interval);
-    initialRefresh = undefined;
-    interval = undefined;
+    if (timer !== undefined) timers.clearTimeout(timer);
+    timer = undefined;
+  };
+  const schedule = (delay: number) => {
+    stopTimers();
+    if (disposed || visibility.visibilityState !== "visible") return;
+    timer = timers.setTimeout(() => {
+      timer = undefined;
+      void run();
+    }, delay);
   };
   const run = async (queueIfBusy = false) => {
     if (disposed || visibility.visibilityState !== "visible") return;
@@ -111,6 +112,8 @@ export function startBranchPrStatusPolling(
       if (refreshAfterFlight) {
         refreshAfterFlight = false;
         void run();
+      } else {
+        schedule(BRANCH_PR_REFRESH_INTERVAL_MS);
       }
     }
   };
@@ -122,8 +125,7 @@ export function startBranchPrStatusPolling(
       return;
     }
     if (immediate) void run(true);
-    else initialRefresh = timers.setTimeout(() => void run(), BRANCH_PR_INITIAL_REFRESH_DELAY_MS);
-    interval = timers.setInterval(() => void run(), BRANCH_PR_REFRESH_INTERVAL_MS);
+    else schedule(BRANCH_PR_INITIAL_REFRESH_DELAY_MS);
   };
   const onVisibilityChange = () => start(true);
 
