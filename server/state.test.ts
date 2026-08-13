@@ -910,9 +910,14 @@ test("host restart marks orphaned active and approval turns interrupted", async 
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
 
-  const restarted = new LocalStateStore(directory);
+  class RecoveryIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("startup recovery must not clone the full projection");
+    }
+  }
+  const restarted = new RecoveryIndexOnlyStore(directory);
   await restarted.recoverInterruptedTurns();
-  const projection = await restarted.load();
+  const projection = await new LocalStateStore(directory).load();
   assert.deepEqual(
     projection.turns.map((turn) => turn.status),
     ["interrupted", "interrupted"],

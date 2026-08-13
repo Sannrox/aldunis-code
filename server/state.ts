@@ -3888,7 +3888,8 @@ export class LocalStateStore {
         }
       }
     });
-    const projection = await this.load();
+    await this.#writeQueue;
+    const projection = this.#projection;
     const threadById = new Map(projection.threads.map((thread) => [thread.id, thread]));
     const nativeInputsByTurn = new Map<string, ChildInputRequest[]>();
     for (const request of projection.inputRequests) {
