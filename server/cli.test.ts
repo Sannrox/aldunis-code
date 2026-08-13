@@ -58,6 +58,14 @@ test("the CLI build emits provider approval helpers beside the host bundle", asy
   assert.match(command, /--outfile=dist-cli\/shikigami-permission-hook\.mjs/);
 });
 
+test("desktop packaging excludes dependency source maps", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+    build?: { files?: string[] };
+  };
+
+  assert.ok(packageJson.build?.files?.includes("!node_modules/**/*.map"));
+});
+
 test("legacy remote-auth flags remain compatible", () => {
   assert.deepEqual(parseCliArgs(["--remote-auth", "pair"]), {
     kind: "auth",
