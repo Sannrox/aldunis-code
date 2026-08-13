@@ -3,6 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
+  type Server,
   type ServerResponse,
 } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
@@ -916,9 +917,15 @@ export interface LocalHostOptions {
   publicOrigin?: string | (() => string | undefined);
   localBindHost?: string;
   allowLocalControl?: boolean;
+  previews?: PreviewManager;
 }
 
-export function createLocalHost(options: LocalHostOptions = {}) {
+export interface LocalHostServer extends Server {
+  /** Finish bounded process and persistence cleanup after HTTP close. */
+  closeResources(): Promise<void>;
+}
+
+export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer {
   const dist = options.dist ?? fileURLToPath(new URL("../dist", import.meta.url));
   const state = options.state ?? new LocalStateStore();
   const profiles = options.profiles ?? new ClaudeProfileStore(state.directory);
@@ -951,7 +958,7 @@ export function createLocalHost(options: LocalHostOptions = {}) {
     managedHost?.shikigami.executable ?? "shikigami",
     permissions,
   );
-  const previews = new PreviewManager();
+  const previews = options.previews ?? new PreviewManager();
   const preferences = new PreferencesStore(state.directory);
   const automations = new AutomationStore(state.directory);
   const worktrees = new WorktreeManager(state.directory);
@@ -1266,7 +1273,9 @@ export function createLocalHost(options: LocalHostOptions = {}) {
       return;
     await serveStatic(request, response, dist);
   };
-  const server = tls ? createHttpsServer(tls, handler) : createHttpServer(handler);
+  const server = (
+    tls ? createHttpsServer(tls, handler) : createHttpServer(handler)
+  ) as LocalHostServer;
   serverRef = server;
   if (!managedHost) {
     server.once("listening", () => {
@@ -1280,16 +1289,36 @@ export function createLocalHost(options: LocalHostOptions = {}) {
         .catch(() => undefined);
     });
   }
-  server.once("close", () => {
+  let resourceCleanup: Promise<void> | null = null;
+  server.closeResources = () => {
+    if (resourceCleanup) return resourceCleanup;
     unsubscribePermissionChanges();
     automationScheduler.stop();
     autonomyScheduler.stop();
     codex.close();
     internalPermissionCallback?.server.close();
-    // Best-effort: kill npm/vite process trees so desktop quit does not orphan previews.
-    void previews.stopAll().catch(() => undefined);
-    // Best-effort: journal any open stream segments before the process exits.
-    void state.flushPendingAssistantHistory().catch(() => undefined);
+    const finishStartupAndFlush = async () => {
+      const startup = await Promise.allSettled([profileBootstrap, recovery]);
+      const flush = await Promise.allSettled([state.flushPendingAssistantHistory()]);
+      const failure = [...startup, ...flush].find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failure) throw failure.reason;
+    };
+    resourceCleanup = Promise.allSettled([previews.stopAll(), finishStartupAndFlush()]).then(
+      (results) => {
+        const failure = results.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (failure) throw failure.reason;
+      },
+    );
+    return resourceCleanup;
+  };
+  server.once("close", () => {
+    // Compatibility for callers that only close the HTTP server. Desktop and
+    // CLI shutdown additionally await this same idempotent cleanup promise.
+    void server.closeResources().catch(() => undefined);
   });
   return server;
 }

@@ -174,8 +174,20 @@ async function disableTailscaleServe(): Promise<void> {
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
   await disableTailscaleServe();
-  server.close(() => {
-    void releaseWriterLease().finally(() => process.kill(process.pid, signal));
+  server.close((error) => {
+    void server
+      .closeResources()
+      .catch((cleanupError) => {
+        console.error("Local services could not be closed cleanly during shutdown.", cleanupError);
+      })
+      .then(() => releaseWriterLease())
+      .catch((leaseError) => {
+        console.error("The local-state writer lease could not be released cleanly.", leaseError);
+      })
+      .finally(() => {
+        if (error) console.error("The local host could not close cleanly.", error);
+        process.kill(process.pid, signal);
+      });
   });
 }
 

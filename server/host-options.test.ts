@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { createLocalHost, pipeStaticAsset } from "./host.ts";
+import { PreviewManager } from "./preview.ts";
 import { LocalStateStore } from "./state.ts";
 
 function assertFormerPositionalInterfaceDoesNotTypeCheck() {
@@ -67,6 +68,42 @@ test("local host options keep state and static content behind one named interfac
     });
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("local host exposes idempotent cleanup that waits for preview termination", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-host-cleanup-"));
+  let releasePreviewCleanup!: () => void;
+  let cleanupCalls = 0;
+  const previews = new PreviewManager();
+  previews.stopAll = async () => {
+    cleanupCalls += 1;
+    await new Promise<void>((resolve) => {
+      releasePreviewCleanup = resolve;
+    });
+  };
+  const server = createLocalHost({
+    dist: directory,
+    state: new LocalStateStore(join(directory, "state")),
+    previews,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+
+  let settled = false;
+  const first = server.closeResources().then(() => {
+    settled = true;
+  });
+  const second = server.closeResources();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.equal(cleanupCalls, 1);
+  releasePreviewCleanup();
+  await Promise.all([first, second]);
+  assert.equal(settled, true);
+  assert.equal(cleanupCalls, 1);
+  await rm(directory, { recursive: true, force: true });
 });
 
 test("missing static assets return 404 without crashing the host", async () => {
