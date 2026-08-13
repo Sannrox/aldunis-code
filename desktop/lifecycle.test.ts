@@ -160,6 +160,14 @@ test("desktop shutdown disconnects the renderer before closing local services", 
   assert.deepEqual(events, ["dispose updater", "destroy window", "close services"]);
 });
 
+test("desktop service shutdown awaits local-host resource cleanup", async () => {
+  const source = await readFile(new URL("./main.ts", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /if \(runningBackend\?\.listening\) await closeServer\(runningBackend\);\s+await runningBackend\?\.closeResources\(\);/,
+  );
+});
+
 test("desktop shutdown exposes cleanup failure for bounded main-process handling", async () => {
   await assert.rejects(
     finishDesktopShutdown({

@@ -90,6 +90,7 @@ async function closeLocalServices(): Promise<void> {
   backend = null;
   try {
     if (runningBackend?.listening) await closeServer(runningBackend);
+    await runningBackend?.closeResources();
     await remoteEnvironments?.close();
   } finally {
     const release = releaseWriterLease;
