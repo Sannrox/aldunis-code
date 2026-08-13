@@ -715,16 +715,22 @@ export class WorktreeManager {
 
   /** Active managed worktrees still counting toward the installation limit. */
   async countActiveManaged(): Promise<number> {
-    const registry = await this.store.load();
-    return countActiveManaged(registry);
+    return (await this.inspectActiveManaged()).count;
   }
 
   /** Canonical paths of active managed worktrees (installation-wide). */
   async listActiveManagedPaths(): Promise<string[]> {
+    return (await this.inspectActiveManaged()).paths;
+  }
+
+  /** Active managed-worktree inventory derived from one coherent registry read. */
+  async inspectActiveManaged(): Promise<{ count: number; paths: string[] }> {
     const registry = await this.store.load();
-    return registry.records
-      .filter((record) => !record.removedAt && !record.removalPendingAt)
-      .map((record) => record.path);
+    const paths: string[] = [];
+    for (const record of registry.records) {
+      if (!record.removedAt && !record.removalPendingAt) paths.push(record.path);
+    }
+    return { count: paths.length, paths };
   }
 
   /**

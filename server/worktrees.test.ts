@@ -91,6 +91,35 @@ test("managed worktree storage retains protected ownership and bounds removed hi
   }
 });
 
+test("active managed inventory derives count and paths from one registry read", async () => {
+  class CountingStore extends ManagedWorktreeStore {
+    loads = 0;
+
+    override async load() {
+      this.loads += 1;
+      return {
+        schemaVersion: 1 as const,
+        records: [
+          managedRecord("active", null),
+          {
+            ...managedRecord("pending", null),
+            removalPendingAt: "2026-02-01T00:00:00.000Z",
+          },
+          managedRecord("removed", "2026-02-01T00:00:00.000Z"),
+        ],
+      };
+    }
+  }
+
+  const store = new CountingStore("/state");
+  const manager = new WorktreeManager("/state", store);
+  assert.deepEqual(await manager.inspectActiveManaged(), {
+    count: 1,
+    paths: ["/worktrees/active"],
+  });
+  assert.equal(store.loads, 1);
+});
+
 test("managed worktree storage leaves prior state intact when protected records exceed bytes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-size-"));
   try {
