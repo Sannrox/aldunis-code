@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from "react";
+import { lazy, StrictMode, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { DEFAULT_PREFERENCES, resolveTheme, type Preferences } from "./preferences";
 import { initializeRemoteAuthentication } from "./remote-auth";
@@ -21,11 +21,7 @@ import {
 } from "./features/dialogs/provider-management-dialog";
 import { ThreadSearchDialog } from "./features/dialogs/thread-search-dialog";
 import { CommandPalette } from "./features/dialogs/command-palette";
-import { AutomationsDialog } from "./features/dialogs/automations-dialog";
-import { AutonomyDialog } from "./features/dialogs/autonomy-dialog";
-import { PreferencesDialog } from "./features/dialogs/preferences-dialog";
-import { ActivityDialog, type ActivitySelectionAction } from "./features/dialogs/activity-dialog";
-import { ConnectionsDialog } from "./features/dialogs/connections-dialog";
+import type { ActivitySelectionAction } from "./features/dialogs/activity-dialog";
 import { DesktopUpdateBanner, type DesktopUpdateControls } from "./features/updates/desktop-update";
 import { isKeybindingCaptured, matchesModifierShortcut } from "./lib/workspace-shortcuts";
 import {
@@ -35,6 +31,22 @@ import {
 } from "./lib/product-availability";
 import { ApplicationShellBootstrapModule } from "./lib/application-shell-bootstrap";
 import type { DesktopUpdateSnapshot } from "../desktop/update-contract";
+
+const AutomationsDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/automations-dialog")).AutomationsDialog,
+}));
+const AutonomyDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/autonomy-dialog")).AutonomyDialog,
+}));
+const PreferencesDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/preferences-dialog")).PreferencesDialog,
+}));
+const ActivityDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/activity-dialog")).ActivityDialog,
+}));
+const ConnectionsDialog = lazy(async () => ({
+  default: (await import("./features/dialogs/connections-dialog")).ConnectionsDialog,
+}));
 
 const desktopPlatform = window.aldunisDesktop?.platform;
 if (desktopPlatform) {
@@ -368,66 +380,76 @@ function App() {
         }}
         hasRepository={repository != null}
       />
-      <AutomationsDialog
-        open={automationsOpen}
-        threads={threads.map((thread) => ({
-          id: thread.id,
-          title: thread.title,
-          projectName: thread.projectName,
-          provider: thread.provider,
-        }))}
-        onClose={() => setAutomationsOpen(false)}
-      />
-      <AutonomyDialog
-        open={autonomyOpen}
-        repository={repository}
-        projects={savedProjects}
-        managed={hostCapabilities.managed}
-        onClose={() => setAutonomyOpen(false)}
-      />
-      <PreferencesDialog
-        open={preferencesOpen}
-        preferences={preferences}
-        recovered={preferencesRecovered}
-        onClose={() => setPreferencesOpen(false)}
-        onOpenProviderManagement={() => {
-          if (hostCapabilities.managed) return;
-          setProviderManagement({ destination: "diagnostics", provider: null });
-        }}
-        onOpenConnections={() => setConnectionsOpen(true)}
-        onOpenArchivedThreads={() => {
-          setPreferencesOpen(false);
-          window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
-        }}
-        desktopUpdates={desktopUpdateControls}
-        onSave={async (value) => {
-          const response = await fetch("/api/preferences/save", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(value),
-          });
-          if (!response.ok) return;
-          setPreferences((await response.json()) as Preferences);
-          setPreferencesRecovered(false);
-          setPreferencesOpen(false);
-        }}
-      />
-      <ActivityDialog
-        open={activityOpen}
-        onClose={() => setActivityOpen(false)}
-        onSelect={(conversation, action: ActivitySelectionAction) => {
-          window.dispatchEvent(
-            new CustomEvent("aldunis:open-conversation", {
-              detail: {
-                threadId: conversation.id,
-                conversation,
-                action,
-              },
-            }),
-          );
-        }}
-      />
-      <ConnectionsDialog open={connectionsOpen} onClose={() => setConnectionsOpen(false)} />
+      <Suspense fallback={null}>
+        {automationsOpen && (
+          <AutomationsDialog
+            open={automationsOpen}
+            threads={threads.map((thread) => ({
+              id: thread.id,
+              title: thread.title,
+              projectName: thread.projectName,
+              provider: thread.provider,
+            }))}
+            onClose={() => setAutomationsOpen(false)}
+          />
+        )}
+        {autonomyOpen && (
+          <AutonomyDialog
+            open={autonomyOpen}
+            repository={repository}
+            projects={savedProjects}
+            managed={hostCapabilities.managed}
+            onClose={() => setAutonomyOpen(false)}
+          />
+        )}
+        {preferencesOpen && (
+          <PreferencesDialog
+            open={preferencesOpen}
+            preferences={preferences}
+            recovered={preferencesRecovered}
+            onClose={() => setPreferencesOpen(false)}
+            onOpenProviderManagement={() => {
+              if (hostCapabilities.managed) return;
+              setProviderManagement({ destination: "diagnostics", provider: null });
+            }}
+            onOpenConnections={() => setConnectionsOpen(true)}
+            onOpenArchivedThreads={() => {
+              setPreferencesOpen(false);
+              window.dispatchEvent(new CustomEvent("aldunis:show-archived"));
+            }}
+            desktopUpdates={desktopUpdateControls}
+            onSave={async (value) => {
+              const response = await fetch("/api/preferences/save", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(value),
+              });
+              if (!response.ok) return;
+              setPreferences((await response.json()) as Preferences);
+              setPreferencesRecovered(false);
+              setPreferencesOpen(false);
+            }}
+          />
+        )}
+        {activityOpen && (
+          <ActivityDialog
+            open={activityOpen}
+            onClose={() => setActivityOpen(false)}
+            onSelect={(conversation, action: ActivitySelectionAction) => {
+              window.dispatchEvent(
+                new CustomEvent("aldunis:open-conversation", {
+                  detail: {
+                    threadId: conversation.id,
+                    conversation,
+                    action,
+                  },
+                }),
+              );
+            }}
+          />
+        )}
+        {connectionsOpen && <ConnectionsDialog open onClose={() => setConnectionsOpen(false)} />}
+      </Suspense>
     </div>
   );
 }
