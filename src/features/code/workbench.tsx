@@ -64,7 +64,7 @@ import {
 } from "./workbench-projection-sync";
 import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
 import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
-import { DomainPage } from "../shell/domain-page";
+import { OptionalControlBoundary } from "../../components/optional-control-boundary";
 import type { SavedProject } from "../dialogs/repository-dialog";
 import { RenameConversationDialog } from "../dialogs/rename-conversation-dialog";
 import { StartDelegatedConversationDialog } from "../dialogs/start-delegated-conversation-dialog";
@@ -82,6 +82,10 @@ import {
   loadBranchPrLookupResults,
   uniqueWorktreeRoots,
 } from "../../lib/branch-pr-status";
+
+const DomainPage = React.lazy(async () => ({
+  default: (await import("../shell/domain-page")).DomainPage,
+}));
 
 /** Pane tab label: title alone collides when dual-pane hosts same-titled forks. */
 function paneConversationLabel(
@@ -1528,15 +1532,20 @@ export function CodeWorkbench({
         tabIndex={-1}
       >
         {product !== "code" ? (
-          <DomainPage
-            product={product as Exclude<import("../../types").Product, "code">}
-            projects={projects}
-            selectedProjectId={repository?.projectId ?? null}
-            onProjectsChanged={onProjectsChanged}
-            chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
-            chiseiCorrelationId={chiseiCorrelationId}
-            repository={repository}
-          />
+          <OptionalControlBoundary
+            label={`${product} product screen`}
+            onDismiss={() => onProductChange("code")}
+          >
+            <DomainPage
+              product={product as Exclude<import("../../types").Product, "code">}
+              projects={projects}
+              selectedProjectId={repository?.projectId ?? null}
+              onProjectsChanged={onProjectsChanged}
+              chiseiBindingAdministrationAvailable={chiseiBindingAdministrationAvailable}
+              chiseiCorrelationId={chiseiCorrelationId}
+              repository={repository}
+            />
+          </OptionalControlBoundary>
         ) : usageOpen ? (
           <UsagePage onBack={() => setUsageOpen(false)} />
         ) : (
