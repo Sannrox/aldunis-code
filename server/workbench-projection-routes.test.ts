@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
-import { handleWorkbenchProjectionRoute } from "./workbench-projection-routes.ts";
+import {
+  filterManagedProjection,
+  handleWorkbenchProjectionRoute,
+} from "./workbench-projection-routes.ts";
 import { LocalStateError, type StateProjection } from "./state.ts";
 
 const request = {} as IncomingMessage;
@@ -201,6 +204,37 @@ test("managed Workbench load filters projects and approvals through catalogue au
   );
   assert.equal((value?.threads as unknown[]).length, 2);
   assert.deepEqual(value?.delegatedApprovals, []);
+});
+
+test("managed projection derives task visibility from one filtered run index", () => {
+  const value = projection();
+  value.autonomyRuns = [
+    { id: "visible", projectId: "p1" },
+    { id: "global", projectId: null },
+    { id: "hidden", projectId: "p2" },
+  ] as StateProjection["autonomyRuns"];
+  value.autonomyTasks = [
+    { id: "visible-task", runId: "visible" },
+    { id: "global-task", runId: "global" },
+    { id: "hidden-task", runId: "hidden" },
+    { id: "orphan-task", runId: "missing" },
+  ] as StateProjection["autonomyTasks"];
+
+  const filtered = filterManagedProjection(value, {
+    repositoryForRoot(root) {
+      if (root !== "/alpha") throw new Error("outside catalogue");
+      return {} as never;
+    },
+  });
+
+  assert.deepEqual(
+    filtered.autonomyRuns.map((run) => run.id),
+    ["visible", "global"],
+  );
+  assert.deepEqual(
+    filtered.autonomyTasks.map((task) => task.id),
+    ["visible-task", "global-task"],
+  );
 });
 
 test("history validates identity and applies managed admission", async () => {

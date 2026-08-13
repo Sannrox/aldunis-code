@@ -62,6 +62,10 @@ export function filterManagedProjection(
   const threadIds = new Set(threads.map((thread) => thread.id));
   const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
   const turnIds = new Set(turns.map((turn) => turn.id));
+  const autonomyRuns = projection.autonomyRuns.filter(
+    (run) => run.projectId === null || projectIds.has(run.projectId),
+  );
+  const visibleAutonomyRunIds = new Set(autonomyRuns.map((run) => run.id));
   return {
     ...projection,
     projects,
@@ -105,13 +109,8 @@ export function filterManagedProjection(
         threadIds.has(receipt.childThreadId) &&
         (receipt.parentThreadId === null || threadIds.has(receipt.parentThreadId)),
     ),
-    autonomyRuns: projection.autonomyRuns.filter(
-      (run) => run.projectId === null || projectIds.has(run.projectId),
-    ),
-    autonomyTasks: projection.autonomyTasks.filter((task) => {
-      const run = projection.autonomyRuns.find((candidate) => candidate.id === task.runId);
-      return run?.projectId === null || (run?.projectId ? projectIds.has(run.projectId) : false);
-    }),
+    autonomyRuns,
+    autonomyTasks: projection.autonomyTasks.filter((task) => visibleAutonomyRunIds.has(task.runId)),
     autonomyFlows: projection.autonomyFlows,
     heartbeatMonitors: projection.heartbeatMonitors.filter(
       (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
