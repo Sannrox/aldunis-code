@@ -91,7 +91,6 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "dist-cli/**/*",
       "contracts/**/*",
       "vendor/sekai-chisei-sdk/**/*",
       "provider-adapters/**/*",
