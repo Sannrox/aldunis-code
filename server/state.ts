@@ -592,37 +592,69 @@ function projectThreadStatusFromTurns(
   };
 }
 
-export function projectThreadStatuses(projection: StateProjection): ThreadStatusProjection[] {
+export type TurnsByThreadIndex = ReadonlyMap<string, readonly Turn[]>;
+
+function groupTurnsByThread(turns: readonly Turn[]): Map<string, Turn[]> {
   const turnsByThread = new Map<string, Turn[]>();
-  for (const turn of projection.turns) {
-    const turns = turnsByThread.get(turn.threadId);
-    if (turns) turns.push(turn);
+  for (const turn of turns) {
+    const group = turnsByThread.get(turn.threadId);
+    if (group) group.push(turn);
     else turnsByThread.set(turn.threadId, [turn]);
   }
-  for (const turns of turnsByThread.values()) {
-    turns.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  }
+  return turnsByThread;
+}
+
+function sortedTurnsForThread(turns: readonly Turn[] | undefined): readonly Turn[] {
+  if (!turns || turns.length === 0) return [];
+  if (turns.length === 1) return turns;
+  return [...turns].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+/**
+ * Batch thread status from a store-maintained turn index when provided.
+ * Without an index this still groups `projection.turns` once; `/api/state/load`
+ * must pass the live index so refresh does not scan unrelated conversations.
+ */
+export function projectThreadStatuses(
+  projection: Pick<StateProjection, "threads" | "turns">,
+  turnsByThread?: TurnsByThreadIndex,
+): ThreadStatusProjection[] {
+  const index = turnsByThread ?? groupTurnsByThread(projection.turns);
   return projection.threads.map((thread) =>
-    projectThreadStatusFromTurns(thread, turnsByThread.get(thread.id) ?? [], thread.id),
+    projectThreadStatusFromTurns(thread, sortedTurnsForThread(index.get(thread.id)), thread.id),
   );
+}
+
+function rememberLatestCompletedTurn(latestByChild: Map<string, Turn>, turn: Turn): void {
+  if (turn.status !== "completed") return;
+  const previous = latestByChild.get(turn.threadId);
+  if (
+    !previous ||
+    turn.createdAt > previous.createdAt ||
+    (turn.createdAt === previous.createdAt && turn.id > previous.id)
+  ) {
+    latestByChild.set(turn.threadId, turn);
+  }
 }
 
 export function projectDelegatedConversationOutcomes(
   projection: StateProjection,
+  turnsByThread?: TurnsByThreadIndex,
 ): DelegatedConversationOutcomeProjection[] {
   const childIds = new Set(
     projection.delegatedRelationships.map((relationship) => relationship.childThreadId),
   );
   const latestByChild = new Map<string, Turn>();
-  for (const turn of projection.turns) {
-    if (!childIds.has(turn.threadId) || turn.status !== "completed") continue;
-    const previous = latestByChild.get(turn.threadId);
-    if (
-      !previous ||
-      turn.createdAt > previous.createdAt ||
-      (turn.createdAt === previous.createdAt && turn.id > previous.id)
-    ) {
-      latestByChild.set(turn.threadId, turn);
+  if (turnsByThread) {
+    for (const childId of childIds) {
+      const turns = turnsByThread.get(childId);
+      if (!turns) continue;
+      for (const turn of turns) rememberLatestCompletedTurn(latestByChild, turn);
+    }
+  } else {
+    for (const turn of projection.turns) {
+      if (!childIds.has(turn.threadId)) continue;
+      rememberLatestCompletedTurn(latestByChild, turn);
     }
   }
   const childByTurn = new Map(
@@ -998,10 +1030,46 @@ function buildForkPreview(source: Thread, projection: StateProjection) {
   };
 }
 
+function previousTurnDuringApply(
+  turns: Turn[],
+  turnId: string,
+  replayIndexes?: ReplayIndexes,
+): Turn | undefined {
+  if (replayIndexes) {
+    const index = replayIndex(turns, replayIndexes).get(turnId);
+    return index === undefined ? undefined : turns[index];
+  }
+  return turns.find((turn) => turn.id === turnId);
+}
+
+function indexSavedTurn(
+  turnsByThread: Map<string, Turn[]>,
+  previous: Turn | undefined,
+  next: Turn,
+): void {
+  if (previous && previous.threadId !== next.threadId) {
+    const oldBucket = turnsByThread.get(previous.threadId);
+    if (oldBucket) {
+      const oldIndex = oldBucket.findIndex((turn) => turn.id === previous.id);
+      if (oldIndex !== -1) oldBucket.splice(oldIndex, 1);
+      if (oldBucket.length === 0) turnsByThread.delete(previous.threadId);
+    }
+  }
+  const bucket = turnsByThread.get(next.threadId);
+  if (!bucket) {
+    turnsByThread.set(next.threadId, [next]);
+    return;
+  }
+  const existingIndex = bucket.findIndex((turn) => turn.id === next.id);
+  if (existingIndex === -1) bucket.push(next);
+  else bucket[existingIndex] = next;
+}
+
 function applyEvent(
   projection: StateProjection,
   envelope: EventEnvelope,
   replayIndexes?: ReplayIndexes,
+  turnsByThread?: Map<string, Turn[]>,
 ): void {
   if (envelope.sequence !== projection.sequence + 1) {
     throw new LocalStateError(
@@ -1013,9 +1081,11 @@ function applyEvent(
     replaceByIdDuringReplay(projection.projects, event.project, replayIndexes);
   else if (event.type === "thread_saved")
     replaceByIdDuringReplay(projection.threads, event.thread, replayIndexes);
-  else if (event.type === "turn_saved")
+  else if (event.type === "turn_saved") {
+    const previous = previousTurnDuringApply(projection.turns, event.turn.id, replayIndexes);
     replaceByIdDuringReplay(projection.turns, event.turn, replayIndexes);
-  else if (event.type === "message_saved") {
+    if (turnsByThread) indexSavedTurn(turnsByThread, previous, event.turn);
+  } else if (event.type === "message_saved") {
     replaceByIdDuringReplay(
       projection.messages,
       { ...event.message, eventSequence: envelope.sequence },
@@ -1361,6 +1431,7 @@ export class LocalStateStore {
   readonly #eventPath: string;
   readonly #options: LocalStateStoreOptions;
   #projection = emptyProjection();
+  #turnsByThread = new Map<string, Turn[]>();
   #writeQueue: Promise<void> = Promise.resolve();
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
@@ -1386,6 +1457,7 @@ export class LocalStateStore {
   async #readProjection(): Promise<{
     envelopes: EventEnvelope[];
     projection: StateProjection;
+    turnsByThread: Map<string, Turn[]>;
     repaired: boolean;
     sourceIdentity: Awaited<ReturnType<FileHandle["stat"]>> | null;
   }> {
@@ -1397,6 +1469,7 @@ export class LocalStateStore {
         return {
           envelopes: [],
           projection: emptyProjection(),
+          turnsByThread: new Map(),
           repaired: false,
           sourceIdentity: null,
         };
@@ -1412,6 +1485,7 @@ export class LocalStateStore {
       let firstMismatch: { actual: number; expected: number } | null = null;
       let forkSequences: Set<number> | null = null;
       const replayIndexes: ReplayIndexes = new Map();
+      const turnsByThread = new Map<string, Turn[]>();
       for await (const envelope of streamEventEnvelopes(handle)) {
         parsedCount += 1;
         maximumSequence = Math.max(maximumSequence, envelope.sequence);
@@ -1423,10 +1497,10 @@ export class LocalStateStore {
           }
         }
         if (forkSequences) forkSequences.add(envelope.sequence);
-        if (!firstMismatch) applyEvent(projection, envelope, replayIndexes);
+        if (!firstMismatch) applyEvent(projection, envelope, replayIndexes, turnsByThread);
       }
       if (!firstMismatch) {
-        return { envelopes: [], projection, repaired: false, sourceIdentity };
+        return { envelopes: [], projection, turnsByThread, repaired: false, sourceIdentity };
       }
       const isCompleteFork =
         Number.isSafeInteger(maximumSequence) &&
@@ -1446,6 +1520,7 @@ export class LocalStateStore {
       projection = emptyProjection();
       const envelopes: EventEnvelope[] = [];
       const repairIndexes: ReplayIndexes = new Map();
+      const repairTurnsByThread = new Map<string, Turn[]>();
       const repairHandle = await open(this.#eventPath, "r");
       try {
         const repairIdentity = await repairHandle.stat();
@@ -1458,7 +1533,7 @@ export class LocalStateStore {
         for await (const parsed of streamEventEnvelopes(repairHandle)) {
           const envelope = { ...parsed, sequence: envelopes.length + 1 };
           envelopes.push(envelope);
-          applyEvent(projection, envelope, repairIndexes);
+          applyEvent(projection, envelope, repairIndexes, repairTurnsByThread);
         }
         if (!sameEventHistoryFile(sourceIdentity, await stat(this.#eventPath))) {
           throw new LocalStateError("Local history changed while it was being repaired.");
@@ -1466,7 +1541,13 @@ export class LocalStateStore {
       } finally {
         await repairHandle.close().catch(() => undefined);
       }
-      return { envelopes, projection, repaired: true, sourceIdentity };
+      return {
+        envelopes,
+        projection,
+        turnsByThread: repairTurnsByThread,
+        repaired: true,
+        sourceIdentity,
+      };
     } catch (error) {
       if (error instanceof LocalStateError) throw error;
       throw new LocalStateError("Local history could not be read.");
@@ -1549,6 +1630,7 @@ export class LocalStateStore {
       await this.#replaceHistory(history.envelopes);
     }
     this.#projection = history.projection;
+    this.#turnsByThread = history.turnsByThread;
     this.#loaded = true;
   }
 
@@ -1564,6 +1646,15 @@ export class LocalStateStore {
   async inspect(): Promise<Readonly<StateProjection>> {
     await this.#ensureLoaded();
     return this.#projection;
+  }
+
+  /**
+   * Live turns grouped by conversation, maintained as events apply.
+   * Callers must not mutate the returned map or its arrays.
+   */
+  async turnsByThreadIndex(): Promise<TurnsByThreadIndex> {
+    await this.#ensureLoaded();
+    return this.#turnsByThread;
   }
 
   async #append(event: StateEvent): Promise<void> {
@@ -1599,7 +1690,7 @@ export class LocalStateStore {
         } finally {
           await handle.close();
         }
-        applyEvent(this.#projection, envelope);
+        applyEvent(this.#projection, envelope, undefined, this.#turnsByThread);
       }
     });
     this.#writeQueue = operation.catch(() => undefined);
@@ -1624,7 +1715,7 @@ export class LocalStateStore {
     } finally {
       await handle.close();
     }
-    applyEvent(this.#projection, envelope);
+    applyEvent(this.#projection, envelope, undefined, this.#turnsByThread);
   }
 
   async #bufferAssistantText(turnId: string, text: string, createdAt: string): Promise<void> {
@@ -4069,6 +4160,7 @@ export class LocalStateStore {
         })),
       ];
       const rebuilt = emptyProjection();
+      const rebuiltTurnsByThread = new Map<string, Turn[]>();
       const envelopes = events.map((event, index) => {
         const envelope: EventEnvelope = {
           schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -4077,11 +4169,12 @@ export class LocalStateStore {
           recordedAt: new Date().toISOString(),
           event,
         };
-        applyEvent(rebuilt, envelope);
+        applyEvent(rebuilt, envelope, undefined, rebuiltTurnsByThread);
         return envelope;
       });
       await this.#replaceHistory(envelopes);
       this.#projection = rebuilt;
+      this.#turnsByThread = rebuiltTurnsByThread;
     });
     this.#writeQueue = operation.catch(() => undefined);
     await operation;

@@ -10,12 +10,13 @@ import {
   projectDelegatedConversationOutcomes,
   projectThreadStatuses,
   type StateProjection,
+  type TurnsByThreadIndex,
 } from "./state.ts";
 import { projectConversationHistory, projectWorkbenchState } from "./state-projection.ts";
 import type { WorktreeManager } from "./worktrees.ts";
 
 export interface WorkbenchProjectionRouteContext {
-  state: Pick<LocalStateStore, "inspect">;
+  state: Pick<LocalStateStore, "inspect"> & Partial<Pick<LocalStateStore, "turnsByThreadIndex">>;
   preferences: Pick<PreferencesStore, "load">;
   permissions: Pick<PermissionBroker, "approvals">;
   worktrees: Pick<WorktreeManager, "countActiveManaged" | "listActiveManagedPaths">;
@@ -28,6 +29,23 @@ export interface WorkbenchProjectionRouteContext {
 
 type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
 type UsageProjection = Pick<StateProjection, "projects" | "threads" | "turns" | "usageReceipts">;
+
+function visibleTurnsForThreads(
+  projection: Pick<StateProjection, "turns">,
+  threads: StateProjection["threads"],
+  turnsByThread?: TurnsByThreadIndex,
+): StateProjection["turns"] {
+  if (!turnsByThread) {
+    const threadIds = new Set(threads.map((thread) => thread.id));
+    return projection.turns.filter((turn) => threadIds.has(turn.threadId));
+  }
+  const turns: StateProjection["turns"] = [];
+  for (const thread of threads) {
+    const indexed = turnsByThread.get(thread.id);
+    if (indexed) turns.push(...indexed);
+  }
+  return turns;
+}
 
 const ROUTES = new Set([
   "/api/state/load",
@@ -57,10 +75,11 @@ export function filterManagedThreadSearchProjection(
 export function filterManagedOrchestrationProjection(
   projection: StateProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
+  turnsByThread?: TurnsByThreadIndex,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
   const threadIds = new Set(threads.map((thread) => thread.id));
-  const turns = projection.turns.filter((turn) => threadIds.has(turn.threadId));
+  const turns = visibleTurnsForThreads(projection, threads, turnsByThread);
   const turnIds = new Set(turns.map((turn) => turn.id));
   return {
     schemaVersion: projection.schemaVersion,
@@ -117,6 +136,7 @@ export function filterManagedUsageReceipts(
 export function filterManagedWorkbenchListProjection(
   projection: StateProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
+  turnsByThread?: TurnsByThreadIndex,
 ): StateProjection {
   const { projects, threads } = filterManagedThreadSearchProjection(projection, managedHost);
   const threadIds = new Set(threads.map((thread) => thread.id));
@@ -124,7 +144,7 @@ export function filterManagedWorkbenchListProjection(
     ...projection,
     projects,
     threads,
-    turns: projection.turns.filter((turn) => threadIds.has(turn.threadId)),
+    turns: visibleTurnsForThreads(projection, threads, turnsByThread),
     messages: [],
     activities: [],
     plans: [],
@@ -181,16 +201,17 @@ export async function handleWorkbenchProjectionRoute(
     // Preferences first so orchestration-disabled installs skip transcript scans.
     const { preferences: currentPreferences } = await preferences.load();
     const projection = (await state.inspect()) as StateProjection;
+    const turnsByThread = state.turnsByThreadIndex ? await state.turnsByThreadIndex() : undefined;
     const orchestrationEnabled = currentPreferences.orchestrationThreadsBeta;
     const visibleProjection = managedHost
       ? orchestrationEnabled
-        ? filterManagedOrchestrationProjection(projection, managedHost)
-        : filterManagedWorkbenchListProjection(projection, managedHost)
+        ? filterManagedOrchestrationProjection(projection, managedHost, turnsByThread)
+        : filterManagedWorkbenchListProjection(projection, managedHost, turnsByThread)
       : projection;
     // Derive transcript-backed values before the Workbench projection strips them,
     // and before later awaits can observe a newer live-state mutation.
     const delegatedOutcomes = orchestrationEnabled
-      ? projectDelegatedConversationOutcomes(visibleProjection)
+      ? projectDelegatedConversationOutcomes(visibleProjection, turnsByThread)
       : [];
     const delegatedInputs = orchestrationEnabled ? projectDelegatedInputs(visibleProjection) : [];
     const delegatedApprovals = orchestrationEnabled
@@ -209,7 +230,7 @@ export async function handleWorkbenchProjectionRoute(
           }),
         )
       : [];
-    const threadStatuses = projectThreadStatuses(visibleProjection);
+    const threadStatuses = projectThreadStatuses(visibleProjection, turnsByThread);
     const workbench = projectWorkbenchState(visibleProjection);
     const managedWorktreeCount = await worktrees.countActiveManaged();
     const managedWorktreePaths = await worktrees.listActiveManagedPaths();

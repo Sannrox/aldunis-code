@@ -342,6 +342,118 @@ test("managed orchestration projection skips unrelated durable collections", () 
   assert.deepEqual(filtered.autonomyRuns, []);
 });
 
+function forbiddenLoadTurns(turns: StateProjection["turns"]): StateProjection["turns"] {
+  return new Proxy(turns, {
+    get(target, property, receiver) {
+      if (
+        property === Symbol.iterator ||
+        property === "filter" ||
+        property === "map" ||
+        property === "flatMap" ||
+        property === "forEach" ||
+        property === "find"
+      ) {
+        throw new Error(`scanned turns via ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+test("Workbench load uses the turn index instead of scanning inspect().turns", async () => {
+  const current = projection();
+  const foreign = Array.from({ length: 200 }, (_, index) => ({
+    schemaVersion: 2 as const,
+    id: `foreign-${index}`,
+    threadId: "other",
+    status: "completed" as const,
+    mode: "build" as const,
+    createdAt: "t0",
+    completedAt: "t1",
+  }));
+  current.turns = [...current.turns, ...foreign];
+  const inspected = new Proxy(current, {
+    get(target, property, receiver) {
+      if (property === "then") return undefined;
+      if (property === "turns") {
+        throw new Error("workbench load scanned projection.turns");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const turnsByThread = new Map([
+    ["active", [projection().turns[0]]],
+    ["other", foreign],
+  ]);
+  let value: Record<string, unknown> | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/load",
+    request,
+    response,
+    context({
+      preferences: {
+        load: async () => ({
+          preferences: { orchestrationThreadsBeta: false, managedWorktreeLimit: 7 },
+        }),
+      },
+      state: {
+        inspect: async () => inspected,
+        turnsByThreadIndex: async () => turnsByThread,
+      },
+      worktrees: {
+        countActiveManaged: async () => 0,
+        listActiveManagedPaths: async () => [],
+      },
+      sendJson: (_response: ServerResponse, status: number, body: unknown) => {
+        assert.equal(status, 200);
+        value = body as Record<string, unknown>;
+      },
+    }) as never,
+  );
+  assert.deepEqual(
+    (value?.threadStatuses as Array<{ threadId: string; status: string }>).map((item) => [
+      item.threadId,
+      item.status,
+    ]),
+    [
+      ["active", "completed"],
+      ["archived", "idle"],
+      ["hidden", "idle"],
+    ],
+  );
+});
+
+test("managed list projection uses the turn index instead of scanning all turns", () => {
+  const value = projection();
+  const hiddenTurn = {
+    schemaVersion: 2 as const,
+    id: "turn-hidden",
+    threadId: "hidden",
+    status: "completed" as const,
+    mode: "build" as const,
+    createdAt: "t0",
+    completedAt: "t1",
+  };
+  value.turns = forbiddenLoadTurns([...value.turns, hiddenTurn]);
+  const filtered = filterManagedWorkbenchListProjection(
+    value,
+    {
+      repositoryForRoot(root) {
+        if (root !== "/alpha") throw new Error("outside catalogue");
+        return {} as never;
+      },
+    },
+    new Map([
+      ["active", [projection().turns[0]]],
+      ["hidden", [hiddenTurn]],
+    ]),
+  );
+  assert.deepEqual(
+    filtered.turns.map((turn) => turn.id),
+    ["turn-active"],
+  );
+});
+
 test("managed list projection skips transcript and durable-history filtering", () => {
   const value = projection();
   value.autonomyRuns = [{ id: "run", projectId: "p1" }] as StateProjection["autonomyRuns"];
