@@ -697,10 +697,18 @@ export async function repositoryCommonDir(worktreePath: string): Promise<string>
 export async function repositoryMainRoot(worktreePath: string): Promise<string> {
   const root = await canonicalizeRepositoryRoot(worktreePath);
   const worktrees = await discoverWorktrees(root);
+  return resolveRepositoryMainRoot(root, worktrees);
+}
+
+export async function resolveRepositoryMainRoot(
+  root: string,
+  worktrees: ReadonlyArray<Pick<WorktreeMetadata, "path">>,
+  canonicalize: (path: string) => Promise<string> = realpath,
+): Promise<string> {
   const primary = worktrees[0]?.path;
   if (!primary) return root;
   try {
-    return await realpath(primary);
+    return await canonicalize(primary);
   } catch {
     return root;
   }
@@ -891,13 +899,35 @@ function isEphemeralWorktreePath(path: string): boolean {
   );
 }
 
-export async function openRepository(input: string): Promise<RepositoryMetadata> {
-  const selected = await canonicalizeRepositoryRoot(input);
-  const mainRoot = await repositoryMainRoot(selected);
-  const [worktrees, defaultBranch, localBranches] = await Promise.all([
-    discoverWorktrees(mainRoot),
-    repositoryDefaultBranch(mainRoot),
-    repositoryLocalBranches(mainRoot),
+interface OpenRepositoryOperations {
+  canonicalize(input: string): Promise<string>;
+  discover(root: string): Promise<WorktreeMetadata[]>;
+  resolveMainRoot(
+    root: string,
+    worktrees: ReadonlyArray<Pick<WorktreeMetadata, "path">>,
+  ): Promise<string>;
+  defaultBranch(root: string): Promise<string | null>;
+  localBranches(root: string): Promise<string[]>;
+}
+
+const openRepositoryOperations: OpenRepositoryOperations = {
+  canonicalize: canonicalizeRepositoryRoot,
+  discover: discoverWorktrees,
+  resolveMainRoot: resolveRepositoryMainRoot,
+  defaultBranch: repositoryDefaultBranch,
+  localBranches: repositoryLocalBranches,
+};
+
+export async function openRepository(
+  input: string,
+  operations: OpenRepositoryOperations = openRepositoryOperations,
+): Promise<RepositoryMetadata> {
+  const selected = await operations.canonicalize(input);
+  const worktrees = await operations.discover(selected);
+  const mainRoot = await operations.resolveMainRoot(selected, worktrees);
+  const [defaultBranch, localBranches] = await Promise.all([
+    operations.defaultBranch(mainRoot),
+    operations.localBranches(mainRoot),
   ]);
   return {
     name:
