@@ -13,6 +13,7 @@ import {
   projectDelegatedConversationOutcomes,
   projectThreadStatus,
   projectThreadStatuses,
+  type StateProjection,
   writeEventHistory,
 } from "./state.ts";
 
@@ -1622,6 +1623,10 @@ test("delegated completion outcomes project only the latest bounded child result
   // Stream tokens buffer into one durable segment with literal concatenation
   // (plus markdown block-boundary breaks), matching the stored transcript.
   assert.equal(outcomes[0].summary, "Result\n Details");
+  assert.deepEqual(
+    projectDelegatedConversationOutcomes(await store.load(), await store.turnsByThreadIndex()),
+    outcomes,
+  );
 });
 
 test("child input requests and parent coordination receipts persist and resolve once", async () => {
@@ -2487,6 +2492,235 @@ test("thread status projection and wokeAt track operator-attention transitions",
   projection = await store.load();
   assert.ok(projection.threads[0].lastVisitedAt);
   assert.ok(projection.threads[0].lastVisitedAt! >= projection.threads[0].wokeAt!);
+  assert.deepEqual(
+    projectThreadStatuses(projection, await store.turnsByThreadIndex()),
+    projectThreadStatuses(projection),
+  );
+});
+
+function statusFixtureThread(id: string): StateProjection["threads"][number] {
+  return {
+    schemaVersion: 2,
+    id,
+    projectId: "project-1",
+    worktree: `/${id}`,
+    workspaceMode: "shared",
+    title: id,
+    provider: "codex-cli",
+    createdAt: "t0",
+    updatedAt: "t1",
+  };
+}
+
+function statusFixtureTurn(
+  id: string,
+  threadId: string,
+  status: StateProjection["turns"][number]["status"],
+  createdAt: string,
+  completedAt: string | null = null,
+): StateProjection["turns"][number] {
+  return {
+    schemaVersion: 2,
+    id,
+    threadId,
+    status,
+    mode: "build",
+    createdAt,
+    completedAt,
+  };
+}
+
+function forbiddenTurns(turns: StateProjection["turns"]): StateProjection["turns"] {
+  return new Proxy(turns, {
+    get(target, property, receiver) {
+      if (
+        property === Symbol.iterator ||
+        property === "filter" ||
+        property === "map" ||
+        property === "flatMap" ||
+        property === "forEach" ||
+        property === "reduce" ||
+        property === "values" ||
+        property === "entries" ||
+        property === "keys" ||
+        property === "find" ||
+        property === "findIndex" ||
+        property === "some" ||
+        property === "every"
+      ) {
+        throw new Error(`scanned turns via ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+test("thread status and delegated outcomes use indexed turns instead of scanning all turns", () => {
+  const childTurn = statusFixtureTurn("turn-child", "child", "completed", "t2", "t3");
+  const parentTurn = statusFixtureTurn("turn-parent", "parent", "running", "t1");
+  const foreignTurns = Array.from({ length: 4_000 }, (_, index) =>
+    statusFixtureTurn(
+      `foreign-${index}`,
+      "other",
+      "completed",
+      `t${String(index).padStart(4, "0")}`,
+      `t${String(index).padStart(4, "0")}`,
+    ),
+  );
+  const turns = [...foreignTurns, parentTurn, childTurn];
+  const index = new Map<string, StateProjection["turns"]>([
+    ["parent", [parentTurn]],
+    ["child", [childTurn]],
+    ["other", foreignTurns],
+  ]);
+  const projection: StateProjection = {
+    schemaVersion: 2,
+    sequence: 1,
+    projects: [
+      { schemaVersion: 2, id: "project-1", name: "fixture", root: "/fixture", openedAt: "t0" },
+    ],
+    threads: [statusFixtureThread("parent"), statusFixtureThread("child")],
+    turns: forbiddenTurns(turns),
+    messages: [
+      {
+        schemaVersion: 2,
+        id: "message-child",
+        turnId: childTurn.id,
+        role: "assistant",
+        text: "Indexed result.",
+        createdAt: "t3",
+      },
+    ],
+    activities: [],
+    plans: [],
+    contextReceipts: [],
+    usageReceipts: [],
+    governanceCorrelations: [],
+    providerSessions: [],
+    checkpoints: [],
+    annotations: [],
+    fileReviews: [],
+    conversationDeletions: [],
+    forks: [],
+    delegatedRelationships: [
+      {
+        schemaVersion: 2,
+        id: "rel-1",
+        parentThreadId: "parent",
+        childThreadId: "child",
+        createdAt: "t1",
+      },
+    ],
+    inputRequests: [],
+    inputReceipts: [],
+    automationFires: [],
+    autonomyRuns: [],
+    autonomyTasks: [],
+    autonomyFlows: [],
+    heartbeatMonitors: [],
+    standingOrders: [],
+    autonomyHooks: [],
+  };
+  const scanned: StateProjection = { ...projection, turns };
+  assert.deepEqual(projectThreadStatuses(projection, index), projectThreadStatuses(scanned));
+  assert.deepEqual(
+    projectDelegatedConversationOutcomes(projection, index),
+    projectDelegatedConversationOutcomes(scanned),
+  );
+  assert.deepEqual(
+    projectThreadStatuses(projection, index).map((item) => [item.threadId, item.status]),
+    [
+      ["parent", "running"],
+      ["child", "completed"],
+    ],
+  );
+  assert.deepEqual(projectDelegatedConversationOutcomes(projection, index), [
+    {
+      childThreadId: "child",
+      completedAt: "t3",
+      summary: "Indexed result.",
+    },
+  ]);
+});
+
+test("turn index follows apply, reload, in-place completion, and compaction", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const noisy = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/noisy",
+    prompt: "Noisy history",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  let currentTurnId = noisy.turn.id;
+  for (let index = 0; index < 8; index += 1) {
+    await store.recordProviderEvent(noisy.thread.id, currentTurnId, "codex-cli", {
+      kind: "turn_completed",
+      sessionId: `noisy-session-${index}`,
+      costUsd: 0,
+    });
+    currentTurnId = (
+      await store.startTurn({
+        projectId: "project-1",
+        worktree: "/fixture/noisy",
+        prompt: `Noisy follow-up ${index}`,
+        mode: "ask",
+        provider: "codex-cli",
+        threadId: noisy.thread.id,
+      })
+    ).turn.id;
+  }
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Deliver",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  await store.linkDelegatedConversation(noisy.thread.id, child.thread.id);
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "assistant_text",
+    text: "Child done.",
+  });
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "child-session",
+    costUsd: 0,
+  });
+
+  const live = await store.inspect();
+  const index = await store.turnsByThreadIndex();
+  assert.equal(
+    index.get(noisy.thread.id)?.length,
+    live.turns.filter((turn) => turn.threadId === noisy.thread.id).length,
+  );
+  assert.equal(index.get(child.thread.id)?.length, 1);
+  assert.equal(index.get(child.thread.id)?.[0]?.status, "completed");
+  assert.deepEqual(projectThreadStatuses(live, index), projectThreadStatuses(live));
+  assert.deepEqual(
+    projectDelegatedConversationOutcomes(live, index),
+    projectDelegatedConversationOutcomes(live),
+  );
+
+  const reloaded = new LocalStateStore(directory);
+  const reloadedIndex = await reloaded.turnsByThreadIndex();
+  assert.deepEqual(
+    [...reloadedIndex.entries()].map(([threadId, turns]) => [
+      threadId,
+      turns.map((turn) => turn.id),
+    ]),
+    [...index.entries()].map(([threadId, turns]) => [threadId, turns.map((turn) => turn.id)]),
+  );
+
+  await store.deleteConversation(child.thread.id);
+  const afterDelete = await store.turnsByThreadIndex();
+  assert.equal(afterDelete.has(child.thread.id), false);
+  assert.ok(afterDelete.has(noisy.thread.id));
+  assert.deepEqual(
+    projectThreadStatuses(await store.inspect(), afterDelete),
+    projectThreadStatuses(await store.load()),
+  );
 });
 
 test("file reviews are keyed by content identity and follow conversation retention", async () => {
