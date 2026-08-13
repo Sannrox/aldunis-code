@@ -2664,10 +2664,22 @@ test("thread status projection and wokeAt track operator-attention transitions",
   assert.deepEqual(projectThreadStatuses(projection), [projectThreadStatus(projection, thread.id)]);
   assert.ok(projection.threads[0].wokeAt);
 
-  await store.markConversationVisited(thread.id);
-  projection = await store.load();
+  class VisitIndexOnlyStore extends LocalStateStore {
+    override async load(): Promise<never> {
+      throw new Error("conversation visits must not clone the full projection");
+    }
+  }
+  const visitStore = new VisitIndexOnlyStore(directory);
+  const updatedAtBeforeVisit = projection.threads[0].updatedAt;
+  await visitStore.markConversationVisited(thread.id);
+  await assert.rejects(
+    visitStore.markConversationVisited("missing-thread"),
+    (error: unknown) => error instanceof LocalStateError && error.status === 404,
+  );
+  projection = await new LocalStateStore(directory).load();
   assert.ok(projection.threads[0].lastVisitedAt);
   assert.ok(projection.threads[0].lastVisitedAt! >= projection.threads[0].wokeAt!);
+  assert.equal(projection.threads[0].updatedAt, updatedAtBeforeVisit);
   assert.deepEqual(
     projectThreadStatuses(projection, await store.turnsByThreadIndex()),
     projectThreadStatuses(projection),

@@ -3157,12 +3157,15 @@ export class LocalStateStore {
   }
 
   async markConversationVisited(threadId: string): Promise<Thread> {
-    const thread = this.#requireThread(await this.load(), threadId);
-    const now = new Date().toISOString();
-    // Visit is read-tracking only — do not bump updatedAt or the inbox resorts on every click.
-    const saved = { ...thread, lastVisitedAt: now };
-    await this.#append({ type: "thread_saved", thread: saved });
-    return saved;
+    return this.#appendComputed(() => {
+      const thread = this.#conversationHistory.threadById.get(threadId);
+      if (!thread) {
+        throw new LocalStateError("The selected conversation is not available.", 404);
+      }
+      // Visit is read-tracking only — do not bump updatedAt or the inbox resorts on every click.
+      const saved = { ...thread, lastVisitedAt: new Date().toISOString() };
+      return { event: { type: "thread_saved", thread: saved }, value: saved };
+    });
   }
 
   async previewConversationDeletion(
