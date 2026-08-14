@@ -13,6 +13,7 @@ import {
   MAX_RETAINED_PREVIEW_SESSIONS,
   PreviewError,
   PreviewManager,
+  probePreviewReadiness,
   readPreviewPackageManifest,
   releasePreviewTerminationAttempt,
   terminatePreviewProcess,
@@ -73,6 +74,24 @@ test("preview origins are loopback-only and credentials are rejected", () => {
       (error: unknown) => error instanceof PreviewError && error.status === 403,
     );
   }
+});
+
+test("preview readiness cancels the unused response body before resolving", async () => {
+  let cancelled = false;
+  let requestSignal: AbortSignal | undefined;
+  const body = new ReadableStream({
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  await probePreviewReadiness("http://127.0.0.1:4174", async (_input, init) => {
+    requestSignal = init?.signal ?? undefined;
+    return { body };
+  });
+
+  assert.equal(cancelled, true);
+  assert.equal(requestSignal?.aborted, true);
 });
 
 test("preview termination clears its exact force timer on normal exit", () => {
