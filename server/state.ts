@@ -859,10 +859,16 @@ export function projectDelegatedConversationOutcomes(
     [...latestByChild].map(([childThreadId, turn]) => [turn.id, childThreadId]),
   );
   const lastToolStartByTurn = new Map<string, number>();
+  const indexedRows = function* <T>(
+    turnIds: Iterable<string>,
+    rowsByTurn: ReadonlyMap<string, ReadonlyMap<string, T>>,
+  ): Generator<T> {
+    for (const turnId of turnIds) {
+      yield* rowsByTurn.get(turnId)?.values() ?? [];
+    }
+  };
   const relevantActivities = activitiesByTurn
-    ? [...childByTurn.keys()].flatMap((turnId) => [
-        ...(activitiesByTurn.get(turnId)?.values() ?? []),
-      ])
+    ? indexedRows(childByTurn.keys(), activitiesByTurn)
     : projection.activities;
   for (const activity of relevantActivities) {
     if (
@@ -877,7 +883,8 @@ export function projectDelegatedConversationOutcomes(
     );
   }
   type BoundedSummary = {
-    text: string;
+    characters: string[];
+    start: number;
     truncated: boolean;
     pendingWhitespace: string;
   };
@@ -885,29 +892,45 @@ export function projectDelegatedConversationOutcomes(
     if (!next.trim()) {
       const whitespace = `${current?.pendingWhitespace ?? ""}${next}`;
       return {
-        text: current?.text ?? "",
+        characters: current?.characters ?? [],
+        start: current?.start ?? 0,
         truncated: current?.truncated ?? false,
         pendingWhitespace: whitespace.includes("\n") ? "\n\n" : " ",
       };
     }
     const substantive = next.trimEnd();
     const trailingWhitespace = next.slice(substantive.length);
-    const joined = joinAssistantTextChunks([
-      current?.text ?? "",
-      current?.pendingWhitespace ?? "",
-      substantive,
-    ]);
-    const characters = Array.from(joined);
+    const characters = current?.characters ?? [];
+    let start = current?.start ?? 0;
+    const previous = characters.at(-1);
+    const pendingWhitespace = current?.pendingWhitespace ?? "";
+    if (pendingWhitespace) characters.push(...pendingWhitespace);
+    else if (
+      previous !== undefined &&
+      !/\s/.test(previous) &&
+      /^(#{1,6}(?=\s|#|$)|```|---(?:\s|$))/.test(substantive)
+    ) {
+      characters.push("\n");
+    }
+    for (const character of substantive) characters.push(character);
+    const overflow = characters.length - start - 500;
+    const truncated = Boolean(current?.truncated) || overflow > 0;
+    if (overflow > 0) start += overflow;
+    if (start >= 1_024 && start * 2 >= characters.length) {
+      characters.splice(0, start);
+      start = 0;
+    }
     return {
-      text: characters.slice(-500).join(""),
-      truncated: Boolean(current?.truncated) || characters.length > 500,
+      characters,
+      start,
+      truncated,
       pendingWhitespace: trailingWhitespace.includes("\n") ? "\n\n" : trailingWhitespace,
     };
   };
   const allAssistantByChild = new Map<string, BoundedSummary>();
   const finalAssistantByChild = new Map<string, BoundedSummary>();
   const relevantMessages = messagesByTurn
-    ? [...childByTurn.keys()].flatMap((turnId) => [...(messagesByTurn.get(turnId)?.values() ?? [])])
+    ? indexedRows(childByTurn.keys(), messagesByTurn)
     : projection.messages;
   for (const message of relevantMessages) {
     const childThreadId = childByTurn.get(message.turnId);
@@ -932,10 +955,11 @@ export function projectDelegatedConversationOutcomes(
     const latest = latestByChild.get(childThreadId);
     if (!latest) return [];
     const finalAssistant = finalAssistantByChild.get(childThreadId);
-    const projected = finalAssistant?.text.trim()
-      ? finalAssistant
-      : allAssistantByChild.get(childThreadId);
-    const summary = (projected?.text ?? "").trim();
+    const finalText = finalAssistant
+      ? finalAssistant.characters.slice(finalAssistant.start).join("")
+      : "";
+    const projected = finalText.trim() ? finalAssistant : allAssistantByChild.get(childThreadId);
+    const summary = projected ? projected.characters.slice(projected.start).join("").trim() : "";
     return [
       {
         childThreadId,

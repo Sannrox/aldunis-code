@@ -367,7 +367,7 @@
     },
     {
       "name": "DelegatedConversationOutcomeProjection",
-      "description": "A beta-gated, read-only UI projection of the latest completed child turn. Its bounded summary is derived from child history and never enters parent provider context."
+      "description": "A beta-gated, read-only UI projection of the latest completed child turn. Its summary streams indexed child records through a fixed 500-code-point tail without materializing combined transcript arrays, and never enters parent provider context."
     },
     {
       "name": "ChildBoundHumanRequest",
@@ -2475,6 +2475,12 @@
       "subject": "DelegatedConversationOutcomeProjection",
       "source": "GitHub Issue Sannrox/aldunis-code#412",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/412",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedConversationOutcomeProjection",
+      "source": "GitHub Issue Sannrox/aldunis-code#1098",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1098; server/state.ts#projectDelegatedConversationOutcomes",
       "confidence": 1.0
     },
     {

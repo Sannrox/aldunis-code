@@ -1966,6 +1966,56 @@ test("delegated completion outcomes project only the latest bounded child result
   );
 });
 
+test("indexed delegated outcomes retain a bounded Unicode tail across many segments", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const parent = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/parent",
+    prompt: "Coordinate",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Deliver",
+    mode: "build",
+    provider: "codex-cli",
+  });
+  await store.linkDelegatedConversation(parent.thread.id, child.thread.id);
+  await store.recordProviderEvent(child.thread.id, child.turn.id, "codex-cli", {
+    kind: "turn_completed",
+    sessionId: "child-session",
+    costUsd: 0,
+  });
+  const projection = await store.load();
+  const messages = new Map(
+    Array.from({ length: 600 }, (_, index) => {
+      const message = {
+        schemaVersion: 2 as const,
+        id: `message-${index}`,
+        turnId: child.turn.id,
+        role: "assistant" as const,
+        text: "🙂",
+        createdAt: `t${index}`,
+        eventSequence: index + 1,
+      };
+      return [message.id, message] as const;
+    }),
+  );
+
+  const outcomes = projectDelegatedConversationOutcomes(
+    projection,
+    new Map([[child.thread.id, [projection.turns.at(-1)!]]]),
+    new Map([[child.turn.id, messages]]),
+    new Map([[child.turn.id, new Map()]]),
+  );
+
+  assert.equal(outcomes[0]?.summary, `…${"🙂".repeat(500)}`);
+  assert.equal(Array.from(outcomes[0]?.summary.slice(1) ?? "").length, 500);
+});
+
 test("child input requests and parent coordination receipts persist and resolve once", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
