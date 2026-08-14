@@ -3,8 +3,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { listChangedFiles, type ChangedFile } from "./changes.ts";
 import {
   canonicalizeRepositoryRoot,
@@ -41,12 +40,14 @@ import {
 } from "./autonomy.ts";
 import { LocalStateError, type LocalStateStore, type Project } from "./state.ts";
 
-const execFileAsync = promisify(execFile);
 const MAX_SCAN_FILES = 200;
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_HOOK_COOLDOWN = 86_400;
 const AUTONOMY_CANCELLATION_DRAIN_MS = 1_000;
+const AUTONOMY_INVENTORY_TIMEOUT_MS = 15_000;
+const MAX_AUTONOMY_INVENTORY_RECORD_BYTES = 64 * 1024;
+const MAX_AUTONOMY_INVENTORY_STDERR_BYTES = 64 * 1024;
 
 export interface AutonomyScanFileOperations {
   open(path: string, flags: number): Promise<Pick<FileHandle, "stat" | "read" | "close">>;
@@ -299,20 +300,95 @@ function finding(
   };
 }
 
-async function gitTrackedFiles(worktree: string, signal?: AbortSignal): Promise<string[]> {
+export async function listBoundedAutonomyTrackedFiles(
+  worktree: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
   signal?.throwIfAborted();
+  const child = spawn("git", ["-C", worktree, "ls-files", "-z"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const paths: string[] = [];
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  let pending = Buffer.alloc(0);
+  let stopped = false;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  const abort = () => stop();
+  signal?.addEventListener("abort", abort, { once: true });
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_AUTONOMY_INVENTORY_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_AUTONOMY_INVENTORY_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, AUTONOMY_INVENTORY_TIMEOUT_MS);
+  timeout.unref?.();
   try {
-    const result = await execFileAsync("git", ["-C", worktree, "ls-files", "-z"], {
-      encoding: "utf8",
-      timeout: 15_000,
-      maxBuffer: 4 * 1024 * 1024,
-      signal,
-    });
+    outer: for await (const chunk of child.stdout) {
+      signal?.throwIfAborted();
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        if (end - start > MAX_AUTONOMY_INVENTORY_RECORD_BYTES) {
+          throw new AutonomyError(
+            "A repository path exceeded the maintenance inventory limit.",
+            409,
+          );
+        }
+        paths.push(joined.toString("utf8", start, end));
+        start = end + 1;
+        if (paths.length >= MAX_SCAN_FILES) {
+          stopped = true;
+          stop();
+          break outer;
+        }
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_AUTONOMY_INVENTORY_RECORD_BYTES) {
+        throw new AutonomyError("A repository path exceeded the maintenance inventory limit.", 409);
+      }
+    }
+    const completion = await exit;
     signal?.throwIfAborted();
-    return result.stdout.split("\0").filter(Boolean).slice(0, MAX_SCAN_FILES);
-  } catch {
+    if (timedOut) throw new AutonomyError("The repository file inventory timed out.", 409);
+    if (!stopped && pending.length > 0) {
+      throw new AutonomyError("Git returned an incomplete repository file inventory.", 409);
+    }
+    if (!stopped && completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new AutonomyError(detail || "The repository file inventory could not be read.", 409);
+    }
+    return paths;
+  } catch (error) {
     signal?.throwIfAborted();
+    if (error instanceof AutonomyError) throw error;
     throw new AutonomyError("The repository file inventory could not be read.", 409);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener("abort", abort);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
   }
 }
 
@@ -1011,7 +1087,7 @@ export class AutonomyEngine {
   async scanRepository(worktree: string, signal?: AbortSignal): Promise<ScanContext> {
     signal?.throwIfAborted();
     const changedFiles = await listChangedFiles(worktree, signal);
-    const trackedFiles = await gitTrackedFiles(worktree, signal);
+    const trackedFiles = await listBoundedAutonomyTrackedFiles(worktree, signal);
     const findings: MaintenanceFinding[] = [];
     if (changedFiles.length > 0) {
       findings.push(

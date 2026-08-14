@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, mkdtemp, open, readFile, rename, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,6 +19,7 @@ import {
 import {
   AutonomyEngine,
   AutonomyScheduler,
+  listBoundedAutonomyTrackedFiles,
   readBoundedAutonomyTextFile,
 } from "./autonomy-engine.ts";
 import { LocalStateStore } from "./state.ts";
@@ -242,6 +243,75 @@ test("Autonomy repository scan rejects pre-aborted work before discovery", async
     });
   } finally {
     await cleanup();
+  }
+});
+
+test("Autonomy tracked inventory stops after its scan ceiling beyond 4 MiB", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-autonomy-large-index-"));
+  try {
+    await git(root, ["init", "-q"]);
+    await writeFile(join(root, "empty"), "");
+    const { stdout: emptyBlob } = await execFileAsync(
+      "git",
+      ["-C", root, "hash-object", "-w", "empty"],
+      { encoding: "utf8" },
+    );
+    const directory = "x".repeat(180);
+    const paths = Array.from(
+      { length: 25_000 },
+      (_, index) => `corpus/${directory}/file-${String(index).padStart(5, "0")}.ts`,
+    );
+    assert.ok(Buffer.byteLength(`${paths.join("\0")}\0`) > 4 * 1024 * 1024);
+    const indexInput = paths.map((path) => `100644 ${emptyBlob.trim()}\t${path}\n`).join("");
+    const update = spawn("git", ["-C", root, "update-index", "--index-info"], {
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    update.stderr.setEncoding("utf8");
+    update.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    update.stdin.end(indexInput);
+    const code = await new Promise<number | null>((resolve) => update.once("close", resolve));
+    assert.equal(code, 0, stderr);
+
+    const retained = await listBoundedAutonomyTrackedFiles(root);
+    assert.deepEqual(retained, paths.slice(0, 200));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Autonomy tracked inventory rejects an oversized complete path record", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-autonomy-long-index-path-"));
+  try {
+    await git(root, ["init", "-q"]);
+    await writeFile(join(root, "empty"), "");
+    const { stdout: emptyBlob } = await execFileAsync(
+      "git",
+      ["-C", root, "hash-object", "-w", "empty"],
+      { encoding: "utf8" },
+    );
+    const path = `${Array.from({ length: 300 }, () => "x".repeat(220)).join("/")}/file.ts`;
+    assert.ok(Buffer.byteLength(path) > 64 * 1024);
+    const update = spawn("git", ["-C", root, "update-index", "--index-info"], {
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    update.stderr.setEncoding("utf8");
+    update.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    update.stdin.end(`100644 ${emptyBlob.trim()}\t${path}\n`);
+    const code = await new Promise<number | null>((resolve) => update.once("close", resolve));
+    assert.equal(code, 0, stderr);
+
+    await assert.rejects(
+      listBoundedAutonomyTrackedFiles(root),
+      /path exceeded the maintenance inventory limit/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
