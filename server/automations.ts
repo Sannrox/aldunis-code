@@ -391,6 +391,11 @@ export class AutomationStore {
     return this.#serialize(async () => (await this.#read()).items);
   }
 
+  /** Scheduler reads must surface transient failures so its retry timer stays armed. */
+  async listForScheduling(): Promise<Automation[]> {
+    return this.#serialize(async () => (await this.#read(false)).items);
+  }
+
   async get(id: string): Promise<Automation | null> {
     const items = await this.list();
     return items.find((item) => item.id === id) ?? null;
@@ -476,7 +481,7 @@ export class AutomationStore {
     });
   }
 
-  async #read(): Promise<AutomationStoreFile> {
+  async #read(maskUnexpectedFailure = true): Promise<AutomationStoreFile> {
     try {
       return parseStore(
         JSON.parse(await readAutomationStoreFile(this.#path, this.maxStoreBytes)),
@@ -487,6 +492,7 @@ export class AutomationStore {
         return { schemaVersion: 1, items: [] };
       }
       if (error instanceof AutomationError) throw error;
+      if (!maskUnexpectedFailure) throw error;
       return { schemaVersion: 1, items: [] };
     }
   }
@@ -586,12 +592,18 @@ export class AutomationScheduler {
     this.#timer.unref();
   }
 
+  #listForScheduling(): Promise<Automation[]> {
+    return typeof this.store.listForScheduling === "function"
+      ? this.store.listForScheduling()
+      : this.store.list();
+  }
+
   async #drain(): Promise<void> {
     let failed = false;
     try {
       do {
         this.#refreshRequested = false;
-        const items = await this.store.list();
+        const items = await this.#listForScheduling();
         this.#hasEnabledAutomations = items.some((automation) => automation.enabled);
         if (!this.#hasEnabledAutomations) this.#clearTimer();
       } while (this.#started && this.#refreshRequested);
@@ -605,10 +617,17 @@ export class AutomationScheduler {
   }
 
   async #wake(): Promise<void> {
+    const canReuseTickState = !this.#running;
+    let tickSucceeded = false;
     try {
       await this.tick();
+      tickSucceeded = canReuseTickState;
     } finally {
-      await this.refresh();
+      if (!tickSucceeded || this.#refreshRequested || this.#drainPromise) {
+        await this.refresh();
+      } else {
+        this.#schedule();
+      }
     }
   }
 
@@ -755,7 +774,7 @@ export class AutomationScheduler {
     this.#running = true;
     try {
       const now = this.#now();
-      const items = await this.store.list();
+      const items = await this.#listForScheduling();
       this.#hasEnabledAutomations = items.some((automation) => automation.enabled);
       // Evaluate schedules first, then fire due items concurrently so one long
       // provider turn does not delay other due automations.
