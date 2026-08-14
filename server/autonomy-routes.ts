@@ -55,12 +55,13 @@ export async function handleAutonomyRoute(
   };
 
   if (route === "/api/autonomy/load") {
-    const snapshot = await autonomy.snapshot(200);
     if (!managed) {
+      const snapshot = await autonomy.snapshot(200);
       sendJson(response, 200, snapshot);
       return true;
     }
     const projectIds = await context.visibleProjectIds();
+    const snapshot = await autonomy.snapshot(200, { visibleProjectIds: projectIds });
     const runs = snapshot.runs.filter(
       (run) => run.projectId === null || projectIds.has(run.projectId),
     );
@@ -69,15 +70,6 @@ export async function handleAutonomyRoute(
       ...snapshot,
       runs,
       tasks: snapshot.tasks.filter((task) => runIds.has(task.runId)),
-      heartbeatMonitors: snapshot.heartbeatMonitors.filter(
-        (monitor) => monitor.projectId === null || projectIds.has(monitor.projectId),
-      ),
-      standingOrders: snapshot.standingOrders.filter(
-        (order) => order.projectId === null || projectIds.has(order.projectId),
-      ),
-      hooks: snapshot.hooks.filter(
-        (hook) => hook.projectId === null || projectIds.has(hook.projectId),
-      ),
     });
     return true;
   }

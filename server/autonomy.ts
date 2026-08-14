@@ -10,6 +10,8 @@ export const NIGHTLY_GARDENER_FLOW_ID = "maintenance-gardener.v1" as const;
 export const HEARTBEAT_AWARENESS_FLOW_ID = "heartbeat-awareness.v1" as const;
 export const MIN_HEARTBEAT_SECONDS = 60;
 export const MAX_HEARTBEAT_SECONDS = 7 * 24 * 60 * 60;
+/** Finite per-kind ceiling for operator-authored Autonomy configuration. */
+export const MAX_AUTONOMY_CONFIGURATIONS_PER_KIND = 256;
 
 export type AutonomyRunKind = "heartbeat" | "maintenance" | "workflow";
 export type AutonomyRunStatus =
