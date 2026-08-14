@@ -573,11 +573,7 @@ export function Conversation({
     const { before, after } = partitionMailboxOutbound(mailboxOutbound, latestCreatedAt);
     return {
       after,
-      items: interleaveMailboxOutbound(
-        archivedTurns,
-        before,
-        (turn) => turn.message.createdAt,
-      ),
+      items: interleaveMailboxOutbound(archivedTurns, before, (turn) => turn.message.createdAt),
     };
   }, [archivedTurns, mailboxOutbound, messages]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
@@ -2881,69 +2877,75 @@ export function Conversation({
                       <p>{item.transfer.text}</p>
                     </article>
                   ) : (
-                  <React.Fragment key={`archived-${item.turn.message.createdAt ?? item.index}`}>
-                    <div className="turn user">
-                      <div className="role">
-                        <span className="av you">Y</span>
-                        <span className="rname">{item.turn.mailboxFrom ? `From ${item.turn.mailboxFrom}` : "You"}</span>
-                        <span className="rtime">
-                          {item.turn.message.createdAt ? formatElapsed(item.turn.message.createdAt) : "now"}
-                        </span>
-                      </div>
-                      <p>{item.turn.message.text}</p>
-                      {item.turn.contextReceipt && (
-                        <ContextPackageSummary
-                          receipt={item.turn.contextReceipt}
-                          label="Submitted context"
-                        />
-                      )}
-                      <TurnCopyAction text={item.turn.message.text} label="Copy prompt" />
-                    </div>
-                    <div className="turn">
-                      <div className="role">
-                        <span className="av">
-                          {providerAvatarInitials(provider, providerLabel)}
-                        </span>
-                        <span className="rname">{providerLabel}</span>
-                        <span className="rtime">
-                          {item.turn.assistantAt ? formatElapsed(item.turn.assistantAt) : "now"}
-                        </span>
-                      </div>
-                      {renderTimeline(
-                        item.turn.events,
-                        `archived-${item.index}`,
-                        item.turn.state === "interrupted" || item.turn.state === "cancelled"
-                          ? "cancelled"
-                          : "running",
-                      )}
-                      <TurnChangesCard
-                        checkpoint={item.turn.checkpoint}
-                        pane={pane}
-                        onOpen={openTurnChanges}
-                      />
-                      {renderArchivedFailure(item.turn.events)}
-                      {item.turn.events
-                        .filter(
-                          (
-                            event,
-                          ): event is Extract<ProviderEvent, { kind: "governance_correlation" }> =>
-                            event.kind === "governance_correlation",
-                        )
-                        .map((correlation) => (
-                          <GovernanceCorrelationSummary
-                            key={correlation.operationId}
-                            correlation={correlation}
+                    <React.Fragment key={`archived-${item.turn.message.createdAt ?? item.index}`}>
+                      <div className="turn user">
+                        <div className="role">
+                          <span className="av you">Y</span>
+                          <span className="rname">
+                            {item.turn.mailboxFrom ? `From ${item.turn.mailboxFrom}` : "You"}
+                          </span>
+                          <span className="rtime">
+                            {item.turn.message.createdAt
+                              ? formatElapsed(item.turn.message.createdAt)
+                              : "now"}
+                          </span>
+                        </div>
+                        <p>{item.turn.message.text}</p>
+                        {item.turn.contextReceipt && (
+                          <ContextPackageSummary
+                            receipt={item.turn.contextReceipt}
+                            label="Submitted context"
                           />
-                        ))}
-                      {(item.turn.state === "interrupted" || item.turn.state === "cancelled") && (
-                        <p className="provider-state">{providerLabel} cancelled</p>
-                      )}
-                      <TurnCopyAction
-                        text={assistantTextFromEvents(item.turn.events)}
-                        label="Copy answer"
-                      />
-                    </div>
-                  </React.Fragment>
+                        )}
+                        <TurnCopyAction text={item.turn.message.text} label="Copy prompt" />
+                      </div>
+                      <div className="turn">
+                        <div className="role">
+                          <span className="av">
+                            {providerAvatarInitials(provider, providerLabel)}
+                          </span>
+                          <span className="rname">{providerLabel}</span>
+                          <span className="rtime">
+                            {item.turn.assistantAt ? formatElapsed(item.turn.assistantAt) : "now"}
+                          </span>
+                        </div>
+                        {renderTimeline(
+                          item.turn.events,
+                          `archived-${item.index}`,
+                          item.turn.state === "interrupted" || item.turn.state === "cancelled"
+                            ? "cancelled"
+                            : "running",
+                        )}
+                        <TurnChangesCard
+                          checkpoint={item.turn.checkpoint}
+                          pane={pane}
+                          onOpen={openTurnChanges}
+                        />
+                        {renderArchivedFailure(item.turn.events)}
+                        {item.turn.events
+                          .filter(
+                            (
+                              event,
+                            ): event is Extract<
+                              ProviderEvent,
+                              { kind: "governance_correlation" }
+                            > => event.kind === "governance_correlation",
+                          )
+                          .map((correlation) => (
+                            <GovernanceCorrelationSummary
+                              key={correlation.operationId}
+                              correlation={correlation}
+                            />
+                          ))}
+                        {(item.turn.state === "interrupted" || item.turn.state === "cancelled") && (
+                          <p className="provider-state">{providerLabel} cancelled</p>
+                        )}
+                        <TurnCopyAction
+                          text={assistantTextFromEvents(item.turn.events)}
+                          label="Copy answer"
+                        />
+                      </div>
+                    </React.Fragment>
                   ),
                 )}
                 {latestMessage && (
@@ -2953,7 +2955,9 @@ export function Conversation({
                   >
                     <div className="role">
                       <span className="av you">Y</span>
-                      <span className="rname">{currentMailboxFrom ? `From ${currentMailboxFrom}` : "You"}</span>
+                      <span className="rname">
+                        {currentMailboxFrom ? `From ${currentMailboxFrom}` : "You"}
+                      </span>
                       <span className="rtime">
                         {latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}
                       </span>

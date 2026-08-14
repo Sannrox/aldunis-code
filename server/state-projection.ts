@@ -81,9 +81,7 @@ export function projectConversationHistory(
   );
   counterpartIds.delete(threadId);
   const counterparts = [...counterpartIds]
-    .map(
-      (id) => index?.threadById.get(id) ?? projection.threads.find((item) => item.id === id),
-    )
+    .map((id) => index?.threadById.get(id) ?? projection.threads.find((item) => item.id === id))
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   if (index) {
     return {

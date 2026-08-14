@@ -34,10 +34,8 @@ test("mailbox outbound cards interleave with turns by createdAt", () => {
     ["late"],
   );
   assert.deepEqual(
-    interleaveMailboxOutbound(
-      [{ id: "turn-a" }, { id: "turn-b" }],
-      before,
-      (turn) => (turn.id === "turn-a" ? "2026-08-14T09:00:00.000Z" : "2026-08-14T10:30:00.000Z"),
+    interleaveMailboxOutbound([{ id: "turn-a" }, { id: "turn-b" }], before, (turn) =>
+      turn.id === "turn-a" ? "2026-08-14T09:00:00.000Z" : "2026-08-14T10:30:00.000Z",
     ).map((item) => (item.kind === "mailbox" ? item.transfer.id : item.turn.id)),
     ["turn-a", "early", "turn-b"],
   );

@@ -130,7 +130,11 @@ interface RestoredThreadBinding {
 export type PersistedConversationRestoration =
   | { kind: "thread_missing" }
   | { kind: "provider_changed"; provider: ProviderId }
-  | { kind: "empty_thread"; thread: RestoredThreadBinding; mailboxOutbound: RestoredMailboxOutbound[] }
+  | {
+      kind: "empty_thread";
+      thread: RestoredThreadBinding;
+      mailboxOutbound: RestoredMailboxOutbound[];
+    }
   | {
       kind: "restored";
       thread: RestoredThreadBinding;
@@ -410,7 +414,9 @@ export function restorePersistedConversation(
     }));
   const mailboxFromByTurn = new Map(
     (projection.mailboxTransfers ?? [])
-      .filter((transfer) => transfer.destinationThreadId === thread.id && transfer.destinationTurnId)
+      .filter(
+        (transfer) => transfer.destinationThreadId === thread.id && transfer.destinationTurnId,
+      )
       .map((transfer) => [
         transfer.destinationTurnId!,
         projection.threads.find((item) => item.id === transfer.sourceThreadId)?.title ??

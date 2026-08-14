@@ -831,9 +831,10 @@ async function executeProviderRun(
         state.linkDelegatedConversation(delegatedParentThreadId, persisted.thread.id),
       );
     }
-    const forkPrompt = nativeResumeClaim || mailboxDestination
-      ? null
-      : await state.pendingForkPrompt(persisted.thread.id);
+    const forkPrompt =
+      nativeResumeClaim || mailboxDestination
+        ? null
+        : await state.pendingForkPrompt(persisted.thread.id);
     const effectiveProviderPrompt = nativeResumeClaim
       ? ""
       : forkPrompt

@@ -25,7 +25,12 @@ export function mailboxReviewLines(input: {
   mode: InteractionMode;
   text: string;
 }): string[] {
-  return [`From ${input.sourceTitle}`, `To ${input.destinationTitle}`, `Mode ${input.mode}`, input.text.trim()];
+  return [
+    `From ${input.sourceTitle}`,
+    `To ${input.destinationTitle}`,
+    `Mode ${input.mode}`,
+    input.text.trim(),
+  ];
 }
 
 export function SendMailboxMessageDialog({
@@ -51,7 +56,8 @@ export function SendMailboxMessageDialog({
   }, [destinationId, text, mode]);
   const destination = destinations.find((item) => item.id === destinationId) ?? null;
   const trimmedLength = mailboxTextLength(text);
-  const canReview = Boolean(destination) && trimmedLength > 0 && trimmedLength <= MAILBOX_TEXT_MAX_CHARS;
+  const canReview =
+    Boolean(destination) && trimmedLength > 0 && trimmedLength <= MAILBOX_TEXT_MAX_CHARS;
   const destinationIdField = `mailbox-destination-${source.id}`;
   const textId = `mailbox-text-${source.id}`;
   const modeId = `mailbox-mode-${source.id}`;
@@ -95,19 +101,19 @@ export function SendMailboxMessageDialog({
   };
 
   return (
-    <OverlayDialog
-      title={MAILBOX_DIALOG_COPY.title}
-      onClose={busy ? () => undefined : onClose}
-    >
+    <OverlayDialog title={MAILBOX_DIALOG_COPY.title} onClose={busy ? () => undefined : onClose}>
       {reviewing ? (
         <div className="mailbox-send-dialog">
-          <p className="mailbox-send-help">
-            {MAILBOX_DIALOG_COPY.reviewHelp}
-          </p>
+          <p className="mailbox-send-help">{MAILBOX_DIALOG_COPY.reviewHelp}</p>
           <pre className="mailbox-send-review">{reviewLines.join("\n\n")}</pre>
           {error ? <p className="mailbox-send-error">{error}</p> : null}
           <footer>
-            <Button type="button" variant="ghost" onClick={() => setReviewing(false)} disabled={busy}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setReviewing(false)}
+              disabled={busy}
+            >
               Back
             </Button>
             <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
@@ -120,9 +126,7 @@ export function SendMailboxMessageDialog({
         </div>
       ) : (
         <form className="mailbox-send-dialog" onSubmit={submitReview}>
-          <p className="mailbox-send-help">
-            {MAILBOX_DIALOG_COPY.help}
-          </p>
+          <p className="mailbox-send-help">{MAILBOX_DIALOG_COPY.help}</p>
           {destinations.length === 0 ? (
             <p className="mailbox-send-error">{MAILBOX_DIALOG_COPY.emptyDestinations}</p>
           ) : (

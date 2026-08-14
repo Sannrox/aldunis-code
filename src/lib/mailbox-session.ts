@@ -34,8 +34,7 @@ export function clampMailboxText(text: string): string {
 }
 
 export type MailboxTimelineItem<TTurn, TTransfer extends { id: string; createdAt: string }> =
-  | { kind: "mailbox"; transfer: TTransfer }
-  | { kind: "archived"; turn: TTurn; index: number };
+  { kind: "mailbox"; transfer: TTransfer } | { kind: "archived"; turn: TTurn; index: number };
 
 export function interleaveMailboxOutbound<
   TTurn,
@@ -105,9 +104,10 @@ export class ConversationMailboxSessionModule {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    const payload = (await response.json().catch(() => null)) as
-      | { transfer?: MailboxTransfer; error?: string }
-      | null;
+    const payload = (await response.json().catch(() => null)) as {
+      transfer?: MailboxTransfer;
+      error?: string;
+    } | null;
     if (!response.ok || !payload?.transfer) {
       throw new Error(mailboxSendError(payload, "The mailbox message could not be sent."));
     }

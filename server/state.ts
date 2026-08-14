@@ -1808,10 +1808,7 @@ function applyEvent(
         previous,
         event.mailboxTransfer,
       );
-      conversationHistory.mailboxTransferById.set(
-        event.mailboxTransfer.id,
-        event.mailboxTransfer,
-      );
+      conversationHistory.mailboxTransferById.set(event.mailboxTransfer.id, event.mailboxTransfer);
       conversationHistory.mailboxTransferByKey.set(
         event.mailboxTransfer.idempotencyKey,
         event.mailboxTransfer,
@@ -3389,7 +3386,10 @@ export class LocalStateStore {
   }): Promise<{ transfer: MailboxTransfer; created: boolean }> {
     const trimmed = input.text.trim();
     if (!trimmed || Array.from(trimmed).length > 4_000) {
-      throw new LocalStateError("A mailbox message between 1 and 4,000 characters is required.", 400);
+      throw new LocalStateError(
+        "A mailbox message between 1 and 4,000 characters is required.",
+        400,
+      );
     }
     if (!/^[0-9a-f-]{36}$/i.test(input.idempotencyKey)) {
       throw new LocalStateError("A mailbox idempotency key is required.", 400);
@@ -3438,7 +3438,9 @@ export class LocalStateStore {
           409,
         );
       }
-      if (this.#conversationHistory.forkByDestinationThread.get(destination.id)?.status === "pending") {
+      if (
+        this.#conversationHistory.forkByDestinationThread.get(destination.id)?.status === "pending"
+      ) {
         throw new LocalStateError(
           "Mailbox messages cannot be sent to a conversation that is still waiting to start as a fork.",
           409,
@@ -4513,7 +4515,9 @@ export class LocalStateStore {
     const now = new Date().toISOString();
     for (const transfer of projection.mailboxTransfers) {
       if (transfer.sourceThreadId !== threadId || !transfer.destinationTurnId) continue;
-      const destIndex = projection.turns.findIndex((turn) => turn.id === transfer.destinationTurnId);
+      const destIndex = projection.turns.findIndex(
+        (turn) => turn.id === transfer.destinationTurnId,
+      );
       if (destIndex < 0) continue;
       const destTurn = projection.turns[destIndex]!;
       if (destTurn.status === "active" && !destTurn.providerRunId) {
