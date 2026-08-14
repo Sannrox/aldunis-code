@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   canUseCurrentWorkspace,
@@ -34,4 +37,17 @@ test("shared-workspace recovery is available only for user-owned worktrees", () 
     false,
   );
   assert.equal(canUseCurrentWorkspace(userWorktree, undefined, true), false);
+});
+
+test("in-flight workspace creation cannot dismiss the overlay", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const sources = [
+    "conversation-workspace-dialog.tsx",
+    "start-delegated-conversation-dialog.tsx",
+    "fork-conversation-dialog.tsx",
+  ].map((name) => readFileSync(join(here, name), "utf8"));
+  for (const source of sources) {
+    assert.match(source, /dismissible=\{!busy\}/);
+    assert.doesNotMatch(source, /onClose=\{busy \? \(\) => undefined : onClose\}/);
+  }
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import type { ContextPin, ContextReceipt } from "../../types";
 
 function formatBytes(bytes: number): string {
@@ -27,13 +27,18 @@ export function ContextPackageSummary({
       </summary>
       <div className="context-package-entries">
         {receipt.entries.map((entry) => (
-          <article className={entry.omissionReason ? "is-omitted" : ""} key={`${entry.source}:${entry.path}`}>
+          <article
+            className={entry.omissionReason ? "is-omitted" : ""}
+            key={`${entry.source}:${entry.path}`}
+          >
             <div>
               <strong title={entry.path}>{entry.path}</strong>
               <small>
                 {entry.source === "provider_managed_instruction"
                   ? "Provider-managed instruction"
-                  : entry.source === "aldunis_folder" ? "Pinned folder" : "Aldunis attachment"}
+                  : entry.source === "aldunis_folder"
+                    ? "Pinned folder"
+                    : "Aldunis attachment"}
               </small>
             </div>
             <span>
@@ -62,6 +67,7 @@ export function ContextPackagePanel({
   onAdd,
   onRemove,
   onClose,
+  pane = "primary",
 }: {
   receipt: ContextReceipt | null;
   pins: ContextPin[];
@@ -70,6 +76,7 @@ export function ContextPackagePanel({
   onAdd: (pin: ContextPin) => void;
   onRemove: (pin: ContextPin) => void;
   onClose: () => void;
+  pane?: "primary" | "secondary";
 }) {
   const [path, setPath] = useState("");
   const [kind, setKind] = useState<ContextPin["kind"]>("file");
@@ -85,28 +92,49 @@ export function ContextPackagePanel({
       }}
     >
       <header>
-        <div><small>Aldunis-owned context</small><h2>Context package</h2></div>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close context package">×</button>
+        <div>
+          <small>Aldunis-owned context</small>
+          <h2>Context package</h2>
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={onClose}
+          aria-label="Close context package"
+        >
+          ×
+        </button>
       </header>
       <div className="context-package-panel-body">
-        <p>Paths are repository-relative. Folders resolve deterministically when the turn is submitted.</p>
-        <form onSubmit={(event) => {
-          event.preventDefault();
-          const input = path.trim();
-          const value = input === "." || input === "./"
-            ? "."
-            : input.replace(/^\.?\//, "").replace(/\/+$/, "");
-          if (!value) return;
-          onAdd({ path: value, kind });
-          setPath("");
-        }}>
-          <label>Pin type
-            <select value={kind} onChange={(event) => setKind(event.target.value as ContextPin["kind"])}>
+        <p>
+          Paths are repository-relative. Folders resolve deterministically when the turn is
+          submitted.
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            const input = path.trim();
+            const value =
+              input === "." || input === "./"
+                ? "."
+                : input.replace(/^\.?\//, "").replace(/\/+$/, "");
+            if (!value) return;
+            onAdd({ path: value, kind });
+            setPath("");
+          }}
+        >
+          <label>
+            Pin type
+            <select
+              value={kind}
+              onChange={(event) => setKind(event.target.value as ContextPin["kind"])}
+            >
               <option value="file">File</option>
               <option value="folder">Folder</option>
             </select>
           </label>
-          <label>Repository-relative path
+          <label>
+            Repository-relative path
             <input
               autoFocus
               value={path}
@@ -114,23 +142,41 @@ export function ContextPackagePanel({
               placeholder=". or src/main.ts"
             />
           </label>
-          <button type="submit" className="btn btn-default btn-sm">Pin {kind}</button>
+          <button type="submit" className="btn btn-default btn-sm">
+            Pin {kind}
+          </button>
         </form>
-        <section aria-labelledby="context-pins-title">
-          <h3 id="context-pins-title">Conversation pins</h3>
+        <section aria-labelledby={`${pane}-context-pins-title`}>
+          <h3 id={`${pane}-context-pins-title`}>Conversation pins</h3>
           {pins.length ? (
             <ul className="context-pin-list">
               {pins.map((pin) => (
                 <li key={`${pin.kind}:${pin.path}`}>
-                  <span><strong>{pin.path}</strong><small>{pin.kind}</small></span>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => onRemove(pin)} aria-label={`Remove ${pin.kind} ${pin.path}`}>Remove</button>
+                  <span>
+                    <strong>{pin.path}</strong>
+                    <small>{pin.kind}</small>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => onRemove(pin)}
+                    aria-label={`Remove ${pin.kind} ${pin.path}`}
+                  >
+                    Remove
+                  </button>
                 </li>
               ))}
             </ul>
-          ) : <p>No files or folders are pinned.</p>}
+          ) : (
+            <p>No files or folders are pinned.</p>
+          )}
         </section>
         {busy && <p role="status">Resolving bounded package…</p>}
-        {error && <p className="context-error" role="alert">{error}</p>}
+        {error && (
+          <p className="context-error" role="alert">
+            {error}
+          </p>
+        )}
         {receipt && <ContextPackageSummary receipt={receipt} label="Draft package" />}
       </div>
     </aside>

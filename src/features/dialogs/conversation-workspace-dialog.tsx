@@ -113,7 +113,7 @@ export function ConversationWorkspaceDialog({
   const canCreate = Boolean(base.trim() && branch.trim());
 
   return (
-    <OverlayDialog title="Create Aldunis worktree" onClose={busy ? () => undefined : onClose}>
+    <OverlayDialog title="Create Aldunis worktree" onClose={onClose} dismissible={!busy}>
       <div className="conversation-workspace-dialog">
         <p>
           This conversation gets its own Git worktree and branch after one approval.
