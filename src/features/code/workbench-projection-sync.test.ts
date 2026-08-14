@@ -62,6 +62,8 @@ test("synchronization serializes startup and coalesces event bursts", async () =
 
   synchronization.start();
   listeners.get("open")?.({ data: "" });
+  assert.equal(requests.length, 1);
+  listeners.get("ready")?.({ data: "ready" });
   listeners.get("thread_status")?.({
     data: JSON.stringify({ threadId: "thread", status: "running", at: "2026-01-01" }),
   });
@@ -101,7 +103,7 @@ test("synchronization serializes startup and coalesces event bursts", async () =
 
   synchronization.dispose();
   assert.equal(closed, true);
-  listeners.get("open")?.({ data: "" });
+  listeners.get("ready")?.({ data: "ready" });
   assert.equal(requests.length, 4);
 });
 
@@ -167,7 +169,7 @@ test("synchronization releases hidden streams and reconnects fresh when visible"
   visibilityState = "visible";
   visibilityListener?.();
   assert.equal(streams.length, 2);
-  streams[1]?.listeners.get("open")?.({ data: "" });
+  streams[1]?.listeners.get("ready")?.({ data: "ready" });
   await Promise.resolve();
   assert.deepEqual(requests, [false, true, true]);
 
