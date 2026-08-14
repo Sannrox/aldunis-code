@@ -144,8 +144,8 @@ export function FileBrowserPanel({
         <span className="sr-only">Search file names and text content</span>
         <input
           ref={searchRef}
-          id="file-browser-search"
-          name="file-browser-search"
+          id={`${pane}-file-browser-search`}
+          name={`${pane}-file-browser-search`}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}

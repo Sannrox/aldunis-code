@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   activeThreadSearchResult,
@@ -120,4 +123,21 @@ test("conversation search cancels superseded scheduled requests", () => {
   assert.equal(calls, 0);
   callback?.();
   assert.equal(calls, 0);
+});
+
+test("conversation search status stays outside the result listbox", () => {
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "thread-search-dialog.tsx"),
+    "utf8",
+  );
+  assert.match(source, /id="thread-search-status"/);
+  assert.match(source, /className="quick-results-empty"/);
+  const listboxIndex = source.indexOf('role="listbox"');
+  const searchingIndex = source.indexOf("Searching conversations…");
+  const emptyIndex = source.indexOf("No matching conversations.");
+  assert.notEqual(listboxIndex, -1);
+  assert.ok(searchingIndex !== -1 && searchingIndex < listboxIndex);
+  assert.ok(emptyIndex !== -1 && emptyIndex < listboxIndex);
+  assert.doesNotMatch(source.slice(listboxIndex), /Searching conversations/);
+  assert.doesNotMatch(source.slice(listboxIndex), /No matching conversations/);
 });

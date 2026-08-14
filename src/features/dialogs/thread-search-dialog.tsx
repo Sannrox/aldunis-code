@@ -204,6 +204,7 @@ export function ThreadSearchDialog({
           placeholder="Title, project, or worktree"
           aria-label="Search conversations by title, project, or worktree"
           aria-controls="thread-search-results"
+          aria-describedby={loading || results.length === 0 ? "thread-search-status" : undefined}
           aria-activedescendant={
             loading ? undefined : threadSearchActiveDescendant(activeIndex, results.length)
           }
@@ -232,6 +233,16 @@ export function ThreadSearchDialog({
           contents are excluded.
         </p>
       </div>
+      {loading && (
+        <p id="thread-search-status" className="quick-results-empty" role="status">
+          Searching conversations…
+        </p>
+      )}
+      {!loading && results.length === 0 && (
+        <p id="thread-search-status" className="quick-results-empty" role="status">
+          No matching conversations.
+        </p>
+      )}
       <div
         ref={resultsRef}
         className="quick-results"
@@ -262,8 +273,6 @@ export function ThreadSearchDialog({
             </button>
           );
         })}
-        {loading && <p role="status">Searching conversations…</p>}
-        {!loading && results.length === 0 && <p>No matching conversations.</p>}
       </div>
     </OverlayDialog>
   );

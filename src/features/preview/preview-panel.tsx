@@ -648,10 +648,10 @@ export function PreviewPanel({
                 void request();
               }}
             >
-              <label htmlFor="preview-origin">Configured preview origin</label>
+              <label htmlFor={`${pane}-preview-origin`}>Configured preview origin</label>
               <input
-                id="preview-origin"
-                name="preview-origin"
+                id={`${pane}-preview-origin`}
+                name={`${pane}-preview-origin`}
                 value={origin}
                 onChange={(event) => setOrigin(event.target.value)}
                 autoComplete="off"

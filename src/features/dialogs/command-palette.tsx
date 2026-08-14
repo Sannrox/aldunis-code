@@ -221,18 +221,23 @@ export function CommandPalette({
             placeholder="Search available actions"
             aria-label="Search available actions"
             aria-controls="command-palette-results"
+            aria-describedby={actions.length === 0 ? "command-palette-empty" : undefined}
             aria-activedescendant={
               actions[activeIndex] ? `command-palette-action-${activeIndex}` : undefined
             }
           />
         </label>
+        {actions.length === 0 && (
+          <p id="command-palette-empty" className="quick-results-empty" role="status">
+            No matching actions.
+          </p>
+        )}
         <div
           className="quick-results"
           id="command-palette-results"
           role="listbox"
           aria-label="Available actions"
         >
-          {actions.length === 0 && <p>No matching actions.</p>}
           {actions.map((action, index) => (
             <button
               key={"id" in action ? action.id : action.label}
