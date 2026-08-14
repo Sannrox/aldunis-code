@@ -594,6 +594,13 @@ async function hashArtifactPath(
     );
   }
   entries.sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)));
+  const committedEntries = await committedArtifactDirectoryEntries(worktree, path);
+  if (committedEntries.size !== entries.length) {
+    throw new RepositoryError(
+      "Tenkai artifact inputs must match their committed directory entries.",
+      409,
+    );
+  }
   hash.update(length64(entries.length, true));
   let size = 0;
   for (const entry of entries) {
@@ -608,8 +615,19 @@ async function hashArtifactPath(
     if (metadata.isSymbolicLink()) {
       throw new RepositoryError("Tenkai artifact inputs cannot contain symlinks.", 409);
     }
+    const committed = committedEntries.get(entry.name);
+    if (
+      !committed ||
+      (metadata.isDirectory() && committed.type !== "tree") ||
+      (metadata.isFile() && committed.type !== "blob")
+    ) {
+      throw new RepositoryError(
+        "Tenkai artifact inputs must match their committed directory entries.",
+        409,
+      );
+    }
     const permissions = Buffer.alloc(4);
-    permissions.writeUInt32LE(await committedArtifactMode(worktree, child, metadata.isDirectory()));
+    permissions.writeUInt32LE(committed.mode);
     hash.update(permissions);
     if (metadata.isDirectory()) {
       hashBytes(hash, Buffer.from("dir"));
@@ -862,6 +880,72 @@ async function committedArtifactMode(
     throw new RepositoryError("Tenkai artifact files must use a committed regular-file mode.", 409);
   }
   return metadata[0] === "100755" ? 0o755 : 0o644;
+}
+
+type CommittedArtifactDirectoryEntry = {
+  mode: number;
+  type: "blob" | "tree";
+};
+
+async function committedArtifactDirectoryEntries(
+  worktree: string,
+  path: string,
+): Promise<Map<string, CommittedArtifactDirectoryEntry>> {
+  const relativePath = relative(worktree, path).split(sep).join("/");
+  const tree = (
+    await git(
+      worktree,
+      ["ls-tree", "-z", relativePath ? `HEAD:${relativePath}` : "HEAD:"],
+      "buffer",
+    )
+  ).stdout as Buffer;
+  return parseCommittedArtifactDirectoryEntries(tree);
+}
+
+export function parseCommittedArtifactDirectoryEntries(
+  tree: Buffer,
+): Map<string, CommittedArtifactDirectoryEntry> {
+  const entries = new Map<string, CommittedArtifactDirectoryEntry>();
+  let offset = 0;
+  while (offset < tree.length) {
+    const end = tree.indexOf(0, offset);
+    if (end < 0) {
+      throw new RepositoryError("Committed artifact directory output is incomplete.", 409);
+    }
+    if (end - offset > MAX_GIT_TREE_RECORD_BYTES) {
+      throw new RepositoryError("A committed artifact directory entry is too large.", 409);
+    }
+    const bytes = tree.subarray(offset, end);
+    offset = end + 1;
+    if (bytes.length === 0) continue;
+    const tab = bytes.indexOf(0x09);
+    const metadata = bytes.subarray(0, tab).toString("ascii").split(" ");
+    const pathBytes = bytes.subarray(tab + 1);
+    const name = pathBytes.toString("utf8");
+    const type = metadata[1];
+    const mode = metadata[0];
+    if (
+      tab < 0 ||
+      metadata.length !== 3 ||
+      !Buffer.from(name, "utf8").equals(pathBytes) ||
+      name !== name.normalize("NFC") ||
+      name.includes("/") ||
+      // eslint-disable-next-line no-control-regex -- canonical paths reject ASCII control bytes.
+      /[\u0000-\u001f\u007f]/u.test(name) ||
+      !(
+        (type === "blob" && ["100644", "100755"].includes(mode)) ||
+        (type === "tree" && mode === "040000")
+      ) ||
+      entries.has(name)
+    ) {
+      throw new RepositoryError("Committed artifact directory entries are not canonical.", 409);
+    }
+    entries.set(name, {
+      mode: type === "tree" || mode === "100755" ? 0o755 : 0o644,
+      type,
+    });
+  }
+  return entries;
 }
 
 async function artifactDigest(

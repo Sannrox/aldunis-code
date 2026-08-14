@@ -29,6 +29,7 @@ import {
   deliveryCandidateIdentity,
   hashArtifactFile,
   hashReleaseLockFile,
+  parseCommittedArtifactDirectoryEntries,
   prepareReleaseCandidate,
   readCommittedReleaseManifest,
   readReleasePackageManifest,
@@ -452,6 +453,41 @@ test("artifact file hashing preserves length framing without retaining the file"
     hash.digest("hex"),
     createHash("sha256").update(length).update(content).digest("hex"),
   );
+});
+
+test("committed artifact directory parsing retains regular, executable, and directory modes", () => {
+  const oid = "1".repeat(40);
+  const entries = parseCommittedArtifactDirectoryEntries(
+    Buffer.from(
+      `100644 blob ${oid}\tplain.txt\0` +
+        `100755 blob ${oid}\trun.sh\0` +
+        `040000 tree ${oid}\tnested\0`,
+    ),
+  );
+
+  assert.deepEqual(
+    [...entries].map(([name, entry]) => [name, entry.type, entry.mode]),
+    [
+      ["plain.txt", "blob", 0o644],
+      ["run.sh", "blob", 0o755],
+      ["nested", "tree", 0o755],
+    ],
+  );
+});
+
+test("committed artifact directory parsing fails closed on malformed records", () => {
+  const oid = "1".repeat(40);
+  const invalid = [
+    Buffer.from(`100644 blob ${oid}\tincomplete`),
+    Buffer.from(`120000 blob ${oid}\tlink\0`),
+    Buffer.from(`160000 commit ${oid}\tsubmodule\0`),
+    Buffer.from(`100644 blob ${oid}\tnested/path\0`),
+    Buffer.from(`100644 blob ${oid}\tname\0` + `100644 blob ${oid}\tname\0`),
+    Buffer.concat([Buffer.alloc(MAX_GIT_TREE_RECORD_BYTES + 1, 0x61), Buffer.from([0])]),
+  ];
+  for (const output of invalid) {
+    assert.throws(() => parseCommittedArtifactDirectoryEntries(output));
+  }
 });
 
 test("artifact file hashing closes its handle and rejects concurrent file changes", async () => {
