@@ -1080,32 +1080,27 @@ function compareTranscriptOrder(
  * them. Preserves user messages and assistant segments split by tools.
  * Used when rewriting history so older token-per-event logs shrink.
  */
-type TranscriptItem =
-  { kind: "message"; message: Message } | { kind: "activity"; activity: Activity };
-
-function orderedTranscriptItems(messages: Message[], activities: Activity[]): TranscriptItem[] {
-  return [
-    ...messages.map((message) => ({ kind: "message" as const, message })),
-    ...activities.map((activity) => ({ kind: "activity" as const, activity })),
-  ].sort((left, right) => {
-    const leftItem = left.kind === "message" ? left.message : left.activity;
-    const rightItem = right.kind === "message" ? right.message : right.activity;
-    return compareTranscriptOrder(leftItem, rightItem);
-  });
-}
-
 function coalescedAssistantMessageCount(messages: Message[], activities: Activity[]): number {
   let count = 0;
   let openTurnId: string | null = null;
-  for (const item of orderedTranscriptItems(messages, activities)) {
-    if (item.kind === "activity") {
+  let messageIndex = 0;
+  let activityIndex = 0;
+  while (messageIndex < messages.length || activityIndex < activities.length) {
+    const message = messages[messageIndex];
+    const activity = activities[activityIndex];
+    if (activity && (!message || compareTranscriptOrder(activity, message) < 0)) {
+      activityIndex += 1;
       openTurnId = null;
-    } else if (item.message.role !== "assistant") {
+    } else if (message?.role !== "assistant") {
+      messageIndex += 1;
       count += 1;
       openTurnId = null;
-    } else if (openTurnId !== item.message.turnId) {
+    } else if (openTurnId !== message.turnId) {
+      messageIndex += 1;
       count += 1;
-      openTurnId = item.message.turnId;
+      openTurnId = message.turnId;
+    } else {
+      messageIndex += 1;
     }
   }
   return count;
@@ -1127,12 +1122,18 @@ export function coalesceConsecutiveAssistantMessages(
       openTextParts = [];
     }
   };
-  for (const item of orderedTranscriptItems(messages, activities)) {
-    if (item.kind === "activity") {
+  let messageIndex = 0;
+  let activityIndex = 0;
+  while (messageIndex < messages.length || activityIndex < activities.length) {
+    const message = messages[messageIndex];
+    const activity = activities[activityIndex];
+    if (activity && (!message || compareTranscriptOrder(activity, message) < 0)) {
+      activityIndex += 1;
       closeOpen();
       continue;
     }
-    const message = item.message;
+    if (!message) break;
+    messageIndex += 1;
     if (message.role !== "assistant") {
       closeOpen();
       coalesced.push({ ...message });
@@ -1151,6 +1152,71 @@ export function coalesceConsecutiveAssistantMessages(
   }
   closeOpen();
   return coalesced;
+}
+
+type RewriteTranscriptRecord =
+  Message | Activity | PlanArtifact | ContextReceipt | UsageReceipt | GovernanceCorrelationReceipt;
+
+function* rewriteTranscriptEvents(projection: StateProjection): Generator<StateEvent> {
+  const collections: readonly (readonly RewriteTranscriptRecord[])[] = [
+    projection.messages,
+    projection.activities,
+    projection.plans,
+    projection.contextReceipts,
+    projection.usageReceipts,
+    projection.governanceCorrelations,
+  ];
+  // Replay appends a record on its first event and replaces it in place on
+  // later events. Rewrite mutations only filter or immutably replace records,
+  // so each collection retains its event/timestamp order. Validate that
+  // invariant before relying on the allocation-bounded merge.
+  for (const collection of collections) {
+    for (let index = 1; index < collection.length; index += 1) {
+      if (compareRewriteTranscriptOrder(collection[index - 1]!, collection[index]!) > 0) {
+        throw new LocalStateError("Local transcript collections are not ordered for rewrite.");
+      }
+    }
+  }
+  const positions = new Uint32Array(collections.length);
+  while (true) {
+    let selected = -1;
+    for (let index = 0; index < collections.length; index += 1) {
+      const candidate = collections[index][positions[index]];
+      if (!candidate) continue;
+      const current = selected < 0 ? undefined : collections[selected][positions[selected]];
+      if (!current || compareRewriteTranscriptOrder(candidate, current) < 0) selected = index;
+    }
+    if (selected < 0) return;
+    const record = collections[selected][positions[selected]++]!;
+    if (selected === 0) yield { type: "message_saved", message: record as Message };
+    else if (selected === 1) yield { type: "activity_saved", activity: record as Activity };
+    else if (selected === 2) {
+      yield {
+        type: "plan_saved",
+        plan: { ...(record as PlanArtifact), eventSequence: undefined },
+      };
+    } else if (selected === 3) {
+      yield { type: "context_receipt_saved", contextReceipt: record as ContextReceipt };
+    } else if (selected === 4) {
+      yield { type: "usage_receipt_saved", usageReceipt: record as UsageReceipt };
+    } else {
+      yield {
+        type: "governance_correlation_saved",
+        governanceCorrelation: record as GovernanceCorrelationReceipt,
+      };
+    }
+  }
+}
+
+function compareRewriteTranscriptOrder(
+  left: RewriteTranscriptRecord,
+  right: RewriteTranscriptRecord,
+): number {
+  const leftSequence = "eventSequence" in left ? left.eventSequence : undefined;
+  const rightSequence = "eventSequence" in right ? right.eventSequence : undefined;
+  return leftSequence !== undefined && rightSequence !== undefined
+    ? leftSequence - rightSequence
+    : left.createdAt.localeCompare(right.createdAt);
 }
 
 function renderForkPrompt(
@@ -1425,12 +1491,23 @@ function applyEvent(
     if (conversationHistory)
       indexSavedThreadRow(conversationHistory.plansByThread, next.threadId, next);
   } else if (event.type === "context_receipt_saved") {
-    replaceByIdDuringReplay(projection.contextReceipts, event.contextReceipt, replayIndexes);
+    const existingIndex = replayIndexes
+      ? replayIndex(projection.contextReceipts, replayIndexes).get(event.contextReceipt.id)
+      : undefined;
+    const existing = replayIndexes
+      ? existingIndex === undefined
+        ? undefined
+        : projection.contextReceipts[existingIndex]
+      : projection.contextReceipts.find((receipt) => receipt.id === event.contextReceipt.id);
+    const contextReceipt = existing
+      ? { ...event.contextReceipt, createdAt: existing.createdAt }
+      : event.contextReceipt;
+    replaceByIdDuringReplay(projection.contextReceipts, contextReceipt, replayIndexes);
     if (conversationHistory)
       indexSavedThreadRow(
         conversationHistory.contextReceiptsByThread,
-        event.contextReceipt.threadId,
-        event.contextReceipt,
+        contextReceipt.threadId,
+        contextReceipt,
       );
   } else if (event.type === "usage_receipt_saved") {
     replaceByIdDuringReplay(projection.usageReceipts, event.usageReceipt, replayIndexes);
@@ -2647,18 +2724,25 @@ export class LocalStateStore {
   async saveContextReceipt(
     receipt: Omit<ContextReceipt, "schemaVersion" | "id" | "createdAt">,
   ): Promise<ContextReceipt> {
-    const { turn } = await this.#inspectProviderEventContext(receipt.threadId, receipt.turnId);
-    if (!turn) throw new LocalStateError("The context receipt turn is unavailable.", 404);
-    const saved: ContextReceipt = {
-      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-      id: createHash("sha256")
+    return this.#appendComputed(() => {
+      const turn = (this.#turnsByThread.get(receipt.threadId) ?? []).find(
+        (item) => item.id === receipt.turnId,
+      );
+      if (!turn) throw new LocalStateError("The context receipt turn is unavailable.", 404);
+      const id = createHash("sha256")
         .update(`${receipt.threadId}\n${receipt.turnId}\n${receipt.digest}`, "utf8")
-        .digest("hex"),
-      ...receipt,
-      createdAt: new Date().toISOString(),
-    };
-    await this.#append({ type: "context_receipt_saved", contextReceipt: saved });
-    return saved;
+        .digest("hex");
+      const existing = (
+        this.#conversationHistory.contextReceiptsByThread.get(receipt.threadId) ?? []
+      ).find((item) => item.id === id);
+      const saved: ContextReceipt = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id,
+        ...receipt,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+      };
+      return { event: { type: "context_receipt_saved", contextReceipt: saved }, value: saved };
+    });
   }
 
   async createFork(input: {
@@ -4754,48 +4838,6 @@ export class LocalStateStore {
       // History rewrites always collapse stream-token rows so deletion and
       // retention reclaim fsync-heavy assistant logs from earlier hosts.
       next.messages = coalesceConsecutiveAssistantMessages(next.messages, next.activities);
-      const transcriptEvents = [
-        ...next.messages.map((message) => ({
-          eventSequence: message.eventSequence,
-          createdAt: message.createdAt,
-          event: { type: "message_saved" as const, message },
-        })),
-        ...next.activities.map((activity) => ({
-          eventSequence: activity.eventSequence,
-          createdAt: activity.createdAt,
-          event: { type: "activity_saved" as const, activity },
-        })),
-        ...next.plans.map((plan) => ({
-          eventSequence: plan.eventSequence,
-          createdAt: plan.createdAt,
-          event: {
-            type: "plan_saved" as const,
-            plan: { ...plan, eventSequence: undefined },
-          },
-        })),
-        ...next.contextReceipts.map((contextReceipt) => ({
-          eventSequence: undefined,
-          createdAt: contextReceipt.createdAt,
-          event: { type: "context_receipt_saved" as const, contextReceipt },
-        })),
-        ...next.usageReceipts.map((usageReceipt) => ({
-          eventSequence: undefined,
-          createdAt: usageReceipt.createdAt,
-          event: { type: "usage_receipt_saved" as const, usageReceipt },
-        })),
-        ...next.governanceCorrelations.map((governanceCorrelation) => ({
-          eventSequence: undefined,
-          createdAt: governanceCorrelation.createdAt,
-          event: {
-            type: "governance_correlation_saved" as const,
-            governanceCorrelation,
-          },
-        })),
-      ].sort((left, right) =>
-        left.eventSequence !== undefined && right.eventSequence !== undefined
-          ? left.eventSequence - right.eventSequence
-          : left.createdAt.localeCompare(right.createdAt),
-      );
       const events = function* (): Generator<StateEvent> {
         for (const project of next.projects) yield { type: "project_saved", project };
         for (const thread of next.threads) yield { type: "thread_saved", thread };
@@ -4803,7 +4845,7 @@ export class LocalStateStore {
         for (const delegatedRelationship of next.delegatedRelationships) {
           yield { type: "delegated_relationship_saved", delegatedRelationship };
         }
-        for (const { event } of transcriptEvents) yield event;
+        yield* rewriteTranscriptEvents(next);
         for (const providerSession of next.providerSessions) {
           yield { type: "provider_session_saved", providerSession };
         }
