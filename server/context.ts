@@ -21,6 +21,7 @@ const CONTEXT_PACKAGE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
+export const MAX_SEARCH_INSPECTED_FILES = 1_024;
 export const MAX_ACTIVE_BROWSE_INSPECTIONS = 8;
 const IMAGE_TYPES: Record<string, string> = {
   ".gif": "image/gif",
@@ -830,6 +831,7 @@ export async function browseRepositoryFiles(
   const paths = await repositoryPaths(worktree, signal);
   const matches: Array<{ path: string; match: RepositoryFileResult["match"] }> = [];
   let searchedBytes = 0;
+  let inspectedFiles = 0;
   let searchBudgetExhausted = false;
   for (const path of paths) {
     if (signal?.aborted) throw signal.reason;
@@ -839,10 +841,11 @@ export async function browseRepositoryFiles(
       matches.push({ path, match: needle ? "name" : null });
       continue;
     }
-    if (searchedBytes >= MAX_SEARCH_BYTES) {
+    if (searchedBytes >= MAX_SEARCH_BYTES || inspectedFiles >= MAX_SEARCH_INSPECTED_FILES) {
       searchBudgetExhausted = true;
       continue;
     }
+    inspectedFiles += 1;
     try {
       const direct = await lstat(join(worktree, path));
       if (direct.isSymbolicLink() || !direct.isFile() || direct.size > MAX_PREVIEW_BYTES) continue;

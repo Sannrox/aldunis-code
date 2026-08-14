@@ -24,6 +24,7 @@ import {
   MAX_ACTIVE_BROWSE_INSPECTIONS,
   MAX_COMPOSER_ATTACHMENT_IGNORE_BYTES,
   MAX_CONTEXT_FILES,
+  MAX_SEARCH_INSPECTED_FILES,
   MAX_IMAGE_BYTES,
   MAX_INSPECTED_COMPOSER_ATTACHMENT_ENTRIES,
   previewRepositoryFile,
@@ -469,6 +470,39 @@ test("content search reports when its byte budget makes results incomplete", asy
   await writeFile(join(root, "z-tail.txt"), "late unique content");
   const result = await browseRepositoryFiles(root, "late unique content");
   assert.equal(result.files.length, 0);
+  assert.equal(result.truncated, true);
+});
+
+test("content search bounds zero-byte file inspections", async () => {
+  const { root } = await fixture();
+  await mkdir(join(root, "empty"));
+  await Promise.all(
+    Array.from({ length: MAX_SEARCH_INSPECTED_FILES + 1 }, (_, index) =>
+      writeFile(
+        join(root, "empty", `${String(index).padStart(4, "0")}.txt`),
+        index === 0 ? "bounded target" : "",
+      ),
+    ),
+  );
+  let opened = 0;
+  const result = await browseRepositoryFiles(root, "bounded target", undefined, 100, {
+    open: async (path, flags) => {
+      opened += 1;
+      return open(path, flags);
+    },
+    lstat,
+    inspectRepositoryFile: async (_worktree, path, match) => ({
+      path,
+      kind: "text",
+      size: 14,
+      match,
+    }),
+  });
+  assert.equal(opened, MAX_SEARCH_INSPECTED_FILES);
+  assert.deepEqual(
+    result.files.map(({ path, match }) => ({ path, match })),
+    [{ path: "empty/0000.txt", match: "content" }],
+  );
   assert.equal(result.truncated, true);
 });
 
