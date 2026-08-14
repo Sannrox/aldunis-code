@@ -112,6 +112,40 @@ test("parent-routed approval requires the exact live relationship and approval",
   }
 });
 
+test("parent-routed approval scans the retained turns backward without materializing them", () => {
+  const state = fixture();
+  state.turns.unshift({
+    ...state.turns[0],
+    id: "turn-child-older",
+    providerRunId: "run-stale",
+  });
+  state.turns = new Proxy(state.turns, {
+    get(target, property, receiver) {
+      if (property === Symbol.iterator) {
+        throw new Error("approval routing must not copy or iterate the complete turn ledger");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  assert.doesNotThrow(() =>
+    assertParentRoutedApproval(state, [approval()], {
+      parentThreadId: "parent",
+      childThreadId: "child",
+      approvalId: "approval",
+    }),
+  );
+  assert.throws(
+    () =>
+      assertParentRoutedApproval(state, [approval({ runId: "run-stale" })], {
+        parentThreadId: "parent",
+        childThreadId: "child",
+        approvalId: "approval",
+      }),
+    (error: unknown) => error instanceof Error && "status" in error && error.status === 403,
+  );
+});
+
 test("a concurrent pending approval remains projected after its sibling resolves", () => {
   const state = fixture();
   state.turns[0] = { ...state.turns[0], status: "active" };

@@ -507,7 +507,7 @@
     },
     {
       "name": "DelegatedHumanControlRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates delegated approval and input-response route recognition, parent-child authority validation, single-use coordination, provider response routing, recovery, and thread-status publication behind one internal dispatch interface without changing provider, persistence, permission, or managed-host authority."
+      "description": "A deep server-side Aldunis Code module that concentrates delegated approval and input-response route recognition, parent-child authority validation including allocation-free backward selection of the latest retained child turn, single-use coordination, provider response routing, recovery, and thread-status publication behind one internal dispatch interface without changing provider, persistence, permission, or managed-host authority."
     },
     {
       "name": "DeliveryRouteDispatchModule",
@@ -2837,6 +2837,12 @@
       "subject": "DelegatedHumanControlRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#648",
       "locator": "server/delegated-control-routes.ts#handleDelegatedControlRoute; docs/decisions/delegated-human-control.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DelegatedHumanControlRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1107",
+      "locator": "server/delegated-approvals.ts#assertParentRoutedApproval; https://github.com/Sannrox/aldunis-code/issues/1107",
       "confidence": 1.0
     },
     {
