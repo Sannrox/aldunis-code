@@ -3140,6 +3140,8 @@ test("turn index follows apply, reload, in-place completion, and compaction", as
     sessionId: "child-session",
     costUsd: 0,
   });
+  // Exercise a successful lazy history rewrite without removing either thread.
+  await store.enforceRetention(new Date(0));
 
   const live = await store.inspect();
   const liveSnapshot = await store.inspectWorkbenchProjection();
@@ -3568,17 +3570,25 @@ test("history serialization bounds batches and writes an oversized envelope dire
       },
     },
   ];
+  let yielded = 0;
+  const stream = function* () {
+    for (const envelope of envelopes) {
+      yielded += 1;
+      yield envelope;
+    }
+  };
   await writeEventHistory(
     {
       async writeFile(data) {
         writes.push(data);
       },
     },
-    envelopes,
+    stream(),
     300,
   );
 
   assert.equal(writes.at(-1), "\n");
+  assert.equal(yielded, envelopes.length);
   assert.ok(
     writes.slice(0, -1).every((write) => Buffer.byteLength(write) <= 300 || !write.endsWith("\n")),
   );
