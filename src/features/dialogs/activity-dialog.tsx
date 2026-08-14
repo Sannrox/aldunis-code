@@ -8,6 +8,7 @@ import { OverlayDialog } from "./overlay-dialog";
 export type ActivityBucket = "attention" | "running" | "completed" | "idle";
 export type ActivityFilter = "all" | ActivityBucket;
 export type ActivitySelectionAction = "open" | "review_changes";
+export const MAX_ACTIVITY_ROWS = 100;
 
 export const ACTIVITY_FILTERS: ActivityFilter[] = [
   "all",
@@ -27,21 +28,31 @@ export function activityBucket(conversation: ConversationSummary): ActivityBucke
   return "idle";
 }
 
-export function activityCounts(conversations: ConversationSummary[]): Record<ActivityBucket, number> {
-  return conversations.reduce((counts, conversation) => {
-    const bucket = activityBucket(conversation);
-    counts[bucket] += 1;
-    return counts;
-  }, { attention: 0, running: 0, completed: 0, idle: 0 });
+export function activityCounts(
+  conversations: ConversationSummary[],
+): Record<ActivityBucket, number> {
+  return conversations.reduce(
+    (counts, conversation) => {
+      const bucket = activityBucket(conversation);
+      counts[bucket] += 1;
+      return counts;
+    },
+    { attention: 0, running: 0, completed: 0, idle: 0 },
+  );
 }
 
 export function activityFilterLabel(filter: ActivityFilter): string {
   switch (filter) {
-    case "all": return "All";
-    case "attention": return "Attention";
-    case "running": return "Running";
-    case "completed": return "Completed";
-    case "idle": return "Idle";
+    case "all":
+      return "All";
+    case "attention":
+      return "Attention";
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "idle":
+      return "Idle";
   }
 }
 
@@ -62,25 +73,39 @@ export function filterActivity(
   return conversations.filter((conversation) => activityBucket(conversation) === filter);
 }
 
-export function activityStatusLabel(status: ThreadStatus | undefined, settledAt?: string | null): string {
+export function activityStatusLabel(
+  status: ThreadStatus | undefined,
+  settledAt?: string | null,
+): string {
   if (settledAt || status === "completed") return "Completed";
   switch (status) {
-    case "pending_approval": return "Approval needed";
-    case "awaiting_input": return "Input needed";
-    case "running": return "Running";
-    case "failed": return "Failed";
-    default: return "Idle";
+    case "pending_approval":
+      return "Approval needed";
+    case "awaiting_input":
+      return "Input needed";
+    case "running":
+      return "Running";
+    case "failed":
+      return "Failed";
+    default:
+      return "Idle";
   }
 }
 
 export function activityNextActionLabel(conversation: ConversationSummary): string {
   switch (conversation.status) {
-    case "pending_approval": return "Resolve approval";
-    case "awaiting_input": return "Answer input";
-    case "running": return "Monitor run";
-    case "failed": return "Inspect failure";
-    case "completed": return "Review outcome";
-    default: return conversation.settledAt ? "Review outcome" : "Resume conversation";
+    case "pending_approval":
+      return "Resolve approval";
+    case "awaiting_input":
+      return "Answer input";
+    case "running":
+      return "Monitor run";
+    case "failed":
+      return "Inspect failure";
+    case "completed":
+      return "Review outcome";
+    default:
+      return conversation.settledAt ? "Review outcome" : "Resume conversation";
   }
 }
 
@@ -96,12 +121,66 @@ const ACTIVITY_ORDER: Record<ActivityBucket, number> = {
   completed: 3,
 };
 
+function compareActivity(left: ConversationSummary, right: ConversationSummary): number {
+  return (
+    ACTIVITY_ORDER[activityBucket(left)] - ACTIVITY_ORDER[activityBucket(right)] ||
+    (right.statusSince ?? right.updatedAt).localeCompare(left.statusSince ?? left.updatedAt) ||
+    right.id.localeCompare(left.id)
+  );
+}
+
 export function sortActivity(conversations: ConversationSummary[]): ConversationSummary[] {
-  return [...conversations].sort((left, right) => (
-    ACTIVITY_ORDER[activityBucket(left)] - ACTIVITY_ORDER[activityBucket(right)]
-      || (right.statusSince ?? right.updatedAt).localeCompare(left.statusSince ?? left.updatedAt)
-      || right.id.localeCompare(left.id)
-  ));
+  return [...conversations].sort(compareActivity);
+}
+
+export function selectActivityRows(
+  conversations: readonly ConversationSummary[],
+  filter: ActivityFilter,
+  limit = MAX_ACTIVITY_ROWS,
+): { rows: ConversationSummary[]; total: number } {
+  const capacity = Number.isFinite(limit)
+    ? Math.max(0, Math.min(MAX_ACTIVITY_ROWS, Math.floor(limit)))
+    : MAX_ACTIVITY_ROWS;
+  const heap: ConversationSummary[] = [];
+  let total = 0;
+
+  const siftUp = (start: number) => {
+    let index = start;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (compareActivity(heap[parent]!, heap[index]!) >= 0) break;
+      [heap[parent], heap[index]] = [heap[index]!, heap[parent]!];
+      index = parent;
+    }
+  };
+  const siftDown = () => {
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= heap.length) break;
+      const right = left + 1;
+      const worse =
+        right < heap.length && compareActivity(heap[right]!, heap[left]!) > 0 ? right : left;
+      if (compareActivity(heap[index]!, heap[worse]!) >= 0) break;
+      [heap[index], heap[worse]] = [heap[worse]!, heap[index]!];
+      index = worse;
+    }
+  };
+
+  for (const conversation of conversations) {
+    if (filter !== "all" && activityBucket(conversation) !== filter) continue;
+    total += 1;
+    if (capacity === 0) continue;
+    if (heap.length < capacity) {
+      heap.push(conversation);
+      siftUp(heap.length - 1);
+    } else if (compareActivity(conversation, heap[0]!) < 0) {
+      heap[0] = conversation;
+      siftDown();
+    }
+  }
+
+  return { rows: heap.sort(compareActivity), total };
 }
 
 export function ActivityDialog({
@@ -129,19 +208,19 @@ export function ActivityDialog({
         if (active) setConversations(next);
       })
       .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : "Activity could not be loaded.");
+        if (active)
+          setError(cause instanceof Error ? cause.message : "Activity could not be loaded.");
       })
       .finally(() => {
         if (active) setLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [open, refreshKey]);
 
   const counts = useMemo(() => activityCounts(conversations), [conversations]);
-  const ordered = useMemo(
-    () => sortActivity(filterActivity(conversations, filter)),
-    [conversations, filter],
-  );
+  const visible = useMemo(() => selectActivityRows(conversations, filter), [conversations, filter]);
   const select = (conversation: ConversationSummary, action: ActivitySelectionAction) => {
     onSelect(conversation, action);
     onClose();
@@ -153,7 +232,12 @@ export function ActivityDialog({
       <div className="activity-dialog">
         <header className="activity-header">
           <p>Cross-project supervision from the existing local conversation/status projection.</p>
-          <Button type="button" size="sm" onClick={() => setRefreshKey((value) => value + 1)} disabled={loading}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setRefreshKey((value) => value + 1)}
+            disabled={loading}
+          >
             {loading ? "Refreshing…" : "Refresh"}
           </Button>
         </header>
@@ -173,62 +257,82 @@ export function ActivityDialog({
             );
           })}
         </div>
-        {loading && <p className="activity-note" role="status">Reading local activity…</p>}
-        {error && <p className="activity-error" role="alert">{error}</p>}
-        {!loading && !error && ordered.length === 0 && (
+        {loading && (
+          <p className="activity-note" role="status">
+            Reading local activity…
+          </p>
+        )}
+        {error && (
+          <p className="activity-error" role="alert">
+            {error}
+          </p>
+        )}
+        {!loading && !error && visible.rows.length === 0 && (
           <p className="activity-note">
             {filter === "all"
               ? "No conversations are available to supervise."
               : `No ${activityFilterLabel(filter).toLowerCase()} conversations are available.`}
           </p>
         )}
-        {!loading && !error && ordered.length > 0 && (
-          <ul className="activity-list" aria-label="Conversation activity">
-            {ordered.map((conversation) => {
-              const status = activityStatusLabel(conversation.status, conversation.settledAt);
-              const bucket = activityBucket(conversation);
-              return (
-                <li key={conversation.id} className="activity-item">
-                  <div className="activity-row">
-                    <span className={`activity-status ${bucket}`} aria-hidden="true">{status}</span>
-                    <span className="activity-copy">
-                      <strong>{conversation.title || "Untitled conversation"}</strong>
-                      <small>
-                        {conversation.projectName ?? "Unknown project"}
-                        {" · "}{providerListLabel(conversation.provider)}
-                        {" · "}{activityWorktreeLabel(conversation.worktree)}
-                      </small>
-                      <span className="activity-next-action">
-                        Next: {activityNextActionLabel(conversation)} · {formatElapsed(conversation.statusSince ?? conversation.updatedAt)}
+        {!loading && !error && visible.rows.length > 0 && (
+          <>
+            {visible.total > visible.rows.length && (
+              <p className="activity-note" role="status">
+                Showing the first {visible.rows.length} of {visible.total} matching conversations.
+              </p>
+            )}
+            <ul className="activity-list" aria-label="Conversation activity">
+              {visible.rows.map((conversation) => {
+                const status = activityStatusLabel(conversation.status, conversation.settledAt);
+                const bucket = activityBucket(conversation);
+                return (
+                  <li key={conversation.id} className="activity-item">
+                    <div className="activity-row">
+                      <span className={`activity-status ${bucket}`} aria-hidden="true">
+                        {status}
                       </span>
-                    </span>
-                    <span className="activity-actions">
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant={bucket === "attention" ? "primary" : "default"}
-                        onClick={() => select(conversation, "open")}
-                        aria-label={`Open conversation ${conversation.title || "Untitled conversation"}: ${status}`}
-                      >
-                        Open
-                      </Button>
-                      {conversation.worktree.trim() && (
+                      <span className="activity-copy">
+                        <strong>{conversation.title || "Untitled conversation"}</strong>
+                        <small>
+                          {conversation.projectName ?? "Unknown project"}
+                          {" · "}
+                          {providerListLabel(conversation.provider)}
+                          {" · "}
+                          {activityWorktreeLabel(conversation.worktree)}
+                        </small>
+                        <span className="activity-next-action">
+                          Next: {activityNextActionLabel(conversation)} ·{" "}
+                          {formatElapsed(conversation.statusSince ?? conversation.updatedAt)}
+                        </span>
+                      </span>
+                      <span className="activity-actions">
                         <Button
                           type="button"
                           size="xs"
-                          variant="ghost"
-                          onClick={() => select(conversation, "review_changes")}
-                          aria-label={`Review changes for ${conversation.title || "Untitled conversation"}`}
+                          variant={bucket === "attention" ? "primary" : "default"}
+                          onClick={() => select(conversation, "open")}
+                          aria-label={`Open conversation ${conversation.title || "Untitled conversation"}: ${status}`}
                         >
-                          Review changes
+                          Open
                         </Button>
-                      )}
-                    </span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                        {conversation.worktree.trim() && (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => select(conversation, "review_changes")}
+                            aria-label={`Review changes for ${conversation.title || "Untitled conversation"}`}
+                          >
+                            Review changes
+                          </Button>
+                        )}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
       </div>
     </OverlayDialog>

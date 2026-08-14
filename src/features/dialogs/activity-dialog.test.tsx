@@ -9,11 +9,17 @@ import {
   activityStatusLabel,
   activityWorktreeLabel,
   filterActivity,
+  MAX_ACTIVITY_ROWS,
+  selectActivityRows,
   sortActivity,
 } from "./activity-dialog";
 import type { ConversationSummary } from "../../types";
 
-function conversation(id: string, status: ConversationSummary["status"], settledAt: string | null = null): ConversationSummary {
+function conversation(
+  id: string,
+  status: ConversationSummary["status"],
+  settledAt: string | null = null,
+): ConversationSummary {
   return {
     id,
     projectId: "project-1",
@@ -42,8 +48,15 @@ test("activity groups expose attention, running, completed, and idle work", () =
 });
 
 test("activity sorting puts attention before running and settled work", () => {
-  const items = [conversation("done", "completed"), conversation("running", "running"), conversation("failed", "failed")];
-  assert.deepEqual(sortActivity(items).map((item) => item.id), ["failed", "running", "done"]);
+  const items = [
+    conversation("done", "completed"),
+    conversation("running", "running"),
+    conversation("failed", "failed"),
+  ];
+  assert.deepEqual(
+    sortActivity(items).map((item) => item.id),
+    ["failed", "running", "done"],
+  );
 });
 
 test("activity filters preserve the full list while narrowing by status", () => {
@@ -52,14 +65,62 @@ test("activity filters preserve the full list while narrowing by status", () => 
     conversation("running", "running"),
     conversation("idle", "idle"),
   ];
-  assert.deepEqual(filterActivity(items, "all").map(({ id }) => id), ["approval", "running", "idle"]);
-  assert.deepEqual(filterActivity(items, "attention").map(({ id }) => id), ["approval"]);
+  assert.deepEqual(
+    filterActivity(items, "all").map(({ id }) => id),
+    ["approval", "running", "idle"],
+  );
+  assert.deepEqual(
+    filterActivity(items, "attention").map(({ id }) => id),
+    ["approval"],
+  );
   assert.equal(activityFilterCount(items, "running"), 1);
   assert.equal(activityFilterLabel("completed"), "Completed");
 });
 
+test("activity row selection retains only the highest-priority bounded page", () => {
+  const items = Array.from({ length: 1_000 }, (_, index) =>
+    conversation(`item-${index.toString().padStart(4, "0")}`, index % 3 === 0 ? "failed" : "idle"),
+  );
+  const inventory = new Proxy(items, {
+    get(target, property, receiver) {
+      if (
+        property === "filter" ||
+        property === "map" ||
+        property === "slice" ||
+        property === "sort"
+      ) {
+        throw new Error(`activity inventory must not call ${property}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const selected = selectActivityRows(inventory, "all");
+  const expected = sortActivity(items).slice(0, MAX_ACTIVITY_ROWS);
+
+  assert.equal(selected.total, items.length);
+  assert.equal(selected.rows.length, MAX_ACTIVITY_ROWS);
+  assert.deepEqual(
+    selected.rows.map(({ id }) => id),
+    expected.map(({ id }) => id),
+  );
+  assert.deepEqual(
+    items.map(({ id }) => id),
+    Array.from({ length: 1_000 }, (_, index) => `item-${index.toString().padStart(4, "0")}`),
+  );
+
+  const attention = selectActivityRows(inventory, "attention", 7);
+  assert.equal(attention.total, 334);
+  assert.equal(attention.rows.length, 7);
+  assert.deepEqual(selectActivityRows(inventory, "all", 0), { rows: [], total: items.length });
+  assert.equal(selectActivityRows(inventory, "all", 10_000).rows.length, MAX_ACTIVITY_ROWS);
+});
+
 test("activity rows explain the next bounded operator action", () => {
-  assert.equal(activityNextActionLabel(conversation("approval", "pending_approval")), "Resolve approval");
+  assert.equal(
+    activityNextActionLabel(conversation("approval", "pending_approval")),
+    "Resolve approval",
+  );
   assert.equal(activityNextActionLabel(conversation("input", "awaiting_input")), "Answer input");
   assert.equal(activityNextActionLabel(conversation("failed", "failed")), "Inspect failure");
   assert.equal(activityNextActionLabel(conversation("idle", "idle")), "Resume conversation");
