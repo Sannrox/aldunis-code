@@ -127,7 +127,7 @@
     },
     {
       "name": "ConversationAutomationFire",
-      "description": "A metadata-only durable identity for one scheduled or explicitly requested conversation automation attempt; it records idempotency, bound turn and provider-run identities, bounded outcome, and explicit unknown-after-restart state without raw provider output, while automation-list projection selects latest fires in one live-state ledger pass and clones only selected records."
+      "description": "A metadata-only durable identity for one scheduled or explicitly requested conversation automation attempt; it records idempotency, bound turn and provider-run identities, bounded outcome, and explicit unknown-after-restart state without raw provider output, while automation-list projection selects latest fires in one live-state ledger pass and clones only selected records and startup recovery indexes only turns bound to started fires."
     },
     {
       "name": "AutonomyRun",
@@ -2007,8 +2007,8 @@
     },
     {
       "subject": "ConversationAutomationFire",
-      "source": "GitHub Issues Sannrox/aldunis-code#448 and #805",
-      "locator": "server/automations.ts#AutomationFire; server/state.ts#automation_fire_saved; server/state.ts#latestAutomationFires; https://github.com/Sannrox/aldunis-code/issues/805",
+      "source": "GitHub Issues Sannrox/aldunis-code#448, #805, and #1115",
+      "locator": "server/automations.ts#AutomationFire; server/state.ts#automation_fire_saved; server/state.ts#latestAutomationFires; server/state.ts#LocalStateStore.reconcileAutomationFires; https://github.com/Sannrox/aldunis-code/issues/805; https://github.com/Sannrox/aldunis-code/issues/1115",
       "confidence": 1.0
     },
     {
