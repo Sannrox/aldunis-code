@@ -7,18 +7,34 @@ export interface DelegatedInputProjection {
 }
 
 export function projectDelegatedInputs(projection: StateProjection): DelegatedInputProjection[] {
-  const relationshipByChild = new Map(
-    projection.delegatedRelationships.map((relationship) => [
-      relationship.childThreadId,
-      relationship,
-    ]),
+  const requests = projection.inputRequests.filter(
+    (request) =>
+      request.state === "pending" ||
+      (request.responseMode === "native_resume" && request.resumeState === "unavailable"),
   );
-  const turnById = new Map(projection.turns.map((turn) => [turn.id, turn]));
-  return projection.inputRequests
+  if (requests.length === 0) return [];
+
+  const remainingTurnIds = new Set(requests.map((request) => request.turnId));
+  const remainingChildIds = new Set(requests.map((request) => request.threadId));
+  const turnById = new Map<string, StateProjection["turns"][number]>();
+  const relationshipByChild = new Map<string, StateProjection["delegatedRelationships"][number]>();
+  for (let index = projection.turns.length - 1; index >= 0; index -= 1) {
+    const turn = projection.turns[index];
+    if (!remainingTurnIds.delete(turn.id)) continue;
+    turnById.set(turn.id, turn);
+    if (remainingTurnIds.size === 0) break;
+  }
+  for (let index = projection.delegatedRelationships.length - 1; index >= 0; index -= 1) {
+    const relationship = projection.delegatedRelationships[index];
+    if (!remainingChildIds.delete(relationship.childThreadId)) continue;
+    relationshipByChild.set(relationship.childThreadId, relationship);
+    if (remainingChildIds.size === 0) break;
+  }
+
+  return requests
     .flatMap((request) => {
       const unavailableNativeResume =
         request.responseMode === "native_resume" && request.resumeState === "unavailable";
-      if (request.state !== "pending" && !unavailableNativeResume) return [];
       const relationship = relationshipByChild.get(request.threadId);
       const candidate = turnById.get(request.turnId);
       const turn =
