@@ -1807,7 +1807,7 @@ interface EventHistoryWriteHandle {
 
 export async function writeEventHistory(
   handle: EventHistoryWriteHandle,
-  envelopes: EventEnvelope[],
+  envelopes: Iterable<EventEnvelope>,
   maxBufferBytes = MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES,
 ): Promise<void> {
   let buffered: string[] = [];
@@ -1818,9 +1818,11 @@ export async function writeEventHistory(
     buffered = [];
     bufferedBytes = 0;
   };
-  for (const [index, envelope] of envelopes.entries()) {
+  let index = 0;
+  for (const envelope of envelopes) {
     const serialized = JSON.stringify(envelope);
-    assertEventEnvelopeSize(serialized, index + 1);
+    index += 1;
+    assertEventEnvelopeSize(serialized, index);
     const lineBytes = Buffer.byteLength(serialized, "utf8") + 1;
     if (lineBytes > maxBufferBytes) {
       await flush();
@@ -2037,7 +2039,7 @@ export class LocalStateStore {
     }
   }
 
-  async #replaceHistory(envelopes: EventEnvelope[]): Promise<void> {
+  async #replaceHistory(envelopes: Iterable<EventEnvelope>): Promise<void> {
     const temporary = join(this.directory, `.events-${randomUUID()}.tmp`);
     try {
       const handle = await open(temporary, "wx", 0o600);
@@ -4794,105 +4796,88 @@ export class LocalStateStore {
           ? left.eventSequence - right.eventSequence
           : left.createdAt.localeCompare(right.createdAt),
       );
-      const events: StateEvent[] = [
-        ...next.projects.map((project): StateEvent => ({ type: "project_saved", project })),
-        ...next.threads.map((thread): StateEvent => ({ type: "thread_saved", thread })),
-        ...next.turns.map((turn): StateEvent => ({ type: "turn_saved", turn })),
-        ...next.delegatedRelationships.map((delegatedRelationship): StateEvent => ({
-          type: "delegated_relationship_saved",
-          delegatedRelationship,
-        })),
-        ...transcriptEvents.map(({ event }) => event),
-        ...next.providerSessions.map((providerSession): StateEvent => ({
-          type: "provider_session_saved",
-          providerSession,
-        })),
-        ...next.checkpoints.map((checkpoint): StateEvent => ({
-          type: "checkpoint_saved",
-          checkpoint,
-        })),
-        ...next.annotations.map((annotation): StateEvent => ({
-          type: "annotation_saved",
-          annotation,
-        })),
-        ...next.fileReviews.map((fileReview): StateEvent => ({
-          type: "file_review_saved",
-          fileReview,
-        })),
-        ...next.conversationDeletions.map((conversationDeletion): StateEvent => ({
-          type: "conversation_deletion_saved",
-          conversationDeletion,
-        })),
-        ...next.forks.map((fork): StateEvent => ({ type: "fork_saved", fork })),
-        ...next.inputRequests.map((inputRequest): StateEvent => ({
-          type: "input_request_saved",
-          inputRequest,
-        })),
-        ...next.inputReceipts.map((inputReceipt): StateEvent => ({
-          type: "input_receipt_saved",
-          inputReceipt,
-        })),
-        ...next.automationFires.map((automationFire): StateEvent => ({
-          type: "automation_fire_saved",
-          automationFire,
-        })),
-        ...next.autonomyRuns.map((autonomyRun): StateEvent => ({
-          type: "autonomy_run_saved",
-          autonomyRun,
-        })),
-        ...next.autonomyTasks.map((autonomyTask): StateEvent => ({
-          type: "autonomy_task_saved",
-          autonomyTask,
-        })),
-        ...next.autonomyFlows.map((autonomyFlow): StateEvent => ({
-          type: "autonomy_flow_saved",
-          autonomyFlow,
-        })),
-        ...next.heartbeatMonitors.map((heartbeatMonitor): StateEvent => ({
-          type: "heartbeat_monitor_saved",
-          heartbeatMonitor,
-        })),
-        ...next.standingOrders.map((standingOrder): StateEvent => ({
-          type: "standing_order_saved",
-          standingOrder,
-        })),
-        ...next.autonomyHooks.map((autonomyHook): StateEvent => ({
-          type: "autonomy_hook_saved",
-          autonomyHook,
-        })),
-      ];
+      const events = function* (): Generator<StateEvent> {
+        for (const project of next.projects) yield { type: "project_saved", project };
+        for (const thread of next.threads) yield { type: "thread_saved", thread };
+        for (const turn of next.turns) yield { type: "turn_saved", turn };
+        for (const delegatedRelationship of next.delegatedRelationships) {
+          yield { type: "delegated_relationship_saved", delegatedRelationship };
+        }
+        for (const { event } of transcriptEvents) yield event;
+        for (const providerSession of next.providerSessions) {
+          yield { type: "provider_session_saved", providerSession };
+        }
+        for (const checkpoint of next.checkpoints) yield { type: "checkpoint_saved", checkpoint };
+        for (const annotation of next.annotations) yield { type: "annotation_saved", annotation };
+        for (const fileReview of next.fileReviews) yield { type: "file_review_saved", fileReview };
+        for (const conversationDeletion of next.conversationDeletions) {
+          yield { type: "conversation_deletion_saved", conversationDeletion };
+        }
+        for (const fork of next.forks) yield { type: "fork_saved", fork };
+        for (const inputRequest of next.inputRequests) {
+          yield { type: "input_request_saved", inputRequest };
+        }
+        for (const inputReceipt of next.inputReceipts) {
+          yield { type: "input_receipt_saved", inputReceipt };
+        }
+        for (const automationFire of next.automationFires) {
+          yield { type: "automation_fire_saved", automationFire };
+        }
+        for (const autonomyRun of next.autonomyRuns) {
+          yield { type: "autonomy_run_saved", autonomyRun };
+        }
+        for (const autonomyTask of next.autonomyTasks) {
+          yield { type: "autonomy_task_saved", autonomyTask };
+        }
+        for (const autonomyFlow of next.autonomyFlows) {
+          yield { type: "autonomy_flow_saved", autonomyFlow };
+        }
+        for (const heartbeatMonitor of next.heartbeatMonitors) {
+          yield { type: "heartbeat_monitor_saved", heartbeatMonitor };
+        }
+        for (const standingOrder of next.standingOrders) {
+          yield { type: "standing_order_saved", standingOrder };
+        }
+        for (const autonomyHook of next.autonomyHooks) {
+          yield { type: "autonomy_hook_saved", autonomyHook };
+        }
+      };
       const rebuilt = emptyProjection();
       const rebuiltTurnsByThread = new Map<string, Turn[]>();
       const rebuiltMessagesByTurn = new Map<string, Map<string, Message>>();
       const rebuiltActivitiesByTurn = new Map<string, Map<string, Activity>>();
       const rebuiltDelegatedChildTurnIds = new Set<string>();
-      const envelopes = events.map((event, index) => {
-        const envelope: EventEnvelope = {
-          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-          sequence: index + 1,
-          id: randomUUID(),
-          recordedAt: new Date().toISOString(),
-          event,
-        };
-        applyEvent(
-          rebuilt,
-          envelope,
-          undefined,
-          rebuiltTurnsByThread,
-          rebuiltMessagesByTurn,
-          rebuiltActivitiesByTurn,
-          rebuiltDelegatedChildTurnIds,
-          true,
-        );
-        return envelope;
-      });
+      const envelopes = function* (): Generator<EventEnvelope> {
+        let index = 0;
+        for (const event of events()) {
+          index += 1;
+          const envelope: EventEnvelope = {
+            schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+            sequence: index,
+            id: randomUUID(),
+            recordedAt: new Date().toISOString(),
+            event,
+          };
+          applyEvent(
+            rebuilt,
+            envelope,
+            undefined,
+            rebuiltTurnsByThread,
+            rebuiltMessagesByTurn,
+            rebuiltActivitiesByTurn,
+            rebuiltDelegatedChildTurnIds,
+            true,
+          );
+          yield envelope;
+        }
+      };
+      await this.#replaceHistory(envelopes());
       rebuildDelegatedTranscriptIndexes(
         rebuilt,
         rebuiltMessagesByTurn,
         rebuiltActivitiesByTurn,
         rebuiltDelegatedChildTurnIds,
       );
-      await this.#replaceHistory(envelopes);
       this.#projection = rebuilt;
       this.#turnsByThread = rebuiltTurnsByThread;
       this.#messagesByTurn = rebuiltMessagesByTurn;
