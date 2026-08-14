@@ -143,15 +143,15 @@
     },
     {
       "name": "HeartbeatMonitor",
-      "description": "A durable periodic-awareness or scheduled-gardener configuration evaluated while the local Aldunis Code host is alive, with a bounded built-in flow, active hours, and a link to its latest AutonomyRun."
+      "description": "A durable periodic-awareness or scheduled-gardener configuration evaluated while the local Aldunis Code host is alive, with a bounded built-in flow, active hours, a link to its latest AutonomyRun, atomic admission within a 256-record per-kind inventory, and bounded newest-page ledger projection with explicit overflow metadata."
     },
     {
       "name": "StandingOrder",
-      "description": "A durable operator-authored bounded preference for autonomy planning. It is informational policy input and never expands provider, filesystem, credential, tenant, or approval authority."
+      "description": "A durable operator-authored bounded preference for autonomy planning, admitted atomically within a 256-record per-kind inventory and projected through a bounded newest page with explicit overflow metadata. It is informational policy input and never expands provider, filesystem, credential, tenant, or approval authority."
     },
     {
       "name": "AutonomyHook",
-      "description": "An internal event-driven reaction from a local lifecycle event to a built-in read-only AutonomyFlow, guarded by enablement and cooldown metadata."
+      "description": "An internal event-driven reaction from a local lifecycle event to a built-in read-only AutonomyFlow, guarded by enablement and cooldown metadata, atomic admission within a 256-record per-kind inventory, and bounded newest-page ledger projection with explicit overflow metadata."
     },
     {
       "name": "MaintenanceFinding",
@@ -2043,20 +2043,20 @@
     },
     {
       "subject": "HeartbeatMonitor",
-      "source": "Aldunis Code autonomy stack",
-      "locator": "server/autonomy.ts#HeartbeatMonitor; server/autonomy-engine.ts#AutonomyScheduler",
+      "source": "Aldunis Code autonomy stack; GitHub Issue Sannrox/aldunis-code#1120",
+      "locator": "server/autonomy.ts#HeartbeatMonitor; server/autonomy-engine.ts#AutonomyScheduler; server/autonomy-engine.ts#AutonomyEngine.snapshot; https://github.com/Sannrox/aldunis-code/issues/1120",
       "confidence": 1.0
     },
     {
       "subject": "StandingOrder",
-      "source": "Aldunis Code autonomy stack",
-      "locator": "server/autonomy.ts#StandingOrder; server/host.ts#/api/autonomy/standing-orders",
+      "source": "Aldunis Code autonomy stack; GitHub Issue Sannrox/aldunis-code#1120",
+      "locator": "server/autonomy.ts#StandingOrder; server/host.ts#/api/autonomy/standing-orders; server/autonomy-engine.ts#AutonomyEngine.snapshot; https://github.com/Sannrox/aldunis-code/issues/1120",
       "confidence": 1.0
     },
     {
       "subject": "AutonomyHook",
-      "source": "Aldunis Code autonomy stack",
-      "locator": "server/autonomy.ts#AutonomyHook; server/autonomy-engine.ts#AutonomyEngine.dispatch",
+      "source": "Aldunis Code autonomy stack; GitHub Issue Sannrox/aldunis-code#1120",
+      "locator": "server/autonomy.ts#AutonomyHook; server/autonomy-engine.ts#AutonomyEngine.dispatch; server/autonomy-engine.ts#AutonomyEngine.snapshot; https://github.com/Sannrox/aldunis-code/issues/1120",
       "confidence": 1.0
     },
     {

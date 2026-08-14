@@ -18,6 +18,7 @@ import {
   digestAutonomyResult,
   HEARTBEAT_AWARENESS_FLOW_ID,
   isHeartbeatDue,
+  MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
   NIGHTLY_GARDENER_FLOW_ID,
   parseAutonomyHook,
   parseHeartbeatMonitor,
@@ -63,6 +64,12 @@ export interface AutonomyStateSnapshot {
   heartbeatMonitors: HeartbeatMonitor[];
   standingOrders: StandingOrder[];
   hooks: AutonomyHook[];
+  configurationInventory: {
+    limitPerKind: number;
+    heartbeatMonitors: { total: number; truncated: boolean };
+    standingOrders: { total: number; truncated: boolean };
+    hooks: { total: number; truncated: boolean };
+  };
 }
 
 interface RunStartInput {
@@ -148,8 +155,9 @@ function selectLatestByUpdatedAt<T extends { updatedAt: string }>(
       index = parent;
     }
   };
-  const replaceWorst = (candidate: RankedItem) => {
-    ranked[0] = candidate;
+  const replaceWorst = (item: T, itemIndex: number) => {
+    ranked[0]!.item = item;
+    ranked[0]!.index = itemIndex;
     let index = 0;
     while (true) {
       const left = index * 2 + 1;
@@ -171,12 +179,67 @@ function selectLatestByUpdatedAt<T extends { updatedAt: string }>(
     }
     const worst = ranked[0]!;
     if (compareUpdatedAtDesc(item, index, worst.item, worst.index) >= 0) continue;
-    replaceWorst(candidate);
+    replaceWorst(item, index);
   }
   ranked.sort((left, right) =>
     compareUpdatedAtDesc(left.item, left.index, right.item, right.index),
   );
   return structuredClone(ranked.map((entry) => entry.item));
+}
+
+function selectLatestByUpdatedAtMatching<T extends { updatedAt: string }>(
+  items: readonly T[],
+  limit: number,
+  predicate: (item: T) => boolean,
+): { items: T[]; total: number } {
+  type RankedItem = { item: T; index: number };
+  const bounded = Math.max(0, limit);
+  const ranked: RankedItem[] = [];
+  let total = 0;
+  const isWorse = (left: RankedItem, right: RankedItem) =>
+    compareUpdatedAtDesc(left.item, left.index, right.item, right.index) > 0;
+  const push = (candidate: RankedItem) => {
+    ranked.push(candidate);
+    let index = ranked.length - 1;
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (!isWorse(ranked[index]!, ranked[parent]!)) break;
+      [ranked[index], ranked[parent]] = [ranked[parent]!, ranked[index]!];
+      index = parent;
+    }
+  };
+  const replaceWorst = (item: T, itemIndex: number) => {
+    ranked[0]!.item = item;
+    ranked[0]!.index = itemIndex;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= ranked.length) return;
+      const right = left + 1;
+      const worseChild =
+        right < ranked.length && isWorse(ranked[right]!, ranked[left]!) ? right : left;
+      if (!isWorse(ranked[worseChild]!, ranked[index]!)) return;
+      [ranked[index], ranked[worseChild]] = [ranked[worseChild]!, ranked[index]!];
+      index = worseChild;
+    }
+  };
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    if (!predicate(item)) continue;
+    total += 1;
+    if (bounded === 0) continue;
+    if (ranked.length < bounded) {
+      push({ item, index });
+      continue;
+    }
+    const worst = ranked[0]!;
+    if (compareUpdatedAtDesc(item, index, worst.item, worst.index) >= 0) continue;
+    replaceWorst(item, index);
+  }
+  ranked.sort((left, right) =>
+    compareUpdatedAtDesc(left.item, left.index, right.item, right.index),
+  );
+  return { items: structuredClone(ranked.map((entry) => entry.item)), total };
 }
 
 function isSafeRelativePath(worktree: string, candidate: string): boolean {
@@ -364,25 +427,58 @@ export class AutonomyEngine {
     );
   }
 
-  async snapshot(limit = 50): Promise<AutonomyStateSnapshot> {
+  async snapshot(
+    limit = 50,
+    options: { visibleProjectIds?: ReadonlySet<string> } = {},
+  ): Promise<AutonomyStateSnapshot> {
     // Inspect the live ledger and copy only the visible page. Periodic refreshes
     // must not clone or sort tens of thousands of retained runs/tasks.
     const projection = await this.state.inspectAutonomyProjection();
+    const visible = (projectId: string | null) =>
+      projectId === null || !options.visibleProjectIds || options.visibleProjectIds.has(projectId);
+    const configurationPage = <
+      T extends { name: string; projectId: string | null; updatedAt: string },
+    >(
+      items: readonly T[],
+    ) => {
+      const page = options.visibleProjectIds
+        ? selectLatestByUpdatedAtMatching(items, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND, (item) =>
+            visible(item.projectId),
+          )
+        : {
+            items: selectLatestByUpdatedAt(items, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND),
+            total: items.length,
+          };
+      page.items.sort((left, right) => left.name.localeCompare(right.name));
+      return page;
+    };
+    const heartbeatPage = configurationPage(projection.heartbeatMonitors);
+    const standingOrderPage = configurationPage(projection.standingOrders);
+    const hookPage = configurationPage(projection.autonomyHooks);
     return {
       runs: selectLatestByUpdatedAt(projection.autonomyRuns, Math.max(1, Math.min(limit, 200))),
       tasks: selectLatestByUpdatedAt(projection.autonomyTasks, 500),
       flows: structuredClone(projection.autonomyFlows).sort((left, right) =>
         left.name.localeCompare(right.name),
       ),
-      heartbeatMonitors: structuredClone(projection.heartbeatMonitors).sort((left, right) =>
-        left.name.localeCompare(right.name),
-      ),
-      standingOrders: structuredClone(projection.standingOrders).sort((left, right) =>
-        left.name.localeCompare(right.name),
-      ),
-      hooks: structuredClone(projection.autonomyHooks).sort((left, right) =>
-        left.name.localeCompare(right.name),
-      ),
+      heartbeatMonitors: heartbeatPage.items,
+      standingOrders: standingOrderPage.items,
+      hooks: hookPage.items,
+      configurationInventory: {
+        limitPerKind: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+        heartbeatMonitors: {
+          total: heartbeatPage.total,
+          truncated: heartbeatPage.total > MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+        },
+        standingOrders: {
+          total: standingOrderPage.total,
+          truncated: standingOrderPage.total > MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+        },
+        hooks: {
+          total: hookPage.total,
+          truncated: hookPage.total > MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+        },
+      },
     };
   }
 

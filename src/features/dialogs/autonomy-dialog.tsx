@@ -111,6 +111,14 @@ export function AutonomyDialog({
   }, [projects, repository]);
 
   const displayedError = error ?? loadError;
+  const visibleInventory =
+    tab === "heartbeats"
+      ? snapshot.configurationInventory?.heartbeatMonitors
+      : tab === "orders"
+        ? snapshot.configurationInventory?.standingOrders
+        : tab === "hooks"
+          ? snapshot.configurationInventory?.hooks
+          : undefined;
 
   const currentProjectLabel =
     projectOptions.find((project) => project.id === projectId)?.label ?? "No project selected";
@@ -144,6 +152,12 @@ export function AutonomyDialog({
             </button>
           ))}
         </nav>
+        {visibleInventory?.truncated && (
+          <p role="status" className="muted">
+            Showing the {snapshot.configurationInventory?.limitPerKind} most recently updated of{" "}
+            {visibleInventory.total} records. Delete visible records to reveal older entries.
+          </p>
+        )}
 
         {tab === "runs" && (
           <div className="stack gap-sm">

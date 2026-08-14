@@ -81,6 +81,12 @@ export interface AutonomyLedger {
     enabled: boolean;
     cooldownSeconds: number;
   }>;
+  configurationInventory?: {
+    limitPerKind: number;
+    heartbeatMonitors: { total: number; truncated: boolean };
+    standingOrders: { total: number; truncated: boolean };
+    hooks: { total: number; truncated: boolean };
+  };
 }
 
 export interface AutonomyLedgerDraft {

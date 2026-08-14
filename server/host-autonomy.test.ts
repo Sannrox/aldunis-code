@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { MAX_AUTONOMY_CONFIGURATIONS_PER_KIND } from "./autonomy.ts";
 import { createLocalHost } from "./host.ts";
 import type { RemoteAuth } from "./remote-auth.ts";
 import { LocalStateStore } from "./state.ts";
@@ -38,11 +39,15 @@ test("autonomy host routes expose the ledger and keep mutations loopback-local",
   try {
     const loaded = await post(current.url, "/api/autonomy/load", {});
     assert.equal(loaded.status, 200);
-    const initial = (await loaded.json()) as { flows: Array<{ id: string }> };
+    const initial = (await loaded.json()) as {
+      flows: Array<{ id: string }>;
+      configurationInventory: { limitPerKind: number };
+    };
     assert.deepEqual(initial.flows.map((flow) => flow.id).sort(), [
       "heartbeat-awareness.v1",
       "maintenance-gardener.v1",
     ]);
+    assert.equal(initial.configurationInventory.limitPerKind, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND);
 
     const order = await post(current.url, "/api/autonomy/standing-orders/create", {
       name: "Keep reports bounded",
