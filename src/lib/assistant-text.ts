@@ -25,3 +25,25 @@ export function joinAssistantTextChunks(parts: readonly string[]): string {
   }
   return output.join("");
 }
+
+/** Append one live provider chunk without rebuilding the complete message. */
+export function appendAssistantTextChunkWithWhitespaceState(
+  current: string,
+  next: string,
+  currentEndsWithWhitespace: boolean,
+): string {
+  if (!next) return current;
+  const needsBlockBreak =
+    current.length > 0 &&
+    !currentEndsWithWhitespace &&
+    /^(#{1,6}(?=\s|#|$)|```|---(?:\s|$))/.test(next);
+  return needsBlockBreak ? `${current}\n${next}` : current + next;
+}
+
+export function appendAssistantTextChunk(current: string, next: string): string {
+  return appendAssistantTextChunkWithWhitespaceState(
+    current,
+    next,
+    current.length > 0 && /\s$/.test(current),
+  );
+}
