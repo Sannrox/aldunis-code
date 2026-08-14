@@ -269,7 +269,7 @@
     },
     {
       "name": "LocalUsageReceipt",
-      "description": "A bounded, provider-reported numeric observation for one Aldunis Code turn. It contains token and optional cost fields only, supports a local Usage report that streams the retained receipt inventory once with auxiliary aggregation proportional to output provider and model cardinality, excludes prompts, tool payloads, repository content, and credentials, and is not billing truth or Chisei usage authority."
+      "description": "A bounded, provider-reported numeric observation for one Aldunis Code turn. It contains token and optional cost fields only, supports a local Usage report that streams the retained receipt inventory once with auxiliary aggregation proportional to output provider and model cardinality, and in managed mode streams only repository-authorized receipts from coherent per-thread turn and receipt indexes with auxiliary authority state bounded by the largest visited thread. It excludes prompts, tool payloads, repository content, and credentials, and is not billing truth or Chisei usage authority."
     },
     {
       "name": "TurnChangeSummary",
@@ -2241,8 +2241,8 @@
     },
     {
       "subject": "LocalUsageReceipt",
-      "source": "Aldunis Code local usage dashboard boundary and Issue #1126",
-      "locator": "src/lib/usage.ts#UsageReceipt; src/lib/usage.ts#buildUsageReport; server/state.ts#usage_receipt_saved; server/host.ts#/api/usage/summary; https://github.com/Sannrox/aldunis-code/issues/1126",
+      "source": "Aldunis Code local usage dashboard boundary and Issues #1126 and #1128",
+      "locator": "src/lib/usage.ts#UsageReceipt; src/lib/usage.ts#buildUsageReport; server/state.ts#usage_receipt_saved; server/host.ts#/api/usage/summary; server/workbench-projection-routes.ts#consumeManagedUsageReceipts; https://github.com/Sannrox/aldunis-code/issues/1126; https://github.com/Sannrox/aldunis-code/issues/1128",
       "confidence": 1.0
     },
     {
