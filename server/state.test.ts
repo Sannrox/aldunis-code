@@ -1375,6 +1375,73 @@ test("corruption and incompatible schemas fail visibly without discarding histor
   );
 });
 
+test("assistant text deltas fail closed without an exact persisted base", async () => {
+  const envelope = (sequence: number, event: Record<string, unknown>) =>
+    JSON.stringify({
+      schemaVersion: 2,
+      sequence,
+      id: `event-${sequence}`,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+      event,
+    });
+  const append = (overrides: Record<string, unknown> = {}) => ({
+    type: "message_text_appended",
+    messageTextAppend: {
+      schemaVersion: 2,
+      id: "message-1",
+      turnId: "turn-1",
+      offset: 4,
+      text: "tail",
+      ...overrides,
+    },
+  });
+
+  const missing = await fixtureStore();
+  await writeFile(
+    join(missing.directory, "events.v1.jsonl"),
+    `${envelope(1, append({ offset: 0 }))}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    () => new LocalStateStore(missing.directory).load(),
+    (error: unknown) => error instanceof LocalStateError && /missing message/.test(error.message),
+  );
+
+  const conflicting = await fixtureStore();
+  const base = {
+    type: "message_saved",
+    message: {
+      schemaVersion: 2,
+      id: "message-1",
+      turnId: "turn-1",
+      role: "assistant",
+      text: "base",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+  await writeFile(
+    join(conflicting.directory, "events.v1.jsonl"),
+    `${envelope(1, base)}\n${envelope(2, append({ offset: 3 }))}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    () => new LocalStateStore(conflicting.directory).load(),
+    (error: unknown) =>
+      error instanceof LocalStateError && /conflicting message/.test(error.message),
+  );
+
+  const invalid = await fixtureStore();
+  await writeFile(
+    join(invalid.directory, "events.v1.jsonl"),
+    `${envelope(1, append({ offset: "4" }))}\n`,
+    "utf8",
+  );
+  await assert.rejects(
+    () => new LocalStateStore(invalid.directory).load(),
+    (error: unknown) => error instanceof LocalStateError && /corrupt at line 1/.test(error.message),
+  );
+});
+
 test("streamed history reports physical corruption lines across blank records", async () => {
   const { directory } = await fixtureStore();
   await writeFile(join(directory, "events.v1.jsonl"), '\n\n{"schemaVersion":1', "utf8");
@@ -3813,6 +3880,120 @@ test("assistant streams soft-checkpoint large growth and flush on demand", async
     (message) => message.turnId === turn.id && message.role === "assistant",
   );
   assert.equal(assistant?.text, `${chunk}\n## Tail`);
+  const finalLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  const appendEvents = finalLog
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).event)
+    .filter((event) => event.type === "message_text_appended");
+  assert.deepEqual(appendEvents, [
+    {
+      type: "message_text_appended",
+      messageTextAppend: {
+        schemaVersion: 2,
+        id: assistant?.id,
+        turnId: turn.id,
+        offset: chunk.length,
+        text: "\n## Tail",
+      },
+    },
+  ]);
+});
+
+test("assistant checkpoints persist one full base followed by ordered text deltas", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Linear checkpoints",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const chunk = "x".repeat(LocalStateStore.ASSISTANT_CHECKPOINT_CHARS);
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: chunk,
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: chunk,
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "tail",
+  });
+  await store.flushPendingAssistantHistory();
+
+  const eventPath = join(directory, "events.v1.jsonl");
+  const events = (await readFile(eventPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line).event);
+  assert.equal(events.filter((event) => event.type === "message_saved").length, 2); // user + base
+  assert.deepEqual(
+    events
+      .filter((event) => event.type === "message_text_appended")
+      .map((event) => ({
+        offset: event.messageTextAppend.offset,
+        text: event.messageTextAppend.text,
+      })),
+    [
+      { offset: chunk.length, text: chunk },
+      { offset: chunk.length * 2, text: "tail" },
+    ],
+  );
+  const expected = `${chunk}${chunk}tail`;
+  const reloadedStore = new LocalStateStore(directory);
+  assert.equal(
+    (await reloadedStore.load()).messages.find(
+      (message) => message.turnId === turn.id && message.role === "assistant",
+    )?.text,
+    expected,
+  );
+  assert.equal(
+    (await reloadedStore.inspectWorkbenchProjection()).conversationHistory.messagesByThread
+      .get(thread.id)
+      ?.find((message) => message.role === "assistant")?.text,
+    expected,
+  );
+
+  await store.enforceRetention(new Date(0));
+  const compacted = await readFile(eventPath, "utf8");
+  assert.doesNotMatch(compacted, /"type":"message_text_appended"/);
+  assert.equal(
+    (await new LocalStateStore(directory).load()).messages.find(
+      (message) => message.turnId === turn.id && message.role === "assistant",
+    )?.text,
+    expected,
+  );
+});
+
+test("closing at an exact assistant checkpoint does not append an empty delta", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Exact checkpoint",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const chunk = "x".repeat(LocalStateStore.ASSISTANT_CHECKPOINT_CHARS);
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: chunk,
+  });
+  await store.flushPendingAssistantHistory();
+
+  const log = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.doesNotMatch(log, /"type":"message_text_appended"/);
+  assert.equal(
+    (await new LocalStateStore(directory).load()).messages.find(
+      (message) => message.turnId === turn.id && message.role === "assistant",
+    )?.text,
+    chunk,
+  );
 });
 
 test("coalesceConsecutiveAssistantMessages merges tokens and keeps tool splits", () => {
