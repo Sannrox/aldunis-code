@@ -6,6 +6,7 @@ import {
   filterManagedUsageReceipts,
   filterManagedWorkbenchListProjection,
   handleWorkbenchProjectionRoute,
+  selectNewestThreadMatches,
 } from "./workbench-projection-routes.ts";
 import { LocalStateError, type StateProjection } from "./state.ts";
 
@@ -863,6 +864,33 @@ test("search enforces archive scope and managed visibility", async () => {
   );
 });
 
+test("search retains only the newest bounded page without copying the match set", () => {
+  const records = Array.from({ length: 100 }, (_, index) => ({
+    id: `thread-${index}`,
+    updatedAt: index < 4 ? "000" : String(index).padStart(3, "0"),
+  }));
+  const guarded = new Proxy(records, {
+    get(target, property, receiver) {
+      if (["filter", "map", "slice", "sort", Symbol.iterator].includes(property)) {
+        throw new Error(`full thread inventory operation ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const bounded = selectNewestThreadMatches(guarded, () => true, 3);
+  assert.equal(bounded.peakRetained, 3);
+  assert.deepEqual(
+    bounded.threads.map((thread) => thread.id),
+    ["thread-99", "thread-98", "thread-97"],
+  );
+  assert.deepEqual(
+    selectNewestThreadMatches(records.slice(0, 4), () => true, 3).threads.map(
+      (thread) => thread.id,
+    ),
+    ["thread-0", "thread-1", "thread-2"],
+  );
+});
+
 test("managed search does not traverse unrelated projection collections", async () => {
   const currentProjection = projection();
   const searchProjection = new Proxy(currentProjection, {
@@ -897,5 +925,58 @@ test("managed search does not traverse unrelated projection collections", async 
   assert.deepEqual(
     value?.threads.map((thread) => thread.id),
     ["active", "archived"],
+  );
+});
+
+test("managed search filters authority and query before retaining its bounded page", async () => {
+  const currentProjection = projection();
+  const template = currentProjection.threads[0]!;
+  const hidden = Array.from({ length: 60 }, (_, index) => ({
+    ...template,
+    id: `hidden-${index}`,
+    projectId: "p2",
+    title: "target hidden",
+    updatedAt: `z-${String(index).padStart(3, "0")}`,
+  }));
+  const nonmatching = Array.from({ length: 55 }, (_, index) => ({
+    ...template,
+    id: `nonmatching-${index}`,
+    title: "other",
+    updatedAt: `y-${String(index).padStart(3, "0")}`,
+  }));
+  const matching = [
+    { ...template, id: "target-newer", title: "target", updatedAt: "b" },
+    { ...template, id: "target-older", title: "target", updatedAt: "a" },
+  ];
+  currentProjection.threads = new Proxy([...hidden, ...nonmatching, ...matching], {
+    get(target, property, receiver) {
+      if (["filter", "map", "slice", "sort", Symbol.iterator].includes(property)) {
+        throw new Error(`route copied full thread inventory with ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  let value: { threads: Array<{ id: string }> } | undefined;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/search",
+    request,
+    response,
+    context({
+      readJson: async () => ({ query: "target", archived: "include" }),
+      state: { inspect: async () => currentProjection },
+      managedHost: {
+        repositoryForRoot: (root: string) => {
+          if (root !== "/alpha") throw new Error("outside catalogue");
+          return {};
+        },
+      },
+      sendJson: (_response: ServerResponse, _status: number, body: unknown) => {
+        value = body as { threads: Array<{ id: string }> };
+      },
+    }) as never,
+  );
+  assert.deepEqual(
+    value?.threads.map((thread) => thread.id),
+    ["target-newer", "target-older"],
   );
 });
