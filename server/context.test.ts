@@ -283,7 +283,7 @@ test("file discovery is repository-scoped and hides protected names", async () =
   assert.equal(files.includes("api-key.config.js"), true);
 });
 
-test("filename search streams a globally ranked inventory beyond 4 MiB", async () => {
+test("bounded filename and context-package projections stream beyond 4 MiB", async () => {
   const root = await mkdtemp(join(tmpdir(), "aldunis-context-large-search-index-"));
   try {
     await new Promise<void>((resolve, reject) => {
@@ -338,6 +338,12 @@ test("filename search streams a globally ranked inventory beyond 4 MiB", async (
       "match-untracked.ts",
       ...paths.slice(0, 19),
     ]);
+    const assembled = await assembleContextPackage(root, [{ path: ".", kind: "folder" }]);
+    assert.deepEqual(assembled.attachments, []);
+    assert.equal(
+      assembled.entries.find((entry) => entry.omissionReason === "package inspection limit")?.path,
+      "4802 additional files",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -896,6 +902,32 @@ test("remote context assembly does not enumerate provider instruction paths", as
     includeProviderInstructions: false,
   });
   assert.deepEqual(assembled.entries, []);
+});
+
+test("context packages bound provider instruction metadata", async () => {
+  const { root } = await fixture();
+  await Promise.all(
+    Array.from({ length: 101 }, async (_, index) => {
+      const directory = join(root, "instructions", String(index).padStart(3, "0"));
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "AGENTS.md"), "# provider-owned instructions\n");
+    }),
+  );
+  const assembled = await assembleContextPackage(root, []);
+  assert.equal(
+    assembled.entries.filter(
+      (entry) =>
+        entry.source === "provider_managed_instruction" &&
+        entry.omissionReason === "provider-managed effectiveness was not reported",
+    ).length,
+    100,
+  );
+  assert.equal(
+    assembled.entries.find(
+      (entry) => entry.omissionReason === "provider instruction metadata limit",
+    )?.path,
+    "1 additional provider instructions",
+  );
 });
 
 test("visible element references compose as bounded escaped structured context", () => {

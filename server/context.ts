@@ -19,6 +19,7 @@ export const MAX_CONTEXT_PACKAGE_FILES = 100;
 export const MAX_CONTEXT_PACKAGE_BYTES = 2 * 1024 * 1024;
 const CONTEXT_PACKAGE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_CONTEXT_PACKAGE_INSPECTED_FILES = MAX_CONTEXT_PACKAGE_FILES * 2;
+const MAX_CONTEXT_PACKAGE_INSTRUCTION_ENTRIES = MAX_CONTEXT_PACKAGE_FILES;
 export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 export const MAX_SEARCH_INSPECTED_FILES = 1_024;
@@ -454,6 +455,142 @@ function omittedEntry(
   };
 }
 
+interface ContextPackageCandidate {
+  path: string;
+  source: ContextReceiptSource;
+}
+
+function compareContextPackageCandidate(
+  left: ContextPackageCandidate,
+  right: ContextPackageCandidate,
+): number {
+  return left.path.localeCompare(right.path);
+}
+
+function retainEarliestContextCandidate(
+  retained: ContextPackageCandidate[],
+  candidate: ContextPackageCandidate,
+  limit: number,
+): void {
+  if (limit <= 0) return;
+  if (retained.length < limit) {
+    retained.push(candidate);
+    let index = retained.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (compareContextPackageCandidate(retained[parent], retained[index]) >= 0) break;
+      [retained[parent], retained[index]] = [retained[index]!, retained[parent]!];
+      index = parent;
+    }
+    return;
+  }
+  if (compareContextPackageCandidate(candidate, retained[0]!) >= 0) return;
+  retained[0] = candidate;
+  let index = 0;
+  for (;;) {
+    const left = index * 2 + 1;
+    if (left >= retained.length) return;
+    const right = left + 1;
+    const larger =
+      right < retained.length &&
+      compareContextPackageCandidate(retained[right]!, retained[left]!) > 0
+        ? right
+        : left;
+    if (compareContextPackageCandidate(retained[index]!, retained[larger]!) >= 0) return;
+    [retained[index], retained[larger]] = [retained[larger]!, retained[index]!];
+    index = larger;
+  }
+}
+
+async function contextPackageInventory(
+  worktree: string,
+  pins: ReadonlyArray<{ pin: ContextPin; index: number }>,
+  includeProviderInstructions: boolean,
+  signal?: AbortSignal,
+): Promise<{
+  paths: ContextPackageCandidate[];
+  totalPaths: number;
+  availableFiles: Set<string>;
+  matchedFolders: Set<number>;
+  instructions: ContextPackageCandidate[];
+  totalInstructions: number;
+}> {
+  const retained: ContextPackageCandidate[] = [];
+  const instructions: ContextPackageCandidate[] = [];
+  const availableFiles = new Set<string>();
+  const matchedFolders = new Set<number>();
+  const directFiles = new Map(
+    pins.filter(({ pin }) => pin.kind === "file").map(({ pin, index }) => [pin.path, index]),
+  );
+  const folders = pins
+    .filter(({ pin }) => pin.kind === "folder")
+    .map(({ pin, index }) => ({ index, prefix: pin.path === "." ? "" : `${pin.path}/` }));
+  let totalPaths = 0;
+  let totalInstructions = 0;
+  const admit = (path: string, untracked: boolean): void => {
+    if ((untracked && isLocalRuntimePath(path)) || isHidden(path) || isSecretLikePath(path)) {
+      return;
+    }
+    const instruction = isProviderInstruction(path);
+    if (instruction && includeProviderInstructions) {
+      totalInstructions += 1;
+      retainEarliestContextCandidate(
+        instructions,
+        { path, source: "provider_managed_instruction" },
+        MAX_CONTEXT_PACKAGE_INSTRUCTION_ENTRIES,
+      );
+    }
+    const directIndex = directFiles.get(path);
+    if (directIndex !== undefined) availableFiles.add(path);
+    let selectedIndex = instruction ? Number.POSITIVE_INFINITY : (directIndex ?? -1);
+    let source: ContextReceiptSource | null =
+      directIndex !== undefined && !instruction ? "aldunis_attachment" : null;
+    for (const folder of folders) {
+      if (folder.prefix && !path.startsWith(folder.prefix)) continue;
+      matchedFolders.add(folder.index);
+      if (!instruction && folder.index > selectedIndex) {
+        selectedIndex = folder.index;
+        source = "aldunis_folder";
+      }
+    }
+    if (!source) return;
+    totalPaths += 1;
+    retainEarliestContextCandidate(retained, { path, source }, MAX_CONTEXT_PACKAGE_INSPECTED_FILES);
+  };
+  const internalAbort = new AbortController();
+  const inventorySignal = signal
+    ? AbortSignal.any([signal, internalAbort.signal])
+    : internalAbort.signal;
+  const tasks = [
+    streamRepositoryPaths(worktree, ["ls-files", "--cached", "-z"], false, admit, inventorySignal),
+    streamRepositoryPaths(
+      worktree,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      true,
+      admit,
+      inventorySignal,
+    ),
+  ];
+  try {
+    await Promise.all(tasks);
+  } catch (error) {
+    internalAbort.abort();
+    await Promise.allSettled(tasks);
+    signal?.throwIfAborted();
+    throw error;
+  } finally {
+    internalAbort.abort();
+  }
+  return {
+    paths: retained.sort(compareContextPackageCandidate),
+    totalPaths,
+    availableFiles,
+    matchedFolders,
+    instructions: instructions.sort(compareContextPackageCandidate),
+    totalInstructions,
+  };
+}
+
 /**
  * Resolve explicit file/folder pins through Git's tracked + non-ignored view.
  * Content is returned only for immediate prompt assembly; receipts retain
@@ -470,18 +607,10 @@ export async function assembleContextPackage(
     kind: pin.kind,
   }));
   const uniquePins = [...new Map(pins.map((pin) => [`${pin.kind}:${pin.path}`, pin])).values()];
-  const available = await repositoryPaths(worktree, options.signal);
-  const availableSet = new Set(available);
-  const selected = new Map<string, ContextReceiptSource>();
   const entries: ContextReceiptEntry[] = [];
-
-  for (const pin of uniquePins) {
-    const isUntrackedRuntimeFile =
-      pin.kind === "file" && isLocalRuntimePath(pin.path) && !availableSet.has(pin.path);
-    if (
-      pin.path !== "." &&
-      (isSecretLikePath(pin.path) || isUntrackedRuntimeFile || isHidden(pin.path))
-    ) {
+  const inventoryPins: Array<{ pin: ContextPin; index: number }> = [];
+  for (const [index, pin] of uniquePins.entries()) {
+    if (pin.path !== "." && (isSecretLikePath(pin.path) || isHidden(pin.path))) {
       entries.push(
         omittedEntry(
           pin.path,
@@ -504,12 +633,18 @@ export async function assembleContextPackage(
       }
       continue;
     }
+    inventoryPins.push({ pin, index });
+  }
+  const inventory = await contextPackageInventory(
+    worktree,
+    inventoryPins,
+    options.includeProviderInstructions !== false,
+    options.signal,
+  );
+  const composerCandidates: ContextPackageCandidate[] = [];
+  for (const { pin, index } of inventoryPins) {
     if (pin.kind === "folder") {
-      const prefix = `${pin.path}/`;
-      const matches =
-        pin.path === "." ? available : available.filter((path) => path.startsWith(prefix));
-      const attachableMatches = matches.filter((path) => !isProviderInstruction(path));
-      if (matches.length === 0) {
+      if (!inventory.matchedFolders.has(index)) {
         entries.push(
           omittedEntry(
             pin.path,
@@ -520,32 +655,34 @@ export async function assembleContextPackage(
         );
         continue;
       }
-      for (const path of attachableMatches) selected.set(path, "aldunis_folder");
       continue;
     }
-    if (!availableSet.has(pin.path)) {
+    if (!inventory.availableFiles.has(pin.path)) {
       // Host-staged composer images are intentionally gitignored so screenshots
       // cannot be `git add -A`'d by accident, but remain explicit attach targets.
       if (pin.kind === "file" && isComposerAttachmentPath(pin.path)) {
-        selected.set(pin.path, "aldunis_attachment");
+        composerCandidates.push({ path: pin.path, source: "aldunis_attachment" });
         continue;
       }
       entries.push(
         omittedEntry(
           pin.path,
           "aldunis_attachment",
-          "file is ignored, missing, or outside the repository",
+          isLocalRuntimePath(pin.path)
+            ? "ignored, secret-like, or local runtime path"
+            : "file is ignored, missing, or outside the repository",
         ),
       );
-      continue;
     }
-    selected.set(pin.path, "aldunis_attachment");
   }
 
   const attachments: ContextAttachment[] = [];
   let totalBytes = 0;
   let inspectedBytes = 0;
-  const paths = [...selected].sort(([left], [right]) => left.localeCompare(right));
+  const totalPaths = inventory.totalPaths + composerCandidates.length;
+  const paths = [...inventory.paths, ...composerCandidates]
+    .sort(compareContextPackageCandidate)
+    .slice(0, MAX_CONTEXT_PACKAGE_INSPECTED_FILES);
   let pathIndex = 0;
   for (
     ;
@@ -554,7 +691,7 @@ export async function assembleContextPackage(
   ) {
     options.signal?.throwIfAborted();
     if (attachments.length >= MAX_CONTEXT_PACKAGE_FILES) break;
-    const [path, source] = paths[pathIndex];
+    const { path, source } = paths[pathIndex];
     const direct = await lstat(join(worktree, path)).catch(() => null);
     if (!direct) {
       entries.push(omittedEntry(path, source, "file changed or disappeared during resolution"));
@@ -625,25 +762,19 @@ export async function assembleContextPackage(
     });
     totalBytes += bytes.length;
   }
-  if (pathIndex < paths.length) {
+  if (pathIndex < totalPaths) {
     const limit =
       attachments.length >= MAX_CONTEXT_PACKAGE_FILES
         ? "package file limit"
         : "package inspection limit";
     entries.push(
-      omittedEntry(
-        `${paths.length - pathIndex} additional files`,
-        "aldunis_folder",
-        limit,
-        "folder",
-      ),
+      omittedEntry(`${totalPaths - pathIndex} additional files`, "aldunis_folder", limit, "folder"),
     );
   }
 
   if (options.includeProviderInstructions !== false) {
     options.signal?.throwIfAborted();
-    for (const path of available.filter(isProviderInstruction)) {
-      if (selected.has(path)) continue;
+    for (const { path } of inventory.instructions) {
       entries.push({
         path,
         type: "instruction",
@@ -653,6 +784,16 @@ export async function assembleContextPackage(
         digest: null,
         omissionReason: "provider-managed effectiveness was not reported",
       });
+    }
+    if (inventory.totalInstructions > inventory.instructions.length) {
+      entries.push(
+        omittedEntry(
+          `${inventory.totalInstructions - inventory.instructions.length} additional provider instructions`,
+          "provider_managed_instruction",
+          "provider instruction metadata limit",
+          "instruction",
+        ),
+      );
     }
   }
   const orderedEntries = entries.sort((left, right) => left.path.localeCompare(right.path));
@@ -803,7 +944,7 @@ async function inspectRepositoryFiles(
   return files;
 }
 
-async function streamRepositorySearchPaths(
+async function streamRepositoryPaths(
   worktree: string,
   args: string[],
   untracked: boolean,
@@ -919,14 +1060,8 @@ export async function searchRepositoryFiles(
     ? AbortSignal.any([signal, internalAbort.signal])
     : internalAbort.signal;
   const tasks = [
-    streamRepositorySearchPaths(
-      worktree,
-      ["ls-files", "--cached", "-z"],
-      false,
-      admit,
-      inventorySignal,
-    ),
-    streamRepositorySearchPaths(
+    streamRepositoryPaths(worktree, ["ls-files", "--cached", "-z"], false, admit, inventorySignal),
+    streamRepositoryPaths(
       worktree,
       ["ls-files", "--others", "--exclude-standard", "-z"],
       true,
