@@ -580,3 +580,37 @@ test("Autonomy snapshots copy only the newest page, not the whole ledger", async
     await cleanup();
   }
 });
+
+test("Autonomy snapshot paging preserves ledger order for equal timestamps", async () => {
+  const { state, engine, cleanup } = await fixture();
+  try {
+    const live = await state.inspect();
+    const runs = ["first", "second", "third"].map((id) => ledgerRun(id, "same"));
+    (live as { autonomyRuns: AutonomyRun[] }).autonomyRuns = runs;
+
+    const snapshot = await engine.snapshot(2);
+    assert.deepEqual(
+      snapshot.runs.map((run) => run.id),
+      ["first", "second"],
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy snapshot paging selects newest records from an updated ledger", async () => {
+  const { state, engine, cleanup } = await fixture();
+  try {
+    const live = await state.inspect();
+    const runs = [ledgerRun("newest", "t3"), ledgerRun("oldest", "t1"), ledgerRun("middle", "t2")];
+    (live as { autonomyRuns: AutonomyRun[] }).autonomyRuns = runs;
+
+    const snapshot = await engine.snapshot(2);
+    assert.deepEqual(
+      snapshot.runs.map((run) => run.id),
+      ["newest", "middle"],
+    );
+  } finally {
+    await cleanup();
+  }
+});
