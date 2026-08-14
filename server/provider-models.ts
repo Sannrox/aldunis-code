@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { Stats } from "node:fs";
 import {
   chmod,
@@ -34,6 +34,8 @@ const MAX_PROBE_PREPARATION_MS = 5_000;
 const MAX_ADAPTER_MODEL_DISCOVERY_MS = 13_000;
 const PROBE_INDEX_RESERVE_MS = 1_000;
 const PROBE_COPY_BUFFER_BYTES = 256 * 1024;
+const MAX_PROBE_PATH_BYTES = 64 * 1024;
+const MAX_PROBE_STDERR_BYTES = 64 * 1024;
 const PROBE_SENSITIVE_PATH =
   /(^|\/)(\.env(?:\..*)?|\.npmrc|\.netrc|credentials(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:key|pem|p12|pfx))$/i;
 const BULK_PROBE_DIRECTORIES = new Set([
@@ -290,46 +292,11 @@ async function probeTreeContext(source: string, deadline: number): Promise<Probe
       branchName: "probe",
     };
   }
-  const { stdout } = await execFileAsync("git", ["-C", source, "ls-files", "-s", "-z"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: remainingProbeTime(deadline),
-  });
   const trackedPaths = new Set<string>();
   const submoduleDirectories = new Set<string>();
-  for (const record of stdout.split("\0").filter(Boolean)) {
-    const separator = record.indexOf("\t");
-    if (separator === -1) {
-      trackedPaths.add(record);
-      continue;
-    }
-    const metadata = record.slice(0, separator);
-    const path = record.slice(separator + 1);
-    trackedPaths.add(path);
-    if (metadata.startsWith("160000 ")) submoduleDirectories.add(path);
-  }
   const trackedDirectories = new Set<string>();
-  for (const trackedPath of trackedPaths) {
-    const parts = trackedPath.split("/");
-    for (let index = 1; index < parts.length; index += 1) {
-      trackedDirectories.add(parts.slice(0, index).join("/"));
-    }
-  }
-  const { stdout: untrackedOutput } = await execFileAsync(
-    "git",
-    ["-C", source, "ls-files", "--others", "--exclude-standard", "-z"],
-    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: remainingProbeTime(deadline) },
-  );
-  const allowedUntrackedPaths = new Set(
-    untrackedOutput.split("\0").filter((path) => path && !PROBE_SENSITIVE_PATH.test(path)),
-  );
+  const allowedUntrackedPaths = new Set<string>();
   const allowedUntrackedDirectories = new Set<string>();
-  for (const untrackedPath of allowedUntrackedPaths) {
-    const parts = untrackedPath.split("/");
-    for (let index = 1; index < parts.length; index += 1) {
-      allowedUntrackedDirectories.add(parts.slice(0, index).join("/"));
-    }
-  }
   let branchName = "probe";
   try {
     const { stdout } = await execFileAsync(
@@ -340,23 +307,6 @@ async function probeTreeContext(source: string, deadline: number): Promise<Probe
     if (/^[A-Za-z0-9._/-]+$/.test(stdout.trim())) branchName = stdout.trim();
   } catch {
     // Detached HEADs retain the synthetic probe branch.
-  }
-  for (const submodule of submoduleDirectories) {
-    const childRoot = join(source, ...submodule.split("/"));
-    try {
-      const child = await probeTreeContext(childRoot, deadline);
-      if (child.allowNonGitFiles) continue;
-      const prefix = `${submodule}/`;
-      for (const path of child.trackedPaths) trackedPaths.add(`${prefix}${path}`);
-      for (const path of child.trackedDirectories) trackedDirectories.add(`${prefix}${path}`);
-      for (const path of child.submoduleDirectories) submoduleDirectories.add(`${prefix}${path}`);
-      for (const path of child.allowedUntrackedPaths) allowedUntrackedPaths.add(`${prefix}${path}`);
-      for (const path of child.allowedUntrackedDirectories) {
-        allowedUntrackedDirectories.add(`${prefix}${path}`);
-      }
-    } catch {
-      // An unavailable submodule classification remains an empty submodule snapshot.
-    }
   }
   return {
     source,
@@ -479,6 +429,235 @@ async function copyProbeSymlink(
   const destinationTarget = join(destinationRoot, targetRelative);
   const linkTarget = relative(dirname(destinationPath), destinationTarget) || ".";
   await symlink(linkTarget, destinationPath).catch(() => undefined);
+}
+
+async function streamGitProbePaths(
+  source: string,
+  args: string[],
+  deadline: number,
+  admit: (path: string) => Promise<boolean>,
+): Promise<boolean> {
+  if (Date.now() >= deadline) return false;
+  const child = spawn("git", ["-C", source, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, signal) => resolveExit({ code, signal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  let pending = Buffer.alloc(0);
+  let stoppedEarly = false;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_PROBE_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_PROBE_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, remainingProbeTime(deadline));
+  timeout.unref?.();
+  try {
+    outer: for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        if (end - start > MAX_PROBE_PATH_BYTES) {
+          throw new Error("Provider model probe path exceeded its resource limit.");
+        }
+        if (!(await admit(joined.toString("utf8", start, end)))) {
+          stoppedEarly = true;
+          stop();
+          break outer;
+        }
+        start = end + 1;
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_PROBE_PATH_BYTES) {
+        throw new Error("Provider model probe path exceeded its resource limit.");
+      }
+    }
+    const completion = await exit;
+    if (timedOut) throw new Error("Provider model probe inventory timed out.");
+    if (!stoppedEarly && pending.length > 0) {
+      throw new Error("Git returned an incomplete provider model probe inventory.");
+    }
+    if (!stoppedEarly && completion.code !== 0) {
+      throw new Error(
+        Buffer.concat(stderr, stderrBytes).toString("utf8").trim() ||
+          "Git could not enumerate provider model probe paths.",
+      );
+    }
+    return !stoppedEarly;
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+}
+
+function safeProbePath(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    !path.split("/").some((part) => !part || part === "." || part === "..")
+  );
+}
+
+async function copyGitProbePath(
+  source: string,
+  destination: string,
+  relativePath: string,
+  budget: ProbeCopyBudget,
+  context: ProbeTreeContext,
+  entryCharge: number,
+  allowGitlink: boolean,
+  blockedDirectories: Set<string>,
+): Promise<boolean> {
+  if (budget.truncated || Date.now() >= budget.deadline) {
+    budget.truncated = true;
+    return false;
+  }
+  budget.entries += entryCharge;
+  if (budget.entries > MAX_PROBE_ENTRIES) {
+    budget.truncated = true;
+    return false;
+  }
+  if (!safeProbePath(relativePath) || PROBE_SENSITIVE_PATH.test(relativePath)) return true;
+  const sourcePath = join(source, ...relativePath.split("/"));
+  const destinationPath = join(destination, ...relativePath.split("/"));
+  const stats = await lstat(sourcePath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENAMETOOLONG") return null;
+    throw error;
+  });
+  if (!stats) return true;
+  await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+  if (stats.isSymbolicLink()) {
+    await copyProbeSymlink(sourcePath, destinationPath, context, destination);
+    return true;
+  }
+  if (stats.isDirectory()) {
+    if (!allowGitlink) {
+      blockedDirectories.add(relativePath);
+      await rm(destinationPath, { recursive: true, force: true });
+      return true;
+    }
+    await rm(destinationPath, { recursive: true, force: true });
+    await mkdir(destinationPath, { recursive: true, mode: 0o700 });
+    try {
+      const childContext = await probeTreeContext(sourcePath, budget.deadline);
+      if (!childContext.allowNonGitFiles) {
+        await copyGitProbeWorkingTree(sourcePath, destinationPath, budget, childContext);
+      }
+    } catch {
+      // An unavailable submodule remains an empty submodule snapshot.
+    }
+    return !budget.truncated;
+  }
+  if (!stats.isFile()) {
+    await rm(destinationPath, { recursive: true, force: true });
+    return true;
+  }
+  if (budget.files >= MAX_PROBE_FILES) {
+    budget.truncated = true;
+    return false;
+  }
+  if (budget.bytes + stats.size > MAX_PROBE_BYTES) {
+    budget.truncated = true;
+    return false;
+  }
+  await rm(destinationPath, { recursive: true, force: true });
+  await copyStableProbeFile(sourcePath, destinationPath, stats);
+  budget.files += 1;
+  budget.bytes += stats.size;
+  return true;
+}
+
+async function copyGitProbeWorkingTree(
+  source: string,
+  destination: string,
+  budget: ProbeCopyBudget,
+  context: ProbeTreeContext,
+): Promise<void> {
+  let previousDirectories: string[] = [];
+  const blockedDirectories = new Set<string>();
+  const isBlocked = (path: string) => {
+    const parts = path.split("/");
+    let prefix = "";
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      prefix = prefix ? `${prefix}/${parts[index]}` : parts[index]!;
+      if (blockedDirectories.has(prefix)) return true;
+    }
+    return false;
+  };
+  const admit = (path: string, allowGitlink: boolean) => {
+    const directories = path.split("/").slice(0, -1);
+    let shared = 0;
+    while (
+      shared < previousDirectories.length &&
+      shared < directories.length &&
+      previousDirectories[shared] === directories[shared]
+    ) {
+      shared += 1;
+    }
+    previousDirectories = directories;
+    return copyGitProbePath(
+      source,
+      destination,
+      path,
+      budget,
+      context,
+      1 + directories.length - shared,
+      allowGitlink,
+      blockedDirectories,
+    );
+  };
+  let previousTrackedPath: string | null = null;
+  const trackedComplete = await streamGitProbePaths(
+    source,
+    ["ls-files", "--stage", "-z"],
+    budget.deadline,
+    async (record) => {
+      const separator = record.indexOf("\t");
+      if (separator < 0) throw new Error("Git returned invalid provider model probe metadata.");
+      const metadata = record.slice(0, separator);
+      const match = /^([0-7]{6}) [0-9a-f]+ [0-3]$/.exec(metadata);
+      if (!match) throw new Error("Git returned invalid provider model probe metadata.");
+      const path = record.slice(separator + 1);
+      if (path === previousTrackedPath) return true;
+      previousTrackedPath = path;
+      return admit(path, match[1] === "160000");
+    },
+  );
+  if (!trackedComplete) budget.truncated = true;
+  if (budget.truncated) return;
+  previousDirectories = [];
+  const untrackedComplete = await streamGitProbePaths(
+    source,
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    budget.deadline,
+    (path) => {
+      if (isBlocked(path)) return Promise.resolve(true);
+      return admit(path, false);
+    },
+  );
+  if (!untrackedComplete) budget.truncated = true;
 }
 
 async function copyProbeWorkingTree(
@@ -643,7 +822,18 @@ async function createAcpProbeWorkspace(
       truncated: false,
       deadline: deadline - PROBE_INDEX_RESERVE_MS,
     };
-    await copyProbeWorkingTree(sourceRoot, sessionDirectory, budget, context, "", sessionDirectory);
+    if (context.allowNonGitFiles) {
+      await copyProbeWorkingTree(
+        sourceRoot,
+        sessionDirectory,
+        budget,
+        context,
+        "",
+        sessionDirectory,
+      );
+    } else {
+      await copyGitProbeWorkingTree(sourceRoot, sessionDirectory, budget, context);
+    }
     // A bounded copy may be partial; keep it isolated and object-limited so
     // adapters can still advertise context-free models without seeing secrets.
     if (!budget.truncated) {

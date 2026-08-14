@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   chmod,
   lstat,
@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   rename,
+  rm,
   stat,
   symlink,
   writeFile,
@@ -30,6 +31,39 @@ import {
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 
 const execFileAsync = promisify(execFile);
+
+async function addOversizedTrackedProbeInventory(directory: string): Promise<void> {
+  const empty = join(directory, "empty-probe-blob");
+  await writeFile(empty, "");
+  const { stdout } = await execFileAsync("git", ["hash-object", "-w", empty], {
+    cwd: directory,
+    encoding: "utf8",
+  });
+  const pathPrefix = `corpus/${"x".repeat(61_100)}/`;
+  const pathCount = 1_100;
+  assert.ok(Buffer.byteLength(pathPrefix) * pathCount > 64 * 1024 * 1024);
+  const child = spawn("git", ["update-index", "--index-info"], {
+    cwd: directory,
+    stdio: ["pipe", "ignore", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  for (let index = 0; index < pathCount; index += 1) {
+    const record = `100644 ${stdout.trim()}\t${pathPrefix}file-${String(index).padStart(4, "0")}\n`;
+    if (!child.stdin.write(record)) {
+      await new Promise<void>((resolve) => child.stdin.once("drain", resolve));
+    }
+  }
+  child.stdin.end();
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+  assert.equal(code, 0, stderr);
+}
 
 test("copyStableProbeFile copies the exact admitted regular file", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-acp-probe-copy-"));
@@ -262,13 +296,38 @@ test("adapter model probe admission bounds preparation, queueing, and cleanup", 
 
 test("reviewed adapter models come from a live ACP probe", async () => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-provider-models-"));
+  const submoduleSource = await mkdtemp(join(tmpdir(), "aldunis-provider-models-submodule-"));
+  await execFileAsync("git", ["init", "-q"], { cwd: submoduleSource });
+  await execFileAsync("git", ["config", "user.email", "test@example.com"], {
+    cwd: submoduleSource,
+  });
+  await execFileAsync("git", ["config", "user.name", "Aldunis Test"], {
+    cwd: submoduleSource,
+  });
+  await writeFile(join(submoduleSource, "child.txt"), "submodule context\n");
+  await execFileAsync("git", ["add", "child.txt"], { cwd: submoduleSource });
+  await execFileAsync("git", ["commit", "-qm", "submodule baseline"], {
+    cwd: submoduleSource,
+  });
   await execFileAsync("git", ["init", "-q"], { cwd: directory });
   await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: directory });
   await execFileAsync("git", ["config", "user.name", "Aldunis Test"], { cwd: directory });
   await writeFile(join(directory, ".gitignore"), "ignored.txt\n");
   await writeFile(join(directory, "tracked.txt"), "baseline\n");
-  await execFileAsync("git", ["add", ".gitignore", "tracked.txt"], { cwd: directory });
+  await writeFile(join(directory, "replaced.txt"), "tracked blob\n");
+  await execFileAsync(
+    "git",
+    ["-c", "protocol.file.allow=always", "submodule", "add", "-q", submoduleSource, "module"],
+    { cwd: directory },
+  );
+  await execFileAsync("git", ["add", ".gitignore", "tracked.txt", "replaced.txt"], {
+    cwd: directory,
+  });
   await execFileAsync("git", ["commit", "-qm", "baseline"], { cwd: directory });
+  await addOversizedTrackedProbeInventory(directory);
+  await rm(join(directory, "replaced.txt"));
+  await mkdir(join(directory, "replaced.txt"));
+  await writeFile(join(directory, "replaced.txt", "foreign.txt"), "not parent inventory\n");
   await writeFile(join(directory, "untracked.txt"), "current\n");
   await writeFile(join(directory, "model-config.json"), "current\n");
   await writeFile(join(directory, "ignored.txt"), "secret\n");
@@ -309,6 +368,8 @@ rl.on("line", (line) => {
       && existsSync(join(msg.params.cwd, "untracked.txt"))
       && existsSync(join(msg.params.cwd, "model-config.json"))
       && !existsSync(join(msg.params.cwd, "ignored.txt"))
+      && !existsSync(join(msg.params.cwd, "replaced.txt", "foreign.txt"))
+      && existsSync(join(msg.params.cwd, "module", "child.txt"))
       && existsSync(join(msg.params.cwd, "packages", "app", "config.txt"));
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0", id: msg.id,
