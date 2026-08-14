@@ -39,7 +39,7 @@
     },
     {
       "name": "PermissionMcpBoundary",
-      "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding, retains bounded chunk slices and copies each complete line at most once, applies stdin backpressure while at most eight broker requests are active, and reads each broker decision within the five-minute approval window plus a fixed transport margin and a 64 KiB response ceiling."
+      "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding, retains bounded chunk slices and copies each complete line at most once, applies stdin backpressure while at most eight broker requests are active, serializes JSON-RPC responses through stdout backpressure before admitting later work, and reads each broker decision within the five-minute approval window plus a fixed transport margin and a 64 KiB response ceiling."
     },
     {
       "name": "PermissionBroker",
@@ -305,7 +305,7 @@
     },
     {
       "name": "BrowserAutomationBroker",
-      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, accepts provider JSON-RPC messages within a 1 MiB ceiling while retaining bounded chunk slices and copying each complete line at most once, authenticates one conversation-scoped provider token, streams broker responses within a 2 MiB ceiling, and rejects actions when agent control is disabled or human input has advanced the control epoch."
+      "description": "A host-owned broker that exposes bounded shared-browser MCP operations, accepts provider JSON-RPC messages within a 1 MiB ceiling while retaining bounded chunk slices and copying each complete line at most once, serializes JSON-RPC responses through stdout backpressure before consuming another request, authenticates one conversation-scoped provider token, streams broker responses within a 2 MiB ceiling, and rejects actions when agent control is disabled or human input has advanced the control epoch."
     },
     {
       "name": "PictureInPictureBrowserMirror",
@@ -2200,6 +2200,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "PermissionMcpBoundary",
+      "source": "Aldunis Code Issue #1139 bounded MCP response transport",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1139; server/json-line-writer.mjs; server/permission-mcp.mjs#handle",
+      "confidence": 1.0
+    },
+    {
       "subject": "PermissionBroker",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1105",
       "locator": "server/permission.ts#PermissionBroker; server/provider-control-routes.ts#handleProviderPermissionRequest; https://github.com/Sannrox/aldunis-code/issues/1105",
@@ -2347,6 +2353,12 @@
       "subject": "BrowserAutomationBroker",
       "source": "Aldunis Code Issue #902 bounded browser MCP request framing",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/902; server/browser-mcp.mjs#processInput",
+      "confidence": 1.0
+    },
+    {
+      "subject": "BrowserAutomationBroker",
+      "source": "Aldunis Code Issue #1139 bounded MCP response transport",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1139; server/json-line-writer.mjs; server/browser-mcp.mjs#handle",
       "confidence": 1.0
     },
     {

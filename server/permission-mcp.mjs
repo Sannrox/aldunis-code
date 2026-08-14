@@ -1,6 +1,7 @@
 import process from "node:process";
 import { requestApproval } from "./approval-response.mjs";
 import { readBoundedLines } from "./bounded-line-reader.mjs";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 
 const approvalUrl = process.env.ALDUNIS_APPROVAL_URL;
 const runId = process.env.ALDUNIS_PROVIDER_RUN_ID;
@@ -8,13 +9,11 @@ const token = process.env.ALDUNIS_PROVIDER_RUN_TOKEN;
 const MAX_MESSAGE_BYTES = 1024 * 1024;
 const MAX_ACTIVE_REQUESTS = 8;
 
-function send(value) {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
-}
+const output = new JsonLineWriter(process.stdout);
 
 async function handle(message) {
   if (message.method === "initialize") {
-    send({
+    await output.write({
       jsonrpc: "2.0",
       id: message.id,
       result: {
@@ -26,7 +25,7 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    send({
+    await output.write({
       jsonrpc: "2.0",
       id: message.id,
       result: {
@@ -64,13 +63,13 @@ async function handle(message) {
         }),
       });
       if (!response.ok) throw new Error(result.error ?? "Permission broker failed.");
-      send({
+      await output.write({
         jsonrpc: "2.0",
         id: message.id,
         result: { content: [{ type: "text", text: JSON.stringify(result) }] },
       });
     } catch (error) {
-      send({
+      await output.write({
         jsonrpc: "2.0",
         id: message.id,
         result: {
@@ -90,7 +89,11 @@ async function handle(message) {
     return;
   }
   if (message.id !== undefined) {
-    send({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } });
+    await output.write({
+      jsonrpc: "2.0",
+      id: message.id,
+      error: { code: -32601, message: "Method not found" },
+    });
   }
 }
 
