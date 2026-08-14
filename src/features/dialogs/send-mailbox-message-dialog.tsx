@@ -101,7 +101,7 @@ export function SendMailboxMessageDialog({
   };
 
   return (
-    <OverlayDialog title={MAILBOX_DIALOG_COPY.title} onClose={busy ? () => undefined : onClose}>
+    <OverlayDialog title={MAILBOX_DIALOG_COPY.title} onClose={onClose} dismissible={!busy}>
       {reviewing ? (
         <div className="mailbox-send-dialog">
           <p className="mailbox-send-help">{MAILBOX_DIALOG_COPY.reviewHelp}</p>

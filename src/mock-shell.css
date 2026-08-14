@@ -852,8 +852,11 @@ html, body { height: 100%; }
   color: var(--foreground);
   font: 13px var(--font-mono);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: min(40vh, 280px);
+  overflow-y: auto;
 }
-.mailbox-send-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.mailbox-send-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .mailbox-card {
   margin: 12px 0;
   padding: 10px 12px;

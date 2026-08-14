@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   appendProviderEvent,
   assistantTextFromEvents,
+  composerAcceptsInput,
   filterSelectableWorktrees,
   formatHostLabel,
   formatWorktreeOptionLabel,
@@ -24,6 +25,22 @@ test("provider profile labels stay bound to the selected provider", () => {
   assert.equal(providerProfileDisplayName(profiles, "claude-code", "shiki"), null);
   assert.equal(providerProfileDisplayName(profiles, "shikigami", "shiki"), "Shikigami");
   assert.equal(providerProfileDisplayName(profiles, "codex-cli", "work"), null);
+});
+
+test("composer rejects input when the conversation worktree is missing", () => {
+  const ready = {
+    hasRunnableWorktree: true,
+    conversationWorktreeMissing: false,
+    providerReady: true,
+    runActive: false,
+    historyRestored: true,
+  };
+  assert.equal(composerAcceptsInput(ready), true);
+  assert.equal(composerAcceptsInput({ ...ready, conversationWorktreeMissing: true }), false);
+  assert.equal(composerAcceptsInput({ ...ready, hasRunnableWorktree: false }), false);
+  assert.equal(composerAcceptsInput({ ...ready, providerReady: false }), false);
+  assert.equal(composerAcceptsInput({ ...ready, runActive: true }), false);
+  assert.equal(composerAcceptsInput({ ...ready, historyRestored: false }), false);
 });
 
 test("ready composer copy distinguishes new work from an existing conversation", () => {

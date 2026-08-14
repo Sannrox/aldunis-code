@@ -431,6 +431,8 @@ test("delegated approval cards stay readable in narrow parent panels", () => {
 
 test("mailbox send dialog keeps a usable review textarea", () => {
   assert.match(shellCss, /\.mailbox-send-dialog textarea\s*\{[\s\S]*?min-height:\s*112px/);
+  assert.match(shellCss, /\.mailbox-send-review\s*\{[\s\S]*?overflow-wrap:\s*anywhere/);
+  assert.match(shellCss, /\.mailbox-send-dialog footer\s*\{[\s\S]*?flex-wrap:\s*wrap/);
 });
 
 test("delegated input cards keep bounded full-width answer controls", () => {
