@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   commandPaletteThreadMatches,
@@ -63,4 +66,24 @@ test("command palette retains only the first bounded thread quick actions", () =
   );
   assert.deepEqual(selectCommandPaletteThreads(inventory, "matching", 0), []);
   assert.deepEqual(selectCommandPaletteThreads(inventory, "does-not-exist"), []);
+});
+
+test("command palette empty status stays outside the action listbox", () => {
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "command-palette.tsx"),
+    "utf8",
+  );
+  assert.match(source, /id="command-palette-empty"/);
+  assert.match(source, /className="quick-results-empty"/);
+  assert.match(source, /role="status"/);
+  const listboxIndex = source.indexOf('role="listbox"');
+  const emptyIndex = source.indexOf("No matching actions.");
+  assert.notEqual(listboxIndex, -1);
+  assert.notEqual(emptyIndex, -1);
+  assert.ok(emptyIndex < listboxIndex, "empty status must render before the listbox");
+  assert.doesNotMatch(
+    source.slice(listboxIndex),
+    /No matching actions/,
+    "listbox must not contain the empty-status paragraph",
+  );
 });

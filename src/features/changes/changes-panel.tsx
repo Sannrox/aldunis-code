@@ -324,8 +324,8 @@ export function ChangesPanel({
                       }`}
                 </strong>
                 <textarea
-                  id="review-comment-text"
-                  name="review-comment-text"
+                  id={`${pane}-review-comment-text`}
+                  name={`${pane}-review-comment-text`}
                   autoFocus
                   maxLength={2000}
                   value={commentText}

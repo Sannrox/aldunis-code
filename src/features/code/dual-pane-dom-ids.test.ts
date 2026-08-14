@@ -41,6 +41,33 @@ test("conversation scopes tool activity and composer menu ids by pane", () => {
   }
 });
 
+test("workspace panels scope dual-pane field ids", () => {
+  const files = {
+    "file-browser-panel.tsx": readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../files/file-browser-panel.tsx"),
+      "utf8",
+    ),
+    "preview-panel.tsx": readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../preview/preview-panel.tsx"),
+      "utf8",
+    ),
+    "changes-panel.tsx": readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../changes/changes-panel.tsx"),
+      "utf8",
+    ),
+  };
+
+  assert.match(files["file-browser-panel.tsx"], /id=\{`\$\{pane\}-file-browser-search`\}/);
+  assert.match(files["preview-panel.tsx"], /htmlFor=\{`\$\{pane\}-preview-origin`\}/);
+  assert.match(files["preview-panel.tsx"], /id=\{`\$\{pane\}-preview-origin`\}/);
+  assert.match(files["changes-panel.tsx"], /id=\{`\$\{pane\}-review-comment-text`\}/);
+
+  assert.doesNotMatch(files["file-browser-panel.tsx"], /id="file-browser-search"/);
+  assert.doesNotMatch(files["preview-panel.tsx"], /id="preview-origin"/);
+  assert.doesNotMatch(files["preview-panel.tsx"], /htmlFor="preview-origin"/);
+  assert.doesNotMatch(files["changes-panel.tsx"], /id="review-comment-text"/);
+});
+
 test("collapsed disclosure controls omit aria-controls until the target is mounted", () => {
   // Conditional panels are not in the DOM when closed; pointing aria-controls at a
   // missing id fails accessibility audits and confuses assistive tech.

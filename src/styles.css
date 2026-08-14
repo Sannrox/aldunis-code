@@ -1926,10 +1926,14 @@ select.ui-input {
   font-weight: 500;
 }
 .quick-results small,
-.quick-results > p {
+.quick-results > p,
+.quick-results-empty {
   display: block;
   color: var(--muted-foreground);
   font-size: 12px;
+}
+.quick-results-empty {
+  padding: 10px 16px 6px;
 }
 
 .adapter-settings {

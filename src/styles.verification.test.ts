@@ -466,6 +466,14 @@ test("direct governed correlation remains readable and stacks at narrow widths",
   );
 });
 
+test("quick-result empty status stays readable outside the listbox", () => {
+  assert.match(
+    css,
+    /\.quick-results small,[\s\S]*?\.quick-results-empty\s*\{[^}]*color:\s*var\(--muted-foreground\)/s,
+  );
+  assert.match(css, /\.quick-results-empty\s*\{[^}]*padding:/s);
+});
+
 test("keyboard-active quick results remain visibly highlighted", () => {
   assert.match(
     css,
