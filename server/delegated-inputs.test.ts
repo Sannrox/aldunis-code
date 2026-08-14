@@ -77,6 +77,64 @@ test("delegated inputs project only the exact pending child turn", () => {
   assert.deepEqual(projectDelegatedInputs(stale), []);
 });
 
+test("delegated input projection indexes only candidate turn identities", () => {
+  const state = projection();
+  state.turns.unshift(
+    ...Array.from({ length: 100 }, (_, index) => ({
+      ...state.turns[0],
+      id: `unrelated-turn-${index}`,
+      threadId: `unrelated-thread-${index}`,
+      providerRunId: `unrelated-run-${index}`,
+    })),
+  );
+  state.turns = new Proxy(state.turns, {
+    get(target, property, receiver) {
+      if (property === Symbol.iterator || property === "map") {
+        throw new Error("delegated input projection must not materialize the complete turn ledger");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  assert.equal(projectDelegatedInputs(state).length, 1);
+});
+
+test("delegated input projection skips retained history without a candidate request", () => {
+  const state = projection();
+  state.inputRequests = [{ ...request, state: "answered", answeredAt: request.createdAt }];
+  const inaccessible = new Proxy(state.turns, {
+    get() {
+      throw new Error("retained turns must stay untouched without candidate input");
+    },
+  });
+  state.turns = inaccessible;
+
+  assert.deepEqual(projectDelegatedInputs(state), []);
+});
+
+test("pending native resume does not project a terminal turn while resume remains available", () => {
+  const state = projection();
+  state.inputRequests = [
+    {
+      ...request,
+      responseMode: "native_resume",
+      providerRequestId: "provider-request",
+      resumeState: "available",
+      resumeError: null,
+    },
+  ];
+  state.turns[0] = { ...state.turns[0], status: "interrupted" };
+
+  assert.deepEqual(projectDelegatedInputs(state), []);
+  state.inputRequests[0] = {
+    ...state.inputRequests[0],
+    state: "cancelled",
+    resumeState: "unavailable",
+    resumeError: "Native resume is unavailable.",
+  };
+  assert.equal(projectDelegatedInputs(state).length, 1);
+});
+
 test("parent-routed input requires the live relationship and request", () => {
   assert.equal(
     assertParentRoutedInput(projection(), "parent", "child", "request-1").id,
