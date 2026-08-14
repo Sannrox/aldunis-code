@@ -17,6 +17,7 @@ export interface PersistedConversationProjection {
     id: string;
     projectId: string;
     worktree: string;
+    title?: string;
     provider?: ProviderId;
     profileId?: string | null;
     model?: string | null;
@@ -63,6 +64,14 @@ export interface PersistedConversationProjection {
   }>;
   contextReceipts?: ContextReceipt[];
   inputRequests?: Array<Extract<ProviderEvent, { kind: "input_requested" }> & { turnId: string }>;
+  mailboxTransfers?: Array<{
+    id: string;
+    sourceThreadId: string;
+    destinationThreadId: string;
+    text: string;
+    createdAt: string;
+    destinationTurnId: string | null;
+  }>;
   providerSessions: Array<{
     threadId: string;
     provider?: ProviderId;
@@ -90,6 +99,13 @@ export interface PersistedConversationTarget {
   providerName: string;
 }
 
+export interface RestoredMailboxOutbound {
+  id: string;
+  destinationTitle: string;
+  text: string;
+  createdAt: string;
+}
+
 export interface RestoredConversationTurn {
   message: { text: string; mode: InteractionMode; createdAt: string };
   events: ProviderEvent[];
@@ -97,6 +113,7 @@ export interface RestoredConversationTurn {
   state: RestoredTurnStatus;
   contextReceipt?: ContextReceipt;
   checkpoint?: TurnCheckpoint;
+  mailboxFrom?: string | null;
 }
 
 interface RestoredThreadBinding {
@@ -113,13 +130,14 @@ interface RestoredThreadBinding {
 export type PersistedConversationRestoration =
   | { kind: "thread_missing" }
   | { kind: "provider_changed"; provider: ProviderId }
-  | { kind: "empty_thread"; thread: RestoredThreadBinding }
+  | { kind: "empty_thread"; thread: RestoredThreadBinding; mailboxOutbound: RestoredMailboxOutbound[] }
   | {
       kind: "restored";
       thread: RestoredThreadBinding;
       messages: Array<{ text: string; mode: InteractionMode; createdAt: string }>;
       archivedTurns: RestoredConversationTurn[];
       currentTurn: RestoredConversationTurn;
+      mailboxOutbound: RestoredMailboxOutbound[];
       providerState: ProviderState;
       assistantTurnAt: string;
       latestStatus: { turnId: string; status: RestoredTurnStatus };
@@ -380,8 +398,27 @@ export function restorePersistedConversation(
   const turns = projection.turns
     .filter((item) => item.threadId === thread.id)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const mailboxOutbound = (projection.mailboxTransfers ?? [])
+    .filter((transfer) => transfer.sourceThreadId === thread.id)
+    .map((transfer) => ({
+      id: transfer.id,
+      destinationTitle:
+        projection.threads.find((item) => item.id === transfer.destinationThreadId)?.title ??
+        "Conversation",
+      text: transfer.text,
+      createdAt: transfer.createdAt,
+    }));
+  const mailboxFromByTurn = new Map(
+    (projection.mailboxTransfers ?? [])
+      .filter((transfer) => transfer.destinationThreadId === thread.id && transfer.destinationTurnId)
+      .map((transfer) => [
+        transfer.destinationTurnId!,
+        projection.threads.find((item) => item.id === transfer.sourceThreadId)?.title ??
+          "Conversation",
+      ]),
+  );
   const latest = turns.at(-1);
-  if (!latest) return { kind: "empty_thread", thread: binding };
+  if (!latest) return { kind: "empty_thread", thread: binding, mailboxOutbound };
 
   const turnIds = new Set(turns.map((turn) => turn.id));
   const turnById = new Map(turns.map((turn) => [turn.id, turn]));
@@ -510,11 +547,12 @@ export function restorePersistedConversation(
         state: turn.status,
         contextReceipt: contextReceiptsByTurn.get(turn.id)?.[0],
         checkpoint: checkpointsByTurn.get(turn.id)?.[0],
+        mailboxFrom: mailboxFromByTurn.get(turn.id) ?? null,
       },
     ];
   });
   const currentTurn = restoredTurns.at(-1);
-  if (!currentTurn) return { kind: "empty_thread", thread: binding };
+  if (!currentTurn) return { kind: "empty_thread", thread: binding, mailboxOutbound };
   const lastAssistantAt = history
     .filter((message) => message.role === "assistant" && message.createdAt)
     .at(-1)?.createdAt;
@@ -531,6 +569,7 @@ export function restorePersistedConversation(
     messages,
     archivedTurns: restoredTurns.slice(0, -1),
     currentTurn,
+    mailboxOutbound,
     providerState: providerStateFor(latest.status),
     assistantTurnAt: latest.completedAt ?? lastAssistantAt ?? latest.createdAt,
     latestStatus: { turnId: latest.id, status: latest.status },

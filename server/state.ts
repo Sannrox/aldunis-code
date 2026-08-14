@@ -118,6 +118,7 @@ export interface ConversationDeletion {
     delegatedRelationships: number;
     inputRequests: number;
     inputReceipts: number;
+    mailboxTransfers: number;
   };
   requestedAt: string;
   completedAt: string | null;
@@ -163,6 +164,18 @@ export interface ChildInputReceipt {
   answerDigest: string;
   route: "native_resume" | "child_follow_up";
   createdAt: string;
+}
+
+export interface MailboxTransfer {
+  schemaVersion: 2;
+  id: string;
+  sourceThreadId: string;
+  destinationThreadId: string;
+  text: string;
+  mode: InteractionMode;
+  createdAt: string;
+  destinationTurnId: string | null;
+  idempotencyKey: string;
 }
 
 export interface ForkTransferMessage {
@@ -405,6 +418,7 @@ export interface StateProjection {
   delegatedRelationships: DelegatedConversationRelationship[];
   inputRequests: ChildInputRequest[];
   inputReceipts: ChildInputReceipt[];
+  mailboxTransfers: MailboxTransfer[];
   automationFires: AutomationFire[];
   autonomyRuns: AutonomyRun[];
   autonomyTasks: AutonomyTask[];
@@ -447,6 +461,7 @@ type StateEvent =
     }
   | { type: "input_request_saved"; inputRequest: ChildInputRequest }
   | { type: "input_receipt_saved"; inputReceipt: ChildInputReceipt }
+  | { type: "mailbox_transfer_saved"; mailboxTransfer: MailboxTransfer }
   | { type: "automation_fire_saved"; automationFire: AutomationFire }
   | { type: "autonomy_run_saved"; autonomyRun: AutonomyRun }
   | { type: "autonomy_task_saved"; autonomyTask: AutonomyTask }
@@ -494,6 +509,7 @@ function emptyProjection(): StateProjection {
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],
@@ -530,6 +546,7 @@ export function isolateProjectionCollections(projection: StateProjection): State
     delegatedRelationships: [...projection.delegatedRelationships],
     inputRequests: [...projection.inputRequests],
     inputReceipts: [...projection.inputReceipts],
+    mailboxTransfers: [...projection.mailboxTransfers],
     automationFires: [...projection.automationFires],
     autonomyRuns: [...projection.autonomyRuns],
     autonomyTasks: [...projection.autonomyTasks],
@@ -682,6 +699,9 @@ export interface ConversationHistoryIndex {
   automationFireByKey: ReadonlyMap<string, AutomationFire>;
   automationFireByTurnId: ReadonlyMap<string, AutomationFire>;
   delegatedRelationshipByChild: ReadonlyMap<string, DelegatedConversationRelationship>;
+  mailboxTransfersByThread: RowsByThread<MailboxTransfer>;
+  mailboxTransferById: ReadonlyMap<string, MailboxTransfer>;
+  mailboxTransferByKey: ReadonlyMap<string, MailboxTransfer>;
   governanceCorrelationsByThread: RowsByThread<GovernanceCorrelation>;
   checkpointsByThread: RowsByThread<Checkpoint>;
 }
@@ -724,6 +744,9 @@ interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
   automationFireByKey: Map<string, AutomationFire>;
   automationFireByTurnId: Map<string, AutomationFire>;
   delegatedRelationshipByChild: Map<string, DelegatedConversationRelationship>;
+  mailboxTransfersByThread: Map<string, MailboxTransfer[]>;
+  mailboxTransferById: Map<string, MailboxTransfer>;
+  mailboxTransferByKey: Map<string, MailboxTransfer>;
   governanceCorrelationsByThread: Map<string, GovernanceCorrelation[]>;
   checkpointsByThread: Map<string, Checkpoint[]>;
   threadIdByTurn: Map<string, string>;
@@ -738,6 +761,41 @@ function groupRowsByThread<T>(rows: readonly T[], threadId: (row: T) => string):
     else rowsByThread.set(id, [row]);
   }
   return rowsByThread;
+}
+
+function indexMailboxTransfersByThread(
+  transfers: readonly MailboxTransfer[],
+): Map<string, MailboxTransfer[]> {
+  const rowsByThread = new Map<string, MailboxTransfer[]>();
+  for (const transfer of transfers) {
+    for (const threadId of [transfer.sourceThreadId, transfer.destinationThreadId]) {
+      const group = rowsByThread.get(threadId);
+      if (group) {
+        if (!group.some((item) => item.id === transfer.id)) group.push(transfer);
+      } else rowsByThread.set(threadId, [transfer]);
+    }
+  }
+  return rowsByThread;
+}
+
+function indexSavedMailboxTransfer(
+  rowsByThread: Map<string, MailboxTransfer[]>,
+  previous: MailboxTransfer | undefined,
+  transfer: MailboxTransfer,
+): void {
+  if (previous) {
+    for (const threadId of [previous.sourceThreadId, previous.destinationThreadId]) {
+      const group = rowsByThread.get(threadId);
+      if (!group) continue;
+      const next = group.filter((item) => item.id !== previous.id);
+      if (next.length > 0) rowsByThread.set(threadId, next);
+      else rowsByThread.delete(threadId);
+    }
+  }
+  for (const threadId of [transfer.sourceThreadId, transfer.destinationThreadId]) {
+    const group = rowsByThread.get(threadId) ?? [];
+    rowsByThread.set(threadId, [...group.filter((item) => item.id !== transfer.id), transfer]);
+  }
 }
 
 function fileReviewIdentity(
@@ -799,6 +857,13 @@ function buildConversationHistoryIndex(
         relationship.childThreadId,
         relationship,
       ]),
+    ),
+    mailboxTransfersByThread: indexMailboxTransfersByThread(projection.mailboxTransfers),
+    mailboxTransferById: new Map(
+      projection.mailboxTransfers.map((transfer) => [transfer.id, transfer]),
+    ),
+    mailboxTransferByKey: new Map(
+      projection.mailboxTransfers.map((transfer) => [transfer.idempotencyKey, transfer]),
     ),
     governanceCorrelationsByThread: groupRowsByThread(
       projection.governanceCorrelations,
@@ -1733,6 +1798,25 @@ function applyEvent(
     }
   } else if (event.type === "input_receipt_saved") {
     replaceByIdDuringReplay(projection.inputReceipts, event.inputReceipt, replayIndexes);
+  } else if (event.type === "mailbox_transfer_saved") {
+    const previous = conversationHistory?.mailboxTransferById.get(event.mailboxTransfer.id);
+    replaceByIdDuringReplay(projection.mailboxTransfers, event.mailboxTransfer, replayIndexes);
+    if (conversationHistory) {
+      if (previous) conversationHistory.mailboxTransferByKey.delete(previous.idempotencyKey);
+      indexSavedMailboxTransfer(
+        conversationHistory.mailboxTransfersByThread,
+        previous,
+        event.mailboxTransfer,
+      );
+      conversationHistory.mailboxTransferById.set(
+        event.mailboxTransfer.id,
+        event.mailboxTransfer,
+      );
+      conversationHistory.mailboxTransferByKey.set(
+        event.mailboxTransfer.idempotencyKey,
+        event.mailboxTransfer,
+      );
+    }
   } else if (event.type === "automation_fire_saved") {
     const previous = conversationHistory?.automationFireById.get(event.automationFire.id);
     replaceByIdDuringReplay(projection.automationFires, event.automationFire, replayIndexes);
@@ -1769,8 +1853,19 @@ function applyEvent(
     throw new LocalStateError("Local history contains an unsupported event type.");
   }
   if (conversationHistory) {
-    const threadId = historyThreadIdForEvent(event, conversationHistory);
-    if (threadId) conversationHistory.revisionByThread.set(threadId, envelope.sequence);
+    if (event.type === "mailbox_transfer_saved") {
+      conversationHistory.revisionByThread.set(
+        event.mailboxTransfer.sourceThreadId,
+        envelope.sequence,
+      );
+      conversationHistory.revisionByThread.set(
+        event.mailboxTransfer.destinationThreadId,
+        envelope.sequence,
+      );
+    } else {
+      const threadId = historyThreadIdForEvent(event, conversationHistory);
+      if (threadId) conversationHistory.revisionByThread.set(threadId, envelope.sequence);
+    }
   }
   projection.sequence = envelope.sequence;
 }
@@ -1816,6 +1911,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     delegated_relationship_saved: "delegatedRelationship",
     input_request_saved: "inputRequest",
     input_receipt_saved: "inputReceipt",
+    mailbox_transfer_saved: "mailboxTransfer",
     automation_fire_saved: "automationFire",
     autonomy_run_saved: "autonomyRun",
     autonomy_task_saved: "autonomyTask",
@@ -1882,6 +1978,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
           delegatedRelationships: Number(records.delegatedRelationships ?? 0),
           inputRequests: Number(records.inputRequests ?? 0),
           inputReceipts: Number(records.inputReceipts ?? 0),
+          mailboxTransfers: Number(records.mailboxTransfers ?? 0),
         },
       };
     } else {
@@ -3283,6 +3380,190 @@ export class LocalStateStore {
     });
   }
 
+  async saveMailboxTransfer(input: {
+    sourceThreadId: string;
+    destinationThreadId: string;
+    text: string;
+    mode: InteractionMode;
+    idempotencyKey: string;
+  }): Promise<{ transfer: MailboxTransfer; created: boolean }> {
+    const trimmed = input.text.trim();
+    if (!trimmed || Array.from(trimmed).length > 4_000) {
+      throw new LocalStateError("A mailbox message between 1 and 4,000 characters is required.", 400);
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(input.idempotencyKey)) {
+      throw new LocalStateError("A mailbox idempotency key is required.", 400);
+    }
+    if (input.sourceThreadId === input.destinationThreadId) {
+      throw new LocalStateError("A conversation cannot send a mailbox message to itself.", 400);
+    }
+    if (!["ask", "plan", "build"].includes(input.mode)) {
+      throw new LocalStateError("A valid interaction mode is required.", 400);
+    }
+    return this.#appendComputed((projection) => {
+      const existing = this.#conversationHistory.mailboxTransferByKey.get(input.idempotencyKey);
+      if (existing) {
+        if (
+          existing.sourceThreadId !== input.sourceThreadId ||
+          existing.destinationThreadId !== input.destinationThreadId ||
+          existing.text !== trimmed ||
+          existing.mode !== input.mode
+        ) {
+          throw new LocalStateError("This mailbox idempotency key is already bound.", 409);
+        }
+        const existingTurn = existing.destinationTurnId
+          ? (this.#turnsByThread.get(existing.destinationThreadId) ?? []).find(
+              (item) => item.id === existing.destinationTurnId,
+            )
+          : undefined;
+        if (existingTurn?.providerRunId || existingTurn?.status === "active") {
+          return { event: null, value: { transfer: existing, created: false } };
+        }
+        if (existingTurn) {
+          return {
+            event: {
+              type: "turn_saved",
+              turn: { ...existingTurn, status: "active", completedAt: null },
+            },
+            value: { transfer: existing, created: true },
+          };
+        }
+        return { event: null, value: { transfer: existing, created: false } };
+      }
+      const source = this.#requireThread(projection, input.sourceThreadId);
+      const destination = this.#requireThread(projection, input.destinationThreadId);
+      if (source.projectId !== destination.projectId) {
+        throw new LocalStateError(
+          "Mailbox messages can only be sent to another conversation in the same project.",
+          409,
+        );
+      }
+      if (this.#conversationHistory.forkByDestinationThread.get(destination.id)?.status === "pending") {
+        throw new LocalStateError(
+          "Mailbox messages cannot be sent to a conversation that is still waiting to start as a fork.",
+          409,
+        );
+      }
+      if (
+        (this.#turnsByThread.get(destination.id) ?? []).some((turn) =>
+          BUSY_TURN_STATUSES.has(turn.status),
+        )
+      ) {
+        throw new LocalStateError(
+          "The destination conversation is busy. Wait for it to finish, then retry.",
+          409,
+        );
+      }
+      const now = new Date().toISOString();
+      const turn: Turn = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        threadId: destination.id,
+        status: "active",
+        createdAt: now,
+        completedAt: null,
+        mode: input.mode,
+      };
+      const message: Message = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        turnId: turn.id,
+        role: "user",
+        text: trimmed,
+        createdAt: now,
+      };
+      const transfer: MailboxTransfer = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        sourceThreadId: source.id,
+        destinationThreadId: destination.id,
+        text: trimmed,
+        mode: input.mode,
+        createdAt: now,
+        destinationTurnId: turn.id,
+        idempotencyKey: input.idempotencyKey,
+      };
+      return {
+        event: [
+          { type: "thread_saved", thread: { ...destination, updatedAt: now } },
+          { type: "turn_saved", turn },
+          { type: "message_saved", message },
+          { type: "mailbox_transfer_saved", mailboxTransfer: transfer },
+        ],
+        value: { transfer, created: true },
+      };
+    });
+  }
+
+  async mailboxTransfer(transferId: string): Promise<MailboxTransfer> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const transfer = this.#conversationHistory.mailboxTransferById.get(transferId);
+    if (!transfer) throw new LocalStateError("The mailbox transfer is not available.", 404);
+    return transfer;
+  }
+
+  async abandonMailboxDelivery(input: {
+    transferId: string;
+    destinationThreadId?: string;
+    destinationTurnId?: string | null;
+  }): Promise<void> {
+    await this.#appendComputed(() => {
+      const transfer = this.#conversationHistory.mailboxTransferById.get(input.transferId);
+      const destinationThreadId = input.destinationThreadId ?? transfer?.destinationThreadId;
+      const destinationTurnId = input.destinationTurnId ?? transfer?.destinationTurnId;
+      if (!destinationThreadId || !destinationTurnId) return { event: null, value: undefined };
+      const turn = (this.#turnsByThread.get(destinationThreadId) ?? []).find(
+        (item) => item.id === destinationTurnId,
+      );
+      if (!turn || turn.providerRunId || turn.status !== "active") {
+        return { event: null, value: undefined };
+      }
+      const now = new Date().toISOString();
+      return {
+        event: {
+          type: "turn_saved",
+          turn: { ...turn, status: "interrupted" as const, completedAt: now },
+        },
+        value: undefined,
+      };
+    });
+  }
+
+  async mailboxDestination(transferId: string): Promise<{
+    transfer: MailboxTransfer;
+    thread: Thread;
+    turn: Turn;
+  }> {
+    await this.#ensureLoaded();
+    await this.#writeQueue;
+    const transfer = this.#conversationHistory.mailboxTransferById.get(transferId);
+    if (!transfer?.destinationTurnId) {
+      throw new LocalStateError("The mailbox transfer is not available.", 404);
+    }
+    const thread = this.#conversationHistory.threadById.get(transfer.destinationThreadId);
+    const turn = (this.#turnsByThread.get(transfer.destinationThreadId) ?? []).find(
+      (item) => item.id === transfer.destinationTurnId,
+    );
+    if (!thread || !turn) {
+      throw new LocalStateError("The mailbox destination turn is not available.", 404);
+    }
+    return { transfer, thread, turn };
+  }
+
+  async bindMailboxTransferTurn(transferId: string, turnId: string): Promise<MailboxTransfer> {
+    return this.#appendComputed(() => {
+      const transfer = this.#conversationHistory.mailboxTransferById.get(transferId);
+      if (!transfer) throw new LocalStateError("The mailbox transfer is not available.", 404);
+      if (transfer.destinationTurnId && transfer.destinationTurnId !== turnId) {
+        throw new LocalStateError("The mailbox transfer is already bound to another turn.", 409);
+      }
+      if (transfer.destinationTurnId === turnId) return { event: null, value: transfer };
+      const next: MailboxTransfer = { ...transfer, destinationTurnId: turnId };
+      return { event: { type: "mailbox_transfer_saved", mailboxTransfer: next }, value: next };
+    });
+  }
+
   async bindAutomationFireTurn(fireId: string, turnId: string): Promise<void> {
     await this.#appendComputed(() => {
       const fire = this.#conversationHistory.automationFireById.get(fireId);
@@ -4177,6 +4458,10 @@ export class LocalStateStore {
       inputReceipts: projection.inputReceipts.filter(
         (receipt) => receipt.childThreadId === threadId || receipt.parentThreadId === threadId,
       ).length,
+      mailboxTransfers: projection.mailboxTransfers.filter(
+        (transfer) =>
+          transfer.sourceThreadId === threadId || transfer.destinationThreadId === threadId,
+      ).length,
     };
   }
 
@@ -4225,6 +4510,20 @@ export class LocalStateStore {
       (relationship) =>
         relationship.parentThreadId !== threadId && relationship.childThreadId !== threadId,
     );
+    const now = new Date().toISOString();
+    for (const transfer of projection.mailboxTransfers) {
+      if (transfer.sourceThreadId !== threadId || !transfer.destinationTurnId) continue;
+      const destIndex = projection.turns.findIndex((turn) => turn.id === transfer.destinationTurnId);
+      if (destIndex < 0) continue;
+      const destTurn = projection.turns[destIndex]!;
+      if (destTurn.status === "active" && !destTurn.providerRunId) {
+        projection.turns[destIndex] = {
+          ...destTurn,
+          status: "interrupted",
+          completedAt: now,
+        };
+      }
+    }
     const removedRequestIds = new Set(
       projection.inputRequests
         .filter((request) => request.threadId === threadId)
@@ -4238,6 +4537,10 @@ export class LocalStateStore {
         !removedRequestIds.has(receipt.requestId) &&
         receipt.childThreadId !== threadId &&
         receipt.parentThreadId !== threadId,
+    );
+    projection.mailboxTransfers = projection.mailboxTransfers.filter(
+      (transfer) =>
+        transfer.sourceThreadId !== threadId && transfer.destinationThreadId !== threadId,
     );
     projection.threads = projection.threads.map((thread) =>
       thread.parentThreadId === threadId || (thread.forkId && removedForkIds.has(thread.forkId))
@@ -5063,6 +5366,11 @@ export class LocalStateStore {
           !expiredThreads.has(receipt.childThreadId) &&
           (!receipt.parentThreadId || !expiredThreads.has(receipt.parentThreadId)),
       );
+      projection.mailboxTransfers = projection.mailboxTransfers.filter(
+        (transfer) =>
+          !expiredThreads.has(transfer.sourceThreadId) &&
+          !expiredThreads.has(transfer.destinationThreadId),
+      );
     });
   }
 
@@ -5100,6 +5408,9 @@ export class LocalStateStore {
         }
         for (const inputReceipt of next.inputReceipts) {
           yield { type: "input_receipt_saved", inputReceipt };
+        }
+        for (const mailboxTransfer of next.mailboxTransfers) {
+          yield { type: "mailbox_transfer_saved", mailboxTransfer };
         }
         for (const automationFire of next.automationFires) {
           yield { type: "automation_fire_saved", automationFire };

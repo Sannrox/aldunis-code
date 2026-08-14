@@ -1536,6 +1536,7 @@ test("project deletion and retention physically remove sensitive conversation da
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],
@@ -1734,6 +1735,7 @@ test("conversation deletion previews and physically compacts only conversation-o
     delegatedRelationships: 0,
     inputRequests: 0,
     inputReceipts: 0,
+    mailboxTransfers: 0,
   });
   const deletion = await store.deleteConversation(thread.id);
   assert.equal(deletion.status, "completed");
@@ -3367,6 +3369,7 @@ test("thread status and delegated outcomes use indexed turns instead of scanning
     ],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],

@@ -43,6 +43,7 @@ function fixture(): StateProjection {
     ],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],

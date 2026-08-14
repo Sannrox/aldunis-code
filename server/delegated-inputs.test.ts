@@ -60,6 +60,7 @@ function projection(): StateProjection {
     ],
     inputRequests: [request],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],

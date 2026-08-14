@@ -31,6 +31,7 @@ export function projectWorkbenchState(projection: StateProjection): StateProject
     delegatedRelationships: projection.delegatedRelationships.slice(),
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],
@@ -59,6 +60,7 @@ export function projectConversationHistory(
   | "plans"
   | "contextReceipts"
   | "inputRequests"
+  | "mailboxTransfers"
   | "providerSessions"
   | "governanceCorrelations"
   | "checkpoints"
@@ -66,16 +68,34 @@ export function projectConversationHistory(
   const thread =
     index?.threadById.get(threadId) ?? projection.threads.find((item) => item.id === threadId);
   if (!thread) return null;
+  const mailboxTransfers = [
+    ...(index
+      ? (index.mailboxTransfersByThread.get(threadId) ?? [])
+      : projection.mailboxTransfers.filter(
+          (transfer) =>
+            transfer.sourceThreadId === threadId || transfer.destinationThreadId === threadId,
+        )),
+  ];
+  const counterpartIds = new Set(
+    mailboxTransfers.flatMap((transfer) => [transfer.sourceThreadId, transfer.destinationThreadId]),
+  );
+  counterpartIds.delete(threadId);
+  const counterparts = [...counterpartIds]
+    .map(
+      (id) => index?.threadById.get(id) ?? projection.threads.find((item) => item.id === id),
+    )
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
   if (index) {
     return {
       sequence: index.revisionByThread.get(threadId) ?? projection.sequence,
-      threads: [thread],
+      threads: [thread, ...counterparts],
       turns: [...(index.turnsByThread.get(threadId) ?? [])],
       messages: [...(index.messagesByThread.get(threadId) ?? [])],
       activities: [...(index.activitiesByThread.get(threadId) ?? [])],
       plans: [...(index.plansByThread.get(threadId) ?? [])],
       contextReceipts: [...(index.contextReceiptsByThread.get(threadId) ?? [])],
       inputRequests: [...(index.inputRequestsByThread.get(threadId) ?? [])],
+      mailboxTransfers,
       providerSessions: [...(index.providerSessionsByThread.get(threadId) ?? [])],
       governanceCorrelations: [...(index.governanceCorrelationsByThread.get(threadId) ?? [])],
       checkpoints: [...(index.checkpointsByThread.get(threadId) ?? [])],
@@ -85,13 +105,14 @@ export function projectConversationHistory(
   const turnIds = new Set(turns.map((turn) => turn.id));
   return {
     sequence: projection.sequence,
-    threads: [thread],
+    threads: [thread, ...counterparts],
     turns,
     messages: projection.messages.filter((message) => turnIds.has(message.turnId)),
     activities: projection.activities.filter((activity) => turnIds.has(activity.turnId)),
     plans: projection.plans.filter((plan) => plan.threadId === threadId),
     contextReceipts: projection.contextReceipts.filter((receipt) => receipt.threadId === threadId),
     inputRequests: projection.inputRequests.filter((request) => request.threadId === threadId),
+    mailboxTransfers,
     providerSessions: projection.providerSessions.filter(
       (session) => session.threadId === threadId,
     ),

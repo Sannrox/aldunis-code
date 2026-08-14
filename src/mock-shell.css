@@ -815,6 +815,54 @@ html, body { height: 100%; }
 .delegated-start-help,
 .delegated-start-note { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .delegated-start-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.mailbox-send-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.mailbox-send-dialog label {
+  color: var(--muted-foreground);
+  font: 10.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.mailbox-send-dialog textarea,
+.mailbox-send-dialog select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 13px var(--font-sans);
+}
+.mailbox-send-dialog textarea { min-height: 112px; padding: 9px 10px; resize: vertical; }
+.mailbox-send-dialog select { min-height: 34px; padding: 6px 8px; }
+.mailbox-send-help,
+.mailbox-send-note { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.mailbox-send-error { margin: 0; color: var(--destructive); font-size: 12px; line-height: 1.5; }
+.mailbox-send-review {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 13px var(--font-mono);
+  white-space: pre-wrap;
+}
+.mailbox-send-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.mailbox-card {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.mailbox-card .role { display: flex; align-items: baseline; gap: 8px; }
+.mailbox-card p { margin: 8px 0 0; white-space: pre-wrap; }
 .delegated-children-header,
 .delegated-link-control,
 .delegated-list > li,

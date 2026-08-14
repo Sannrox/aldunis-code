@@ -114,6 +114,7 @@ function sampleProjection(): StateProjection {
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],
@@ -139,6 +140,7 @@ test("workbench projection keeps list metadata and drops durable histories", () 
   assert.equal(workbench.governanceCorrelations.length, 0);
   assert.equal(workbench.checkpoints.length, 0);
   assert.equal(workbench.automationFires.length, 0);
+  assert.equal(workbench.mailboxTransfers.length, 0);
   assert.equal(workbench.autonomyRuns.length, 0);
   assert.equal(workbench.autonomyTasks.length, 0);
   // Source projection is untouched.
