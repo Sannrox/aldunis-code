@@ -21,27 +21,31 @@ export function projectDelegatedApprovals(
     ]),
   );
 
-  return approvals.flatMap((approval) => {
-    if (approval.state !== "pending") return [];
-    const relationship = relationshipByChild.get(approval.conversationId);
-    const turn = relationship
-      ? latestTurnByThread.get(relationship.childThreadId)
-      : undefined;
-    if (
-      !relationship
-      || !turn
-      || !["active", "running", "waiting_for_approval"].includes(turn.status)
-      || turn.providerRunId !== approval.runId
-    ) return [];
-    return [{
-      parentThreadId: relationship.parentThreadId,
-      childThreadId: relationship.childThreadId,
-      approval,
-    }];
-  }).sort((left, right) => (
-    left.approval.expiresAt.localeCompare(right.approval.expiresAt)
-    || left.approval.id.localeCompare(right.approval.id)
-  ));
+  return approvals
+    .flatMap((approval) => {
+      if (approval.state !== "pending") return [];
+      const relationship = relationshipByChild.get(approval.conversationId);
+      const turn = relationship ? latestTurnByThread.get(relationship.childThreadId) : undefined;
+      if (
+        !relationship ||
+        !turn ||
+        !["active", "running", "waiting_for_approval"].includes(turn.status) ||
+        turn.providerRunId !== approval.runId
+      )
+        return [];
+      return [
+        {
+          parentThreadId: relationship.parentThreadId,
+          childThreadId: relationship.childThreadId,
+          approval,
+        },
+      ];
+    })
+    .sort(
+      (left, right) =>
+        left.approval.expiresAt.localeCompare(right.approval.expiresAt) ||
+        left.approval.id.localeCompare(right.approval.id),
+    );
 }
 
 export function assertParentRoutedApproval(
@@ -53,24 +57,28 @@ export function assertParentRoutedApproval(
     approvalId: string;
   },
 ): void {
-  const relationship = projection.delegatedRelationships.find((item) => (
-    item.parentThreadId === binding.parentThreadId
-    && item.childThreadId === binding.childThreadId
-  ));
-  const latestTurn = [...projection.turns].reverse().find(
-    (turn) => turn.threadId === binding.childThreadId,
+  const relationship = projection.delegatedRelationships.find(
+    (item) =>
+      item.parentThreadId === binding.parentThreadId &&
+      item.childThreadId === binding.childThreadId,
   );
   const approval = approvals.find((item) => item.id === binding.approvalId);
+  let latestTurn: StateProjection["turns"][number] | undefined;
+  if (relationship && approval) {
+    for (let index = projection.turns.length - 1; index >= 0; index -= 1) {
+      const turn = projection.turns[index];
+      if (turn.threadId !== binding.childThreadId) continue;
+      latestTurn = turn;
+      break;
+    }
+  }
   if (
-    !relationship
-    || !latestTurn
-    || !approval
-    || approval.conversationId !== binding.childThreadId
-    || approval.runId !== latestTurn.providerRunId
+    !relationship ||
+    !latestTurn ||
+    !approval ||
+    approval.conversationId !== binding.childThreadId ||
+    approval.runId !== latestTurn.providerRunId
   ) {
-    throw new PermissionError(
-      "The approval is not pending for an explicitly related child.",
-      403,
-    );
+    throw new PermissionError("The approval is not pending for an explicitly related child.", 403);
   }
 }
