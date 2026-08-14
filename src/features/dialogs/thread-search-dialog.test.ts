@@ -4,6 +4,7 @@ import {
   activeThreadSearchResult,
   clampThreadSearchIndex,
   nextThreadSearchIndex,
+  scheduleThreadSearchRequest,
   threadSearchCollisionLabels,
   threadSearchActiveDescendant,
   threadSearchDetail,
@@ -35,11 +36,14 @@ test("conversation search detail exposes pinned and archived lifecycle state", (
     /Codex · Pinned · Updated now/,
   );
   assert.match(
-    threadSearchDetail({
-      ...thread,
-      pinnedAt: "2026-07-29T16:00:00.000Z",
-      archivedAt: "2026-07-29T16:10:00.000Z",
-    }, () => "now"),
+    threadSearchDetail(
+      {
+        ...thread,
+        pinnedAt: "2026-07-29T16:00:00.000Z",
+        archivedAt: "2026-07-29T16:10:00.000Z",
+      },
+      () => "now",
+    ),
     /Codex · Archived · Updated now/,
   );
 });
@@ -55,10 +59,7 @@ test("conversation search labels only exact title and detail collisions", () => 
   const duplicate = { ...thread, id: "thread-2" };
   const unique = { ...thread, id: "thread-3", title: "Another prompt" };
   assert.deepEqual(
-    [...threadSearchCollisionLabels(
-      [thread, duplicate, unique],
-      () => "same detail",
-    )],
+    [...threadSearchCollisionLabels([thread, duplicate, unique], () => "same detail")],
     [
       ["thread-1", "Match 1 of 2"],
       ["thread-2", "Match 2 of 2"],
@@ -91,4 +92,32 @@ test("conversation search cannot select stale results while filtering", () => {
   const results = [{ id: "old-result" }] as never[];
   assert.equal(activeThreadSearchResult(results, 0, true), undefined);
   assert.equal(activeThreadSearchResult(results, 0, false)?.id, "old-result");
+});
+
+test("conversation search cancels superseded scheduled requests", () => {
+  let callback: (() => void) | undefined;
+  let cleared: number | undefined;
+  let calls = 0;
+  const cancel = scheduleThreadSearchRequest(
+    () => {
+      calls += 1;
+    },
+    150,
+    {
+      setTimeout(next: () => void, delay: number) {
+        assert.equal(delay, 150);
+        callback = next;
+        return 7;
+      },
+      clearTimeout(handle: number) {
+        cleared = handle;
+        callback = undefined;
+      },
+    } as never,
+  );
+  cancel();
+  assert.equal(cleared, 7);
+  assert.equal(calls, 0);
+  callback?.();
+  assert.equal(calls, 0);
 });

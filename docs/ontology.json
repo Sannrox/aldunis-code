@@ -219,7 +219,7 @@
     },
     {
       "name": "ThreadSearch",
-      "description": "The bounded local conversation metadata search surface that presents selectable thread results, applies managed visibility using only project and thread metadata, and does not traverse messages, provider output, repository contents, or unrelated state collections."
+      "description": "The bounded local conversation metadata search surface that presents at most the newest 50 selectable thread results, coalesces rapid non-empty query changes behind a 150 ms renderer delay, cancels superseded timer and request work, applies managed visibility before bounded selection using only project and thread metadata, and does not materialize or sort the complete match set or traverse messages, provider output, repository contents, or unrelated state collections."
     },
     {
       "name": "ConversationActivityInbox",
@@ -535,7 +535,7 @@
     },
     {
       "name": "WorkbenchProjectionRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates Workbench projection route recognition, coherent snapshot assembly, managed catalogue visibility, delegated outcome, approval, and input projection, thread-revision-conditional bounded conversation history and search, managed-worktree inventory, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, permission, tenant, or product authority."
+      "description": "A deep server-side Aldunis Code module that concentrates Workbench projection route recognition, coherent snapshot assembly, managed catalogue visibility, delegated outcome, approval, and input projection, thread-revision-conditional bounded conversation history, allocation-bounded newest-50 thread search, managed-worktree inventory, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, permission, tenant, or product authority."
     },
     {
       "name": "LocalStateMaintenanceRouteDispatchModule",
@@ -2199,8 +2199,8 @@
     },
     {
       "subject": "ThreadSearch",
-      "source": "GitHub Issue Sannrox/aldunis-code#783",
-      "locator": "src/features/dialogs/thread-search-dialog.tsx; server/workbench-projection-routes.ts#filterManagedThreadSearchProjection",
+      "source": "GitHub Issues Sannrox/aldunis-code#783 and #1122",
+      "locator": "src/features/dialogs/thread-search-dialog.tsx#scheduleThreadSearchRequest; server/workbench-projection-routes.ts#selectNewestThreadMatches; https://github.com/Sannrox/aldunis-code/issues/1122",
       "confidence": 1.0
     },
     {
@@ -2937,8 +2937,8 @@
     },
     {
       "subject": "WorkbenchProjectionRouteDispatchModule",
-      "source": "Aldunis Code Issues Sannrox/aldunis-code#661 and #1096",
-      "locator": "server/workbench-projection-routes.ts#handleWorkbenchProjectionRoute; https://github.com/Sannrox/aldunis-code/issues/1096",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#661, #1096, and #1122",
+      "locator": "server/workbench-projection-routes.ts#handleWorkbenchProjectionRoute; server/workbench-projection-routes.ts#selectNewestThreadMatches; https://github.com/Sannrox/aldunis-code/issues/1122",
       "confidence": 1.0
     },
     {

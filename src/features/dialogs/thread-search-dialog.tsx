@@ -9,18 +9,23 @@ const THREAD_SEARCH_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   timeStyle: "medium",
 });
 
+export const THREAD_SEARCH_INPUT_DEBOUNCE_MS = 150;
+
+export function scheduleThreadSearchRequest(
+  callback: () => void,
+  delayMs: number,
+  timers: Pick<typeof window, "setTimeout" | "clearTimeout"> = window,
+): () => void {
+  const handle = timers.setTimeout(callback, delayMs);
+  return () => timers.clearTimeout(handle);
+}
+
 export function threadSearchDetail(
   thread: ThreadMetadata,
   formatDate: (date: Date) => string = (date) => THREAD_SEARCH_DATE_FORMAT.format(date),
 ): string {
-  const provider = thread.provider
-    ? providerListLabel(thread.provider)
-    : null;
-  const state = thread.archivedAt
-    ? "Archived"
-    : thread.pinnedAt
-      ? "Pinned"
-      : null;
+  const provider = thread.provider ? providerListLabel(thread.provider) : null;
+  const state = thread.archivedAt ? "Archived" : thread.pinnedAt ? "Pinned" : null;
   const updatedAt = new Date(thread.updatedAt);
   const updated = Number.isFinite(updatedAt.getTime())
     ? `Updated ${formatDate(updatedAt)}`
@@ -103,20 +108,32 @@ export function ThreadSearchDialog({
     if (!open) return;
     const controller = new AbortController();
     setLoading(true);
-    void fetch("/api/state/search", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query, archived }),
-      signal: controller.signal,
-    }).then((response) => response.json()).then((body: { threads?: ThreadMetadata[] }) => {
-      setResults(body.threads ?? []);
-      setLoading(false);
-    }).catch(() => {
-      if (controller.signal.aborted) return;
-      setResults([]);
-      setLoading(false);
-    });
-    return () => controller.abort();
+    const cancelSchedule = scheduleThreadSearchRequest(
+      () => {
+        void fetch("/api/state/search", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query, archived }),
+          signal: controller.signal,
+        })
+          .then((response) => response.json())
+          .then((body: { threads?: ThreadMetadata[] }) => {
+            if (controller.signal.aborted) return;
+            setResults(body.threads ?? []);
+            setLoading(false);
+          })
+          .catch(() => {
+            if (controller.signal.aborted) return;
+            setResults([]);
+            setLoading(false);
+          });
+      },
+      query ? THREAD_SEARCH_INPUT_DEBOUNCE_MS : 0,
+    );
+    return () => {
+      cancelSchedule();
+      controller.abort();
+    };
   }, [archived, open, query]);
   useEffect(() => {
     if (!open) return;
@@ -154,11 +171,13 @@ export function ThreadSearchDialog({
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((current) => nextThreadSearchIndex(
-        current,
-        results.length,
-        event.key === "ArrowDown" ? "next" : "previous",
-      ));
+      setActiveIndex((current) =>
+        nextThreadSearchIndex(
+          current,
+          results.length,
+          event.key === "ArrowDown" ? "next" : "previous",
+        ),
+      );
       return;
     }
     if (event.key === "Enter") {

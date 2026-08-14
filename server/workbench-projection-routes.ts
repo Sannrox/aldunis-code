@@ -111,6 +111,64 @@ const ROUTES = new Set([
   "/api/state/search",
 ]);
 
+/** Retain only the newest matching page; equal timestamps preserve ledger order. */
+export function selectNewestThreadMatches<T extends { updatedAt: string }>(
+  threads: readonly T[],
+  matches: (thread: T) => boolean,
+  limit = 50,
+): { threads: T[]; peakRetained: number } {
+  type Ranked = { thread: T; index: number };
+  const capacity = Math.max(0, limit);
+  if (capacity === 0) return { threads: [], peakRetained: 0 };
+  const ranked: Ranked[] = [];
+  const compareValues = (left: T, leftIndex: number, right: T, rightIndex: number) =>
+    right.updatedAt.localeCompare(left.updatedAt) || leftIndex - rightIndex;
+  const compare = (left: Ranked, right: Ranked) =>
+    compareValues(left.thread, left.index, right.thread, right.index);
+  const isWorse = (left: Ranked, right: Ranked) => compare(left, right) > 0;
+  const push = (candidate: Ranked) => {
+    ranked.push(candidate);
+    let index = ranked.length - 1;
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (!isWorse(ranked[index]!, ranked[parent]!)) break;
+      [ranked[index], ranked[parent]] = [ranked[parent]!, ranked[index]!];
+      index = parent;
+    }
+  };
+  const replaceWorst = (thread: T, threadIndex: number) => {
+    ranked[0]!.thread = thread;
+    ranked[0]!.index = threadIndex;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= ranked.length) return;
+      const right = left + 1;
+      const worseChild =
+        right < ranked.length && isWorse(ranked[right]!, ranked[left]!) ? right : left;
+      if (!isWorse(ranked[worseChild]!, ranked[index]!)) return;
+      [ranked[index], ranked[worseChild]] = [ranked[worseChild]!, ranked[index]!];
+      index = worseChild;
+    }
+  };
+  for (let index = 0; index < threads.length; index += 1) {
+    const thread = threads[index]!;
+    if (!matches(thread)) continue;
+    if (ranked.length < capacity) {
+      push({ thread, index });
+      continue;
+    }
+    const worst = ranked[0]!;
+    if (compareValues(thread, index, worst.thread, worst.index) >= 0) continue;
+    replaceWorst(thread, index);
+  }
+  ranked.sort(compare);
+  return {
+    threads: ranked.map((entry) => entry.thread),
+    peakRetained: ranked.length,
+  };
+}
+
 export function filterManagedThreadSearchProjection(
   projection: ThreadSearchProjection,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
@@ -400,36 +458,36 @@ export async function handleWorkbenchProjectionRoute(
   const query = body.query.trim().toLocaleLowerCase().slice(0, 120);
   const archived = body.archived ?? "exclude";
   const projection = (await state.inspect()) as StateProjection;
-  const visibleProjection = managedHost
-    ? filterManagedThreadSearchProjection(projection, managedHost)
-    : projection;
-  const projects = new Map(visibleProjection.projects.map((project) => [project.id, project]));
-  const threads = visibleProjection.threads
-    .filter((thread) => {
-      if (archived === "exclude" && thread.archivedAt) return false;
-      if (archived === "only" && !thread.archivedAt) return false;
-      const project = projects.get(thread.projectId);
-      return (
-        !query ||
-        thread.title.toLocaleLowerCase().includes(query) ||
-        thread.worktree.toLocaleLowerCase().includes(query) ||
-        project?.name.toLocaleLowerCase().includes(query)
-      );
-    })
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .slice(0, 50)
-    .map((thread) => ({
-      id: thread.id,
-      projectId: thread.projectId,
-      title: thread.title,
-      worktree: thread.worktree,
-      workspaceMode: thread.workspaceMode ?? "shared",
-      provider: thread.provider,
-      updatedAt: thread.updatedAt,
-      pinnedAt: thread.pinnedAt ?? null,
-      archivedAt: thread.archivedAt ?? null,
-      projectName: projects.get(thread.projectId)?.name ?? "Unknown project",
-    }));
+  const visibleProjects = managedHost
+    ? filterManagedThreadSearchProjection(
+        { projects: projection.projects, threads: [] },
+        managedHost,
+      ).projects
+    : projection.projects;
+  const projects = new Map(visibleProjects.map((project) => [project.id, project]));
+  const threads = selectNewestThreadMatches(projection.threads, (thread) => {
+    if (managedHost && !projects.has(thread.projectId)) return false;
+    if (archived === "exclude" && thread.archivedAt) return false;
+    if (archived === "only" && !thread.archivedAt) return false;
+    const project = projects.get(thread.projectId);
+    return (
+      !query ||
+      thread.title.toLocaleLowerCase().includes(query) ||
+      thread.worktree.toLocaleLowerCase().includes(query) ||
+      project?.name.toLocaleLowerCase().includes(query)
+    );
+  }).threads.map((thread) => ({
+    id: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    worktree: thread.worktree,
+    workspaceMode: thread.workspaceMode ?? "shared",
+    provider: thread.provider,
+    updatedAt: thread.updatedAt,
+    pinnedAt: thread.pinnedAt ?? null,
+    archivedAt: thread.archivedAt ?? null,
+    projectName: projects.get(thread.projectId)?.name ?? "Unknown project",
+  }));
   sendJson(response, 200, { threads, bounded: true });
   return true;
 }
