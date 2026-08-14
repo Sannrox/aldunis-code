@@ -78,6 +78,7 @@ export function PaneConversation({
   promptStashOperatorKey?: string | null;
 }) {
   const [changes, setChanges] = useState<ChangedFile[]>([]);
+  const [changesTruncated, setChangesTruncated] = useState(false);
   const [changesLoading, setChangesLoading] = useState(false);
   const [changesError, setChangesError] = useState<string | null>(null);
   const changesRequestSequenceReference = useRef(0);
@@ -86,6 +87,7 @@ export function PaneConversation({
     if (!repository) {
       changesRequestSequenceReference.current += 1;
       setChanges([]);
+      setChangesTruncated(false);
       setChangesError(null);
       setChangesLoading(false);
       return;
@@ -97,12 +99,13 @@ export function PaneConversation({
       // Boot shares inflight with the workbench sidebar badge; signal/manual
       // refreshes force-fresh so post-mutation panels are not stale.
       const load = options.fresh ? loadFreshChangedFiles : loadChangedFiles;
-      const files = await load({
+      const snapshot = await load({
         root: repository.root,
         worktree: repository.selectedWorktree,
       });
       if (sequence !== changesRequestSequenceReference.current) return;
-      setChanges(files);
+      setChanges(snapshot.files);
+      setChangesTruncated(snapshot.truncated);
     } catch (cause) {
       if (sequence !== changesRequestSequenceReference.current) return;
       setChangesError(
@@ -154,6 +157,7 @@ export function PaneConversation({
       onSelectProject={onSelectProject}
       onManageWorktrees={() => onManageWorktrees()}
       changes={changes}
+      changesTruncated={changesTruncated}
       changesLoading={changesLoading}
       changesError={changesError}
       activePanel={activePanel}

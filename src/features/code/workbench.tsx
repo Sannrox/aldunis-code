@@ -1243,7 +1243,7 @@ export function CodeWorkbench({
       // Boot shares inflight with PaneConversation; explicit refreshes force-fresh
       // so post-mutation snapshots are not reused. Sequence drops stale completions.
       const load = options.fresh ? loadFreshChangedFiles : loadChangedFiles;
-      const files = await load({
+      const { files } = await load({
         root: repository.root,
         worktree: worktreeForActive,
       });

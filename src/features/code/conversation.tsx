@@ -457,6 +457,7 @@ export function Conversation({
   onSelectProject,
   onManageWorktrees,
   changes,
+  changesTruncated,
   changesLoading,
   changesError,
   activePanel,
@@ -493,6 +494,7 @@ export function Conversation({
   onSelectProject: (projectId: string) => void;
   onManageWorktrees: () => void;
   changes: ChangedFile[];
+  changesTruncated: boolean;
   changesLoading: boolean;
   changesError: string | null;
   activePanel: WorkspacePanel;
@@ -4757,6 +4759,7 @@ export function Conversation({
                 threadId={threadId}
                 pane={pane}
                 files={turnChangesReview?.files ?? changes}
+                truncated={turnChangesReview ? false : changesTruncated}
                 loading={turnChangesReview ? false : changesLoading}
                 error={turnChangesReview ? null : changesError}
                 onClose={() => closeWorkspacePanel("changes")}

@@ -12,6 +12,10 @@ import { RepositoryError } from "./repository.ts";
 
 interface ReviewChangesAdapter {
   listChangedFiles: (worktree: string, signal?: AbortSignal) => Promise<ChangedFile[]>;
+  listChangedFilesPage: (
+    worktree: string,
+    signal?: AbortSignal,
+  ) => Promise<{ files: ChangedFile[]; truncated: boolean }>;
   readFileDiff: (
     worktree: string,
     path: string,
@@ -115,9 +119,9 @@ export async function handleReviewRoute(
     await withRequestCancellation(request, response, async (signal) => {
       const selected = await selectWorktree(body.root, body.worktree);
       signal.throwIfAborted();
-      const files = await changes.listChangedFiles(selected.worktree, signal);
+      const { files, truncated } = await changes.listChangedFilesPage(selected.worktree, signal);
       signal.throwIfAborted();
-      sendJson(response, 200, { files });
+      sendJson(response, 200, { files, truncated });
     });
     return true;
   }

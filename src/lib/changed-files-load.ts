@@ -6,7 +6,12 @@ import type { ChangedFile } from "../types";
  * post-mutation refreshes stay visible.
  */
 
-const inflight = new Map<string, Promise<ChangedFile[]>>();
+export interface ChangedFilesSnapshot {
+  files: ChangedFile[];
+  truncated: boolean;
+}
+
+const inflight = new Map<string, Promise<ChangedFilesSnapshot>>();
 let activeRequests = 0;
 export const CHANGED_FILES_REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_ACTIVE_CHANGED_FILES_REQUESTS = 8;
@@ -21,7 +26,9 @@ function cacheKey(root: string, worktree: string, timeoutMs: number): string {
   return `${root}\0${worktree}\0${timeoutMs}`;
 }
 
-async function requestChangedFiles(options: ChangedFilesLoadOptions): Promise<ChangedFile[]> {
+async function requestChangedFiles(
+  options: ChangedFilesLoadOptions,
+): Promise<ChangedFilesSnapshot> {
   const controller = new AbortController();
   let rejectTimeout: ((reason: Error) => void) | undefined;
   const timeoutResult = new Promise<never>((_resolve, reject) => {
@@ -39,11 +46,15 @@ async function requestChangedFiles(options: ChangedFilesLoadOptions): Promise<Ch
         body: JSON.stringify({ root: options.root, worktree: options.worktree }),
         signal: controller.signal,
       }).then(async (response) => {
-        const body = (await response.json()) as { files?: ChangedFile[]; error?: string };
+        const body = (await response.json()) as {
+          files?: ChangedFile[];
+          truncated?: boolean;
+          error?: string;
+        };
         if (!response.ok) {
           throw new Error(body.error ?? "Changed files could not be inspected.");
         }
-        return body.files ?? [];
+        return { files: body.files ?? [], truncated: body.truncated === true };
       }),
       timeoutResult,
     ]);
@@ -57,7 +68,7 @@ async function requestChangedFiles(options: ChangedFilesLoadOptions): Promise<Ch
 
 async function requestBoundedChangedFiles(
   options: ChangedFilesLoadOptions,
-): Promise<ChangedFile[]> {
+): Promise<ChangedFilesSnapshot> {
   if (activeRequests >= MAX_ACTIVE_CHANGED_FILES_REQUESTS) {
     throw new Error("Too many changed-file requests are already active.");
   }
@@ -69,7 +80,9 @@ async function requestBoundedChangedFiles(
   }
 }
 
-export async function loadChangedFiles(options: ChangedFilesLoadOptions): Promise<ChangedFile[]> {
+export async function loadChangedFiles(
+  options: ChangedFilesLoadOptions,
+): Promise<ChangedFilesSnapshot> {
   const timeoutMs = options.timeoutMs ?? CHANGED_FILES_REQUEST_TIMEOUT_MS;
   const key = cacheKey(options.root, options.worktree, timeoutMs);
   const pending = inflight.get(key);
@@ -82,7 +95,9 @@ export async function loadChangedFiles(options: ChangedFilesLoadOptions): Promis
 }
 
 /** Bypass an older inflight snapshot after a known mutation. */
-export function loadFreshChangedFiles(options: ChangedFilesLoadOptions): Promise<ChangedFile[]> {
+export function loadFreshChangedFiles(
+  options: ChangedFilesLoadOptions,
+): Promise<ChangedFilesSnapshot> {
   return requestBoundedChangedFiles(options);
 }
 
