@@ -21,6 +21,11 @@ Open the command palette → **Autonomy**.
 The local event log remains the single durability authority. The autonomy
 records are metadata only: source contents, prompts, provider transcripts,
 credentials, raw tool traffic, and hidden reasoning are not stored in them.
+Each operator-authored configuration inventory (heartbeats, standing orders,
+and hooks) admits at most 256 records. Ledger loads return the 256 most recently
+updated records of each kind with explicit total and truncation metadata. If a
+legacy ledger exceeds the limit, creation remains closed while visible records
+can be deleted to reveal and remove older entries.
 
 ## Recovery and resumability
 

@@ -234,12 +234,29 @@ test("filters managed snapshots to visible projects and their tasks", async () =
       { id: "visible-hook", projectId: "visible" },
       { id: "hidden-hook", projectId: "hidden" },
     ],
+    configurationInventory: {
+      limitPerKind: 256,
+      heartbeatMonitors: { total: 1, truncated: false },
+      standingOrders: { total: 1, truncated: false },
+      hooks: { total: 1, truncated: false },
+    },
   };
+  let requestedProjects: ReadonlySet<string> | undefined;
   const module = context({
     managed: true,
     visibleProjectIds: async () => new Set(["visible"]),
     autonomy: {
-      snapshot: async () => snapshot,
+      snapshot: async (_limit: number, options: { visibleProjectIds?: ReadonlySet<string> }) => {
+        requestedProjects = options.visibleProjectIds;
+        const visible = (item: { projectId: string | null }) =>
+          item.projectId === null || Boolean(options.visibleProjectIds?.has(item.projectId));
+        return {
+          ...snapshot,
+          heartbeatMonitors: snapshot.heartbeatMonitors.filter(visible),
+          standingOrders: snapshot.standingOrders.filter(visible),
+          hooks: snapshot.hooks.filter(visible),
+        };
+      },
     } as unknown as AutonomyRouteContext["autonomy"],
   });
   await handleAutonomyRoute("/api/autonomy/load", request(), response(), module);
@@ -264,4 +281,5 @@ test("filters managed snapshots to visible projects and their tasks", async () =
     value.hooks.map((item) => item.id),
     ["visible-hook"],
   );
+  assert.deepEqual([...requestedProjects!], ["visible"]);
 });

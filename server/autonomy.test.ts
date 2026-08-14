@@ -9,7 +9,9 @@ import test from "node:test";
 import {
   builtInAutonomyFlows,
   isHeartbeatDue,
+  MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
   NIGHTLY_GARDENER_FLOW_ID,
+  parseAutonomyHook,
   parseHeartbeatMonitor,
   parseStandingOrder,
   type AutonomyRun,
@@ -492,6 +494,57 @@ function ledgerTask(id: string, runId: string, updatedAt: string) {
   };
 }
 
+function standingOrder(id: string, updatedAt: string) {
+  return parseStandingOrder({
+    schemaVersion: 2,
+    id,
+    name: id,
+    scope: "global",
+    projectId: null,
+    instruction: "Keep maintenance bounded.",
+    enabled: true,
+    createdAt: updatedAt,
+    updatedAt,
+  });
+}
+
+function heartbeatMonitor(id: string, updatedAt: string) {
+  return parseHeartbeatMonitor({
+    schemaVersion: 2,
+    id,
+    name: id,
+    flowId: "heartbeat-awareness.v1",
+    projectId: null,
+    worktree: null,
+    goal: "Check bounded maintenance state.",
+    enabled: true,
+    everySeconds: 3_600,
+    activeHours: null,
+    lastRunAt: null,
+    lastRunId: null,
+    lastStatus: null,
+    createdAt: updatedAt,
+    updatedAt,
+  });
+}
+
+function autonomyHook(id: string, updatedAt: string) {
+  return parseAutonomyHook({
+    schemaVersion: 2,
+    id,
+    name: id,
+    event: "heartbeat_tick",
+    flowId: "heartbeat-awareness.v1",
+    projectId: null,
+    enabled: true,
+    cooldownSeconds: 300,
+    lastTriggeredAt: null,
+    lastRunId: null,
+    createdAt: updatedAt,
+    updatedAt,
+  });
+}
+
 function ledgerWithoutFullCopy<T>(items: T[]): T[] {
   return new Proxy(items, {
     get(target, property, receiver) {
@@ -578,6 +631,169 @@ test("Autonomy snapshots copy only the newest page, not the whole ledger", async
   } finally {
     globalThis.structuredClone = originalClone;
     await cleanup();
+  }
+});
+
+test("Autonomy snapshots bound oversized configuration inventories with recovery metadata", async () => {
+  const total = MAX_AUTONOMY_CONFIGURATIONS_PER_KIND + 17;
+  const orders = Array.from({ length: total }, (_, index) =>
+    standingOrder(`order-${index}`, new Date(index * 1_000).toISOString()),
+  );
+  const engine = new AutonomyEngine({
+    inspectAutonomyProjection: async () => ({
+      autonomyRuns: [],
+      autonomyTasks: [],
+      autonomyFlows: [],
+      heartbeatMonitors: [],
+      standingOrders: ledgerWithoutFullCopy(orders),
+      autonomyHooks: [],
+    }),
+  } as unknown as LocalStateStore);
+
+  const snapshot = await engine.snapshot();
+  assert.equal(snapshot.standingOrders.length, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND);
+  assert.equal(
+    snapshot.standingOrders.some((item) => item.id === `order-${total - 1}`),
+    true,
+  );
+  assert.deepEqual(snapshot.configurationInventory.standingOrders, {
+    total,
+    truncated: true,
+  });
+  assert.equal(snapshot.configurationInventory.limitPerKind, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND);
+});
+
+test("managed Autonomy configuration paging filters project authority before selection", async () => {
+  const hidden = Array.from({ length: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND }, (_, index) => ({
+    ...standingOrder(`hidden-${index}`, new Date((index + 1) * 1_000).toISOString()),
+    scope: "project" as const,
+    projectId: "hidden",
+  }));
+  const visible = {
+    ...standingOrder("visible-oldest", new Date(0).toISOString()),
+    scope: "project" as const,
+    projectId: "visible",
+  };
+  const engine = new AutonomyEngine({
+    inspectAutonomyProjection: async () => ({
+      autonomyRuns: [],
+      autonomyTasks: [],
+      autonomyFlows: [],
+      heartbeatMonitors: [],
+      standingOrders: ledgerWithoutFullCopy([visible, ...hidden]),
+      autonomyHooks: [],
+    }),
+  } as unknown as LocalStateStore);
+
+  const snapshot = await engine.snapshot(50, { visibleProjectIds: new Set(["visible"]) });
+  assert.deepEqual(
+    snapshot.standingOrders.map((item) => item.id),
+    ["visible-oldest"],
+  );
+  assert.deepEqual(snapshot.configurationInventory.standingOrders, {
+    total: 1,
+    truncated: false,
+  });
+});
+
+test("Autonomy configuration admission is atomic at the production bound", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-admission-"));
+  try {
+    const state = new LocalStateStore(directory);
+    const attempts = await Promise.allSettled(
+      Array.from({ length: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND + 1 }, (_, index) =>
+        state.saveAutonomyRecords({
+          standingOrders: [standingOrder(`order-${index}`, new Date(index * 1_000).toISOString())],
+        }),
+      ),
+    );
+    assert.equal(
+      attempts.filter((item) => item.status === "fulfilled").length,
+      MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+    );
+    const rejected = attempts.find((item) => item.status === "rejected");
+    assert.equal(rejected?.status, "rejected");
+    if (rejected?.status === "rejected") {
+      assert.match(String(rejected.reason), /inventory is full/);
+      assert.equal((rejected.reason as { status?: number }).status, 429);
+    }
+    assert.equal(
+      (await state.inspect()).standingOrders.length,
+      MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("heartbeat and hook admission share the finite per-kind bound", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-kind-bounds-"));
+  try {
+    const state = new LocalStateStore(directory);
+    const timestamps = Array.from({ length: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND }, (_, index) =>
+      new Date(index * 1_000).toISOString(),
+    );
+    await state.saveAutonomyRecords({
+      heartbeatMonitors: timestamps.map((timestamp, index) =>
+        heartbeatMonitor(`heartbeat-${index}`, timestamp),
+      ),
+      hooks: timestamps.map((timestamp, index) => autonomyHook(`hook-${index}`, timestamp)),
+    });
+
+    await assert.rejects(
+      state.saveAutonomyRecords({
+        heartbeatMonitors: [heartbeatMonitor("heartbeat-overflow", new Date().toISOString())],
+      }),
+      { status: 429 },
+    );
+    await assert.rejects(
+      state.saveAutonomyRecords({
+        hooks: [autonomyHook("hook-overflow", new Date().toISOString())],
+      }),
+      { status: 429 },
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("oversized legacy Autonomy inventories stay bounded and reducible", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-autonomy-legacy-"));
+  try {
+    const orders = Array.from({ length: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND + 1 }, (_, index) =>
+      standingOrder(`legacy-${index}`, new Date(index * 1_000).toISOString()),
+    );
+    await writeFile(
+      join(directory, "events.v1.jsonl"),
+      `${orders
+        .map((order, index) =>
+          JSON.stringify({
+            schemaVersion: 2,
+            sequence: index + 1,
+            id: `legacy-event-${index}`,
+            recordedAt: order.updatedAt,
+            event: { type: "standing_order_saved", standingOrder: order },
+          }),
+        )
+        .join("\n")}\n`,
+      "utf8",
+    );
+    const state = new LocalStateStore(directory);
+    const engine = new AutonomyEngine(state);
+    await engine.ensureBuiltInFlows();
+    const oversized = await engine.snapshot();
+    assert.equal(oversized.standingOrders.length, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND);
+    assert.equal(oversized.configurationInventory.standingOrders.truncated, true);
+
+    await state.removeAutonomyRecord("standingOrder", oversized.standingOrders[0]!.id);
+    const reduced = await engine.snapshot();
+    assert.deepEqual(reduced.configurationInventory.standingOrders, {
+      total: MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
+      truncated: false,
+    });
+    assert.equal(reduced.standingOrders.length, MAX_AUTONOMY_CONFIGURATIONS_PER_KIND);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

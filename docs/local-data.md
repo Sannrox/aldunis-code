@@ -104,8 +104,11 @@ seconds as an explicitly stale fallback.
   token-per-event assistant rows when rewriting history so long ACP streams do
   not retain multi-megabyte message tables or one fsync per token.
 - `POST /api/autonomy/load` snapshots the newest run and task page from the
-  live Autonomy ledger. It does not clone or sort the entire retained run/task
-  history on each refresh.
+  live Autonomy ledger and at most 256 newest heartbeat monitors, standing
+  orders, and hooks per kind with total/truncation metadata. It does not clone
+  or sort the entire retained ledger on each refresh; atomic create admission
+  prevents concurrent writers from exceeding each configuration limit, while
+  oversized legacy inventories remain reducible through their bounded page.
 - Provider credentials, raw tool inputs/outputs, and environment values are
   **not** part of the history schema.
 - Context receipts retain repository-relative paths, entry types, byte counts,

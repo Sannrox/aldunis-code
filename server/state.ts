@@ -24,6 +24,7 @@ import {
 } from "./provider.ts";
 import type { AutomationFire, AutomationFireKey, AutomationFireStatus } from "./automations.ts";
 import {
+  MAX_AUTONOMY_CONFIGURATIONS_PER_KIND,
   parseAutonomyFlow,
   parseAutonomyHook,
   parseAutonomyRun,
@@ -3672,6 +3673,34 @@ export class LocalStateStore {
   }): Promise<void> {
     await this.#appendComputed((projection) => {
       const events: StateEvent[] = [];
+      const assertConfigurationCapacity = <T extends { id: string }>(
+        current: readonly T[],
+        proposed: readonly T[],
+        label: string,
+      ) => {
+        const newIds = new Set<string>();
+        for (const item of proposed) {
+          if (current.some((existing) => existing.id === item.id)) continue;
+          newIds.add(item.id);
+        }
+        if (
+          newIds.size > 0 &&
+          current.length + newIds.size > MAX_AUTONOMY_CONFIGURATIONS_PER_KIND
+        ) {
+          throw new LocalStateError(`Autonomy ${label} inventory is full.`, 429);
+        }
+      };
+      assertConfigurationCapacity(
+        projection.heartbeatMonitors,
+        input.heartbeatMonitors ?? [],
+        "heartbeat",
+      );
+      assertConfigurationCapacity(
+        projection.standingOrders,
+        input.standingOrders ?? [],
+        "standing order",
+      );
+      assertConfigurationCapacity(projection.autonomyHooks, input.hooks ?? [], "hook");
       const save = <T extends { id: string }>(items: T[], next: T, event: StateEvent) => {
         const existing = items.find((item) => item.id === next.id);
         if (existing && JSON.stringify(existing) === JSON.stringify(next)) return;
