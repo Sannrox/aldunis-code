@@ -447,7 +447,7 @@
     },
     {
       "name": "AutonomyRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates Autonomy route recognition, local and managed-host admission, request validation, managed projection filtering, persistence coordination, timestamps, and Autonomy engine invocation behind one internal dispatch interface without granting provider, filesystem, credential, tenant, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates Autonomy route recognition, local and managed-host admission, request validation, managed projection filtering, bounded newest-page selection over chronological and updated ledgers, persistence coordination, timestamps, and Autonomy engine invocation behind one internal dispatch interface without granting provider, filesystem, credential, tenant, or approval authority."
     },
     {
       "name": "ConversationAutomationRouteDispatchModule",
@@ -1573,8 +1573,8 @@
     },
     {
       "subject": "AutonomyRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#624",
-      "locator": "server/autonomy-routes.ts#handleAutonomyRoute",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#624 and #1093",
+      "locator": "server/autonomy-routes.ts#handleAutonomyRoute; server/autonomy-engine.ts#snapshot; https://github.com/Sannrox/aldunis-code/issues/1093",
       "confidence": 1.0
     },
     {

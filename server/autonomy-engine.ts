@@ -113,31 +113,69 @@ function selectLatestByUpdatedAt<T extends { updatedAt: string }>(
       right.updatedAt.localeCompare(left.updatedAt),
     );
   }
-  const ranked: { item: T; index: number }[] = [];
+  let chronological = true;
+  for (let index = 1; index < items.length; index += 1) {
+    if (items[index - 1]!.updatedAt > items[index]!.updatedAt) {
+      chronological = false;
+      break;
+    }
+  }
+  if (chronological) {
+    const selected: T[] = [];
+    let groupEnd = items.length;
+    while (groupEnd > 0 && selected.length < bounded) {
+      const timestamp = items[groupEnd - 1]!.updatedAt;
+      let groupStart = groupEnd - 1;
+      while (groupStart > 0 && items[groupStart - 1]!.updatedAt === timestamp) groupStart -= 1;
+      for (let index = groupStart; index < groupEnd && selected.length < bounded; index += 1) {
+        selected.push(items[index]!);
+      }
+      groupEnd = groupStart;
+    }
+    return structuredClone(selected);
+  }
+  type RankedItem = { item: T; index: number };
+  const ranked: RankedItem[] = [];
+  const isWorse = (left: RankedItem, right: RankedItem) =>
+    compareUpdatedAtDesc(left.item, left.index, right.item, right.index) > 0;
+  const push = (candidate: RankedItem) => {
+    ranked.push(candidate);
+    let index = ranked.length - 1;
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (!isWorse(ranked[index]!, ranked[parent]!)) break;
+      [ranked[index], ranked[parent]] = [ranked[parent]!, ranked[index]!];
+      index = parent;
+    }
+  };
+  const replaceWorst = (candidate: RankedItem) => {
+    ranked[0] = candidate;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      if (left >= ranked.length) return;
+      const right = left + 1;
+      const worseChild =
+        right < ranked.length && isWorse(ranked[right]!, ranked[left]!) ? right : left;
+      if (!isWorse(ranked[worseChild]!, ranked[index]!)) return;
+      [ranked[index], ranked[worseChild]] = [ranked[worseChild]!, ranked[index]!];
+      index = worseChild;
+    }
+  };
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]!;
     const candidate = { item, index };
     if (ranked.length < bounded) {
-      ranked.push(candidate);
-      if (ranked.length === bounded) {
-        ranked.sort((left, right) =>
-          compareUpdatedAtDesc(left.item, left.index, right.item, right.index),
-        );
-      }
+      push(candidate);
       continue;
     }
-    const worst = ranked[ranked.length - 1]!;
+    const worst = ranked[0]!;
     if (compareUpdatedAtDesc(item, index, worst.item, worst.index) >= 0) continue;
-    let lo = 0;
-    let hi = ranked.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (compareUpdatedAtDesc(item, index, ranked[mid]!.item, ranked[mid]!.index) < 0) hi = mid;
-      else lo = mid + 1;
-    }
-    ranked.splice(lo, 0, candidate);
-    ranked.pop();
+    replaceWorst(candidate);
   }
+  ranked.sort((left, right) =>
+    compareUpdatedAtDesc(left.item, left.index, right.item, right.index),
+  );
   return structuredClone(ranked.map((entry) => entry.item));
 }
 
