@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readBoundedLines } from "./bounded-line-reader.mjs";
+import { MAX_RETAINED_LINE_FRAGMENTS, readBoundedLines } from "./bounded-line-reader.mjs";
 
 async function collect(chunks, limit = 8) {
   const lines = [];
@@ -36,6 +36,20 @@ test("assembles a 1 MiB line from 64-byte fragments", async () => {
   const fragments = Array.from({ length: 16_384 }, () => Buffer.alloc(64, 0x61));
   fragments.push(Buffer.from("\n"));
   const [line] = await collect(fragments, 1024 * 1024);
+  assert.equal(Buffer.byteLength(line), 1024 * 1024);
+  assert.equal(line.at(0), "a");
+  assert.equal(line.at(-1), "a");
+});
+
+test("bounds metadata for a 1 MiB line of one-byte fragments", async () => {
+  async function* fragments() {
+    const byte = Buffer.from("a");
+    for (let index = 0; index < 1024 * 1024; index += 1) yield byte;
+    yield Buffer.from("\n");
+  }
+
+  assert.equal(MAX_RETAINED_LINE_FRAGMENTS, 256);
+  const [line] = await collect(fragments(), 1024 * 1024);
   assert.equal(Buffer.byteLength(line), 1024 * 1024);
   assert.equal(line.at(0), "a");
   assert.equal(line.at(-1), "a");

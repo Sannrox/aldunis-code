@@ -395,7 +395,7 @@
     },
     {
       "name": "ProviderOutputFramingBoundary",
-      "description": "The Aldunis Code transport boundary that frames newline-delimited Claude, Codex, Shikigami, and declarative ACP provider output in raw bytes within the adapter's 1 MiB message ceiling, retains bounded chunk slices, copies each completed line at most once before UTF-8 decoding, and preserves each adapter's malformed-message, incomplete-trailer, cancellation, and child-lifecycle semantics without changing provider or permission authority."
+      "description": "The Aldunis Code transport boundary that frames newline-delimited Claude, Codex, Shikigami, and declarative ACP provider output in raw bytes within the adapter's 1 MiB message ceiling, retains at most 256 raw partial-line fragments before hierarchical compaction through 64 KiB-targeted batches, and preserves each adapter's malformed-message, incomplete-trailer, cancellation, and child-lifecycle semantics without changing provider or permission authority."
     },
     {
       "name": "ChildInputCoordinationReceipt",
@@ -3241,6 +3241,12 @@
       "subject": "ProviderOutputFramingBoundary",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1151",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1151; server/bounded-line-reader.mjs; server/provider.ts; server/codex-provider.ts; server/acp-provider.ts; server/shikigami-provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderOutputFramingBoundary",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1153",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1153; server/bounded-line-reader.mjs; server/bounded-line-reader.test.mjs",
       "confidence": 1.0
     }
   ]
