@@ -591,7 +591,7 @@
     },
     {
       "name": "ACPModelDiscoveryProbe",
-      "description": "A short-lived Aldunis Code provider-adapter probe that copies at most 256 MiB of stable regular worktree files through descriptor-pinned bounded buffers, initializes a declarative ACP subprocess, frames each 1 MiB-bounded JSON response through the shared 256-fragment hierarchical compactor, discovers session-advertised models, and terminates on completion, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
+      "description": "A short-lived Aldunis Code provider-adapter probe that streams tracked then allowed untracked Git paths through 64 KiB record and stderr bounds, copies at most 100,000 files and 256 MiB of stable regular worktree content through descriptor-pinned bounded buffers within a 200,000-entry and five-second preparation ceiling, initializes a declarative ACP subprocess, frames each 1 MiB-bounded JSON response through the shared 256-fragment hierarchical compactor, discovers session-advertised models, and terminates exact inventory and provider children on completion, truncation, cancellation, timeout, spawn failure, or protocol overflow without changing provider, filesystem, permission, or credential authority."
     }
   ],
   "relations": [
@@ -3241,6 +3241,12 @@
       "subject": "ACPModelDiscoveryProbe",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1155",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1155; server/acp-models.ts#probeAcpModels; server/bounded-line-reader.mjs",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ACPModelDiscoveryProbe",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1171",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1171; server/provider-models.ts#streamGitProbePaths; server/provider-models.ts#copyGitProbeWorkingTree",
       "confidence": 1.0
     },
     {
