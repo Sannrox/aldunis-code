@@ -308,6 +308,30 @@ async function isTrackedRepositoryPath(worktree: string, path: string): Promise<
   }
 }
 
+async function isVisibleRepositoryPath(worktree: string, path: string): Promise<boolean> {
+  const { stdout } = await execFileAsync(
+    "git",
+    [
+      "--literal-pathspecs",
+      "-C",
+      worktree,
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "-z",
+      "--",
+      path,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 16 * 1024,
+    },
+  );
+  return stdout === `${path}\0`;
+}
+
 export interface ContextAttachment {
   path: string;
   kind: "text" | "image";
@@ -392,31 +416,6 @@ function isHidden(path: string): boolean {
 
 function isProviderInstruction(path: string): boolean {
   return /(^|\/)(AGENTS|CLAUDE)\.md$/i.test(path);
-}
-
-async function repositoryPaths(worktree: string, signal?: AbortSignal): Promise<string[]> {
-  const gitOptions = {
-    encoding: "utf8" as const,
-    timeout: 5_000,
-    maxBuffer: 4 * 1024 * 1024,
-    signal,
-  };
-  const [{ stdout: trackedStdout }, { stdout: untrackedStdout }] = await Promise.all([
-    execFileAsync("git", ["-C", worktree, "ls-files", "--cached", "-z"], gitOptions),
-    execFileAsync(
-      "git",
-      ["-C", worktree, "ls-files", "--others", "--exclude-standard", "-z"],
-      gitOptions,
-    ),
-  ]);
-  const tracked = trackedStdout.split("\0").filter(Boolean);
-  const untracked = untrackedStdout
-    .split("\0")
-    .filter(Boolean)
-    .filter((path) => !isLocalRuntimePath(path));
-  return [...tracked, ...untracked]
-    .filter((path) => !isHidden(path) && !isSecretLikePath(path))
-    .sort((left, right) => left.localeCompare(right));
 }
 
 function packageDigest(entries: ContextReceiptEntry[]): string {
@@ -1609,8 +1608,7 @@ export async function resolveWorktreeImagePath(
   if (isComposerAttachmentPath(relativePath)) {
     return { path: relativePath, mediaType, size: bytes.length };
   }
-  const available = await repositoryPaths(worktree);
-  if (!available.includes(relativePath)) {
+  if (!(await isVisibleRepositoryPath(worktree, relativePath))) {
     // Ignored/unlisted — caller should stage a copy rather than pin a no-op path.
     return null;
   }
