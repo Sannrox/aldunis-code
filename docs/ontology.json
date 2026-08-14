@@ -443,7 +443,7 @@
     },
     {
       "name": "PersistedConversationRestoration",
-      "description": "A pure Aldunis Code projection module that deterministically reconstructs one provider-independent local conversation from persisted thread, turn, message, activity, plan, input, correlation, context, session, and checkpoint records. It preserves exact sequenced-record order, inserts unsequenced projection records deterministically, and carries no fetch, timer, notification, provider-process, or mutation authority."
+      "description": "A pure Aldunis Code projection module that deterministically reconstructs one provider-independent local conversation from persisted thread, turn, message, activity, plan, input, correlation, context, session, and checkpoint records. It directly emits already ordered sequenced records without a combined event-wrapper graph, inserts unsequenced projection records through stable timestamp slots, and carries no fetch, timer, notification, provider-process, or mutation authority."
     },
     {
       "name": "AutonomyRouteDispatchModule",
@@ -2725,8 +2725,8 @@
     },
     {
       "subject": "PersistedConversationRestoration",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#579",
-      "locator": "src/lib/persisted-conversation-restoration.ts#restorePersistedConversation",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#579 and #1092",
+      "locator": "src/lib/persisted-conversation-restoration.ts#restorePersistedConversation; https://github.com/Sannrox/aldunis-code/issues/1092",
       "confidence": 1.0
     },
     {

@@ -147,11 +147,17 @@ export function reconcilePersistedRestorationApplication(
   };
 }
 
-interface OrderedEvent {
-  event: ProviderEvent;
+interface RestorationSourceRecord {
   createdAt: string;
   eventSequence?: number;
-  ordinal: number;
+}
+
+interface RestorationEventSource {
+  length: number;
+  sequencedLength: number;
+  createdAt(index: number): string;
+  eventSequence(index: number): number | undefined;
+  event(index: number): ProviderEvent;
 }
 
 function groupByTurnId<T extends { turnId: string }>(items: readonly T[]): Map<string, T[]> {
@@ -164,42 +170,157 @@ function groupByTurnId<T extends { turnId: string }>(items: readonly T[]): Map<s
   return grouped;
 }
 
-/**
- * Preserve the exact order among sequenced records, then place legacy or
- * projection-only records into timestamp slots without using a non-transitive
- * mixed comparator. Source ordinal makes equal timestamps deterministic.
- */
-function orderEvents(events: OrderedEvent[]): OrderedEvent[] {
-  const sequenced = events
-    .filter((item) => item.eventSequence !== undefined)
-    .sort(
-      (left, right) => left.eventSequence! - right.eventSequence! || left.ordinal - right.ordinal,
-    );
-  const unsequenced = events
-    .filter((item) => item.eventSequence === undefined)
-    .sort(
-      (left, right) =>
-        left.createdAt.localeCompare(right.createdAt) || left.ordinal - right.ordinal,
-    );
-  const result = [...sequenced];
-  for (const item of unsequenced) {
-    let index = 0;
-    for (let candidate = result.length - 1; candidate >= 0; candidate -= 1) {
-      if (result[candidate]!.createdAt <= item.createdAt) {
-        index = candidate + 1;
-        break;
-      }
-    }
-    while (
-      index < result.length &&
-      result[index]!.eventSequence === undefined &&
-      result[index]!.createdAt === item.createdAt
-    ) {
-      index += 1;
-    }
-    result.splice(index, 0, item);
+function compareRestorationRecords(
+  left: RestorationSourceRecord,
+  right: RestorationSourceRecord,
+): number {
+  const leftSequence = left.eventSequence;
+  const rightSequence = right.eventSequence;
+  if (leftSequence !== undefined && rightSequence !== undefined) {
+    return leftSequence - rightSequence;
   }
-  return result;
+  if (leftSequence !== undefined) return -1;
+  if (rightSequence !== undefined) return 1;
+  return left.createdAt.localeCompare(right.createdAt);
+}
+
+function sortRestorationSource<T extends RestorationSourceRecord>(items: T[]): T[] {
+  for (let index = 1; index < items.length; index += 1) {
+    if (compareRestorationRecords(items[index - 1]!, items[index]!) > 0) {
+      return items.sort(compareRestorationRecords);
+    }
+  }
+  return items;
+}
+
+function restorationEventSource<T extends RestorationSourceRecord>(
+  records: T[],
+  event: (record: T) => ProviderEvent,
+): RestorationEventSource {
+  const items = sortRestorationSource(records);
+  const sequencedLength = items.findIndex((item) => item.eventSequence === undefined);
+  return {
+    length: items.length,
+    sequencedLength: sequencedLength < 0 ? items.length : sequencedLength,
+    createdAt: (index) => items[index]!.createdAt,
+    eventSequence: (index) => items[index]!.eventSequence,
+    event: (index) => event(items[index]!),
+  };
+}
+
+function nextSequencedSource(
+  sources: readonly RestorationEventSource[],
+  cursors: readonly number[],
+): number {
+  let selected = -1;
+  for (let source = 0; source < sources.length; source += 1) {
+    const candidate = sources[source]!;
+    if (cursors[source]! >= candidate.sequencedLength) continue;
+    if (selected < 0) {
+      selected = source;
+      continue;
+    }
+    const sequence = candidate.eventSequence(cursors[source]!)!;
+    const selectedSequence = sources[selected]!.eventSequence(cursors[selected]!)!;
+    if (sequence < selectedSequence) selected = source;
+  }
+  return selected;
+}
+
+function nextUnsequencedSource(
+  sources: readonly RestorationEventSource[],
+  cursors: readonly number[],
+): number {
+  let selected = -1;
+  for (let source = 0; source < sources.length; source += 1) {
+    const candidate = sources[source]!;
+    if (cursors[source]! >= candidate.length) continue;
+    if (selected < 0) {
+      selected = source;
+      continue;
+    }
+    if (candidate.createdAt(cursors[source]!) < sources[selected]!.createdAt(cursors[selected]!)) {
+      selected = source;
+    }
+  }
+  return selected;
+}
+
+function insertionSlot(suffixMinimumCreatedAt: readonly string[], createdAt: string): number {
+  let low = 0;
+  let high = suffixMinimumCreatedAt.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (suffixMinimumCreatedAt[middle]! <= createdAt) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * Preserve sequence order, then directly emit timestamp-slotted legacy and
+ * projection-only events. Only one string reference per sequenced event is
+ * retained while deriving insertion slots; no combined event wrapper graph is
+ * materialized.
+ */
+function emitRestorationEvents(sources: readonly RestorationEventSource[]): {
+  events: ProviderEvent[];
+  lastCreatedAt: string | null;
+} {
+  const sequenceCursors = sources.map(() => 0);
+  if (sources.every((source) => source.length === source.sequencedLength)) {
+    const events: ProviderEvent[] = [];
+    let lastCreatedAt: string | null = null;
+    while (true) {
+      const sourceIndex = nextSequencedSource(sources, sequenceCursors);
+      if (sourceIndex < 0) return { events, lastCreatedAt };
+      const source = sources[sourceIndex]!;
+      const index = sequenceCursors[sourceIndex]!;
+      events.push(source.event(index));
+      lastCreatedAt = source.createdAt(index);
+      sequenceCursors[sourceIndex] = index + 1;
+    }
+  }
+  const suffixMinimumCreatedAt: string[] = [];
+  while (true) {
+    const source = nextSequencedSource(sources, sequenceCursors);
+    if (source < 0) break;
+    const index = sequenceCursors[source]!;
+    suffixMinimumCreatedAt.push(sources[source]!.createdAt(index));
+    sequenceCursors[source] = index + 1;
+  }
+  for (let index = suffixMinimumCreatedAt.length - 2; index >= 0; index -= 1) {
+    if (suffixMinimumCreatedAt[index + 1]! < suffixMinimumCreatedAt[index]!) {
+      suffixMinimumCreatedAt[index] = suffixMinimumCreatedAt[index + 1]!;
+    }
+  }
+
+  sequenceCursors.fill(0);
+  const unsequencedCursors = sources.map((source) => source.sequencedLength);
+  const events: ProviderEvent[] = [];
+  let lastCreatedAt: string | null = null;
+  let unsequencedSource = nextUnsequencedSource(sources, unsequencedCursors);
+
+  for (let slot = 0; slot <= suffixMinimumCreatedAt.length; slot += 1) {
+    while (unsequencedSource >= 0) {
+      const source = sources[unsequencedSource]!;
+      const index = unsequencedCursors[unsequencedSource]!;
+      const createdAt = source.createdAt(index);
+      if (insertionSlot(suffixMinimumCreatedAt, createdAt) !== slot) break;
+      events.push(source.event(index));
+      lastCreatedAt = createdAt;
+      unsequencedCursors[unsequencedSource] = index + 1;
+      unsequencedSource = nextUnsequencedSource(sources, unsequencedCursors);
+    }
+    if (slot === suffixMinimumCreatedAt.length) break;
+    const sourceIndex = nextSequencedSource(sources, sequenceCursors);
+    const source = sources[sourceIndex]!;
+    const index = sequenceCursors[sourceIndex]!;
+    events.push(source.event(index));
+    lastCreatedAt = source.createdAt(index);
+    sequenceCursors[sourceIndex] = index + 1;
+  }
+  return { events, lastCreatedAt };
 }
 
 export function restoredTurnTerminalEvent(
@@ -294,107 +415,94 @@ export function restorePersistedConversation(
       createdAt: message.createdAt,
     }));
 
-  const eventsForTurn = (turnId: string): OrderedEvent[] => {
+  const eventsForTurn = (
+    turnId: string,
+  ): { events: ProviderEvent[]; lastCreatedAt: string | null } => {
     const turn = turnById.get(turnId);
-    let ordinal = 0;
-    const ordered = orderEvents([
-      ...(messagesByTurn.get(turnId) ?? [])
-        .filter((message) => message.role === "assistant" && message.text.length > 0)
-        .map((message) => ({
-          event: { kind: "assistant_text" as const, text: message.text },
-          createdAt: message.createdAt,
-          eventSequence: message.eventSequence,
-          ordinal: ordinal++,
-        })),
-      ...(activitiesByTurn.get(turnId) ?? []).flatMap((activity): OrderedEvent[] => {
-        let event: ProviderEvent | null = null;
+    const messageSource = restorationEventSource(
+      (messagesByTurn.get(turnId) ?? []).filter(
+        (message) => message.role === "assistant" && message.text.length > 0,
+      ),
+      (message) => ({ kind: "assistant_text", text: message.text }),
+    );
+    const activitySource = restorationEventSource(
+      (activitiesByTurn.get(turnId) ?? []).filter(
+        (activity) =>
+          activity.kind === "provider_failed" ||
+          ((activity.kind === "tool_started" || activity.kind === "tool_finished") &&
+            Boolean(activity.toolCallId)),
+      ),
+      (activity): ProviderEvent => {
         if (activity.kind === "provider_failed") {
-          event = {
+          return {
             kind: "failed",
             message: activity.message?.trim() || `${target.providerName} failed.`,
           };
-        } else if (activity.kind === "tool_started" && activity.toolCallId) {
-          event = {
+        }
+        if (activity.kind === "tool_started") {
+          return {
             kind: "tool_started",
-            toolCallId: activity.toolCallId,
+            toolCallId: activity.toolCallId!,
             name: activity.name?.trim() || "Tool",
           };
-        } else if (activity.kind === "tool_finished" && activity.toolCallId) {
-          event = {
-            kind: "tool_finished",
-            toolCallId: activity.toolCallId,
-            failed: activity.failed === true,
-          };
         }
-        return event
-          ? [
-              {
-                event,
-                createdAt: activity.createdAt,
-                eventSequence: activity.eventSequence,
-                ordinal: ordinal++,
-              },
-            ]
-          : [];
+        return {
+          kind: "tool_finished",
+          toolCallId: activity.toolCallId!,
+          failed: activity.failed === true,
+        };
+      },
+    );
+    const planSource = restorationEventSource(plansByTurn.get(turnId) ?? [], (plan) => ({
+      kind: "plan_updated",
+      artifact: {
+        id: plan.artifactId,
+        provider: plan.provider,
+        ...(plan.title !== undefined ? { title: plan.title } : {}),
+        ...(plan.body !== undefined ? { body: plan.body } : {}),
+        ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
+        updatedAt: plan.updatedAt,
+      },
+    }));
+    const inputSource = restorationEventSource(inputRequestsByTurn.get(turnId) ?? [], (request) =>
+      request.state === "pending"
+        ? ({ ...request, kind: "input_requested" as const } satisfies ProviderEvent)
+        : ({
+            kind: "input_resolved" as const,
+            id: request.id,
+            state: request.state,
+          } satisfies ProviderEvent),
+    );
+    const correlationSource = restorationEventSource(
+      correlationsByTurn.get(turnId) ?? [],
+      (receipt) => ({
+        kind: "governance_correlation",
+        governance: receipt.governance,
+        runId: receipt.runId,
+        operationId: receipt.operationId,
+        correlationId: receipt.id,
       }),
-      ...(plansByTurn.get(turnId) ?? []).map((plan) => ({
-        event: {
-          kind: "plan_updated" as const,
-          artifact: {
-            id: plan.artifactId,
-            provider: plan.provider,
-            ...(plan.title !== undefined ? { title: plan.title } : {}),
-            ...(plan.body !== undefined ? { body: plan.body } : {}),
-            ...(plan.steps !== undefined ? { steps: plan.steps } : {}),
-            updatedAt: plan.updatedAt,
-          },
-        },
-        createdAt: plan.createdAt,
-        eventSequence: plan.eventSequence,
-        ordinal: ordinal++,
-      })),
-      ...(inputRequestsByTurn.get(turnId) ?? []).map((request) => ({
-        event:
-          request.state === "pending"
-            ? ({ ...request, kind: "input_requested" as const } satisfies ProviderEvent)
-            : ({
-                kind: "input_resolved" as const,
-                id: request.id,
-                state: request.state,
-              } satisfies ProviderEvent),
-        createdAt: request.createdAt,
-        ordinal: ordinal++,
-      })),
-      ...(correlationsByTurn.get(turnId) ?? []).map((receipt) => ({
-        event: {
-          kind: "governance_correlation" as const,
-          governance: receipt.governance,
-          runId: receipt.runId,
-          operationId: receipt.operationId,
-          correlationId: receipt.id,
-        },
-        createdAt: receipt.createdAt,
-        ordinal: ordinal++,
-      })),
+    );
+    const ordered = emitRestorationEvents([
+      messageSource,
+      activitySource,
+      planSource,
+      inputSource,
+      correlationSource,
     ]);
     const terminal = turn ? restoredTurnTerminalEvent(turn.status, binding.sessionId) : null;
     if (
       !terminal ||
-      ordered.some(
-        ({ event }) =>
+      ordered.events.some(
+        (event) =>
           event.kind === "turn_completed" || event.kind === "failed" || event.kind === "cancelled",
       )
     ) {
       return ordered;
     }
-    return [
-      ...ordered,
-      {
-        event: terminal,
-        createdAt: turn?.completedAt ?? ordered.at(-1)?.createdAt ?? turn?.createdAt ?? "",
-        ordinal: ordinal++,
-      },
-    ];
+    const terminalCreatedAt = turn?.completedAt ?? ordered.lastCreatedAt ?? turn?.createdAt ?? "";
+    ordered.events.push(terminal);
+    return { events: ordered.events, lastCreatedAt: terminalCreatedAt };
   };
 
   const restoredTurns = turns.flatMap((turn): RestoredConversationTurn[] => {
@@ -404,8 +512,8 @@ export function restorePersistedConversation(
     return [
       {
         message: { text: user.text, mode: turn.mode ?? "ask", createdAt: user.createdAt },
-        events: orderedEvents.map(({ event }) => event),
-        assistantAt: turn.completedAt ?? orderedEvents.at(-1)?.createdAt ?? turn.createdAt,
+        events: orderedEvents.events,
+        assistantAt: turn.completedAt ?? orderedEvents.lastCreatedAt ?? turn.createdAt,
         state: turn.status,
         contextReceipt: contextReceiptsByTurn.get(turn.id)?.[0],
         checkpoint: checkpointsByTurn.get(turn.id)?.[0],

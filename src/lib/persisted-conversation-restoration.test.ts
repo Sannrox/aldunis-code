@@ -161,6 +161,97 @@ test("restoration event ordering is deterministic for mixed record generations",
   }
 });
 
+test("restoration preserves source stability across sequenced and projection-only records", () => {
+  const input = projection();
+  input.messages.push({
+    turnId: "turn-1",
+    role: "assistant",
+    text: "unsequenced message",
+    createdAt: "2026-08-10T10:00:02.000Z",
+  });
+  input.activities = [
+    {
+      turnId: "turn-1",
+      kind: "tool_started",
+      toolCallId: "tool-1",
+      name: "Tool",
+      failed: null,
+      message: null,
+      createdAt: "2026-08-10T10:00:03.000Z",
+      eventSequence: 1,
+    },
+    {
+      turnId: "turn-1",
+      kind: "tool_finished",
+      toolCallId: "tool-1",
+      name: "Tool",
+      failed: false,
+      message: null,
+      createdAt: "2026-08-10T10:00:02.000Z",
+    },
+    {
+      turnId: "turn-1",
+      kind: "tool_started",
+      toolCallId: "",
+      name: "Malformed",
+      failed: null,
+      message: null,
+      createdAt: "2026-08-10T10:00:02.000Z",
+    },
+  ];
+  input.plans = [
+    {
+      artifactId: "plan-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      provider: "codex-cli",
+      title: "Plan",
+      updatedAt: "2026-08-10T10:00:02.000Z",
+      createdAt: "2026-08-10T10:00:02.000Z",
+    },
+  ];
+  input.inputRequests = [
+    {
+      kind: "input_requested",
+      turnId: "turn-1",
+      id: "input-1",
+      threadId: "thread-1",
+      question: "Continue?",
+      choices: [],
+      recommendation: null,
+      responseMode: "child_follow_up",
+      expiresAt: null,
+      allowFreeForm: true,
+      state: "pending",
+      createdAt: "2026-08-10T10:00:02.000Z",
+    },
+  ];
+
+  const restored = restorePersistedConversation(input, target);
+  assert.equal(restored.kind, "restored");
+  if (restored.kind !== "restored") return;
+  assert.deepEqual(
+    restored.currentTurn.events.map((event) => {
+      if (event.kind === "assistant_text") return event.text;
+      if (event.kind === "tool_started" || event.kind === "tool_finished") return event.kind;
+      if (event.kind === "plan_updated") return event.kind;
+      if (event.kind === "input_requested") return event.kind;
+      return event.kind;
+    }),
+    [
+      "first sequenced event",
+      "tool_started",
+      "second sequenced event",
+      "unsequenced message",
+      "tool_finished",
+      "plan_updated",
+      "input_requested",
+      "governance_correlation",
+      "turn_completed",
+    ],
+  );
+});
+
 test("multi-turn restoration keeps indexed records scoped to their owning turn", () => {
   const input = projection();
   input.turns.push({
