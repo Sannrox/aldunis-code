@@ -34,7 +34,7 @@ test("JSON line writes stop at backpressure and resume in order", async () => {
 
   output.blocked = false;
   output.emit("drain");
-  await Promise.all([first, second]);
+  await Promise.all([first, second, writer.drained()]);
   assert.deepEqual(output.writes, ['{"id":1}\n', '{"id":2}\n']);
   assert.equal(firstSettled, true);
   assert.equal(secondSettled, true);
@@ -53,6 +53,7 @@ test("JSON line writes reject and release listeners when output closes", async (
   output.emit("close");
   await assert.rejects(pending, /output closed/);
   await assert.rejects(queued, /output closed/);
+  await assert.rejects(writer.drained(), /output closed/);
   assert.deepEqual(output.writes, ['{"id":1}\n']);
   assert.equal(output.listenerCount("drain"), 0);
   assert.equal(output.listenerCount("error"), 0);

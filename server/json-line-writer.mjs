@@ -45,4 +45,9 @@ export class JsonLineWriter {
     });
     return next;
   }
+
+  async drained() {
+    await this.#tail;
+    if (this.#failure) throw this.#failure;
+  }
 }
