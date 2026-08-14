@@ -465,7 +465,7 @@ test("context receipts retain immutable metadata without repository content", as
     provider: "codex-cli",
     contextPins: [{ path: "src", kind: "folder" }],
   });
-  await store.saveContextReceipt({
+  const firstReceipt = await store.saveContextReceipt({
     threadId: thread.id,
     turnId: turn.id,
     pins: [{ path: "src", kind: "folder" }],
@@ -484,9 +484,35 @@ test("context receipts retain immutable metadata without repository content", as
     estimatedTokens: 6,
     digest: "b".repeat(64),
   });
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const secondReceipt = await store.saveContextReceipt({
+    threadId: thread.id,
+    turnId: turn.id,
+    pins: [],
+    entries: [],
+    totalBytes: 0,
+    estimatedTokens: 0,
+    digest: "c".repeat(64),
+  });
+  const repeatedReceipt = await store.saveContextReceipt({
+    threadId: thread.id,
+    turnId: turn.id,
+    pins: [{ path: "src", kind: "folder" }],
+    entries: firstReceipt.entries,
+    totalBytes: 24,
+    estimatedTokens: 6,
+    digest: "b".repeat(64),
+  });
+  assert.equal(repeatedReceipt.createdAt, firstReceipt.createdAt);
+  assert.ok(secondReceipt.createdAt > firstReceipt.createdAt);
+  await store.enforceRetention(new Date(0));
   const rebuilt = await new LocalStateStore(directory).load();
   assert.deepEqual(rebuilt.threads[0].contextPins, [{ path: "src", kind: "folder" }]);
-  assert.equal(rebuilt.contextReceipts.length, 1);
+  assert.equal(rebuilt.contextReceipts.length, 2);
+  assert.deepEqual(
+    rebuilt.contextReceipts.map((receipt) => receipt.createdAt),
+    [firstReceipt.createdAt, secondReceipt.createdAt],
+  );
   assert.equal(rebuilt.contextReceipts[0].entries[0].digest, "a".repeat(64));
   await assert.rejects(
     () =>
@@ -2281,12 +2307,94 @@ test("state compaction preserves message and activity event order", async () => 
     text: "After tool.",
   });
   await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "plan_updated",
+    artifact: { id: "survivor-plan", provider: "claude-code", body: "Keep order" },
+  });
+  await store.saveContextReceipt({
+    threadId: survivor.thread.id,
+    turnId: survivor.turn.id,
+    pins: [],
+    entries: [],
+    totalBytes: 0,
+    estimatedTokens: 0,
+    digest: "d".repeat(64),
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
+    kind: "context_usage",
+    usedTokens: 10,
+    maxTokens: 100,
+    totalProcessedTokens: 10,
+    inputTokens: 8,
+    outputTokens: 2,
+    cachedInputTokens: null,
+    cacheWriteInputTokens: null,
+    reasoningOutputTokens: null,
+  });
+  await store.recordProviderEvent(survivor.thread.id, survivor.turn.id, "claude-code", {
     kind: "turn_completed",
     sessionId: "survivor-session",
     costUsd: 0,
   });
 
+  const before = await store.load();
+  const expectedTranscriptOrder = [
+    ...before.messages.map((message) => ({
+      id: message.id,
+      type: "message_saved",
+      eventSequence: message.eventSequence,
+      createdAt: message.createdAt,
+    })),
+    ...before.activities.map((activity) => ({
+      id: activity.id,
+      type: "activity_saved",
+      eventSequence: activity.eventSequence,
+      createdAt: activity.createdAt,
+    })),
+    ...before.plans.map((plan) => ({
+      id: plan.id,
+      type: "plan_saved",
+      eventSequence: plan.eventSequence,
+      createdAt: plan.createdAt,
+    })),
+    ...before.contextReceipts.map((receipt) => ({
+      id: receipt.id,
+      type: "context_receipt_saved",
+      eventSequence: undefined,
+      createdAt: receipt.createdAt,
+    })),
+    ...before.usageReceipts.map((receipt) => ({
+      id: receipt.id,
+      type: "usage_receipt_saved",
+      eventSequence: undefined,
+      createdAt: receipt.createdAt,
+    })),
+  ]
+    .sort((left, right) =>
+      left.eventSequence !== undefined && right.eventSequence !== undefined
+        ? left.eventSequence - right.eventSequence
+        : left.createdAt.localeCompare(right.createdAt),
+    )
+    .filter(
+      ({ id }) =>
+        before.messages.some((item) => item.id === id && item.turnId === survivor.turn.id) ||
+        before.activities.some((item) => item.id === id && item.turnId === survivor.turn.id) ||
+        before.plans.some((item) => item.id === id && item.turnId === survivor.turn.id) ||
+        before.contextReceipts.some((item) => item.id === id && item.turnId === survivor.turn.id) ||
+        before.usageReceipts.some((item) => item.id === id && item.turnId === survivor.turn.id),
+    )
+    .map(({ type, id }) => ({ type, id }));
   await store.deleteConversation(removed.thread.id);
+  const rewrittenTranscriptOrder = (await readFile(join(directory, "events.v1.jsonl"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { event: Record<string, unknown> })
+    .filter(({ event }) => expectedTranscriptOrder.some(({ type }) => type === event.type))
+    .map(({ event }) => {
+      const record =
+        event.message ?? event.activity ?? event.plan ?? event.contextReceipt ?? event.usageReceipt;
+      return { type: event.type, id: (record as { id: string }).id };
+    });
+  assert.deepEqual(rewrittenTranscriptOrder, expectedTranscriptOrder);
   const rebuilt = await new LocalStateStore(directory).load();
   const orderedKinds = [
     ...rebuilt.messages
