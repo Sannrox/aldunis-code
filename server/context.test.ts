@@ -9,6 +9,7 @@ import {
   readdir,
   realpath,
   rename,
+  rm,
   symlink,
   truncate,
   writeFile,
@@ -280,6 +281,66 @@ test("file discovery is repository-scoped and hides protected names", async () =
   assert.equal(files.includes("auth.config.ts"), true);
   assert.equal(files.includes("token.json.ts"), true);
   assert.equal(files.includes("api-key.config.js"), true);
+});
+
+test("filename search streams a globally ranked inventory beyond 4 MiB", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-context-large-search-index-"));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn("git", ["init", "-q", root]);
+      child.once("error", reject);
+      child.once("close", (code) =>
+        code === 0 ? resolve() : reject(new Error(`git init exited with ${code}`)),
+      );
+    });
+    await writeFile(join(root, "empty"), "");
+    await writeFile(join(root, "match-untracked.ts"), "untracked\n");
+    const emptyBlob = await new Promise<string>((resolve, reject) => {
+      const child = spawn("git", ["-C", root, "hash-object", "-w", "empty"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once("error", reject);
+      child.once("close", (code) =>
+        code === 0
+          ? resolve(stdout.trim())
+          : reject(new Error(stderr || `git exited with ${code}`)),
+      );
+    });
+    const directory = "x".repeat(180);
+    const paths = Array.from(
+      { length: 25_000 },
+      (_, index) => `corpus/${directory}/z-match-${String(index).padStart(5, "0")}.ts`,
+    );
+    assert.ok(Buffer.byteLength(`${paths.join("\0")}\0`) > 4 * 1024 * 1024);
+    const update = spawn("git", ["-C", root, "update-index", "--index-info"], {
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    update.stderr.setEncoding("utf8");
+    update.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    update.stdin.end(paths.map((path) => `100644 ${emptyBlob}\t${path}\n`).join(""));
+    const code = await new Promise<number | null>((resolve) => update.once("close", resolve));
+    assert.equal(code, 0, stderr);
+
+    assert.deepEqual(await searchRepositoryFiles(root, "match", 20), [
+      "match-untracked.ts",
+      ...paths.slice(0, 19),
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("file discovery cancels both Git listings through the request signal", async () => {

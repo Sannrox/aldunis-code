@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, opendir, realpath, stat, writeFile } from "node:fs/promises";
@@ -23,6 +23,9 @@ export const MAX_PREVIEW_BYTES = 128 * 1024;
 const MAX_SEARCH_BYTES = 4 * 1024 * 1024;
 export const MAX_SEARCH_INSPECTED_FILES = 1_024;
 export const MAX_ACTIVE_BROWSE_INSPECTIONS = 8;
+const REPOSITORY_SEARCH_INVENTORY_TIMEOUT_MS = 5_000;
+const MAX_REPOSITORY_SEARCH_PATH_BYTES = 64 * 1024;
+const MAX_REPOSITORY_SEARCH_STDERR_BYTES = 64 * 1024;
 const IMAGE_TYPES: Record<string, string> = {
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
@@ -800,6 +803,84 @@ async function inspectRepositoryFiles(
   return files;
 }
 
+async function streamRepositorySearchPaths(
+  worktree: string,
+  args: string[],
+  untracked: boolean,
+  admit: (path: string, untracked: boolean) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  const child = spawn("git", ["-C", worktree, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  let pending = Buffer.alloc(0);
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  const abort = () => stop();
+  signal.addEventListener("abort", abort, { once: true });
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_REPOSITORY_SEARCH_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_REPOSITORY_SEARCH_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, REPOSITORY_SEARCH_INVENTORY_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    for await (const chunk of child.stdout) {
+      signal.throwIfAborted();
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        if (end - start > MAX_REPOSITORY_SEARCH_PATH_BYTES) {
+          throw new RepositoryError("A repository search path exceeded its resource limit.", 409);
+        }
+        admit(joined.toString("utf8", start, end), untracked);
+        start = end + 1;
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_REPOSITORY_SEARCH_PATH_BYTES) {
+        throw new RepositoryError("A repository search path exceeded its resource limit.", 409);
+      }
+    }
+    const completion = await exit;
+    signal.throwIfAborted();
+    if (timedOut) throw new RepositoryError("Repository filename search timed out.", 409);
+    if (pending.length > 0) {
+      throw new RepositoryError("Git returned an incomplete repository search inventory.", 409);
+    }
+    if (completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(detail || "Git could not enumerate repository paths.", 409);
+    }
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", abort);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+}
+
 export async function searchRepositoryFiles(
   worktree: string,
   query: string,
@@ -808,16 +889,62 @@ export async function searchRepositoryFiles(
 ): Promise<string[]> {
   const boundedLimit = Math.max(1, Math.min(limit, 50));
   const needle = query.trim().toLocaleLowerCase();
-  return (await repositoryPaths(worktree, signal))
-    .filter((path) => !needle || path.toLocaleLowerCase().includes(needle))
-    .sort((left, right) => {
-      const leftName = left.split("/").at(-1)?.toLocaleLowerCase() ?? left;
-      const rightName = right.split("/").at(-1)?.toLocaleLowerCase() ?? right;
-      const leftStarts = leftName.startsWith(needle) ? 0 : 1;
-      const rightStarts = rightName.startsWith(needle) ? 0 : 1;
-      return leftStarts - rightStarts || left.localeCompare(right);
-    })
-    .slice(0, boundedLimit);
+  const matches: string[] = [];
+  const compare = (left: string, right: string): number => {
+    const leftName = left.split("/").at(-1)?.toLocaleLowerCase() ?? left;
+    const rightName = right.split("/").at(-1)?.toLocaleLowerCase() ?? right;
+    const leftStarts = leftName.startsWith(needle) ? 0 : 1;
+    const rightStarts = rightName.startsWith(needle) ? 0 : 1;
+    return leftStarts - rightStarts || left.localeCompare(right);
+  };
+  const admit = (path: string, untracked: boolean): void => {
+    if (
+      (untracked && isLocalRuntimePath(path)) ||
+      isHidden(path) ||
+      isSecretLikePath(path) ||
+      (needle && !path.toLocaleLowerCase().includes(needle))
+    ) {
+      return;
+    }
+    const index = matches.findIndex((existing) => compare(path, existing) < 0);
+    if (index < 0) {
+      if (matches.length < boundedLimit) matches.push(path);
+      return;
+    }
+    matches.splice(index, 0, path);
+    if (matches.length > boundedLimit) matches.pop();
+  };
+  const internalAbort = new AbortController();
+  const inventorySignal = signal
+    ? AbortSignal.any([signal, internalAbort.signal])
+    : internalAbort.signal;
+  const tasks = [
+    streamRepositorySearchPaths(
+      worktree,
+      ["ls-files", "--cached", "-z"],
+      false,
+      admit,
+      inventorySignal,
+    ),
+    streamRepositorySearchPaths(
+      worktree,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      true,
+      admit,
+      inventorySignal,
+    ),
+  ];
+  try {
+    await Promise.all(tasks);
+  } catch (error) {
+    internalAbort.abort();
+    await Promise.allSettled(tasks);
+    signal?.throwIfAborted();
+    throw error;
+  } finally {
+    internalAbort.abort();
+  }
+  return matches;
 }
 
 export async function browseRepositoryFiles(
