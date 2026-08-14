@@ -21,6 +21,7 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import { BROWSER_MCP_NAME } from "./browser.ts";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 import {
   scheduleProviderChildTermination,
   terminateProviderChild,
@@ -59,14 +60,21 @@ export interface CodexCliAdapterOptions {
   maxIdleSessions?: number;
   onSessionClosed?: (conversationId: string) => void;
   onInputSettled?: (runId: string, requestId: string) => void;
+  inputWriterFactory?: (output: NodeJS.WritableStream) => CodexInputWriter;
   timers?: {
     setTimeout(callback: () => void, delayMs: number): CodexIdleTimer;
     clearTimeout(handle: CodexIdleTimer): void;
   };
 }
 
+export interface CodexInputWriter {
+  write(value: unknown): Promise<void>;
+  drained(): Promise<void>;
+}
+
 interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
+  input: CodexInputWriter;
   cancelled: boolean;
   spawnFailed: boolean;
   initialized: boolean;
@@ -923,6 +931,7 @@ export class CodexCliAdapter {
     child.stderr.resume();
     const active: ActiveRun = {
       child,
+      input: this.options.inputWriterFactory?.(child.stdin) ?? new JsonLineWriter(child.stdin),
       cancelled: false,
       spawnFailed: false,
       initialized: false,
@@ -966,7 +975,7 @@ export class CodexCliAdapter {
     this.#forgetPendingInputs(id, active);
     this.permissions.closeRun(id, "cancelled");
     if (active.threadId && active.turnId) {
-      this.#send(active.child, {
+      this.#queue(active, {
         method: "turn/interrupt",
         id: 99,
         params: { threadId: active.threadId, turnId: active.turnId },
@@ -982,7 +991,7 @@ export class CodexCliAdapter {
     const active = this.#active.get(runId);
     const pending = active?.pendingInputs.get(requestId);
     if (!active || !pending || active.cancelled) return false;
-    const sent = this.#send(active.child, {
+    const sent = this.#queue(active, {
       id: pending.rpcId,
       result: {
         answers: Object.fromEntries(
@@ -998,7 +1007,7 @@ export class CodexCliAdapter {
     const active = this.#active.get(runId);
     const pending = active?.pendingInputs.get(requestId);
     if (!active || !pending || active.cancelled) return false;
-    const sent = this.#send(active.child, {
+    const sent = this.#queue(active, {
       id: pending.rpcId,
       result: { answers: {} },
     });
@@ -1080,6 +1089,21 @@ export class CodexCliAdapter {
     }
   }
 
+  #queue(active: ActiveRun, value: unknown): boolean {
+    if (active.child.stdin.destroyed || active.child.stdin.writableEnded) return false;
+    void active.input.write(value).catch(() => this.#failQueuedWrite(active));
+    return true;
+  }
+
+  #write(active: ActiveRun, value: unknown): Promise<void> {
+    return active.input.write(value);
+  }
+
+  #failQueuedWrite(active: ActiveRun): void {
+    if (this.#sessions.get(active.conversationId) === active) this.#retireSession(active);
+    else this.#terminate(active.child);
+  }
+
   #terminate(child: ChildProcessWithoutNullStreams): void {
     terminateProviderChild(child);
   }
@@ -1128,10 +1152,10 @@ export class CodexCliAdapter {
     options: ProviderStartOptions,
   ): AsyncIterable<ProviderEvent> {
     const token = this.permissions.createRunToken(id);
-    const startTurn = () => {
+    const startTurn = async () => {
       if (!active.threadId)
         throw new ProviderProtocolError("Codex session is missing its thread id.");
-      this.#send(active.child, {
+      await this.#write(active, {
         method: "turn/start",
         id: 2,
         params: {
@@ -1145,31 +1169,32 @@ export class CodexCliAdapter {
         },
       });
     };
-    if (active.initialized) startTurn();
-    else {
-      this.#send(active.child, {
-        method: "initialize",
-        id: 0,
-        params: {
-          clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
-        },
-      });
-    }
     let protocolFailed = false;
     let terminalEmitted = false;
     let completed = false;
     let resumeFallbackAttempted = false;
     const approvalTasks = new Set<Promise<void>>();
     try {
+      if (active.initialized) await startTurn();
+      else {
+        await this.#write(active, {
+          method: "initialize",
+          id: 0,
+          params: {
+            clientInfo: { name: "aldunis_code", title: "Aldunis Code", version: "0.1.0" },
+          },
+        });
+      }
       for await (const message of this.#lines(active.child, {
         allowIncompleteTrailer: () => terminalEmitted || active.cancelled,
       })) {
+        await active.input.drained();
         if (message.id === 0) {
           if (message.error)
             throw new ProviderProtocolError("Codex app-server initialization failed.");
           active.initialized = true;
-          this.#send(active.child, { method: "initialized", params: {} });
-          this.#send(active.child, {
+          await this.#write(active, { method: "initialized", params: {} });
+          await this.#write(active, {
             method: options.resumeSessionId ? "thread/resume" : "thread/start",
             id: 1,
             params: {
@@ -1196,7 +1221,7 @@ export class CodexCliAdapter {
             isRecoverableCodexResumeError(message.error)
           ) {
             resumeFallbackAttempted = true;
-            this.#send(active.child, {
+            await this.#write(active, {
               method: "thread/start",
               id: 1,
               params: {
@@ -1222,7 +1247,7 @@ export class CodexCliAdapter {
             sessionId: active.threadId,
             model: typeof result?.model === "string" ? result.model : (options.model ?? null),
           };
-          startTurn();
+          await startTurn();
           continue;
         }
         if (message.id === 2) {
@@ -1236,7 +1261,7 @@ export class CodexCliAdapter {
           // Some unit-like server requests may omit params; treat as empty object.
           const params = record(message.params) ?? {};
           if (message.method === "item/tool/call") {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               result: { contentItems: [], success: false },
             });
@@ -1263,7 +1288,7 @@ export class CodexCliAdapter {
                   question.isSecret === true,
               )
             ) {
-              this.#send(active.child, {
+              await this.#write(active, {
                 id: message.id as RpcId,
                 error: {
                   code: -32602,
@@ -1310,7 +1335,7 @@ export class CodexCliAdapter {
           const isCommand = message.method === "item/commandExecution/requestApproval";
           const isFile = message.method === "item/fileChange/requestApproval";
           if (!isCommand && !isFile) {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               error: {
                 code: -32601,
@@ -1320,7 +1345,7 @@ export class CodexCliAdapter {
             continue;
           }
           if (options.mode !== "build") {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               result: { decision: "decline" },
             });
@@ -1331,7 +1356,7 @@ export class CodexCliAdapter {
           // Keep commands in the read-only sandbox until Codex exposes a
           // worktree-confined execution policy that Aldunis Code can enforce.
           if (isCommand && params.command != null) {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               result: { decision: "decline" },
             });
@@ -1349,7 +1374,7 @@ export class CodexCliAdapter {
             params.command == null &&
             (typeof network?.host !== "string" || typeof network.protocol !== "string")
           ) {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               result: { decision: "decline" },
             });
@@ -1363,7 +1388,7 @@ export class CodexCliAdapter {
               changedPaths.length > MAX_APPROVAL_PATHS ||
               !(await pathsWithinWorktree(options.worktree, changedPaths)))
           ) {
-            this.#send(active.child, {
+            await this.#write(active, {
               id: message.id as RpcId,
               result: { decision: "decline" },
             });
@@ -1399,7 +1424,7 @@ export class CodexCliAdapter {
               const remainsWithinWorktree =
                 currentPaths.length === 0 ||
                 (await pathsWithinWorktree(options.worktree, currentPaths));
-              this.#send(active.child, {
+              await this.#write(active, {
                 id: message.id as RpcId,
                 result: {
                   decision:
@@ -1409,14 +1434,15 @@ export class CodexCliAdapter {
                 },
               });
             })
-            .catch(() => {
+            .catch(async () => {
               if (!active.child.stdin.destroyed && !active.child.stdin.writableEnded) {
-                this.#send(active.child, {
+                await this.#write(active, {
                   id: message.id as RpcId,
                   result: { decision: "decline" },
                 });
               }
             })
+            .catch(() => this.#failQueuedWrite(active))
             .finally(() => approvalTasks.delete(approvalTask));
           approvalTasks.add(approvalTask);
           continue;
@@ -1477,6 +1503,8 @@ export class CodexCliAdapter {
       // threw (for example, a partial line after intentional terminate). Keep
       // the specific terminal outcome and do not emit a second failure.
       if (terminalEmitted) {
+        this.#terminate(active.child);
+      } else if (active.cancelled || active.spawnFailed) {
         this.#terminate(active.child);
       } else {
         protocolFailed = true;

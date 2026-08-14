@@ -13,6 +13,7 @@ import {
   normalizeCodexNotification,
   pathsWithinWorktree,
 } from "./codex-provider.ts";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 import { ProviderProtocolError } from "./provider.ts";
 
 class FakeCodexTimers {
@@ -1282,4 +1283,87 @@ if (process.argv.includes("--version")) {
         "Codex requested a dynamic or MCP tool that Aldunis Code does not authorize. Continue without external tools.",
     },
   ]);
+});
+
+test("Codex input backpressure stops consuming app-server requests until stdin drains", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-codex-backpressure-"));
+  const executable = join(directory, "fake-codex");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  console.log("codex-cli 0.145.0");
+} else {
+  const readline = require("node:readline");
+  readline.createInterface({input: process.stdin}).on("line", (line) => {
+    const request = JSON.parse(line);
+    if (request.id === 0) console.log(JSON.stringify({id:0,result:{}}));
+    if (request.id === 1) console.log(JSON.stringify({id:1,result:{thread:{id:"thread-1"}}}));
+    if (request.id === 2) {
+      console.log(JSON.stringify({id:2,result:{turn:{id:"turn-1"}}}));
+      console.log(JSON.stringify({id:99,method:"fixture/unsupported",params:{}}));
+      console.log(JSON.stringify({id:99,method:"fixture/unsupported",params:{}}));
+    }
+  });
+  setInterval(() => {}, 1000);
+}
+`,
+  );
+  await chmod(executable, 0o700);
+  let releaseFirstResponse = () => {};
+  const firstResponseGate = new Promise<void>((resolve) => {
+    releaseFirstResponse = resolve;
+  });
+  let markFirstResponse = () => {};
+  const firstResponseStarted = new Promise<void>((resolve) => {
+    markFirstResponse = resolve;
+  });
+  let markSecondResponse = () => {};
+  const secondResponseStarted = new Promise<void>((resolve) => {
+    markSecondResponse = resolve;
+  });
+  let responseCount = 0;
+  const adapter = new CodexCliAdapter(executable, undefined, {
+    inputWriterFactory: (output) => {
+      const delegate = new JsonLineWriter(output);
+      return {
+        async write(value) {
+          const message = value as { id?: unknown; error?: unknown };
+          if (message.id === 99 && message.error) {
+            responseCount += 1;
+            if (responseCount === 1) {
+              markFirstResponse();
+              await firstResponseGate;
+            } else {
+              markSecondResponse();
+            }
+          }
+          await delegate.write(value);
+        },
+        drained: () => delegate.drained(),
+      };
+    },
+  });
+  const run = await adapter.start({
+    repository: directory,
+    worktree: directory,
+    conversationId: "conversation-backpressure",
+    prompt: "Inspect",
+    approvalUrl: "http://127.0.0.1:1/unused",
+    mode: "ask",
+  });
+  const iterator = run.events[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).value?.kind, "session_started");
+  const pending = iterator.next();
+  try {
+    await firstResponseStarted;
+    assert.equal(responseCount, 1);
+    releaseFirstResponse();
+    await secondResponseStarted;
+    assert.equal(responseCount, 2);
+  } finally {
+    releaseFirstResponse();
+    adapter.close();
+    await Promise.allSettled([pending, run.settled]);
+  }
 });
