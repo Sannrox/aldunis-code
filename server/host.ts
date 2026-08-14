@@ -875,7 +875,7 @@ const contentTypes: Record<string, string> = {
 };
 
 export function pipeStaticAsset(stream: Readable, response: ServerResponse): void {
-  if (response.destroyed) {
+  if (response.destroyed || response.writableEnded) {
     stream.destroy();
     return;
   }
@@ -885,10 +885,39 @@ export function pipeStaticAsset(stream: Readable, response: ServerResponse): voi
   stream.pipe(response);
 }
 
-async function serveStatic(
+export const MAX_CONCURRENT_STATIC_ASSET_STREAMS = 64;
+
+export class StaticAssetAdmission {
+  readonly #maximum: number;
+  #active = 0;
+
+  constructor(maximum = MAX_CONCURRENT_STATIC_ASSET_STREAMS) {
+    this.#maximum = Number.isFinite(maximum)
+      ? Math.max(1, Math.floor(maximum))
+      : MAX_CONCURRENT_STATIC_ASSET_STREAMS;
+  }
+
+  tryAcquire(): (() => void) | null {
+    if (this.#active >= this.#maximum) return null;
+    this.#active += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#active -= 1;
+    };
+  }
+
+  get activeCount(): number {
+    return this.#active;
+  }
+}
+
+export async function serveStatic(
   request: IncomingMessage,
   response: ServerResponse,
   dist: string,
+  admission: StaticAssetAdmission,
 ): Promise<void> {
   const rawPath = new URL(request.url ?? "/", "http://localhost").pathname;
   const requested = rawPath === "/" ? "index.html" : rawPath.slice(1);
@@ -916,7 +945,25 @@ async function serveStatic(
     response.end("Not found");
     return;
   }
-  const stream = createReadStream(filePath);
+  const releaseAdmission = admission.tryAcquire();
+  if (!releaseAdmission) {
+    response.writeHead(503, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+      "retry-after": "1",
+      "x-content-type-options": "nosniff",
+    });
+    response.end("Too many static assets are already streaming.");
+    return;
+  }
+  let stream: ReturnType<typeof createReadStream>;
+  try {
+    stream = createReadStream(filePath);
+  } catch (error) {
+    releaseAdmission();
+    throw error;
+  }
+  stream.once("close", releaseAdmission);
   let opened = false;
   stream.on("open", () => {
     opened = true;
@@ -927,6 +974,7 @@ async function serveStatic(
     pipeStaticAsset(stream, response);
   });
   stream.on("error", () => {
+    releaseAdmission();
     if (!opened && !response.headersSent) {
       response.writeHead(500, {
         "content-type": "text/plain; charset=utf-8",
@@ -1011,6 +1059,7 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
   const wakeStreamAdmission = new WakeStreamAdmission();
+  const staticAssetAdmission = new StaticAssetAdmission();
   const autonomy = new AutonomyEngine(state);
   const autonomyScheduler = new AutonomyScheduler(autonomy);
   let delegatedControlTail = Promise.resolve();
@@ -1363,7 +1412,7 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
       })
     )
       return;
-    await serveStatic(request, response, dist);
+    await serveStatic(request, response, dist, staticAssetAdmission);
   };
   const server = (
     tls ? createHttpsServer(tls, handler) : createHttpServer(handler)
