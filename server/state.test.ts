@@ -3718,6 +3718,74 @@ test("assistant token buffering mutates the live segment without scanning retain
   }
 });
 
+test("assistant stream updates remain coherent with concurrent durable writes", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Stream concurrently",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  await Promise.all(
+    Array.from({ length: 100 }, (_, index) => [
+      store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+        kind: "assistant_text",
+        text: "x",
+      }),
+      store.saveProject({ id: "project-1", name: `fixture-${index}`, root: "/fixture" }),
+    ]).flat(),
+  );
+  await store.flushPendingAssistantHistory();
+
+  const liveAssistant = (await store.inspect()).messages.find(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  const rebuiltAssistant = (await new LocalStateStore(directory).load()).messages.find(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  assert.equal(liveAssistant?.text, "x".repeat(100));
+  assert.equal(rebuiltAssistant?.text, liveAssistant?.text);
+});
+
+test("assistant chunks cannot be overtaken by a queued turn boundary", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Preserve boundary order",
+    mode: "ask",
+    provider: "claude-code",
+  });
+
+  const blocker = store.saveProject({
+    id: "project-1",
+    name: "queued-write",
+    root: "/fixture",
+  });
+  const assistant = store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: "Final answer",
+  });
+  const completed = store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: 0,
+  });
+  await Promise.all([blocker, assistant, completed]);
+
+  const rebuilt = await new LocalStateStore(directory).load();
+  assert.equal(
+    rebuilt.messages.find((message) => message.turnId === turn.id && message.role === "assistant")
+      ?.text,
+    "Final answer",
+  );
+  assert.equal(rebuilt.turns.find((candidate) => candidate.id === turn.id)?.status, "completed");
+});
+
 test("assistant streams soft-checkpoint large growth and flush on demand", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
@@ -3737,14 +3805,14 @@ test("assistant streams soft-checkpoint large growth and flush on demand", async
   assert.equal([...afterCheckpoint.matchAll(/"type":"message_saved"/g)].length, 2); // user + checkpoint
   await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
     kind: "assistant_text",
-    text: " tail",
+    text: "## Tail",
   });
   await store.flushPendingAssistantHistory();
   const rebuilt = await new LocalStateStore(directory).load();
   const assistant = rebuilt.messages.find(
     (message) => message.turnId === turn.id && message.role === "assistant",
   );
-  assert.equal(assistant?.text, `${chunk} tail`);
+  assert.equal(assistant?.text, `${chunk}\n## Tail`);
 });
 
 test("coalesceConsecutiveAssistantMessages merges tokens and keeps tool splits", () => {

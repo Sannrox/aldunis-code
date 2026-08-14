@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { joinAssistantTextChunks } from "./assistant-text";
+import { appendAssistantTextChunk, joinAssistantTextChunks } from "./assistant-text";
 
 test("joinAssistantTextChunks concatenates streaming tokens without separators", () => {
   assert.equal(
@@ -35,4 +35,26 @@ test("joinAssistantTextChunks joins many chunks without changing their content",
 
   assert.equal(joined.length, 2_048_000);
   assert.equal(joined, chunks.join(""));
+});
+
+test("appendAssistantTextChunk matches batch reconstruction across stream boundaries", () => {
+  const chunks = [
+    "Result",
+    ".",
+    "##",
+    " Verified",
+    "\n\n",
+    "```",
+    "ts\n",
+    "const value = '🙂';",
+    "\n```",
+    " ",
+    "done",
+  ];
+  assert.equal(chunks.reduce(appendAssistantTextChunk, ""), joinAssistantTextChunks(chunks));
+});
+
+test("appendAssistantTextChunk retains long token streams without changing content", () => {
+  const chunks = Array.from({ length: 20_000 }, (_, index) => String(index % 10));
+  assert.equal(chunks.reduce(appendAssistantTextChunk, ""), chunks.join(""));
 });

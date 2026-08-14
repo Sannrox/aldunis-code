@@ -3,7 +3,10 @@ import { open, mkdir, rename, rm, stat, type FileHandle } from "node:fs/promises
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { lock } from "proper-lockfile";
-import { joinAssistantTextChunks } from "../src/lib/assistant-text.ts";
+import {
+  appendAssistantTextChunkWithWhitespaceState,
+  joinAssistantTextChunks,
+} from "../src/lib/assistant-text.ts";
 import { wouldCreateDelegatedConversationCycle } from "../src/lib/delegated-conversation-graph.ts";
 import {
   MAX_USAGE_COST_USD,
@@ -1996,6 +1999,7 @@ export class LocalStateStore {
   #delegatedChildTurnIds = new Set<string>();
   #conversationHistory = buildConversationHistoryIndex(this.#projection, this.#turnsByThread);
   #writeQueue: Promise<void> = Promise.resolve();
+  #pendingWriteOperations = 0;
   #writeFailure: unknown | null = null;
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
@@ -2005,6 +2009,8 @@ export class LocalStateStore {
    * events so stream tokens do not each become a durable row.
    */
   readonly #openAssistantByTurn = new Map<string, Message>();
+  /** Last live chunk ended in whitespace; avoids flattening the growing text rope. */
+  readonly #openAssistantEndsWithWhitespace = new Map<string, boolean>();
   /** Characters already journaled for each open segment (soft checkpoints). */
   readonly #openAssistantDurableLength = new Map<string, number>();
   /** Soft-checkpoint growth threshold so long text-only replies are not only in RAM. */
@@ -2016,6 +2022,18 @@ export class LocalStateStore {
   ) {
     this.#eventPath = join(directory, "events.v1.jsonl");
     this.#options = options;
+  }
+
+  #enqueueWrite<T>(action: () => Promise<T>): Promise<T> {
+    this.#pendingWriteOperations += 1;
+    const operation = this.#writeQueue.then(action).finally(() => {
+      this.#pendingWriteOperations -= 1;
+    });
+    this.#writeQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async #readProjection(): Promise<{
@@ -2440,7 +2458,7 @@ export class LocalStateStore {
     // history on every append path.
     await this.#ensureLoaded();
     let result!: T;
-    const operation = this.#writeQueue.then(async () => {
+    const operation = this.#enqueueWrite(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
       const computed = compute(this.#projection);
       result = computed.value;
@@ -2489,7 +2507,6 @@ export class LocalStateStore {
         throw error;
       }
     });
-    this.#writeQueue = operation.catch(() => undefined);
     await operation;
     return result;
   }
@@ -2560,46 +2577,77 @@ export class LocalStateStore {
     }
   }
 
-  async #bufferAssistantText(turnId: string, text: string, createdAt: string): Promise<void> {
+  #appendOpenAssistantText(turnId: string, text: string): Message {
+    let segment = this.#openAssistantByTurn.get(turnId);
+    if (!segment) {
+      segment = {
+        schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+        id: randomUUID(),
+        turnId,
+        role: "assistant",
+        text: "",
+        createdAt: new Date().toISOString(),
+      };
+      this.#openAssistantByTurn.set(turnId, segment);
+      this.#openAssistantEndsWithWhitespace.set(turnId, false);
+      this.#openAssistantDurableLength.set(turnId, 0);
+      this.#publishOpenAssistant(segment);
+    }
+    segment.text = appendAssistantTextChunkWithWhitespaceState(
+      segment.text,
+      text,
+      this.#openAssistantEndsWithWhitespace.get(turnId) ?? false,
+    );
+    this.#openAssistantEndsWithWhitespace.set(turnId, /\s/.test(text.at(-1)!));
+    return segment;
+  }
+
+  async #checkpointOpenAssistant(turnId: string, segment: Message): Promise<void> {
+    if (this.#writeFailure) throw this.#writeFailure;
+    if (this.#openAssistantByTurn.get(turnId) !== segment) return;
+    if (
+      segment.text.length - (this.#openAssistantDurableLength.get(turnId) ?? 0) <
+      LocalStateStore.ASSISTANT_CHECKPOINT_CHARS
+    ) {
+      return;
+    }
+    await this.#writeMessageEnvelope(segment);
+    this.#openAssistantDurableLength.set(turnId, segment.text.length);
+  }
+
+  async #bufferAssistantText(turnId: string, text: string): Promise<void> {
     if (!text) return;
     await this.#ensureLoaded();
-    const operation = this.#writeQueue.then(async () => {
+    if (this.#writeFailure) throw this.#writeFailure;
+    if (this.#pendingWriteOperations === 0) {
+      // The idle fast path mutates synchronously, preserving admission order
+      // without allocating a promise per provider token.
+      const segment = this.#appendOpenAssistantText(turnId, text);
+      if (
+        segment.text.length - (this.#openAssistantDurableLength.get(turnId) ?? 0) <
+        LocalStateStore.ASSISTANT_CHECKPOINT_CHARS
+      ) {
+        return;
+      }
+      await this.#enqueueWrite(() => this.#checkpointOpenAssistant(turnId, segment));
+      return;
+    }
+    await this.#enqueueWrite(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
-      let segment = this.#openAssistantByTurn.get(turnId);
-      if (!segment) {
-        segment = {
-          schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
-          id: randomUUID(),
-          turnId,
-          role: "assistant",
-          text: "",
-          createdAt,
-        };
-        this.#openAssistantByTurn.set(turnId, segment);
-        this.#openAssistantDurableLength.set(turnId, 0);
-        this.#publishOpenAssistant(segment);
-      }
-      segment.text = joinAssistantTextChunks([segment.text, text]);
-      const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
-      // Soft checkpoint so a long text-only reply is not only in RAM if the host
-      // exits before a tool/terminal boundary. Same live message id and object.
-      if (segment.text.length - durableLength >= LocalStateStore.ASSISTANT_CHECKPOINT_CHARS) {
-        await this.#writeMessageEnvelope(segment);
-        this.#openAssistantDurableLength.set(turnId, segment.text.length);
-      }
+      const segment = this.#appendOpenAssistantText(turnId, text);
+      await this.#checkpointOpenAssistant(turnId, segment);
     });
-    this.#writeQueue = operation.catch(() => undefined);
-    await operation;
   }
 
   async #flushOpenAssistant(turnId: string): Promise<void> {
     await this.#ensureLoaded();
-    const operation = this.#writeQueue.then(async () => {
+    const operation = this.#enqueueWrite(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
       const segment = this.#openAssistantByTurn.get(turnId);
       if (!segment) return;
       if (!segment.text) {
         this.#openAssistantByTurn.delete(turnId);
+        this.#openAssistantEndsWithWhitespace.delete(turnId);
         this.#openAssistantDurableLength.delete(turnId);
         this.#projection.messages = this.#projection.messages.filter(
           (message) => message.id !== segment.id,
@@ -2613,15 +2661,16 @@ export class LocalStateStore {
       if (segment.text.length === durableLength) {
         // Already journaled at this length (soft checkpoint); just close.
         this.#openAssistantByTurn.delete(turnId);
+        this.#openAssistantEndsWithWhitespace.delete(turnId);
         this.#openAssistantDurableLength.delete(turnId);
         return;
       }
       // Keep the map entry until the write succeeds so a failed fsync can retry.
       await this.#writeMessageEnvelope(segment);
       this.#openAssistantByTurn.delete(turnId);
+      this.#openAssistantEndsWithWhitespace.delete(turnId);
       this.#openAssistantDurableLength.delete(turnId);
     });
-    this.#writeQueue = operation.catch(() => undefined);
     await operation;
   }
 
@@ -4359,7 +4408,6 @@ export class LocalStateStore {
     event: ProviderEvent,
     providerBinding?: { profileId: string; continuationKey: string },
   ): Promise<void> {
-    const now = new Date().toISOString();
     if (event.kind === "browser_observation") {
       if (event.provider !== provider) {
         throw new LocalStateError(
@@ -4379,9 +4427,10 @@ export class LocalStateStore {
     if (event.kind === "assistant_text") {
       // Buffer stream tokens until a tool, approval, input, or terminal event
       // closes the segment. Avoids one fsync per token on long ACP streams.
-      await this.#bufferAssistantText(turnId, event.text, now);
+      await this.#bufferAssistantText(turnId, event.text);
       return;
     }
+    const now = new Date().toISOString();
     // Close the open reply only on true speech boundaries. Metering, plans,
     // session, and governance events may interleave without starting a new
     // assistant segment (and without confusing history coalescing).
@@ -4940,7 +4989,7 @@ export class LocalStateStore {
   async #compact(change: (projection: StateProjection) => void): Promise<void> {
     await this.#flushAllOpenAssistants();
     await this.#ensureLoaded();
-    const operation = this.#writeQueue.then(async () => {
+    const operation = this.#enqueueWrite(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
       const next = isolateProjectionCollections(this.#projection);
       change(next);
@@ -5036,7 +5085,6 @@ export class LocalStateStore {
       this.#delegatedChildTurnIds = rebuiltDelegatedChildTurnIds;
       this.#conversationHistory = buildConversationHistoryIndex(rebuilt, rebuiltTurnsByThread);
     });
-    this.#writeQueue = operation.catch(() => undefined);
     await operation;
   }
 }
