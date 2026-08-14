@@ -31,6 +31,31 @@ export const MAX_RETAINED_PREVIEW_SESSIONS = 8;
 export const MAX_PREVIEW_PACKAGE_MANIFEST_BYTES = 256 * 1024;
 const STOP_GRACE_MS = 3_000;
 const STOP_FORCE_MS = 2_000;
+const PREVIEW_READINESS_TIMEOUT_MS = 600;
+
+type PreviewReadinessFetch = (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<Pick<Response, "body">>;
+
+/** A preview is ready at headers; release an unused body and socket immediately. */
+export async function probePreviewReadiness(
+  origin: string,
+  request: PreviewReadinessFetch = fetch,
+): Promise<void> {
+  const controller = new AbortController();
+  try {
+    const response = await request(origin, {
+      signal: AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(PREVIEW_READINESS_TIMEOUT_MS),
+      ]),
+    });
+    await response.body?.cancel();
+  } finally {
+    controller.abort();
+  }
+}
 
 interface PreviewTerminationTimer {
   unref(): void;
@@ -482,7 +507,7 @@ export class PreviewManager {
     const deadline = Date.now() + 8_000;
     while (preview.state === "starting" && Date.now() < deadline) {
       try {
-        await fetch(preview.origin, { signal: AbortSignal.timeout(600) });
+        await probePreviewReadiness(preview.origin);
         if (preview.state === "starting") preview.state = "running";
         return;
       } catch {

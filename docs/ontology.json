@@ -289,7 +289,7 @@
     },
     {
       "name": "ConstrainedWebPreview",
-      "description": "A loopback-only Aldunis Code preview session admitted within a fixed eight-session host bound that reads at most 256 KiB of one selected worktree's package manifest, starts its declared development command after scoped approval, renders it in a sandboxed iframe with browser permissions denied, and coordinates one idempotent process-tree termination lifecycle whose force timer is released on exact-child exit."
+      "description": "A loopback-only Aldunis Code preview session admitted within a fixed eight-session host bound that reads at most 256 KiB of one selected worktree's package manifest, starts its declared development command after scoped approval, cancels the unused body and socket of each successful header-only readiness probe before publishing running state, renders the origin in a sandboxed iframe with browser permissions denied, and coordinates one idempotent process-tree termination lifecycle whose force timer is released on exact-child exit."
     },
     {
       "name": "PreviewHostContractModule",
@@ -2283,6 +2283,12 @@
       "subject": "ConstrainedWebPreview",
       "source": "Aldunis Code constrained web preview contract and Issues Sannrox/aldunis-code#760, #813, and #853",
       "locator": "docs/web-preview.md; server/preview.ts; src/features/preview/preview-panel.tsx; https://github.com/Sannrox/aldunis-code/issues/813; https://github.com/Sannrox/aldunis-code/issues/853",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConstrainedWebPreview",
+      "source": "GitHub Issue Sannrox/aldunis-code#1149",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1149; server/preview.ts#probePreviewReadiness; server/preview.test.ts",
       "confidence": 1.0
     },
     {
