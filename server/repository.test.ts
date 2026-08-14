@@ -271,6 +271,46 @@ test("checkpoint capture and rewind fail safely for unrelated or concurrent work
   await assert.rejects(() => captureCheckpoint(linked, true), /symlink/);
 });
 
+test("clean checkpoint capture streams inventories larger than the Git buffer ceiling", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-large-checkpoint-"));
+  try {
+    await execFileAsync("git", ["init", "-q", root]);
+    const directory = join(
+      root,
+      ...Array.from({ length: 4 }, (_, index) => `${index}-${"x".repeat(198)}`),
+    );
+    await mkdir(directory, { recursive: true });
+    const paths = Array.from({ length: 5_200 }, (_, index) =>
+      join(directory, `${index.toString().padStart(5, "0")}.txt`),
+    );
+    for (let index = 0; index < paths.length; index += 64) {
+      await Promise.all(paths.slice(index, index + 64).map((path) => writeFile(path, "")));
+    }
+    await execFileAsync("git", ["-C", root, "add", "."], { maxBuffer: 16 * 1024 * 1024 });
+    await execFileAsync(
+      "git",
+      [
+        "-C",
+        root,
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-qm",
+        "large clean fixture",
+      ],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+
+    const checkpoint = await captureCheckpoint(root, false);
+    const headTree = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD^{tree}"]);
+    assert.equal(checkpoint.identity, headTree.stdout.trim());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("checkpoint capture ignores gitignored paths and refuses filtered/embedded content", async () => {
   const ignored = await gitFixture();
   await writeFile(join(ignored, ".gitignore"), "private.env\nnode_modules/\n");
@@ -319,6 +359,23 @@ test("checkpoint capture ignores gitignored paths and refuses filtered/embedded 
   ]);
   await writeFile(join(filtered, "generated.bin"), "untracked generated content\n");
   await assert.rejects(() => captureCheckpoint(filtered, true), /Git filters/);
+
+  const trackedFiltered = await gitFixture();
+  await writeFile(join(trackedFiltered, ".gitattributes"), "generated.bin filter=fixture\n");
+  await writeFile(join(trackedFiltered, "generated.bin"), "tracked generated content\n");
+  await execFileAsync("git", ["-C", trackedFiltered, "add", ".gitattributes", "generated.bin"]);
+  await execFileAsync("git", [
+    "-C",
+    trackedFiltered,
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "track filtered path",
+  ]);
+  await assert.rejects(() => captureCheckpoint(trackedFiltered, false), /Git filters/);
 
   const embedded = await gitFixture();
   const nested = join(embedded, "nested");
