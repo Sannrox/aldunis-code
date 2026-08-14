@@ -4842,6 +4842,7 @@ export function Conversation({
           )}
         {contextOpen && (
           <ContextPackagePanel
+            pane={pane}
             receipt={draftContextReceipt}
             pins={contextPins}
             busy={contextPackageBusy}

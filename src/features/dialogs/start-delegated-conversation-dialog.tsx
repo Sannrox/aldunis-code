@@ -259,7 +259,8 @@ export function StartDelegatedConversationDialog({
   return (
     <OverlayDialog
       title={`Start child conversation · ${providerLabel}`}
-      onClose={busy ? () => undefined : onClose}
+      onClose={onClose}
+      dismissible={!busy}
     >
       <form className="delegated-start-dialog" onSubmit={(event) => void submit(event)}>
         <p className="delegated-start-help">

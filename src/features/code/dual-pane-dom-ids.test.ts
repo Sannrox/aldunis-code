@@ -68,6 +68,15 @@ test("workspace panels scope dual-pane field ids", () => {
   assert.doesNotMatch(files["changes-panel.tsx"], /id="review-comment-text"/);
 });
 
+test("context package pin heading is scoped by pane", () => {
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "context-package.tsx"),
+    "utf8",
+  );
+  assert.match(source, /id=\{`\$\{pane\}-context-pins-title`\}/);
+  assert.doesNotMatch(source, /id="context-pins-title"/);
+});
+
 test("collapsed disclosure controls omit aria-controls until the target is mounted", () => {
   // Conditional panels are not in the DOM when closed; pointing aria-controls at a
   // missing id fails accessibility audits and confuses assistive tech.

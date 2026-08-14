@@ -211,7 +211,7 @@ export function ForkConversationDialog({
     );
   }
   return (
-    <OverlayDialog title={`Fork to ${destinationLabel}`} onClose={onClose}>
+    <OverlayDialog title={`Fork to ${destinationLabel}`} onClose={onClose} dismissible={!busy}>
       <div className="fork-dialog">
         <p>
           This creates a new provider-native conversation. The source and its provider session
