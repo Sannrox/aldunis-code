@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,9 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const WORKTREE_CLASSIFICATION_CONCURRENCY = 8;
 const INDEX_COPY_BUFFER_BYTES = 256 * 1024;
+const CHECKPOINT_INVENTORY_TIMEOUT_MS = 15_000;
+const MAX_CHECKPOINT_INVENTORY_RECORD_BYTES = 64 * 1024;
+const MAX_CHECKPOINT_INVENTORY_STDERR_BYTES = 64 * 1024;
 
 export type WorktreeState = "available" | "detached" | "missing" | "inaccessible";
 
@@ -118,6 +121,120 @@ async function gitBuffer(
   }
 }
 
+async function checkpointInventoryHasRecord(
+  worktree: string,
+  args: string[],
+  matches: (record: Buffer) => boolean,
+): Promise<boolean> {
+  const child = spawn("git", ["-C", worktree, ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_LITERAL_PATHSPECS: "0",
+      GIT_GLOB_PATHSPECS: "0",
+      GIT_NOGLOB_PATHSPECS: "0",
+      GIT_ICASE_PATHSPECS: "0",
+    },
+  });
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  let pending = Buffer.alloc(0);
+  let found = false;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_CHECKPOINT_INVENTORY_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_CHECKPOINT_INVENTORY_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, CHECKPOINT_INVENTORY_TIMEOUT_MS);
+  timeout.unref?.();
+  try {
+    outer: for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        if (end - start > MAX_CHECKPOINT_INVENTORY_RECORD_BYTES) {
+          throw new RepositoryError(
+            "A checkpoint inventory record exceeded its resource limit.",
+            409,
+          );
+        }
+        if (matches(joined.subarray(start, end))) {
+          found = true;
+          stop();
+          break outer;
+        }
+        start = end + 1;
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_CHECKPOINT_INVENTORY_RECORD_BYTES) {
+        throw new RepositoryError(
+          "A checkpoint inventory record exceeded its resource limit.",
+          409,
+        );
+      }
+    }
+    const completion = await exit;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while inspecting the workspace.", 409);
+    }
+    if (!found && pending.length > 0) {
+      throw new RepositoryError("Git returned an incomplete checkpoint inventory.", 409);
+    }
+    if (!found && completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(
+        detail || "The workspace checkpoint operation could not be completed.",
+        409,
+      );
+    }
+    return found;
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    throw new RepositoryError("The workspace checkpoint operation could not be completed.", 409);
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+}
+
+async function hasCheckpointAttribute(worktree: string, attribute: string): Promise<boolean> {
+  return checkpointInventoryHasRecord(
+    worktree,
+    [
+      "ls-files",
+      "-z",
+      "--",
+      ":(top)",
+      `:(top,exclude,attr:!${attribute})`,
+      `:(top,exclude,attr:-${attribute})`,
+    ],
+    () => true,
+  );
+}
+
 /** Copy a generated Git index into an already-exclusive lock without retaining the whole file. */
 export async function copyIndexIntoLock(
   sourcePath: string,
@@ -180,8 +297,12 @@ export async function checkpointGitDirectory(worktree: string): Promise<string> 
 }
 
 async function assertCheckpointable(worktree: string, allowChanges: boolean): Promise<void> {
-  const submodules = await git(worktree, ["ls-files", "--stage"]);
-  if (submodules.split("\n").some((line) => line.startsWith("160000 "))) {
+  const hasSubmodule = await checkpointInventoryHasRecord(
+    worktree,
+    ["ls-files", "--stage", "-z"],
+    (record) => record.subarray(0, 7).toString("ascii") === "160000 ",
+  );
+  if (hasSubmodule) {
     throw new RepositoryError(
       "Checkpoints are unavailable while the worktree contains submodules.",
       409,
@@ -217,16 +338,23 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
       changedPaths.push(entries[++index]);
     }
   }
-  const trackedPaths = (await git(worktree, ["ls-files", "-z"])).split("\0").filter(Boolean);
-  const attributePaths = [...new Set([...trackedPaths, ...changedPaths])];
-  for (let index = 0; index < attributePaths.length; index += 200) {
+  if (
+    (await hasCheckpointAttribute(worktree, "filter")) ||
+    (await hasCheckpointAttribute(worktree, "working-tree-encoding"))
+  ) {
+    throw new RepositoryError(
+      "Checkpoints are unavailable for files transformed by Git filters or working-tree encodings.",
+      409,
+    );
+  }
+  for (let index = 0; index < changedPaths.length; index += 200) {
     const attributes = await git(worktree, [
       "check-attr",
       "-z",
       "filter",
       "working-tree-encoding",
       "--",
-      ...attributePaths.slice(index, index + 200),
+      ...changedPaths.slice(index, index + 200),
     ]);
     const fields = attributes.split("\0").filter(Boolean);
     for (let field = 0; field < fields.length; field += 3) {
