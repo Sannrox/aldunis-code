@@ -15,7 +15,7 @@ import {
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 import { acpSetModelRequest, parseAcpSessionModels } from "./acp-models.ts";
-import { terminateProviderChild } from "./provider-process.ts";
+import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
 
 const MAX_ACP_MESSAGE_BYTES = 1024 * 1024;
@@ -746,7 +746,11 @@ export class AcpProviderAdapter {
       active.spawnFailed = true;
     });
     this.#active.set(id, active);
-    return { id, events: this.#events(id, active, options) };
+    return {
+      id,
+      events: this.#events(id, active, options),
+      settled: waitForProviderChildExit(child),
+    };
   }
 
   cancel(id: string): boolean {
@@ -925,8 +929,8 @@ export class AcpProviderAdapter {
           if (!active.sessionId)
             throw new ProviderProtocolError("ACP completed without a session.");
           terminal = true;
-          yield { kind: "turn_completed", sessionId: active.sessionId, costUsd: null };
           this.#terminate(active.child);
+          yield { kind: "turn_completed", sessionId: active.sessionId, costUsd: null };
           continue;
         }
         if (message.id !== undefined && typeof message.method === "string") {

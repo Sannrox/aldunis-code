@@ -13,6 +13,7 @@ import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
 import { ShikigamiAdapter, type ShikigamiProfileRuntime } from "./shikigami-provider.ts";
 import { beginProviderEventStream } from "./provider-stream.ts";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 import { validateProviderModel } from "./provider-models.ts";
 import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { PermissionBroker } from "./permission.ts";
@@ -141,7 +142,8 @@ export interface ProviderRunExecution {
 export type ProviderRunOutput = Pick<
   ServerResponse,
   "destroyed" | "writableEnded" | "setHeader" | "writeHead" | "flushHeaders" | "write" | "end"
->;
+> &
+  Partial<Pick<ServerResponse, "once" | "removeListener">>;
 
 export function createProviderRunSink(): ProviderRunOutput {
   let ended = false;
@@ -161,6 +163,10 @@ export function createProviderRunSink(): ProviderRunOutput {
       return undefined as never;
     },
   };
+}
+
+export function createProviderRunEventWriter(output: ProviderRunOutput): JsonLineWriter {
+  return new JsonLineWriter(output);
 }
 
 /**
@@ -210,6 +216,8 @@ export function admitProviderRun(
     flushHeaders: output.flushHeaders.bind(output),
     write: output.write.bind(output),
     end: output.end.bind(output),
+    ...(output.once ? { once: output.once.bind(output) } : {}),
+    ...(output.removeListener ? { removeListener: output.removeListener.bind(output) } : {}),
   };
   const completed = handleProviderRun(input, admissionOutput, module).catch((error) => {
     if (!acceptedSettled) {
@@ -783,6 +791,7 @@ async function executeProviderRun(
   let browserProviderConversationId: string | null = null;
   let codexOwnsBrowserProviderToken = false;
   let providerStreamDrained = false;
+  let removeOutputCloseListener = () => {};
   let run: ProviderRun | undefined;
   try {
     const nativeResumeClaim = nativeResumeInput
@@ -1078,100 +1087,168 @@ async function executeProviderRun(
       threadId: persisted.thread.id,
       turnId: persisted.turn.id,
     });
+    const eventOutput = createProviderRunEventWriter(output);
     let completed = false;
     let historyFailed = false;
+    let terminalPersisted = false;
+    let transportClosed = false;
+    let signalTransportClosed = () => {};
+    const transportClosedSignal = new Promise<{ kind: "closed" }>((resolve) => {
+      signalTransportClosed = () => resolve({ kind: "closed" });
+    });
+    const cancelActiveRun = () => {
+      if (providerId === "codex-cli") codex.cancel(run!.id);
+      else if (providerId === "shikigami") shikigami.cancel(run!.id);
+      else if (isDeclarativeAdapter) activeAcp.get(run!.id)?.cancel(run!.id);
+      else provider.cancel(run!.id);
+    };
+    const closeTransport = () => {
+      if (transportClosed) return;
+      transportClosed = true;
+      signalTransportClosed();
+      if (!terminalPersisted || providerId !== "codex-cli") cancelActiveRun();
+    };
+    const onOutputClose = () => {
+      if (!output.writableEnded) closeTransport();
+    };
+    output.once?.("close", onOutputClose);
+    removeOutputCloseListener = () => output.removeListener?.("close", onOutputClose);
+    if (output.destroyed && !output.writableEnded) closeTransport();
     let previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
     // Starting a turn moves the thread to running before the first event.
     await publishThreadStatusTransition(wake, state, persisted.thread.id, null);
     previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
-    for await (const event of run.events) {
-      let outgoingEvent = event;
-      try {
-        await state.recordProviderEvent(
-          persisted.thread.id,
-          persisted.turn.id,
-          providerId,
-          event,
-          profile
-            ? { profileId: profile.profile.id, continuationKey: profile.continuationKey }
-            : undefined,
-        );
-        if (nativeResumeClaim && (event.kind === "failed" || event.kind === "cancelled")) {
-          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
-        }
-        if (event.kind === "approval_resolved") {
-          const sibling = permissions
-            .approvalsFor(run.id)
-            .find((approval) => approval.state === "pending");
-          if (sibling) {
-            await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
-              kind: "approval_pending",
-              ...sibling,
+    const providerEvents = run.events[Symbol.asyncIterator]();
+    try {
+      while (true) {
+        const nextEvent = providerEvents
+          .next()
+          .then((result) => ({ kind: "event" as const, result }));
+        const admitted = transportClosed
+          ? ({ kind: "closed" } as const)
+          : await Promise.race([nextEvent, transportClosedSignal]);
+        if (admitted.kind === "closed" || admitted.result.done) break;
+        const event = admitted.result.value;
+        if (terminalPersisted) continue;
+        const terminalEvent =
+          event.kind === "turn_completed" || event.kind === "failed" || event.kind === "cancelled";
+        let outgoingEvent = event;
+        try {
+          await state.recordProviderEvent(
+            persisted.thread.id,
+            persisted.turn.id,
+            providerId,
+            event,
+            profile
+              ? { profileId: profile.profile.id, continuationKey: profile.continuationKey }
+              : undefined,
+          );
+          if (terminalEvent) {
+            terminalPersisted = true;
+            if (providerId === "codex-cli" && event.kind === "turn_completed") {
+              removeOutputCloseListener();
+              removeOutputCloseListener = () => {};
+            }
+          }
+          if (nativeResumeClaim && (event.kind === "failed" || event.kind === "cancelled")) {
+            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+          }
+          if (event.kind === "approval_resolved") {
+            const sibling = permissions
+              .approvalsFor(run.id)
+              .find((approval) => approval.state === "pending");
+            if (sibling) {
+              await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
+                kind: "approval_pending",
+                ...sibling,
+              });
+            }
+          }
+          if (event.kind === "input_requested" && event.expiresAt) {
+            inputExpiryTimers.schedule(run.id, event.id, event.expiresAt, () => {
+              if (!codex.expireInput(run.id, event.id)) return;
+              void state
+                .recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
+                  kind: "input_resolved",
+                  id: event.id,
+                  state: "cancelled",
+                })
+                .then(async () => {
+                  if (!output.destroyed && !output.writableEnded) {
+                    await eventOutput
+                      .write({
+                        kind: "input_resolved",
+                        id: event.id,
+                        state: "cancelled",
+                      })
+                      .catch(() => undefined);
+                  }
+                  await publishThreadStatusTransition(wake, state, persisted.thread.id, null, true);
+                })
+                .catch(() => undefined);
             });
           }
-        }
-        if (event.kind === "input_requested" && event.expiresAt) {
-          inputExpiryTimers.schedule(run.id, event.id, event.expiresAt, () => {
-            if (!codex.expireInput(run.id, event.id)) return;
-            void state
-              .recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
-                kind: "input_resolved",
-                id: event.id,
-                state: "cancelled",
-              })
-              .then(async () => {
-                if (!output.destroyed && !output.writableEnded) {
-                  output.write(
-                    `${JSON.stringify({
-                      kind: "input_resolved",
-                      id: event.id,
-                      state: "cancelled",
-                    })}\n`,
-                  );
-                }
-                await publishThreadStatusTransition(wake, state, persisted.thread.id, null, true);
-              })
-              .catch(() => undefined);
-          });
-        }
-        await publishThreadStatusTransition(
-          wake,
-          state,
-          persisted.thread.id,
-          previousStatus,
-          event.kind === "approval_pending" ||
-            event.kind === "approval_resolved" ||
-            event.kind === "input_requested" ||
-            event.kind === "input_resolved",
-        );
-        previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
-        if (event.kind === "governance_correlation") {
-          const correlation = (await state.inspect()).governanceCorrelations.find(
-            (item) => item.turnId === persisted.turn.id,
+          await publishThreadStatusTransition(
+            wake,
+            state,
+            persisted.thread.id,
+            previousStatus,
+            event.kind === "approval_pending" ||
+              event.kind === "approval_resolved" ||
+              event.kind === "input_requested" ||
+              event.kind === "input_resolved",
           );
-          if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
+          previousStatus = (await state.inspectThreadStatus(persisted.thread.id)).status;
+          if (event.kind === "governance_correlation") {
+            const correlation = (await state.inspect()).governanceCorrelations.find(
+              (item) => item.turnId === persisted.turn.id,
+            );
+            if (correlation) outgoingEvent = { ...event, correlationId: correlation.id };
+          }
+        } catch {
+          if (nativeResumeClaim) {
+            await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+          }
+          if (providerId === "codex-cli") codex.cancel(run.id);
+          else if (providerId === "shikigami") shikigami.cancel(run.id);
+          else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
+          else provider.cancel(run.id);
+          await eventOutput
+            .write({
+              kind: "failed",
+              message: "Local history could not be updated. The provider run was stopped.",
+            })
+            .catch(() => undefined);
+          historyFailed = true;
+          break;
         }
-      } catch {
-        if (nativeResumeClaim) {
-          await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+        if (event.kind === "turn_completed") completed = true;
+        if (transportClosed && !terminalEvent) break;
+        try {
+          await eventOutput.write(outgoingEvent);
+        } catch {
+          closeTransport();
+          break;
         }
-        if (providerId === "codex-cli") codex.cancel(run.id);
-        else if (providerId === "shikigami") shikigami.cancel(run.id);
-        else if (isDeclarativeAdapter) activeAcp.get(run.id)?.cancel(run.id);
-        else provider.cancel(run.id);
-        output.write(
-          `${JSON.stringify({
-            kind: "failed",
-            message: "Local history could not be updated. The provider run was stopped.",
-          })}\n`,
-        );
-        historyFailed = true;
-        break;
+        if (terminalEvent && providerId === "codex-cli") break;
       }
-      if (event.kind === "turn_completed") completed = true;
-      output.write(`${JSON.stringify(outgoingEvent)}\n`);
+    } finally {
+      await providerEvents.return?.();
     }
-    providerStreamDrained = true;
+    if (transportClosed && !terminalPersisted) {
+      const statusBefore = (await state.inspectThreadStatus(persisted.thread.id)).status;
+      await state.recordProviderEvent(persisted.thread.id, persisted.turn.id, providerId, {
+        kind: "cancelled",
+      });
+      terminalPersisted = true;
+      if (nativeResumeClaim) {
+        await state.markNativeShikigamiResumeUnavailable(nativeResumeClaim.request.id);
+      }
+      await publishThreadStatusTransition(wake, state, persisted.thread.id, statusBefore, true);
+    }
+    const preserveCompletedCodexSession = providerId === "codex-cli" && completed;
+    if (!preserveCompletedCodexSession) await run.settled;
+    providerStreamDrained = !transportClosed;
     const checkpoint = (await state.inspect()).checkpoints.find((item) => item.id === checkpointId);
     if (checkpoint?.state === "baseline" && baselineIdentity) {
       if (historyFailed) {
@@ -1251,6 +1328,7 @@ async function executeProviderRun(
     output.end();
     return true;
   } finally {
+    removeOutputCloseListener();
     releaseActiveAcpRun(activeAcp, run?.id, !providerStreamDrained);
     if (run?.id) inputExpiryTimers.clearRun(run.id);
     if (

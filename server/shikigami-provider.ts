@@ -31,7 +31,7 @@ import {
   type ProviderStartOptions,
   ProviderProtocolError,
 } from "./provider.ts";
-import { terminateProviderChild } from "./provider-process.ts";
+import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
@@ -1141,7 +1141,11 @@ export class ShikigamiAdapter {
       active.spawnFailed = true;
     });
     this.#active.set(id, active);
-    return { id, events: this.#events(id, active, options, stdoutPromise) };
+    return {
+      id,
+      events: this.#events(id, active, options, stdoutPromise),
+      settled: waitForProviderChildExit(child),
+    };
   }
 
   async resumeParked(

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
   admitProviderRun,
+  createProviderRunEventWriter,
   createProviderRunSink,
   handleProviderRun,
   MAX_ACTIVE_PROVIDER_INPUT_EXPIRY_TIMERS,
@@ -16,6 +18,39 @@ import {
 import { RepositoryError } from "./repository.ts";
 
 const output = {} as ProviderRunOutput;
+
+class BackpressuredProviderOutput extends EventEmitter {
+  destroyed = false;
+  writableEnded = false;
+  blocked = true;
+  writes: string[] = [];
+
+  write(value: string): boolean {
+    this.writes.push(value);
+    return !this.blocked;
+  }
+}
+
+test("provider run event output waits for drain before admitting the next event", async () => {
+  const response = new BackpressuredProviderOutput();
+  const writer = createProviderRunEventWriter(response as unknown as ProviderRunOutput);
+  const first = writer.write({ kind: "assistant_text", text: "first" });
+  const second = writer.write({ kind: "assistant_text", text: "second" });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(response.writes.length, 1);
+  response.blocked = false;
+  response.emit("drain");
+  await Promise.all([first, second]);
+  assert.equal(response.writes.length, 2);
+  assert.deepEqual(
+    response.writes.map((line) => JSON.parse(line)),
+    [
+      { kind: "assistant_text", text: "first" },
+      { kind: "assistant_text", text: "second" },
+    ],
+  );
+});
 
 class FakeInputTimers {
   readonly pending = new Set<{ callback: () => void; unref(): void }>();

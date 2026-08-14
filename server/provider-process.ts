@@ -25,6 +25,12 @@ const defaultTimers: ProviderTerminationTimers = {
   clearTimeout: (timer) => clearTimeout(timer as NodeJS.Timeout),
 };
 
+/** Resolve once the exact provider child has relinquished its process resources. */
+export function waitForProviderChildExit(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once("close", () => resolve()));
+}
+
 function releaseTermination(child: ChildProcess, expected?: ActiveTermination): void {
   const active = activeTerminations.get(child);
   if (!active || (expected && active !== expected)) return;

@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { electronMcpEnvironment } from "./electron-runtime.ts";
 import { type ApprovalSnapshot, isMutatingTool, PermissionBroker } from "./permission.ts";
-import { terminateProviderChild } from "./provider-process.ts";
+import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 import { normalizeClaudeModelSlug } from "./profiles.ts";
 
 const execFileAsync = promisify(execFile);
@@ -416,6 +416,7 @@ export function assertSupportedClaudeVersion(output: string): string {
 export interface ProviderRun {
   id: string;
   events: AsyncIterable<ProviderEvent>;
+  settled?: Promise<void>;
 }
 
 export interface ProviderCommand {
@@ -575,6 +576,7 @@ export class ClaudeCodeAdapter {
     return {
       id,
       events: this.#events(id, active, { repository, worktree, conversationId, mode }),
+      settled: waitForProviderChildExit(child),
     };
   }
 
@@ -600,96 +602,104 @@ export class ClaudeCodeAdapter {
     let buffer = "";
     let protocolFailed = false;
     try {
-      providerOutput: for await (const chunk of active.child.stdout) {
-        buffer += chunk.toString("utf8");
-        if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
-          throw new ProviderProtocolError("Claude emitted an oversized event.");
-        }
-        let newline = buffer.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffer.slice(0, newline).trim();
-          buffer = buffer.slice(newline + 1);
-          if (line) {
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(line);
-            } catch {
-              throw new ProviderProtocolError("Claude emitted malformed JSON.");
-            }
-            for (const event of normalizeClaudeEvent(parsed)) {
-              if (event.kind !== "tool_requested") {
-                yield event;
-                if (event.kind === "failed") {
-                  protocolFailed = true;
-                  terminateProviderChild(active.child);
-                  break providerOutput;
-                }
-                if (event.kind === "tool_finished") {
-                  const approval = this.permissions.approvalFor(id, event.toolCallId);
-                  if (approval && approval.state !== "pending") {
-                    yield { kind: "approval_resolved", id: approval.id, state: approval.state };
-                  }
-                }
-                continue;
-              }
-              yield {
-                kind: "tool_started",
-                toolCallId: event.toolCallId,
-                name: event.name,
-              };
-              if (isMutatingTool(event.name)) {
-                if (context.mode !== "build") {
-                  throw new ProviderProtocolError(
-                    `Claude requested mutating tool ${event.name} while ${context.mode} mode was active.`,
-                  );
-                }
-                const approval = this.permissions.register({
-                  runId: id,
-                  conversationId: context.conversationId,
-                  repository: context.repository,
-                  worktree: context.worktree,
-                  toolCallId: event.toolCallId,
-                  toolName: event.name,
-                  toolInput: event.input,
-                });
-                if (approval) yield { kind: "approval_pending", ...approval };
-              }
-            }
+      try {
+        providerOutput: for await (const chunk of active.child.stdout) {
+          buffer += chunk.toString("utf8");
+          if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
+            throw new ProviderProtocolError("Claude emitted an oversized event.");
           }
-          newline = buffer.indexOf("\n");
+          let newline = buffer.indexOf("\n");
+          while (newline !== -1) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (line) {
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(line);
+              } catch {
+                throw new ProviderProtocolError("Claude emitted malformed JSON.");
+              }
+              for (const event of normalizeClaudeEvent(parsed)) {
+                if (event.kind !== "tool_requested") {
+                  yield event;
+                  if (event.kind === "failed") {
+                    protocolFailed = true;
+                    terminateProviderChild(active.child);
+                    break providerOutput;
+                  }
+                  if (event.kind === "tool_finished") {
+                    const approval = this.permissions.approvalFor(id, event.toolCallId);
+                    if (approval && approval.state !== "pending") {
+                      yield { kind: "approval_resolved", id: approval.id, state: approval.state };
+                    }
+                  }
+                  continue;
+                }
+                yield {
+                  kind: "tool_started",
+                  toolCallId: event.toolCallId,
+                  name: event.name,
+                };
+                if (isMutatingTool(event.name)) {
+                  if (context.mode !== "build") {
+                    throw new ProviderProtocolError(
+                      `Claude requested mutating tool ${event.name} while ${context.mode} mode was active.`,
+                    );
+                  }
+                  const approval = this.permissions.register({
+                    runId: id,
+                    conversationId: context.conversationId,
+                    repository: context.repository,
+                    worktree: context.worktree,
+                    toolCallId: event.toolCallId,
+                    toolName: event.name,
+                    toolInput: event.input,
+                  });
+                  if (approval) yield { kind: "approval_pending", ...approval };
+                }
+              }
+            }
+            newline = buffer.indexOf("\n");
+          }
         }
+        if (buffer.trim()) throw new ProviderProtocolError("Claude emitted an incomplete event.");
+      } catch (error) {
+        protocolFailed = true;
+        active.child.kill("SIGTERM");
+        yield {
+          kind: "failed",
+          message:
+            error instanceof ProviderProtocolError
+              ? error.message
+              : "Claude stream processing failed.",
+        };
       }
-      if (buffer.trim()) throw new ProviderProtocolError("Claude emitted an incomplete event.");
-    } catch (error) {
-      protocolFailed = true;
-      active.child.kill("SIGTERM");
-      yield {
-        kind: "failed",
-        message:
-          error instanceof ProviderProtocolError
-            ? error.message
-            : "Claude stream processing failed.",
-      };
-    }
 
-    const [code] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
-      if (active.child.exitCode !== null || active.child.signalCode !== null) {
-        resolve([active.child.exitCode, active.child.signalCode]);
+      const [code] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => {
+        if (active.child.exitCode !== null || active.child.signalCode !== null) {
+          resolve([active.child.exitCode, active.child.signalCode]);
+        } else {
+          active.child.once("close", (exitCode, signal) => resolve([exitCode, signal]));
+        }
+      });
+      if (active.cancelled) {
+        yield { kind: "cancelled" };
+      } else if (!protocolFailed && active.spawnFailed) {
+        this.permissions.closeRun(id, "provider_failed");
+        yield { kind: "failed", message: "Claude Code is not installed or could not be started." };
+      } else if (!protocolFailed && code !== 0) {
+        this.permissions.closeRun(id, "provider_failed");
+        yield { kind: "failed", message: `Claude Code exited unexpectedly (${code ?? "signal"}).` };
       } else {
-        active.child.once("close", (exitCode, signal) => resolve([exitCode, signal]));
+        this.permissions.closeRun(id, "provider_failed");
       }
-    });
-    this.#active.delete(id);
-    if (active.cancelled) {
-      yield { kind: "cancelled" };
-    } else if (!protocolFailed && active.spawnFailed) {
-      this.permissions.closeRun(id, "provider_failed");
-      yield { kind: "failed", message: "Claude Code is not installed or could not be started." };
-    } else if (!protocolFailed && code !== 0) {
-      this.permissions.closeRun(id, "provider_failed");
-      yield { kind: "failed", message: `Claude Code exited unexpectedly (${code ?? "signal"}).` };
-    } else {
-      this.permissions.closeRun(id, "provider_failed");
+    } finally {
+      if (active.child.exitCode === null && active.child.signalCode === null) {
+        active.cancelled = true;
+        terminateProviderChild(active.child);
+      }
+      this.permissions.closeRun(id, active.cancelled ? "cancelled" : "provider_failed");
+      this.#active.delete(id);
     }
   }
 }
