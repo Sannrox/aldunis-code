@@ -341,6 +341,7 @@ async function executeProviderRun(
     reasoningEffort?: unknown;
     inputRequestId?: unknown;
     automationFireId?: unknown;
+    mailboxTransferId?: unknown;
     workspaceMode?: unknown;
   };
   if (managedHost) {
@@ -413,6 +414,10 @@ async function executeProviderRun(
       (!internalRequest ||
         typeof body.automationFireId !== "string" ||
         !/^[0-9a-f-]{36}$/i.test(body.automationFireId))) ||
+    (body.mailboxTransferId !== undefined &&
+      (!internalRequest ||
+        typeof body.mailboxTransferId !== "string" ||
+        !/^[0-9a-f-]{36}$/i.test(body.mailboxTransferId))) ||
     !["ask", "plan", "build"].includes(body.mode as string) ||
     (body.attachments !== undefined &&
       (!Array.isArray(body.attachments) ||
@@ -787,20 +792,26 @@ async function executeProviderRun(
           body.resumeSessionId as string,
         )
       : null;
+    const mailboxDestination =
+      typeof body.mailboxTransferId === "string"
+        ? await state.mailboxDestination(body.mailboxTransferId)
+        : null;
     const persisted = nativeResumeClaim
       ? { thread: nativeResumeClaim.thread, turn: nativeResumeClaim.turn }
-      : await state.startTurn({
-          projectId: project.id,
-          worktree: context.worktree,
-          prompt: body.prompt.trim(),
-          mode,
-          provider: providerId,
-          model: effectiveModel,
-          reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
-          threadId: body.threadId,
-          contextPins: assembledContext.pins,
-          workspaceMode,
-        });
+      : mailboxDestination
+        ? { thread: mailboxDestination.thread, turn: mailboxDestination.turn }
+        : await state.startTurn({
+            projectId: project.id,
+            worktree: context.worktree,
+            prompt: body.prompt.trim(),
+            mode,
+            provider: providerId,
+            model: effectiveModel,
+            reasoningEffort: body.reasoningEffort as ReasoningEffort | undefined,
+            threadId: body.threadId,
+            contextPins: assembledContext.pins,
+            workspaceMode,
+          });
     if (!nativeResumeClaim && typeof body.automationFireId === "string") {
       await state.bindAutomationFireTurn(body.automationFireId, persisted.turn.id);
     }
@@ -820,9 +831,10 @@ async function executeProviderRun(
         state.linkDelegatedConversation(delegatedParentThreadId, persisted.thread.id),
       );
     }
-    const forkPrompt = nativeResumeClaim
-      ? null
-      : await state.pendingForkPrompt(persisted.thread.id);
+    const forkPrompt =
+      nativeResumeClaim || mailboxDestination
+        ? null
+        : await state.pendingForkPrompt(persisted.thread.id);
     const effectiveProviderPrompt = nativeResumeClaim
       ? ""
       : forkPrompt

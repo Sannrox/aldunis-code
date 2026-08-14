@@ -526,6 +526,14 @@
       "description": "A deep server-side Aldunis Code module that concentrates reviewed cross-provider conversation fork route recognition, manifest validation, managed-host admission, canonical source and destination worktree selection, managed-worktree ownership and exclusivity, provider profile and model validation, provider readiness, and fork persistence behind one internal dispatch interface without changing provider, filesystem, persistence, or approval authority."
     },
     {
+      "name": "ConversationMailboxRouteDispatchModule",
+      "description": "A deep server-side Aldunis Code module that concentrates human-reviewed same-project mailbox send recognition, loopback and managed-host admission, bounded payload validation, idempotent transfer persistence, destination busy rejection, and destination-turn admission behind one internal dispatch interface without granting agent-originated sends, automatic approvals, or new filesystem authority."
+    },
+    {
+      "name": "ConversationMailboxSessionModule",
+      "description": "A deep renderer-side Aldunis Code module that concentrates reviewed mailbox send transport, idempotency-key stamping, and validated error fallback behind one command interface while SendMailboxMessageDialog retains destination, payload review, and cancel-before-persist chrome and ConversationMailboxRouteDispatchModule retains host mailbox admission."
+    },
+    {
       "name": "WorkbenchProjectionRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates Workbench projection route recognition, coherent snapshot assembly, managed catalogue visibility, delegated outcome, approval, and input projection, thread-revision-conditional bounded conversation history and search, managed-worktree inventory, and response mapping behind one internal dispatch interface without changing persistence, filesystem, provider, permission, tenant, or product authority."
     },
@@ -836,6 +844,16 @@
       "description": "The local API dispatch module delegates reviewed cross-provider conversation fork requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
       "domain": "LocalApiDispatchModule",
       "range": "CrossProviderConversationForkRouteDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "delegates_conversation_mailbox_route_dispatch",
+      "description": "The local API dispatch module delegates human-reviewed mailbox send requests plus request-scoped host-mode facts through one internal interface while retaining shared origin checks and error translation.",
+      "domain": "LocalApiDispatchModule",
+      "range": "ConversationMailboxRouteDispatchModule",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2897,6 +2915,24 @@
       "subject": "delegates_cross_provider_conversation_fork_route_dispatch",
       "source": "Aldunis Code cross-provider conversation fork route dispatch interface",
       "locator": "server/host.ts#handleApi; server/conversation-fork-routes.ts#handleConversationForkRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationMailboxRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1101",
+      "locator": "server/mailbox-routes.ts#handleMailboxRoute; docs/decisions/conversation-mailbox.md",
+      "confidence": 1.0
+    },
+    {
+      "subject": "delegates_conversation_mailbox_route_dispatch",
+      "source": "Aldunis Code conversation mailbox route dispatch interface",
+      "locator": "server/host.ts#handleApi; server/mailbox-routes.ts#handleMailboxRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationMailboxSessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1101",
+      "locator": "src/lib/mailbox-session.ts#ConversationMailboxSessionModule; src/features/dialogs/send-mailbox-message-dialog.tsx#SendMailboxMessageDialog",
       "confidence": 1.0
     },
     {

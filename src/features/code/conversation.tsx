@@ -157,9 +157,11 @@ import {
   restorePersistedConversation,
   type PersistedRestorationApplication,
   type PersistedConversationProjection,
+  type RestoredMailboxOutbound,
 } from "../../lib/persisted-conversation-restoration";
 import { startPersistedConversationPolling } from "../../lib/persisted-conversation-polling";
 import { conversationResourceTarget } from "../../lib/conversation-resource-target";
+import { interleaveMailboxOutbound, partitionMailboxOutbound } from "../../lib/mailbox-session";
 import { MarkdownBody } from "../../components/markdown-body";
 import { formatElapsed } from "./conversation-list";
 import { shouldNotifyForRestoredTurn } from "./delegated-outcomes";
@@ -177,6 +179,9 @@ import type { SavedProject } from "../dialogs/repository-dialog";
 
 const ForkConversationDialog = React.lazy(async () => ({
   default: (await import("../dialogs/fork-conversation-dialog")).ForkConversationDialog,
+}));
+const SendMailboxMessageDialog = React.lazy(async () => ({
+  default: (await import("../dialogs/send-mailbox-message-dialog")).SendMailboxMessageDialog,
 }));
 const ChangesPanel = React.lazy(async () => ({
   default: (await import("../changes/changes-panel")).ChangesPanel,
@@ -558,8 +563,19 @@ export function Conversation({
       state: RestoredTurnStatus;
       contextReceipt?: ContextReceipt;
       checkpoint?: TurnCheckpoint;
+      mailboxFrom?: string | null;
     }>
   >([]);
+  const [mailboxOutbound, setMailboxOutbound] = useState<RestoredMailboxOutbound[]>([]);
+  const [currentMailboxFrom, setCurrentMailboxFrom] = useState<string | null>(null);
+  const mailboxTimeline = useMemo(() => {
+    const latestCreatedAt = messages.at(-1)?.createdAt;
+    const { before, after } = partitionMailboxOutbound(mailboxOutbound, latestCreatedAt);
+    return {
+      after,
+      items: interleaveMailboxOutbound(archivedTurns, before, (turn) => turn.message.createdAt),
+    };
+  }, [archivedTurns, mailboxOutbound, messages]);
   /** Shell-style ↑/↓ recall over sent user prompts (conversation-local). */
   const promptHistory = useMemo(() => promptHistoryFromMessages(messages), [messages]);
   const [promptHistoryBrowse, setPromptHistoryBrowse] = useState<PromptHistoryBrowse>(() =>
@@ -733,6 +749,7 @@ export function Conversation({
     () => peekProviderDiscoveryCache(providerDiscoveryContext) !== null,
   );
   const [forkOpen, setForkOpen] = useState(false);
+  const [mailboxOpen, setMailboxOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [planPanelMode, setPlanPanelMode] = useState<PlanPanelMode>("plan");
   const [selectedPlanKey, setSelectedPlanKey] = useState<string | null>(null);
@@ -1362,6 +1379,8 @@ export function Conversation({
     setCompletionDismissed(false);
     setMessages([]);
     setArchivedTurns([]);
+    setMailboxOutbound([]);
+    setCurrentMailboxFrom(null);
     setAttachments([]);
     setFolderPins([]);
     setCurrentContextReceipt(null);
@@ -1535,6 +1554,7 @@ export function Conversation({
         setFolderPins(binding.folderPins);
       }
       if (restoration.kind === "empty_thread") {
+        if (shouldApplyRestoration) setMailboxOutbound(restoration.mailboxOutbound);
         setHistoryRestored(true);
         return false;
       }
@@ -1542,6 +1562,8 @@ export function Conversation({
         setThreadId(binding.threadId);
         setRunId(restoration.pendingRunId);
         setArchivedTurns(restoration.archivedTurns);
+        setMailboxOutbound(restoration.mailboxOutbound);
+        setCurrentMailboxFrom(restoration.currentTurn.mailboxFrom ?? null);
         setMessages(restoration.messages);
         setCurrentContextReceipt(restoration.currentTurn.contextReceipt ?? null);
         setCheckpoint(restoration.currentTurn.checkpoint ?? null);
@@ -1968,9 +1990,11 @@ export function Conversation({
           state: providerState === "cancelled" ? "cancelled" : providerState,
           contextReceipt: currentContextReceipt ?? undefined,
           checkpoint: checkpoint ?? undefined,
+          mailboxFrom: currentMailboxFrom,
         },
       ]);
     }
+    setCurrentMailboxFrom(null);
     setMessages((current) => [
       ...current,
       { text: value, mode: turnMode, createdAt: new Date().toISOString() },
@@ -2238,6 +2262,7 @@ export function Conversation({
     conversation?.id ?? "new",
     historyRestored ? "ready" : "restoring",
     archivedTurns.length,
+    mailboxOutbound.length,
     messages.length,
     providerEvents.length,
     assistantText.length,
@@ -2789,6 +2814,18 @@ export function Conversation({
               Fork
             </button>
           )}
+          {threadId && !managedMode && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setMailboxOpen(true)}
+              disabled={runActive}
+              title="Send a reviewed message to another conversation"
+              aria-label="Send a reviewed message to another conversation"
+            >
+              Message
+            </button>
+          )}
           {onClosePane && (
             <button
               type="button"
@@ -2830,71 +2867,87 @@ export function Conversation({
                     {emptyState.action}
                   </section>
                 ) : null}
-                {archivedTurns.map((turn, index) => (
-                  <React.Fragment key={`archived-${turn.message.createdAt ?? index}`}>
-                    <div className="turn user">
+                {mailboxTimeline.items.map((item) =>
+                  item.kind === "mailbox" ? (
+                    <article key={`mailbox-${item.transfer.id}`} className="mailbox-card">
                       <div className="role">
-                        <span className="av you">Y</span>
-                        <span className="rname">You</span>
-                        <span className="rtime">
-                          {turn.message.createdAt ? formatElapsed(turn.message.createdAt) : "now"}
-                        </span>
+                        <span className="rname">Sent to {item.transfer.destinationTitle}</span>
+                        <span className="rtime">{formatElapsed(item.transfer.createdAt)}</span>
                       </div>
-                      <p>{turn.message.text}</p>
-                      {turn.contextReceipt && (
-                        <ContextPackageSummary
-                          receipt={turn.contextReceipt}
-                          label="Submitted context"
-                        />
-                      )}
-                      <TurnCopyAction text={turn.message.text} label="Copy prompt" />
-                    </div>
-                    <div className="turn">
-                      <div className="role">
-                        <span className="av">
-                          {providerAvatarInitials(provider, providerLabel)}
-                        </span>
-                        <span className="rname">{providerLabel}</span>
-                        <span className="rtime">
-                          {turn.assistantAt ? formatElapsed(turn.assistantAt) : "now"}
-                        </span>
-                      </div>
-                      {renderTimeline(
-                        turn.events,
-                        `archived-${index}`,
-                        turn.state === "interrupted" || turn.state === "cancelled"
-                          ? "cancelled"
-                          : "running",
-                      )}
-                      <TurnChangesCard
-                        checkpoint={turn.checkpoint}
-                        pane={pane}
-                        onOpen={openTurnChanges}
-                      />
-                      {renderArchivedFailure(turn.events)}
-                      {turn.events
-                        .filter(
-                          (
-                            event,
-                          ): event is Extract<ProviderEvent, { kind: "governance_correlation" }> =>
-                            event.kind === "governance_correlation",
-                        )
-                        .map((correlation) => (
-                          <GovernanceCorrelationSummary
-                            key={correlation.operationId}
-                            correlation={correlation}
+                      <p>{item.transfer.text}</p>
+                    </article>
+                  ) : (
+                    <React.Fragment key={`archived-${item.turn.message.createdAt ?? item.index}`}>
+                      <div className="turn user">
+                        <div className="role">
+                          <span className="av you">Y</span>
+                          <span className="rname">
+                            {item.turn.mailboxFrom ? `From ${item.turn.mailboxFrom}` : "You"}
+                          </span>
+                          <span className="rtime">
+                            {item.turn.message.createdAt
+                              ? formatElapsed(item.turn.message.createdAt)
+                              : "now"}
+                          </span>
+                        </div>
+                        <p>{item.turn.message.text}</p>
+                        {item.turn.contextReceipt && (
+                          <ContextPackageSummary
+                            receipt={item.turn.contextReceipt}
+                            label="Submitted context"
                           />
-                        ))}
-                      {(turn.state === "interrupted" || turn.state === "cancelled") && (
-                        <p className="provider-state">{providerLabel} cancelled</p>
-                      )}
-                      <TurnCopyAction
-                        text={assistantTextFromEvents(turn.events)}
-                        label="Copy answer"
-                      />
-                    </div>
-                  </React.Fragment>
-                ))}
+                        )}
+                        <TurnCopyAction text={item.turn.message.text} label="Copy prompt" />
+                      </div>
+                      <div className="turn">
+                        <div className="role">
+                          <span className="av">
+                            {providerAvatarInitials(provider, providerLabel)}
+                          </span>
+                          <span className="rname">{providerLabel}</span>
+                          <span className="rtime">
+                            {item.turn.assistantAt ? formatElapsed(item.turn.assistantAt) : "now"}
+                          </span>
+                        </div>
+                        {renderTimeline(
+                          item.turn.events,
+                          `archived-${item.index}`,
+                          item.turn.state === "interrupted" || item.turn.state === "cancelled"
+                            ? "cancelled"
+                            : "running",
+                        )}
+                        <TurnChangesCard
+                          checkpoint={item.turn.checkpoint}
+                          pane={pane}
+                          onOpen={openTurnChanges}
+                        />
+                        {renderArchivedFailure(item.turn.events)}
+                        {item.turn.events
+                          .filter(
+                            (
+                              event,
+                            ): event is Extract<
+                              ProviderEvent,
+                              { kind: "governance_correlation" }
+                            > => event.kind === "governance_correlation",
+                          )
+                          .map((correlation) => (
+                            <GovernanceCorrelationSummary
+                              key={correlation.operationId}
+                              correlation={correlation}
+                            />
+                          ))}
+                        {(item.turn.state === "interrupted" || item.turn.state === "cancelled") && (
+                          <p className="provider-state">{providerLabel} cancelled</p>
+                        )}
+                        <TurnCopyAction
+                          text={assistantTextFromEvents(item.turn.events)}
+                          label="Copy answer"
+                        />
+                      </div>
+                    </React.Fragment>
+                  ),
+                )}
                 {latestMessage && (
                   <div
                     className="turn user"
@@ -2902,7 +2955,9 @@ export function Conversation({
                   >
                     <div className="role">
                       <span className="av you">Y</span>
-                      <span className="rname">You</span>
+                      <span className="rname">
+                        {currentMailboxFrom ? `From ${currentMailboxFrom}` : "You"}
+                      </span>
                       <span className="rtime">
                         {latestMessage.createdAt ? formatElapsed(latestMessage.createdAt) : "now"}
                       </span>
@@ -3232,6 +3287,15 @@ export function Conversation({
                     )}
                   </div>
                 )}
+                {mailboxTimeline.after.map((transfer) => (
+                  <article key={`mailbox-${transfer.id}`} className="mailbox-card">
+                    <div className="role">
+                      <span className="rname">Sent to {transfer.destinationTitle}</span>
+                      <span className="rtime">{formatElapsed(transfer.createdAt)}</span>
+                    </div>
+                    <p>{transfer.text}</p>
+                  </article>
+                ))}
               </div>
             </div>
             {!transcriptViewport.following && !conversationEmpty && (
@@ -4807,6 +4871,23 @@ export function Conversation({
         )}
       </div>
       <>
+        {mailboxOpen && conversation && !managedMode && (
+          <OptionalControlBoundary
+            label="Conversation mailbox"
+            onDismiss={() => setMailboxOpen(false)}
+            pendingDialog
+          >
+            <SendMailboxMessageDialog
+              source={conversation}
+              destinations={projectConversations.filter((item) => item.id !== conversation.id)}
+              onClose={() => setMailboxOpen(false)}
+              onSent={() => {
+                setMailboxOpen(false);
+                setHistoryRefreshSignal((value) => value + 1);
+              }}
+            />
+          </OptionalControlBoundary>
+        )}
         {forkOpen && threadId && !managedMode && repository && (
           <OptionalControlBoundary
             label="Conversation fork"

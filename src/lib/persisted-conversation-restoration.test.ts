@@ -260,6 +260,66 @@ test("multi-turn restoration keeps indexed records scoped to their owning turn",
   );
 });
 
+test("restoration projects mailbox outbound cards and destination attribution", () => {
+  const input = projection();
+  input.threads.push({
+    id: "thread-2",
+    projectId: "project-1",
+    worktree: "/repo/worktree",
+    title: "Review",
+    provider: "codex-cli",
+  });
+  input.threads[0] = { ...input.threads[0]!, title: "Plan" };
+  input.mailboxTransfers = [
+    {
+      id: "mailbox-1",
+      sourceThreadId: "thread-1",
+      destinationThreadId: "thread-2",
+      text: "Please review the plan.",
+      createdAt: "2026-08-10T10:00:05.000Z",
+      destinationTurnId: "turn-2",
+    },
+  ];
+  const source = restorePersistedConversation(input, target);
+  assert.equal(source.kind, "restored");
+  if (source.kind !== "restored") return;
+  assert.deepEqual(source.mailboxOutbound, [
+    {
+      id: "mailbox-1",
+      destinationTitle: "Review",
+      text: "Please review the plan.",
+      createdAt: "2026-08-10T10:00:05.000Z",
+    },
+  ]);
+
+  input.turns = [
+    {
+      id: "turn-2",
+      threadId: "thread-2",
+      status: "completed",
+      mode: "ask",
+      createdAt: "2026-08-10T10:00:05.000Z",
+      completedAt: "2026-08-10T10:00:06.000Z",
+    },
+  ];
+  input.messages = [
+    {
+      turnId: "turn-2",
+      role: "user",
+      text: "Please review the plan.",
+      createdAt: "2026-08-10T10:00:05.000Z",
+    },
+  ];
+  const destination = restorePersistedConversation(input, {
+    ...target,
+    conversationId: "thread-2",
+  });
+  assert.equal(destination.kind, "restored");
+  if (destination.kind !== "restored") return;
+  assert.equal(destination.currentTurn.mailboxFrom, "Plan");
+  assert.deepEqual(destination.mailboxOutbound, []);
+});
+
 test("restoration fails closed across identity and provider selection", () => {
   assert.deepEqual(restorePersistedConversation(projection(), { ...target, worktree: "/other" }), {
     kind: "thread_missing",

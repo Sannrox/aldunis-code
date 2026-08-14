@@ -49,7 +49,8 @@ schemas still **fail visibly** rather than wiping data.
 
 Projects, threads, turns, messages, typed tool activity, provider session
 references, context receipts, checkpoints, delegated-conversation
-relationships, and related records rebuild from the event log.
+relationships, mailbox transfers, and related records rebuild from the event
+log.
 
 Automation fire identities also rebuild from the event log. They contain only
 bounded idempotency and lifecycle metadata: fire key, scheduled/requested time,
@@ -140,6 +141,11 @@ seconds as an explicitly stale fallback.
   parent, route, timestamp, and answer digest—not the answer text. The answer
   itself is persisted only as the prompt of the originating child's native
   resume or explicitly identified follow-up turn.
+- Mailbox transfers retain source and destination thread ids, the reviewed
+  1–4000 character payload, destination mode, destination turn binding, and an
+  idempotency key. They are local inspectable provenance. The source card is
+  not added to the source provider context. Conversation deletion and
+  retention remove transfers that name the deleted thread.
 - Governed direct Shikigami turns retain only provider, governance mode,
   thread/turn identifiers, the provider-confirmed run UUID, the equal Chisei
   operation UUID, and creation time. Prompts, paths, tool payloads, harvest

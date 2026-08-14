@@ -181,6 +181,7 @@ export function filterManagedOrchestrationProjection(
       ? indexedRowsForThreads(threads, auxiliaryIndexes.inputRequestsByThread)
       : projection.inputRequests.filter((item) => threadIds.has(item.threadId)),
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],
@@ -237,6 +238,7 @@ export function filterManagedWorkbenchListProjection(
     delegatedRelationships: [],
     inputRequests: [],
     inputReceipts: [],
+    mailboxTransfers: [],
     automationFires: [],
     autonomyRuns: [],
     autonomyTasks: [],

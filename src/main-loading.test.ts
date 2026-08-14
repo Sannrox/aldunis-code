@@ -102,6 +102,7 @@ test("conversation lifecycle dialogs stay behind renderer intent", () => {
   const conversationPaths = [
     "../dialogs/conversation-workspace-dialog",
     "../dialogs/release-worktree-dialog",
+    "../dialogs/send-mailbox-message-dialog",
   ];
   for (const path of conversationPaths) {
     assert.doesNotMatch(

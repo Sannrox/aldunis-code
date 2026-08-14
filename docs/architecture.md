@@ -146,6 +146,12 @@ transfer of usage and audit authority from Sekai Chisei.
   and input authority remain single-use and bound to the originating child.
   Build children use an isolated managed worktree; Ask/Plan children may use
   the parent worktree.
+- Human-reviewed mailbox sends follow the
+  [inspectable conversation mailbox decision](decisions/conversation-mailbox.md):
+  an operator confirms a bounded payload from conversation A into an existing
+  same-project conversation B. Delivery is a normal destination turn. The
+  source projection never enters the source provider context. Agents cannot
+  originate sends or approve tools for each other.
 - Unknown provider events and incompatible contract versions fail closed.
 - Local usage receipts contain only bounded per-turn numeric provider
   observations for one Code turn. Cumulative context totals stay live-only

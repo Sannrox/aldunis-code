@@ -33,6 +33,7 @@ import {
 import {
   LocalStateError,
   LocalStateStore,
+  type MailboxTransfer,
   type StateProjection,
   type ThreadStatus,
 } from "./state.ts";
@@ -77,6 +78,7 @@ import { handleWorkspaceRoute } from "./workspace-routes.ts";
 import { handleChiseiRoute } from "./chisei-routes.ts";
 import { handleDelegatedControlRoute } from "./delegated-control-routes.ts";
 import { handleAutomationRoute } from "./automation-routes.ts";
+import { handleMailboxRoute } from "./mailbox-routes.ts";
 import { handleDeliveryRoute } from "./delivery-routes.ts";
 import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
 import {
@@ -349,6 +351,7 @@ interface LocalApiDispatchContext {
   wake: WakeBroker;
   withDelegatedControlLock: DelegatedControlLock;
   runChildFollowUp: (body: Record<string, unknown>) => Promise<void>;
+  deliverMailbox: (transfer: MailboxTransfer) => Promise<{ turnId: string }>;
   chisei: ChiseiProjectionClient;
   remoteAuth?: RemoteAuth;
   internalApprovalUrl?: Promise<string>;
@@ -392,6 +395,7 @@ async function handleApi(
     wake,
     withDelegatedControlLock,
     runChildFollowUp,
+    deliverMailbox,
     chisei,
     remoteAuth,
     internalApprovalUrl,
@@ -634,6 +638,17 @@ async function handleApi(
         state,
         remoteRequest,
         managed: Boolean(managedHost),
+        readJson,
+        sendJson,
+      })
+    )
+      return true;
+    if (
+      await handleMailboxRoute(route, request, response, {
+        state,
+        remoteRequest,
+        managed: Boolean(managedHost),
+        deliver: deliverMailbox,
         readJson,
         sendJson,
       })
@@ -1167,6 +1182,58 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
     return state.automationFireOutcome(fire.id);
   }
 
+  async function deliverMailbox(transfer: MailboxTransfer): Promise<{
+    turnId: string;
+  }> {
+    const projection = await state.inspect();
+    const thread = projection.threads.find((item) => item.id === transfer.destinationThreadId);
+    if (!thread) throw new LocalStateError("Target conversation was not found.", 404);
+    const project = projection.projects.find((item) => item.id === thread.projectId);
+    if (!project) throw new LocalStateError("Target project was not found.", 404);
+    const session = projection.providerSessions.find((item) => item.threadId === thread.id);
+    const providerId = thread.provider ?? session?.provider ?? "claude-code";
+    const model =
+      thread.model ??
+      session?.model ??
+      (providerId === "claude-code"
+        ? "default"
+        : providerId === "shikigami"
+          ? "scripted"
+          : "default");
+    const profileId =
+      thread.profileId ??
+      session?.profileId ??
+      (providerId === "shikigami" ? DEFAULT_SHIKIGAMI_PROFILE_ID : undefined);
+    const execution = admitProviderRun(
+      {
+        body: {
+          root: project.root,
+          worktree: thread.worktree,
+          prompt: transfer.text,
+          mode: transfer.mode,
+          conversationId: thread.id,
+          projectId: project.id,
+          threadId: thread.id,
+          resumeSessionId: providerId === "shikigami" ? undefined : session?.sessionId,
+          provider: providerId,
+          model,
+          profileId:
+            providerId === "claude-code" || providerId === "shikigami" ? profileId : undefined,
+          mailboxTransferId: transfer.id,
+        },
+        localPort: localProviderPort(),
+      },
+      createProviderRunSink(),
+      providerRunContext(false, true),
+    );
+    const accepted = await execution.accepted;
+    if (!accepted.turnId) {
+      throw new LocalStateError("The destination conversation turn could not be started.", 500);
+    }
+    void execution.completed.catch(() => undefined);
+    return { turnId: accepted.turnId };
+  }
+
   const automationScheduler = new AutomationScheduler(automations, {
     isThreadBusy,
     fire: fireAutomation,
@@ -1257,6 +1324,7 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
         wake,
         withDelegatedControlLock,
         runChildFollowUp,
+        deliverMailbox,
         chisei,
         remoteAuth,
         internalApprovalUrl: internalPermissionCallback?.url,

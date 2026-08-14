@@ -127,6 +127,7 @@ test("managed wake stream filters unpublished threads before write", async () =>
           delegatedRelationships: [],
           inputRequests: [],
           inputReceipts: [],
+          mailboxTransfers: [],
           automationFires: [],
           autonomyRuns: [],
           autonomyTasks: [],
