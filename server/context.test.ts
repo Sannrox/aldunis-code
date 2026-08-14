@@ -316,9 +316,9 @@ test("filename search streams a globally ranked inventory beyond 4 MiB", async (
           : reject(new Error(stderr || `git exited with ${code}`)),
       );
     });
-    const directory = "x".repeat(180);
+    const directory = "x".repeat(850);
     const paths = Array.from(
-      { length: 25_000 },
+      { length: 5_000 },
       (_, index) => `corpus/${directory}/z-match-${String(index).padStart(5, "0")}.ts`,
     );
     assert.ok(Buffer.byteLength(`${paths.join("\0")}\0`) > 4 * 1024 * 1024);
