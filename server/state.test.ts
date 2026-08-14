@@ -1039,6 +1039,29 @@ test("host restart marks orphaned active and approval turns interrupted", async 
   assert.ok(projection.turns.every((turn) => turn.completedAt));
 });
 
+test("clean host restart leaves the local event journal unchanged", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Already complete",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "turn_completed",
+    sessionId: "session-1",
+    costUsd: null,
+  });
+  const eventPath = join(directory, "events.v1.jsonl");
+  const before = await readFile(eventPath, "utf8");
+
+  await new LocalStateStore(directory).recoverInterruptedTurns();
+
+  assert.equal(await readFile(eventPath, "utf8"), before);
+});
+
 test("concurrent writes remain strictly ordered and crash-safe", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
