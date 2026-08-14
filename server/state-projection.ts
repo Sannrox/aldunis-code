@@ -68,7 +68,7 @@ export function projectConversationHistory(
   if (!thread) return null;
   if (index) {
     return {
-      sequence: projection.sequence,
+      sequence: index.revisionByThread.get(threadId) ?? projection.sequence,
       threads: [thread],
       turns: [...(index.turnsByThread.get(threadId) ?? [])],
       messages: [...(index.messagesByThread.get(threadId) ?? [])],

@@ -371,7 +371,9 @@ export async function handleWorkbenchProjectionRoute(
       throw new LocalStateError("The conversation is unavailable.", 404);
     }
     if (managedHost) context.assertManagedThread(projection, body.threadId);
-    if (body.knownSequence === projection.sequence) {
+    const historySequence =
+      indexed?.conversationHistory?.revisionByThread.get(body.threadId) ?? projection.sequence;
+    if (body.knownSequence === historySequence) {
       sendStatus(response, 204);
       return true;
     }
