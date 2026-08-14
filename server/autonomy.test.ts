@@ -443,6 +443,73 @@ test("heartbeat and standing order records are durable state records", async () 
   }
 });
 
+function ledgerRun(id: string, updatedAt: string): AutonomyRun {
+  return {
+    schemaVersion: 2,
+    id,
+    flowId: "heartbeat-awareness.v1",
+    kind: "heartbeat",
+    name: id,
+    projectId: "project-1",
+    worktree: null,
+    trigger: "manual",
+    status: "succeeded",
+    goal: "x",
+    revision: 0,
+    currentStepId: null,
+    taskIds: [],
+    standingOrderIds: [],
+    budget: { maxTasks: 1, maxRuntimeSeconds: 1, maxCostUsd: null },
+    result: null,
+    error: null,
+    createdAt: updatedAt,
+    startedAt: null,
+    updatedAt,
+    completedAt: null,
+  };
+}
+
+function ledgerTask(id: string, runId: string, updatedAt: string) {
+  return {
+    schemaVersion: 2 as const,
+    id,
+    runId,
+    stepId: "step-1",
+    kind: "notify" as const,
+    title: id,
+    status: "succeeded" as const,
+    attempt: 1,
+    maxAttempts: 1,
+    timeoutSeconds: 1,
+    input: {},
+    output: null,
+    error: null,
+    createdAt: updatedAt,
+    startedAt: null,
+    updatedAt,
+    completedAt: null,
+    nextRunAt: null,
+  };
+}
+
+function ledgerWithoutFullCopy<T>(items: T[]): T[] {
+  return new Proxy(items, {
+    get(target, property, receiver) {
+      if (
+        property === "slice" ||
+        property === "sort" ||
+        property === "map" ||
+        property === "filter" ||
+        property === "forEach" ||
+        property === Symbol.iterator
+      ) {
+        throw new Error(`copied or sorted the full ledger via ${String(property)}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 test("Autonomy snapshots clone only ledger records, not full conversation history", async () => {
   const { state, engine, cleanup } = await fixture();
   try {
@@ -464,6 +531,52 @@ test("Autonomy snapshots clone only ledger records, not full conversation histor
       "Keep snapshots narrow",
     );
   } finally {
+    await cleanup();
+  }
+});
+
+test("Autonomy snapshots copy only the newest page, not the whole ledger", async () => {
+  const { state, engine, cleanup } = await fixture();
+  const originalClone = globalThis.structuredClone;
+  try {
+    await engine.ensureBuiltInFlows();
+    const live = await state.inspect();
+    const runs = Array.from({ length: 8_000 }, (_, index) =>
+      ledgerRun(`run-${index}`, `t${String(index).padStart(5, "0")}`),
+    );
+    const tasks = Array.from({ length: 8_000 }, (_, index) =>
+      ledgerTask(`task-${index}`, `run-${index}`, `t${String(index).padStart(5, "0")}`),
+    );
+    (live as { autonomyRuns: AutonomyRun[] }).autonomyRuns = ledgerWithoutFullCopy(runs);
+    (live as { autonomyTasks: typeof tasks }).autonomyTasks = ledgerWithoutFullCopy(tasks);
+
+    globalThis.structuredClone = ((value: unknown) => {
+      if (Array.isArray(value) && value.length > 500) {
+        throw new Error(`cloned ${value.length} ledger rows`);
+      }
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        const record = value as { autonomyRuns?: unknown[]; autonomyTasks?: unknown[] };
+        if (Array.isArray(record.autonomyRuns) && record.autonomyRuns.length > 500) {
+          throw new Error("cloned the full autonomy run ledger");
+        }
+        if (Array.isArray(record.autonomyTasks) && record.autonomyTasks.length > 500) {
+          throw new Error("cloned the full autonomy task ledger");
+        }
+      }
+      return originalClone(value);
+    }) as typeof structuredClone;
+
+    const snapshot = await engine.snapshot(200);
+    assert.equal(snapshot.runs.length, 200);
+    assert.equal(snapshot.tasks.length, 500);
+    assert.equal(snapshot.runs[0]?.id, "run-7999");
+    assert.equal(snapshot.runs[199]?.id, "run-7800");
+    assert.equal(snapshot.tasks[0]?.id, "task-7999");
+    assert.equal(snapshot.tasks[499]?.id, "task-7500");
+    snapshot.runs[0]!.name = "mutated by caller";
+    assert.equal(runs[7999]?.name, "run-7999");
+  } finally {
+    globalThis.structuredClone = originalClone;
     await cleanup();
   }
 });

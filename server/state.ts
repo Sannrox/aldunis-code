@@ -2215,17 +2215,37 @@ export class LocalStateStore {
       | "autonomyHooks"
     >
   > {
+    return structuredClone(await this.inspectAutonomyProjection());
+  }
+
+  /**
+   * Live Autonomy ledger after the current write generation.
+   * Callers must not mutate the returned collections or records.
+   */
+  async inspectAutonomyProjection(): Promise<
+    Readonly<
+      Pick<
+        StateProjection,
+        | "autonomyRuns"
+        | "autonomyTasks"
+        | "autonomyFlows"
+        | "heartbeatMonitors"
+        | "standingOrders"
+        | "autonomyHooks"
+      >
+    >
+  > {
     await this.#ensureLoaded();
     await this.#writeQueue;
     const projection = this.#projection;
-    return structuredClone({
+    return {
       autonomyRuns: projection.autonomyRuns,
       autonomyTasks: projection.autonomyTasks,
       autonomyFlows: projection.autonomyFlows,
       heartbeatMonitors: projection.heartbeatMonitors,
       standingOrders: projection.standingOrders,
       autonomyHooks: projection.autonomyHooks,
-    });
+    };
   }
 
   /** Clone only the state required to admit a new Autonomy run. */
@@ -2428,6 +2448,18 @@ export class LocalStateStore {
       await handle.sync();
       await handle.close();
       handle = null;
+      if (this.#openAssistantByTurn.get(message.turnId) === message) {
+        // The live segment is already the inspect-visible record. Persist
+        // without replaceById so later tokens keep mutating that same object.
+        if (envelope.sequence !== this.#projection.sequence + 1) {
+          throw new LocalStateError(
+            `Local history is not ordered at event ${envelope.sequence}; expected ${this.#projection.sequence + 1}.`,
+          );
+        }
+        message.eventSequence = envelope.sequence;
+        this.#projection.sequence = envelope.sequence;
+        return;
+      }
       applyEvent(
         this.#projection,
         envelope,
@@ -2443,6 +2475,19 @@ export class LocalStateStore {
       await handle?.close().catch(() => undefined);
       if (writeMayHaveBegun) this.#writeFailure ??= error;
       throw error;
+    }
+  }
+
+  #publishOpenAssistant(segment: Message): void {
+    this.#projection.messages.push(segment);
+    const threadId = this.#conversationHistory.threadIdByTurn.get(segment.turnId);
+    if (threadId) {
+      const bucket = this.#conversationHistory.messagesByThread.get(threadId);
+      if (bucket) bucket.push(segment);
+      else this.#conversationHistory.messagesByThread.set(threadId, [segment]);
+    }
+    if (this.#delegatedChildTurnIds.has(segment.turnId)) {
+      indexSavedRow(this.#messagesByTurn, segment);
     }
   }
 
@@ -2463,17 +2508,12 @@ export class LocalStateStore {
         };
         this.#openAssistantByTurn.set(turnId, segment);
         this.#openAssistantDurableLength.set(turnId, 0);
+        this.#publishOpenAssistant(segment);
       }
       segment.text = joinAssistantTextChunks([segment.text, text]);
-      // Keep live projections (sidebar outcomes, mid-turn load) current without
-      // fsyncing every provider token.
-      replaceById(this.#projection.messages, { ...segment });
-      const threadId = this.#conversationHistory.threadIdByTurn.get(turnId);
-      if (threadId)
-        indexSavedThreadRow(this.#conversationHistory.messagesByThread, threadId, { ...segment });
       const durableLength = this.#openAssistantDurableLength.get(turnId) ?? 0;
       // Soft checkpoint so a long text-only reply is not only in RAM if the host
-      // exits before a tool/terminal boundary. Same message id; replace-by-id.
+      // exits before a tool/terminal boundary. Same live message id and object.
       if (segment.text.length - durableLength >= LocalStateStore.ASSISTANT_CHECKPOINT_CHARS) {
         await this.#writeMessageEnvelope(segment);
         this.#openAssistantDurableLength.set(turnId, segment.text.length);

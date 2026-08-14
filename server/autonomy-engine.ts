@@ -92,6 +92,55 @@ function isTerminal(status: AutonomyRun["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
+function compareUpdatedAtDesc<T extends { updatedAt: string }>(
+  left: T,
+  leftIndex: number,
+  right: T,
+  rightIndex: number,
+): number {
+  return right.updatedAt.localeCompare(left.updatedAt) || leftIndex - rightIndex;
+}
+
+/** Newest `limit` records by updatedAt. Copies only the page; does not sort the ledger. */
+function selectLatestByUpdatedAt<T extends { updatedAt: string }>(
+  items: readonly T[],
+  limit: number,
+): T[] {
+  const bounded = Math.max(0, limit);
+  if (bounded === 0 || items.length === 0) return [];
+  if (items.length <= bounded) {
+    return structuredClone(items).sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    );
+  }
+  const ranked: { item: T; index: number }[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    const candidate = { item, index };
+    if (ranked.length < bounded) {
+      ranked.push(candidate);
+      if (ranked.length === bounded) {
+        ranked.sort((left, right) =>
+          compareUpdatedAtDesc(left.item, left.index, right.item, right.index),
+        );
+      }
+      continue;
+    }
+    const worst = ranked[ranked.length - 1]!;
+    if (compareUpdatedAtDesc(item, index, worst.item, worst.index) >= 0) continue;
+    let lo = 0;
+    let hi = ranked.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (compareUpdatedAtDesc(item, index, ranked[mid]!.item, ranked[mid]!.index) < 0) hi = mid;
+      else lo = mid + 1;
+    }
+    ranked.splice(lo, 0, candidate);
+    ranked.pop();
+  }
+  return structuredClone(ranked.map((entry) => entry.item));
+}
+
 function isSafeRelativePath(worktree: string, candidate: string): boolean {
   if (!candidate || candidate.includes("\0") || isAbsolute(candidate)) return false;
   const resolved = join(worktree, candidate);
@@ -278,30 +327,24 @@ export class AutonomyEngine {
   }
 
   async snapshot(limit = 50): Promise<AutonomyStateSnapshot> {
-    // Public API surface: clone only bounded Autonomy records so periodic ledger
-    // refreshes do not copy unrelated conversation history.
-    const projection = await this.state.loadAutonomyProjection();
+    // Inspect the live ledger and copy only the visible page. Periodic refreshes
+    // must not clone or sort tens of thousands of retained runs/tasks.
+    const projection = await this.state.inspectAutonomyProjection();
     return {
-      runs: projection.autonomyRuns
-        .slice()
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, Math.max(1, Math.min(limit, 200))),
-      tasks: projection.autonomyTasks
-        .slice()
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 500),
-      flows: projection.autonomyFlows
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      heartbeatMonitors: projection.heartbeatMonitors
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      standingOrders: projection.standingOrders
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name)),
-      hooks: projection.autonomyHooks
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name)),
+      runs: selectLatestByUpdatedAt(projection.autonomyRuns, Math.max(1, Math.min(limit, 200))),
+      tasks: selectLatestByUpdatedAt(projection.autonomyTasks, 500),
+      flows: structuredClone(projection.autonomyFlows).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+      heartbeatMonitors: structuredClone(projection.heartbeatMonitors).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+      standingOrders: structuredClone(projection.standingOrders).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+      hooks: structuredClone(projection.autonomyHooks).sort((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
     };
   }
 

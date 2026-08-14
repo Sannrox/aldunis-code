@@ -3545,6 +3545,91 @@ test("assistant stream tokens buffer into one durable message per segment", asyn
   assert.equal([...log.matchAll(/"type":"message_saved"/g)].length, 3);
 });
 
+test("assistant token buffering mutates the live segment without scanning retained messages", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const parent = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Parent",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const child = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture/child",
+    prompt: "Stream",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  await store.linkDelegatedConversation(parent.thread.id, child.thread.id);
+
+  const live = await store.inspect();
+  live.messages.push(
+    ...Array.from({ length: 10_000 }, (_, index) => ({
+      schemaVersion: 2 as const,
+      id: `retained-${index}`,
+      turnId: "retained-turn",
+      role: "assistant" as const,
+      text: "x",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })),
+  );
+  const messages = live.messages;
+  const originalFindIndex = messages.findIndex;
+  messages.findIndex = () => {
+    throw new Error("scanned retained messages via findIndex");
+  };
+
+  try {
+    for (const text of ["Hel", "lo", " ", "wor", "ld"]) {
+      await store.recordProviderEvent(child.thread.id, child.turn.id, "claude-code", {
+        kind: "assistant_text",
+        text,
+      });
+    }
+    const assistants = live.messages.filter(
+      (message) => message.turnId === child.turn.id && message.role === "assistant",
+    );
+    assert.equal(assistants.length, 1);
+    assert.equal(assistants[0]?.text, "Hello world");
+    const indexed = await store.inspectWorkbenchProjection();
+    assert.equal(
+      indexed.conversationHistory.messagesByThread
+        .get(child.thread.id)
+        ?.find((message) => message.role === "assistant"),
+      assistants[0],
+    );
+    assert.equal(
+      indexed.delegatedMessagesByTurn.get(child.turn.id)?.get(assistants[0]!.id),
+      assistants[0],
+    );
+
+    const chunk = "x".repeat(LocalStateStore.ASSISTANT_CHECKPOINT_CHARS);
+    await store.recordProviderEvent(child.thread.id, child.turn.id, "claude-code", {
+      kind: "assistant_text",
+      text: chunk,
+    });
+    await store.recordProviderEvent(child.thread.id, child.turn.id, "claude-code", {
+      kind: "assistant_text",
+      text: " tail",
+    });
+    assert.equal(
+      live.messages.find((message) => message.id === assistants[0]!.id),
+      assistants[0],
+    );
+    assert.equal(assistants[0]?.text, `Hello world${chunk} tail`);
+    assert.equal(
+      (await store.inspectWorkbenchProjection()).conversationHistory.messagesByThread
+        .get(child.thread.id)
+        ?.find((message) => message.role === "assistant")?.text,
+      assistants[0]?.text,
+    );
+  } finally {
+    messages.findIndex = originalFindIndex;
+  }
+});
+
 test("assistant streams soft-checkpoint large growth and flush on demand", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

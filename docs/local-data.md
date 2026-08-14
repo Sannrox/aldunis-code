@@ -95,11 +95,16 @@ seconds as an explicitly stale fallback.
 - Each project is limited to a bounded number of retained conversations
   (currently 200) until older history is deleted or compacted.
 - Provider assistant streams are buffered and flushed as one durable message
-  per segment (between tools, approvals, input prompts, or turn end). Segments
-  also soft-checkpoint about every 4 KiB of growth and on host close so a long
+  per segment (between tools, approvals, input prompts, or turn end). The open
+  segment is the live inspect-visible record; later tokens mutate it in place
+  so retained history is not scanned or cloned on each chunk. Segments also
+  soft-checkpoint about every 4 KiB of growth and on host close so a long
   text-only reply is not only in RAM. Host recovery collapses older
   token-per-event assistant rows when rewriting history so long ACP streams do
   not retain multi-megabyte message tables or one fsync per token.
+- `POST /api/autonomy/load` snapshots the newest run and task page from the
+  live Autonomy ledger. It does not clone or sort the entire retained run/task
+  history on each refresh.
 - Provider credentials, raw tool inputs/outputs, and environment values are
   **not** part of the history schema.
 - Context receipts retain repository-relative paths, entry types, byte counts,
