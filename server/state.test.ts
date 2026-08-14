@@ -796,6 +796,26 @@ test("automation fires become explicit unknown after an interrupted host", async
   });
 });
 
+test("automation reconciliation skips retained turns without a started fire", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Retained turn without an automation fire",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const { projection } = await store.inspectWorkbenchProjection();
+  projection.turns = new Proxy(projection.turns, {
+    get() {
+      throw new Error("turn access must be skipped without started automation fires");
+    },
+  });
+
+  await store.reconcileAutomationFires();
+});
+
 test("governed Shikigami correlation receipts survive restart without sensitive run content", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

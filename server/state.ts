@@ -3348,9 +3348,22 @@ export class LocalStateStore {
   async reconcileAutomationFires(): Promise<void> {
     await this.#appendComputed((projection) => {
       const events: StateEvent[] = [];
-      const turnById = new Map(projection.turns.map((turn) => [turn.id, turn]));
-      for (const fire of projection.automationFires) {
-        if (fire.status !== "started") continue;
+      const startedFires = projection.automationFires.filter((fire) => fire.status === "started");
+      if (startedFires.length === 0) return { event: events, value: undefined };
+      const pendingTurnIds = new Set(
+        startedFires.flatMap((fire) => (fire.turnId ? [fire.turnId] : [])),
+      );
+      const turnById = new Map<string, Turn>();
+      for (
+        let index = projection.turns.length - 1;
+        index >= 0 && pendingTurnIds.size > 0;
+        index -= 1
+      ) {
+        const turn = projection.turns[index];
+        if (!turn || !pendingTurnIds.delete(turn.id)) continue;
+        turnById.set(turn.id, turn);
+      }
+      for (const fire of startedFires) {
         const outcome = automationFireOutcome(projection, fire, turnById);
         events.push({
           type: "automation_fire_saved",
