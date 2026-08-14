@@ -1,4 +1,5 @@
 import { readBoundedLines } from "./bounded-line-reader.mjs";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 
 const endpoint = process.env.ALDUNIS_BROWSER_TOOL_URL;
 const conversationId = process.env.ALDUNIS_BROWSER_CONVERSATION_ID;
@@ -85,18 +86,18 @@ const tools = [
   },
 ];
 
+const output = new JsonLineWriter(process.stdout);
+
 function reply(id, result) {
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+  return output.write({ jsonrpc: "2.0", id, result });
 }
 
 function errorReply(id, code, message) {
-  process.stdout.write(
-    `${JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      error: { code, message },
-    })}\n`,
-  );
+  return output.write({
+    jsonrpc: "2.0",
+    id,
+    error: { code, message },
+  });
 }
 
 function isRecord(value) {
@@ -230,7 +231,7 @@ async function handle(message) {
   if (message.method === "notifications/initialized") return;
   if (message.method === "initialize") {
     if (id === undefined) return;
-    reply(id, {
+    await reply(id, {
       protocolVersion: "2025-06-18",
       capabilities: { tools: {} },
       serverInfo: { name: "aldunis_browser", version: "0.1.0" },
@@ -238,7 +239,7 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    if (id !== undefined) reply(id, { tools });
+    if (id !== undefined) await reply(id, { tools });
     return;
   }
   if (message.method === "tools/call") {
@@ -247,17 +248,17 @@ async function handle(message) {
     const name = typeof params.name === "string" ? params.name : "";
     const operation = operationFor(name, params.arguments);
     if (!operation) {
-      errorReply(id, -32602, "The requested browser tool is not available.");
+      await errorReply(id, -32602, "The requested browser tool is not available.");
       return;
     }
     try {
       const result = await callBroker(operation);
-      reply(id, {
+      await reply(id, {
         content: toolContent(result),
         isError: result?.ok === false,
       });
     } catch (error) {
-      reply(id, {
+      await reply(id, {
         content: [
           { type: "text", text: error instanceof Error ? error.message : "Browser tool failed." },
         ],
@@ -267,7 +268,7 @@ async function handle(message) {
     return;
   }
   if (id !== undefined)
-    errorReply(id, -32601, `Unsupported MCP method: ${String(message.method)}.`);
+    await errorReply(id, -32601, `Unsupported MCP method: ${String(message.method)}.`);
 }
 
 async function processInput() {
@@ -282,7 +283,7 @@ async function processInput() {
       try {
         message = JSON.parse(line);
       } catch {
-        errorReply(null, -32700, "Invalid JSON.");
+        await errorReply(null, -32700, "Invalid JSON.");
         continue;
       }
       await handle(message);
