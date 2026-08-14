@@ -26,7 +26,7 @@ function context(overrides: Record<string, unknown> = {}) {
       LocalStateStore,
       "inspect" | "saveAnnotation" | "setAnnotationResolution" | "setFileReview"
     >,
-    changes: { listChangedFiles: unused, readFileDiff: unused },
+    changes: { listChangedFiles: unused, listChangedFilesPage: unused, readFileDiff: unused },
     managed: false,
     assertManagedThread: () => assert.fail("managed thread must not be checked"),
     selectWorktree: unused,
@@ -62,9 +62,10 @@ test("review route module lists changes through the selected worktree", async ()
       readJson: async () => ({ root: "/repo", worktree: "/repo/wt" }),
       selectWorktree: async () => ({ root: "/repo", worktree: "/canonical/wt" }),
       changes: {
-        listChangedFiles: async (worktree: string) => {
+        listChangedFiles: unused,
+        listChangedFilesPage: async (worktree: string) => {
           assert.equal(worktree, "/canonical/wt");
-          return files;
+          return { files, truncated: false };
         },
         readFileDiff: unused,
       },
@@ -74,7 +75,7 @@ test("review route module lists changes through the selected worktree", async ()
   );
 
   assert.equal(handled, true);
-  assert.deepEqual(writes, [{ status: 200, value: { files } }]);
+  assert.deepEqual(writes, [{ status: 200, value: { files, truncated: false } }]);
 });
 
 test("changed-file listing cancels disconnected requests and releases listeners", async () => {
@@ -94,12 +95,13 @@ test("changed-file listing cancels disconnected requests and releases listeners"
       readJson: async () => ({ root: "/repo", worktree: "/repo/wt" }),
       selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
       changes: {
-        listChangedFiles: async (_worktree: string, signal: AbortSignal) => {
+        listChangedFiles: unused,
+        listChangedFilesPage: async (_worktree: string, signal: AbortSignal) => {
           started = true;
           await new Promise((_resolve, reject) => {
             signal.addEventListener("abort", () => reject(signal.reason), { once: true });
           });
-          return [];
+          return { files: [], truncated: false };
         },
         readFileDiff: unused,
       },

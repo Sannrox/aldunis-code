@@ -6,11 +6,21 @@ import { useReviewedDeliverySession } from "./delivery-session";
 
 export type ChangesPanelMode = "review" | "deliver";
 
+export function ChangedFilesTruncationNotice({ count }: { count: number }) {
+  return (
+    <p className="changes-note" role="status">
+      Showing the first {count.toLocaleString()} changed files. Narrow the worktree before reviewing
+      or delivering the remaining changes.
+    </p>
+  );
+}
+
 export function ChangesPanel({
   repository,
   threadId,
   pane = "primary",
   files,
+  truncated = false,
   loading,
   error,
   onClose,
@@ -28,6 +38,7 @@ export function ChangesPanel({
   /** Dual-pane scope for review dock chrome labels. */
   pane?: "primary" | "secondary";
   files: ChangedFile[];
+  truncated?: boolean;
   loading: boolean;
   error: string | null;
   onClose: () => void;
@@ -196,6 +207,7 @@ export function ChangesPanel({
           {!loading && !error && files.length === 0 && (
             <p className="changes-note">The active worktree is clean.</p>
           )}
+          {!loading && !error && truncated && <ChangedFilesTruncationNotice count={files.length} />}
           {files.map((file) => (
             <div
               className={selected === file.path ? "changed-file active" : "changed-file"}

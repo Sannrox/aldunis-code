@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import type { Stats } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,8 +14,30 @@ function isHiddenReviewPath(path: string): boolean {
 
 const execFileAsync = promisify(execFile);
 export const MAX_DIFF_BYTES = 256 * 1024;
+export const MAX_CHANGED_FILES = 256;
 const CHANGED_FILE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_RENAME_CANDIDATES = 128;
+const MAX_STATUS_RECORD_BYTES = 64 * 1024;
+const MAX_STATUS_STDERR_BYTES = 64 * 1024;
+const HIDDEN_REVIEW_PATHSPECS = [
+  ":(glob)aldunis-code-composer-images/**",
+  ":(icase,glob)**/*.db",
+  ":(icase,glob)**/*.db-journal",
+  ":(icase,glob)**/*.db-shm",
+  ":(icase,glob)**/*.db-wal",
+  ":(icase,glob)**/*.sqlite",
+  ":(icase,glob)**/*.sqlite-journal",
+  ":(icase,glob)**/*.sqlite-shm",
+  ":(icase,glob)**/*.sqlite-wal",
+  ":(icase,glob)**/*.sqlite3",
+  ":(icase,glob)**/*.sqlite3-journal",
+  ":(icase,glob)**/*.sqlite3-shm",
+  ":(icase,glob)**/*.sqlite3-wal",
+  ":(icase,glob)**/data/*-state.json*",
+  ":(icase,glob)**/data/*.state*",
+  ":(icase,glob)**/data/*.lock",
+  ":(icase,glob)**/data/*.sock*",
+];
 // Exact identity checks may read a runtime-looking file, but never beyond this
 // bound. Larger local runtime artifacts remain outside the review surface.
 const MAX_EXACT_RENAME_BYTES = 64 * 1024 * 1024;
@@ -701,19 +723,187 @@ async function counts(
   return parseNumstat(result.stdout);
 }
 
-export async function listChangedFiles(
+async function boundedStatusEntries(
+  worktree: string,
+  maximumEntries: number,
+  signal?: AbortSignal,
+): Promise<{ entries: ChangeEntry[]; truncated: boolean }> {
+  signal?.throwIfAborted();
+  const entries: ChangeEntry[] = [];
+  let trackedCandidates = 0;
+  let untrackedCandidates = 0;
+  let hiddenRenameCandidates = 0;
+  let truncated = false;
+  // Each rename-reconciliation pass can consume deleted candidates. Reserve
+  // enough look-ahead for both runtime-path and ordinary untracked pairing so
+  // a truncated response can still fill the requested page.
+  const visibleParseLimit = maximumEntries + MAX_RENAME_CANDIDATES * 2;
+
+  const collect = async (
+    args: string[],
+    admit: (entry: ChangeEntry) => boolean,
+    fieldsAreUntrackedPaths = false,
+  ): Promise<boolean> => {
+    const child = spawn("git", ["-C", worktree, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+      (resolveExit, rejectExit) => {
+        child.once("error", rejectExit);
+        child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+      },
+    );
+    const stderr: Buffer[] = [];
+    let stderrBytes = 0;
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderrBytes >= MAX_STATUS_STDERR_BYTES) return;
+      const retained = chunk.subarray(0, MAX_STATUS_STDERR_BYTES - stderrBytes);
+      stderr.push(Buffer.from(retained));
+      stderrBytes += retained.length;
+    });
+    const abort = () => child.kill("SIGTERM");
+    signal?.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 10_000);
+    let pending = Buffer.alloc(0);
+    let pendingRename: Omit<ChangeEntry, "previousPath"> | null = null;
+    let stopped = false;
+    try {
+      outer: for await (const chunk of child.stdout) {
+        signal?.throwIfAborted();
+        const bytes = chunk as Buffer;
+        const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+        let start = 0;
+        for (;;) {
+          const end = joined.indexOf(0, start);
+          if (end < 0) break;
+          const field = joined.toString("utf8", start, end);
+          start = end + 1;
+          if (fieldsAreUntrackedPaths) {
+            if (
+              !admit({
+                code: "??",
+                path: safeRelativePath(worktree, field),
+                previousPath: null,
+                initial: "added",
+              })
+            ) {
+              stopped = true;
+              break outer;
+            }
+            continue;
+          }
+          if (pendingRename) {
+            const entry = { ...pendingRename, previousPath: safeRelativePath(worktree, field) };
+            pendingRename = null;
+            if (!admit(entry)) {
+              stopped = true;
+              break outer;
+            }
+            continue;
+          }
+          if (!field) continue;
+          const code = field.slice(0, 2);
+          const path = safeRelativePath(worktree, field.slice(3));
+          const entry = { code, path, initial: baseState(code) };
+          if (code.includes("R") || code.includes("C")) pendingRename = entry;
+          else if (!admit({ ...entry, previousPath: null })) {
+            stopped = true;
+            break outer;
+          }
+        }
+        pending = Buffer.from(joined.subarray(start));
+        if (pending.length > MAX_STATUS_RECORD_BYTES) {
+          throw new RepositoryError(
+            "A changed-file status record exceeded its resource limit.",
+            413,
+          );
+        }
+      }
+      if (stopped) child.kill("SIGTERM");
+      const completion = await exit;
+      signal?.throwIfAborted();
+      if (!stopped && (pending.length > 0 || pendingRename)) {
+        throw new RepositoryError("Git returned an incomplete changed-file inventory.", 409);
+      }
+      if (!stopped && completion.code !== 0) {
+        const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+        throw new RepositoryError(detail || "Git could not inspect changed files.", 409);
+      }
+      return stopped;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await exit.catch(() => undefined);
+    }
+  };
+
+  const admitVisible =
+    (source: "tracked" | "untracked") =>
+    (entry: ChangeEntry): boolean => {
+      const count = source === "tracked" ? trackedCandidates : untrackedCandidates;
+      if (count >= visibleParseLimit) {
+        truncated = true;
+        return false;
+      }
+      if (source === "tracked") trackedCandidates += 1;
+      else untrackedCandidates += 1;
+      entries.push(entry);
+      return true;
+    };
+  const exclusions = HIDDEN_REVIEW_PATHSPECS.map((pathspec) =>
+    pathspec
+      .replace(":(glob)", ":(exclude,glob)")
+      .replace(":(icase,glob)", ":(exclude,icase,glob)"),
+  );
+  await collect(
+    ["status", "--porcelain=v1", "-z", "--untracked-files=no", "--find-renames"],
+    admitVisible("tracked"),
+  );
+  await collect(
+    ["ls-files", "--others", "--exclude-standard", "-z", "--", ...exclusions],
+    admitVisible("untracked"),
+    true,
+  );
+  await collect(
+    ["ls-files", "--others", "--exclude-standard", "-z", "--", ...HIDDEN_REVIEW_PATHSPECS],
+    (entry) => {
+      if (hiddenRenameCandidates >= MAX_RENAME_CANDIDATES) return false;
+      hiddenRenameCandidates += 1;
+      entries.push(entry);
+      return true;
+    },
+    true,
+  );
+  // Git emits each inventory in bytewise pathname order. Keep that exact
+  // ordering after merging so bounded source prefixes remain a valid global
+  // prefix even for mixed-case and non-ASCII paths.
+  entries.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+  return { entries, truncated };
+}
+
+async function inspectChangedFiles(
   worktree: string,
   signal?: AbortSignal,
-): Promise<ChangedFile[]> {
+  maximumEntries = Number.POSITIVE_INFINITY,
+): Promise<{ files: ChangedFile[]; truncated: boolean }> {
   signal?.throwIfAborted();
-  const result = await git(
-    worktree,
-    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--find-renames"],
-    undefined,
-    signal,
-  );
-  const fields = result.stdout.split("\0");
-  const entries: ChangeEntry[] = [];
+  const bounded = Number.isFinite(maximumEntries);
+  const boundedStatus = bounded
+    ? await boundedStatusEntries(worktree, maximumEntries, signal)
+    : null;
+  const result = boundedStatus
+    ? null
+    : await git(
+        worktree,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--find-renames"],
+        undefined,
+        signal,
+      );
+  const fields = result?.stdout.split("\0") ?? [];
+  const entries: ChangeEntry[] = boundedStatus?.entries ?? [];
+  let truncated = boundedStatus?.truncated ?? false;
+  let visibleCandidates = 0;
+  let hiddenRenameCandidates = 0;
+  const visibleParseLimit = bounded ? maximumEntries + MAX_RENAME_CANDIDATES * 2 : maximumEntries;
   for (let index = 0; index < fields.length; index += 1) {
     signal?.throwIfAborted();
     const field = fields[index];
@@ -722,6 +912,16 @@ export async function listChangedFiles(
     const path = safeRelativePath(worktree, field.slice(3));
     const renamed = code.includes("R") || code.includes("C");
     const previousPath = renamed ? safeRelativePath(worktree, fields[++index] ?? "") : null;
+    const hiddenRenameCandidate = code === "??" && isHiddenReviewPath(path);
+    if (hiddenRenameCandidate && bounded && hiddenRenameCandidates >= MAX_RENAME_CANDIDATES) {
+      continue;
+    }
+    if (!hiddenRenameCandidate && visibleCandidates >= visibleParseLimit) {
+      truncated = true;
+      break;
+    }
+    if (hiddenRenameCandidate) hiddenRenameCandidates += 1;
+    else visibleCandidates += 1;
     entries.push({ code, path, previousPath, initial: baseState(code) });
   }
 
@@ -730,6 +930,8 @@ export async function listChangedFiles(
     : [];
   for (const path of ignoredRuntimePaths) {
     if (entries.some((entry) => entry.path === path)) continue;
+    if (bounded && hiddenRenameCandidates >= MAX_RENAME_CANDIDATES) continue;
+    hiddenRenameCandidates += 1;
     entries.push({ code: "??", path, previousPath: null, initial: "added" });
   }
   await markSpecialRenames(worktree, entries, signal);
@@ -782,8 +984,13 @@ export async function listChangedFiles(
     // local databases, generated runtime state, and staged composer images
     // out of review even then, after preserving a genuine unstaged rename
     // into one of those paths.
+    const visibleEntries = entries.filter(
+      (entry) =>
+        !(entry.code === "??" && entry.initial === "added" && isHiddenReviewPath(entry.path)),
+    );
+    if (visibleEntries.length > maximumEntries) truncated = true;
     const changes: ChangedFile[] = [];
-    for (const entry of entries) {
+    for (const entry of visibleEntries.slice(0, maximumEntries)) {
       signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
@@ -832,10 +1039,28 @@ export async function listChangedFiles(
         deletions,
       });
     }
-    return changes.sort((left, right) => left.path.localeCompare(right.path));
+    return { files: changes.sort((left, right) => left.path.localeCompare(right.path)), truncated };
   } finally {
     if (snapshot) await disposeWorktreeSnapshot(snapshot);
   }
+}
+
+export async function listChangedFiles(
+  worktree: string,
+  signal?: AbortSignal,
+): Promise<ChangedFile[]> {
+  return (await inspectChangedFiles(worktree, signal)).files;
+}
+
+export async function listChangedFilesPage(
+  worktree: string,
+  signal?: AbortSignal,
+): Promise<{ files: ChangedFile[]; truncated: boolean }> {
+  const inspected = await inspectChangedFiles(worktree, signal, MAX_CHANGED_FILES + 1);
+  return {
+    files: inspected.files.slice(0, MAX_CHANGED_FILES),
+    truncated: inspected.truncated || inspected.files.length > MAX_CHANGED_FILES,
+  };
 }
 
 export async function readFileDiff(

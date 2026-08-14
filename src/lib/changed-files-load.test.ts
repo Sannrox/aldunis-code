@@ -37,12 +37,13 @@ test("loadChangedFiles coalesces concurrent callers for the same worktree", asyn
     ]);
     assert.equal(calls, 1);
     assert.equal(a, b);
-    assert.equal(a[0]?.path, "/repo:/repo/wt");
+    assert.equal(a.files[0]?.path, "/repo:/repo/wt");
+    assert.equal(a.truncated, false);
 
     // After inflight settles, a later call is a new network request.
     const c = await loadChangedFiles({ root: "/repo", worktree: "/repo/wt" });
     assert.equal(calls, 2);
-    assert.equal(c[0]?.path, "/repo:/repo/wt");
+    assert.equal(c.files[0]?.path, "/repo:/repo/wt");
   } finally {
     globalThis.fetch = originalFetch;
     resetChangedFilesLoadForTests();
@@ -65,6 +66,25 @@ test("loadChangedFiles keeps distinct worktrees on separate requests", async () 
       loadChangedFiles({ root: "/repo", worktree: "/repo/b" }),
     ]);
     assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetChangedFilesLoadForTests();
+  }
+});
+
+test("loadChangedFiles carries the host truncation signal", async () => {
+  resetChangedFilesLoadForTests();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ files: [], truncated: true }), {
+      status: 200,
+    })) as typeof fetch;
+
+  try {
+    assert.deepEqual(await loadChangedFiles({ root: "/repo", worktree: "/repo/wt" }), {
+      files: [],
+      truncated: true,
+    });
   } finally {
     globalThis.fetch = originalFetch;
     resetChangedFilesLoadForTests();
@@ -94,9 +114,9 @@ test("loadFreshChangedFiles bypasses an older inflight snapshot", async () => {
   try {
     const older = loadChangedFiles({ root: "/repo", worktree: "/repo/wt" });
     const fresh = await loadFreshChangedFiles({ root: "/repo", worktree: "/repo/wt" });
-    assert.equal(fresh[0]?.path, "seq-2");
+    assert.equal(fresh.files[0]?.path, "seq-2");
     releaseOlder?.();
-    assert.equal((await older)[0]?.path, "seq-1");
+    assert.equal((await older).files[0]?.path, "seq-1");
     assert.equal(calls, 2);
   } finally {
     releaseOlder?.();
@@ -137,7 +157,7 @@ test("stalled changed-file requests time out, release, and can be retried", asyn
   try {
     const options = { root: "/repo", worktree: "/repo/stalled", timeoutMs: 5 };
     await assert.rejects(loadChangedFiles(options), /Changed files request timed out/);
-    assert.deepEqual(await loadChangedFiles(options), []);
+    assert.deepEqual(await loadChangedFiles(options), { files: [], truncated: false });
     assert.equal(calls, 2);
   } finally {
     globalThis.fetch = originalFetch;

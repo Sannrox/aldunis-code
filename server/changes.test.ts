@@ -16,6 +16,8 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
   listChangedFiles,
+  listChangedFilesPage,
+  MAX_CHANGED_FILES,
   MAX_DIFF_BYTES,
   readBoundedChangedFile,
   readFileDiff,
@@ -117,6 +119,104 @@ test("untracked-only listings skip rename snapshot candidate probes", async () =
     .filter((event) => event.event === "start");
   assert.equal(gitStarts.filter((event) => event.argv?.includes("check-attr")).length, 0);
   assert.equal(gitStarts.filter((event) => event.argv?.includes("cat-file")).length, 0);
+});
+
+test("interactive changed-file inventories bound and report overflow", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-bounded-changes-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await mkdir(join(root, "corpus"));
+  await Promise.all(
+    Array.from({ length: MAX_CHANGED_FILES + 2 }, (_, index) =>
+      writeFile(join(root, "corpus", `file-${String(index).padStart(4, "0")}.txt`), ""),
+    ),
+  );
+
+  const page = await listChangedFilesPage(root);
+  assert.equal(page.files.length, MAX_CHANGED_FILES);
+  assert.equal(page.truncated, true);
+  assert.equal(page.files[0]?.path, "corpus/file-0000.txt");
+  assert.equal(page.files.at(-1)?.path, "corpus/file-0255.txt");
+});
+
+test("hidden runtime entries do not consume the interactive review page", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-hidden-changes-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await mkdir(join(root, "aldunis-code-composer-images"));
+  await Promise.all(
+    Array.from({ length: 5_000 }, (_, index) =>
+      writeFile(
+        join(root, "aldunis-code-composer-images", `image-${String(index).padStart(4, "0")}.png`),
+        "",
+      ),
+    ),
+  );
+  await mkdir(join(root, "data"));
+  await Promise.all(
+    Array.from({ length: 500 }, (_, index) =>
+      writeFile(join(root, "data", `worker-${String(index).padStart(4, "0")}.LOCK`), ""),
+    ),
+  );
+  await writeFile(join(root, "visible.txt"), "review me\n");
+
+  const page = await listChangedFilesPage(root);
+  assert.deepEqual(
+    page.files.map(({ path }) => path),
+    ["visible.txt"],
+  );
+  assert.equal(page.truncated, false);
+});
+
+test("staged renames preserve identity across the hidden review boundary", async () => {
+  for (const [previousPath, path] of [
+    ["config.db", "config.txt"],
+    ["settings.txt", "settings.db"],
+  ] as const) {
+    const root = await mkdtemp(join(tmpdir(), "aldunis-code-cross-boundary-rename-"));
+    await execFileAsync("git", ["-C", root, "init", "-q"]);
+    await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+    await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+    await writeFile(join(root, previousPath), "tracked\n");
+    await execFileAsync("git", ["-C", root, "add", previousPath]);
+    await execFileAsync("git", ["-C", root, "commit", "-qm", "rename fixture"]);
+    await execFileAsync("git", ["-C", root, "mv", previousPath, path]);
+
+    const page = await listChangedFilesPage(root);
+    assert.equal(page.truncated, false);
+    assert.deepEqual(
+      page.files.map(({ path: changedPath, previousPath: changedPreviousPath, state }) => ({
+        path: changedPath,
+        previousPath: changedPreviousPath,
+        state,
+      })),
+      [{ path, previousPath, state: path.endsWith(".db") ? "binary" : "renamed" }],
+    );
+  }
+});
+
+test("mixed tracked and untracked changes preserve the globally earliest page", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-tracked-runtime-changes-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await Promise.all(
+    Array.from({ length: MAX_CHANGED_FILES * 2 + 2 }, (_, index) =>
+      writeFile(join(root, `tracked-${String(index).padStart(4, "0")}.db`), "before\n"),
+    ),
+  );
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "tracked runtime fixtures"]);
+  await Promise.all(
+    Array.from({ length: MAX_CHANGED_FILES * 2 + 2 }, (_, index) =>
+      writeFile(join(root, `tracked-${String(index).padStart(4, "0")}.db`), "after\n"),
+    ),
+  );
+  await writeFile(join(root, "a.txt"), "untracked\n");
+
+  const page = await listChangedFilesPage(root);
+  assert.equal(page.files.length, MAX_CHANGED_FILES);
+  assert.equal(page.truncated, true);
+  assert.equal(page.files[0]?.path, "a.txt");
+  assert.equal(page.files.at(-1)?.path, "tracked-0254.db");
 });
 
 test("untracked local runtime state stays out of changed files", async () => {

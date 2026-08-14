@@ -21,7 +21,7 @@ import { ProviderDiscovery } from "./provider-discovery.ts";
 import { ProviderModelError } from "./provider-models.ts";
 import { ProviderAdapterError, ProviderAdapterStore } from "./provider-adapters.ts";
 import { listReviewedAdapters, prepareReviewedAdapter } from "./reviewed-adapters.ts";
-import { listChangedFiles, readFileDiff } from "./changes.ts";
+import { listChangedFiles, listChangedFilesPage, readFileDiff } from "./changes.ts";
 import { DeliveryBroker } from "./delivery.ts";
 import { ReleaseDeliveryBroker, ReleaseDeliveryStore } from "./release-delivery-workflow.ts";
 import { PermissionBroker, PermissionError, type ApprovalSnapshot } from "./permission.ts";
@@ -784,7 +784,7 @@ async function handleApi(
     if (
       await handleReviewRoute(route, request, response, {
         state,
-        changes: { listChangedFiles, readFileDiff },
+        changes: { listChangedFiles, listChangedFilesPage, readFileDiff },
         managed: Boolean(managedHost),
         assertManagedThread,
         selectWorktree: selectedWorktree,
