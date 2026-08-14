@@ -203,6 +203,23 @@ export function readyComposerPlaceholder(providerName: string, threadId: string 
   return threadId ? `Reply to ${providerName}…` : "What should we build, fix, or review?";
 }
 
+/** Composer, voice, and send must not accept input when the bound worktree is gone. */
+export function composerAcceptsInput(input: {
+  hasRunnableWorktree: boolean;
+  conversationWorktreeMissing: boolean;
+  providerReady: boolean;
+  runActive: boolean;
+  historyRestored: boolean;
+}): boolean {
+  return (
+    input.hasRunnableWorktree &&
+    !input.conversationWorktreeMissing &&
+    input.providerReady &&
+    !input.runActive &&
+    input.historyRestored
+  );
+}
+
 type PlanPanelMode = "plan" | "graph";
 
 /** Join assistant text blocks while preserving timeline boundaries around tools/plans. */
@@ -1661,6 +1678,11 @@ export function Conversation({
         item.path === repository.selectedWorktree &&
         (item.state === "available" || item.state === "detached"),
     ) ?? null;
+  const conversationWorktreeMissing = Boolean(
+    conversation?.worktree &&
+    repository &&
+    !repository.worktrees.some((item) => item.path === conversation.worktree),
+  );
   // Split panes recreate projection objects during unrelated Workbench renders;
   // keep resource effects keyed to the request target, not object identity.
   const [resourceRoot, resourceWorktree] = conversationResourceTarget(repository, worktree);
@@ -1763,6 +1785,13 @@ export function Conversation({
   });
   /** Whether the selected provider can start a run right now. */
   const providerReady = providerReadiness.canRun;
+  const composerReady = composerAcceptsInput({
+    hasRunnableWorktree: Boolean(worktree),
+    conversationWorktreeMissing,
+    providerReady,
+    runActive,
+    historyRestored,
+  });
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1770,10 +1799,7 @@ export function Conversation({
         event.defaultPrevented ||
         !matchesVoiceInputShortcut(event) ||
         document.querySelector('[role="dialog"][aria-modal="true"]') ||
-        !worktree ||
-        !providerReady ||
-        runActive ||
-        !historyRestored
+        !composerReady
       )
         return;
       event.preventDefault();
@@ -1781,7 +1807,7 @@ export function Conversation({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active, draft, historyRestored, providerReady, runActive, worktree]);
+  }, [active, composerReady, draft]);
   const providerReadinessMessage = providerReadiness.message;
   const effectiveModel = managedMode
     ? (managedModel ?? model)
@@ -1965,7 +1991,14 @@ export function Conversation({
           item.path === runRepository.selectedWorktree &&
           (item.state === "available" || item.state === "detached"),
       ) ?? null;
-    if (!value || !runRepository || !runWorktree || !providerReady || runActive || !historyRestored)
+    if (
+      !value ||
+      !runRepository ||
+      !runWorktree ||
+      conversationWorktreeMissing ||
+      !composerReady ||
+      runActive
+    )
       return;
     if (promptOverride === undefined && voiceInputState === "listening") {
       voiceInputModule.stop();
@@ -2299,11 +2332,6 @@ export function Conversation({
     providerLabel,
     failureNeedsConfiguration,
     configurationVerifiedAfterFailure,
-  );
-  const conversationWorktreeMissing = Boolean(
-    conversation?.worktree &&
-    repository &&
-    !repository.worktrees.some((item) => item.path === conversation.worktree),
   );
   const accessLabel =
     mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";
@@ -4058,7 +4086,7 @@ export function Conversation({
                 name={`${pane}-composer`}
                 aria-label={`Message ${providerName}`}
                 title={`Stash draft with ${PROMPT_STASH_SHORTCUT_LABEL}`}
-                disabled={!worktree || !providerReady || runActive || !historyRestored}
+                disabled={!composerReady}
               />
               {voiceInputState === "listening" && (
                 <div className="voice-input-status" role="status" aria-live="polite">
@@ -4112,7 +4140,7 @@ export function Conversation({
                           ? `Try voice input again (${VOICE_INPUT_SHORTCUT_LABEL})`
                           : `Start voice input (${VOICE_INPUT_SHORTCUT_LABEL})`
                   }
-                  disabled={!worktree || !providerReady || runActive || !historyRestored}
+                  disabled={!composerReady}
                   onClick={() => {
                     voiceInputModule.toggle(draft);
                   }}
@@ -4631,9 +4659,7 @@ export function Conversation({
                     type="button"
                     className="send"
                     onClick={() => void send()}
-                    disabled={
-                      !draft.trim() || !worktree || !providerReady || runActive || !historyRestored
-                    }
+                    disabled={!draft.trim() || !composerReady}
                     aria-label={`${threadId ? "Send" : "Start"} conversation, ${pane} pane`}
                   >
                     <svg
