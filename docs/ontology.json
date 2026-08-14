@@ -15,7 +15,7 @@
     },
     {
       "name": "WakeStreamRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates wake SSE route recognition, response headers, WakeStreamCoordinator construction including managed visibility filtering, heartbeat timers, and disconnect cleanup behind one internal dispatch interface while WakeStreamCoordinator retains bounded delivery authority."
+      "description": "A deep server-side Aldunis Code module that concentrates wake SSE route recognition, host-wide admission of at most 32 active streams, pre-dispatch disconnect rejection, admitted-only readiness signaling, response headers, WakeStreamCoordinator construction including managed visibility filtering, heartbeat timers, and exact disconnect cleanup behind one internal dispatch interface while WakeStreamCoordinator retains bounded delivery authority."
     },
     {
       "name": "LocalApiDispatchModule",
@@ -611,17 +611,17 @@
     },
     {
       "name": "coordinates_wake_stream_delivery",
-      "description": "The local host delegates state-event invalidation buffering, managed visibility batching, response backpressure, and disconnect cleanup to one request-scoped coordinator without changing persistence, tenant, provider, or renderer authority.",
+      "description": "The local host admits at most 32 active state-event streams and delegates invalidation buffering, managed visibility batching, response backpressure, and disconnect cleanup to each request-scoped coordinator without changing persistence, tenant, provider, or renderer authority.",
       "domain": "AldunisLocalHost",
       "range": "WakeStreamCoordinator",
       "cardinality": {
         "min": 0,
-        "max": null
+        "max": 32
       }
     },
     {
       "name": "dispatches_wake_stream_routes",
-      "description": "The wake-stream route dispatch module admits GET /api/state/events, constructs the request-scoped WakeStreamCoordinator, and owns heartbeat and cleanup without acquiring persistence, tenant, provider, or renderer authority.",
+      "description": "The wake-stream route dispatch module admits GET /api/state/events only within the host-wide 32-stream ceiling, rejects connections already closed during pre-dispatch work, returns overflow as a short retry-directed SSE response without the admitted-only readiness event or request-scoped stream resource allocation, constructs the WakeStreamCoordinator, and owns heartbeat and exact cleanup without acquiring persistence, tenant, provider, or renderer authority.",
       "domain": "WakeStreamRouteDispatchModule",
       "range": "WakeStreamCoordinator",
       "cardinality": {
@@ -3051,20 +3051,20 @@
     },
     {
       "subject": "coordinates_wake_stream_delivery",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#767",
-      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute; server/wake-stream.ts",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#767 and #1134",
+      "locator": "server/wake-stream-routes.ts#WakeStreamAdmission; server/wake-stream-routes.ts#handleWakeStreamRoute; server/wake-stream.ts; https://github.com/Sannrox/aldunis-code/issues/1134",
       "confidence": 1.0
     },
     {
       "subject": "WakeStreamRouteDispatchModule",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#842",
-      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute; server/host.ts#handleApi",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#842 and #1134",
+      "locator": "server/wake-stream-routes.ts#WakeStreamAdmission; server/wake-stream-routes.ts#handleWakeStreamRoute; server/host.ts#createLocalHost; server/host.ts#handleApi; https://github.com/Sannrox/aldunis-code/issues/1134",
       "confidence": 1.0
     },
     {
       "subject": "dispatches_wake_stream_routes",
-      "source": "Aldunis Code Issue Sannrox/aldunis-code#842",
-      "locator": "server/wake-stream-routes.ts#handleWakeStreamRoute",
+      "source": "Aldunis Code Issues Sannrox/aldunis-code#842 and #1134",
+      "locator": "server/wake-stream-routes.ts#WakeStreamAdmission; server/wake-stream-routes.ts#handleWakeStreamRoute; https://github.com/Sannrox/aldunis-code/issues/1134",
       "confidence": 1.0
     },
     {

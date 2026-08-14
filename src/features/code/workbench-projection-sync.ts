@@ -76,7 +76,7 @@ export function reconcileWorkbenchConversations(
 
 type ProjectionEvent = { data: string };
 type ProjectionEventSource = {
-  addEventListener(type: "open", listener: () => void): void;
+  addEventListener(type: "ready", listener: (event: ProjectionEvent) => void): void;
   addEventListener(type: "thread_status", listener: (event: ProjectionEvent) => void): void;
   close(): void;
 };
@@ -178,7 +178,7 @@ export function createWorkbenchProjectionSynchronization(
     if (!active || events || options.visibility?.visibilityState === "hidden") return;
     const source = options.createEventSource();
     events = source;
-    source.addEventListener("open", () => {
+    source.addEventListener("ready", () => {
       if (events === source) synchronizeInBackground(true);
     });
     source.addEventListener("thread_status", (event) => {

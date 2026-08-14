@@ -54,7 +54,11 @@ import { WorktreeManager } from "./worktrees.ts";
 import { RemoteAuth, RemoteAuthError } from "./remote-auth.ts";
 import { DirectoryBrowser } from "./directory-browser.ts";
 import { WakeBroker } from "./wake.ts";
-import { handleWakeStreamRoute, WAKE_STREAM_ROUTE } from "./wake-stream-routes.ts";
+import {
+  handleWakeStreamRoute,
+  WAKE_STREAM_ROUTE,
+  WakeStreamAdmission,
+} from "./wake-stream-routes.ts";
 import { resolveProductAvailability } from "./products.ts";
 import { ManagedHost, ManagedHostError, type ManagedIdentity } from "./managed-host.ts";
 import { BrowserError, SharedBrowserBroker, type BrowserHost } from "./browser.ts";
@@ -349,6 +353,7 @@ interface LocalApiDispatchContext {
   providerRunAdmission: ProviderRunAdmission;
   inputExpiryTimers: ProviderInputExpiryTimers;
   wake: WakeBroker;
+  wakeStreamAdmission: WakeStreamAdmission;
   withDelegatedControlLock: DelegatedControlLock;
   runChildFollowUp: (body: Record<string, unknown>) => Promise<void>;
   deliverMailbox: (transfer: MailboxTransfer) => Promise<{ turnId: string }>;
@@ -393,6 +398,7 @@ async function handleApi(
     providerRunAdmission,
     inputExpiryTimers,
     wake,
+    wakeStreamAdmission,
     withDelegatedControlLock,
     runChildFollowUp,
     deliverMailbox,
@@ -484,6 +490,7 @@ async function handleApi(
       await handleWakeStreamRoute(route, request, response, {
         method: request.method,
         wake,
+        admission: wakeStreamAdmission,
         // Membership projection is serialized once per burst and inspect
         // avoids cloning full history for each managed wake stream.
         loadProjection: () => state.inspect(),
@@ -1003,6 +1010,7 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
   });
   const activeAcp = new Map<string, AcpProviderAdapter>();
   const wake = new WakeBroker();
+  const wakeStreamAdmission = new WakeStreamAdmission();
   const autonomy = new AutonomyEngine(state);
   const autonomyScheduler = new AutonomyScheduler(autonomy);
   let delegatedControlTail = Promise.resolve();
@@ -1337,6 +1345,7 @@ export function createLocalHost(options: LocalHostOptions = {}): LocalHostServer
         providerRunAdmission,
         inputExpiryTimers,
         wake,
+        wakeStreamAdmission,
         withDelegatedControlLock,
         runChildFollowUp,
         deliverMailbox,
