@@ -211,7 +211,7 @@ async function fixture() {
       new Promise<void>((resolve, reject) => {
         execFile(
           "git",
-          ["-C", root, "add", "--", "data/a.db", "data/tracked-fixture.db"],
+          ["-C", root, "add", "--", "data/a.db", "data/tracked-fixture.db", "image.png"],
           (error) => (error ? reject(error) : resolve()),
         );
       }),
@@ -347,6 +347,15 @@ test("bounded repository projections stream beyond 4 MiB", async () => {
     const browsed = await browseRepositoryFiles(root, "definitely-absent");
     assert.deepEqual(browsed.files, []);
     assert.equal(browsed.truncated, true);
+    await writeFile(
+      join(root, "image.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    assert.deepEqual(await resolveWorktreeImagePath(root, join(root, "image.png")), {
+      path: "image.png",
+      mediaType: "image/png",
+      size: 8,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1247,6 +1256,14 @@ test("resolveWorktreeImagePath pins in-tree images and rejects escapes", async (
   await writeFile(join(parent, "outside.png"), Buffer.from([137, 80, 78, 71]));
   assert.equal(await resolveWorktreeImagePath(root, join(parent, "outside.png")), null);
   assert.equal(await resolveWorktreeImagePath(root, join(root, "src/main.ts")), null);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  await writeFile(join(root, "untracked.png"), png);
+  assert.equal(
+    (await resolveWorktreeImagePath(root, join(root, "untracked.png")))?.path,
+    "untracked.png",
+  );
+  await writeFile(join(root, "generated", "ignored.png"), png);
+  assert.equal(await resolveWorktreeImagePath(root, join(root, "generated", "ignored.png")), null);
 });
 
 test("resolveWorktreeImagePath rejects an atomic replacement without retaining it", async () => {

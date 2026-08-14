@@ -503,7 +503,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime filename search that streams tracked and non-ignored untracked Git inventories through a 50-result top-k projection with bounded records, stderr, deadlines, cancellation, and child cleanup, repository content search that streams the same inventory into at most 200 ordered name matches and 1,024 ordered inspection candidates before nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file and 4 MiB aggregate ceilings, concurrency-bounded browse result inspection with descriptor-pinned text classification, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, context attachment reads pinned to stable descriptors within 64 KiB per-file and 256 KiB aggregate ceilings, and context-package cancellation, streamed tracked and non-ignored untracked inventory projected into at most 200 ordered inspection candidates and 100 provider-instruction metadata entries with exact bounded omission counts, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime filename search that streams tracked and non-ignored untracked Git inventories through a 50-result top-k projection with bounded records, stderr, deadlines, cancellation, and child cleanup, repository content search that streams the same inventory into at most 200 ordered name matches and 1,024 ordered inspection candidates before nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file and 4 MiB aggregate ceilings, concurrency-bounded browse result inspection with descriptor-pinned text classification, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, context attachment reads pinned to stable descriptors within 64 KiB per-file and 256 KiB aggregate ceilings, and context-package cancellation, streamed tracked and non-ignored untracked inventory projected into at most 200 ordered inspection candidates and 100 provider-instruction metadata entries with exact bounded omission counts, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, pathspec-scoped tracked-or-nonignored image visibility checks with bounded Git output and deadline, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -1777,6 +1777,12 @@
       "subject": "ConversationContextRouteDispatchModule",
       "source": "Aldunis Code Issue #1175 streamed bounded repository browse inventory",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1175; server/context.ts#browseRepositoryInventory; server/context.ts#browseRepositoryFiles",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationContextRouteDispatchModule",
+      "source": "Aldunis Code Issue #1177 pathspec-scoped image visibility",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1177; server/context.ts#isVisibleRepositoryPath; server/context.ts#resolveWorktreeImagePath",
       "confidence": 1.0
     },
     {
