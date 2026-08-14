@@ -11,6 +11,7 @@ import { isIP } from "node:net";
 import { extname, join, normalize } from "node:path";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { readBoundedBytes } from "./bounded-byte-reader.mjs";
 import { ClaudeCodeAdapter, ProviderProtocolError } from "./provider.ts";
 import { CodexCliAdapter } from "./codex-provider.ts";
 import { AcpProviderAdapter } from "./acp-provider.ts";
@@ -219,15 +220,11 @@ async function readJson(
       throw new RepositoryError("Request body must be valid JSON.");
     }
   }
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxBytes) throw new RepositoryError("Request body is too large.", 413);
-    chunks.push(chunk);
-  }
+  const body = await readBoundedBytes(request, maxBytes, "Request body is too large.", {
+    error: (message) => new RepositoryError(message, 413),
+  });
   try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return JSON.parse(body.toString("utf8"));
   } catch {
     throw new RepositoryError("Request body must be valid JSON.");
   }
@@ -249,14 +246,9 @@ async function bufferRequest(
   request: IncomingMessage,
   maxBytes: number = MAX_BODY_BYTES,
 ): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maxBytes) throw new RepositoryError("Request body is too large.", 413);
-    chunks.push(chunk);
-  }
-  const body = Buffer.concat(chunks);
+  const body = await readBoundedBytes(request, maxBytes, "Request body is too large.", {
+    error: (message) => new RepositoryError(message, 413),
+  });
   requestBodies.set(request, body);
   return body;
 }
