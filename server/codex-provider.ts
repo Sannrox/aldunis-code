@@ -21,7 +21,11 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import { BROWSER_MCP_NAME } from "./browser.ts";
-import { scheduleProviderChildTermination, terminateProviderChild } from "./provider-process.ts";
+import {
+  scheduleProviderChildTermination,
+  terminateProviderChild,
+  waitForProviderChildExit,
+} from "./provider-process.ts";
 
 const execFileAsync = promisify(execFile);
 /** Major line of the app-server protocol we speak. */
@@ -885,7 +889,11 @@ export class CodexCliAdapter {
       existing.fileChanges.clear();
       existing.activeToolCalls.clear();
       this.#active.set(id, existing);
-      return { id, events: this.#events(id, existing, options) };
+      return {
+        id,
+        events: this.#events(id, existing, options),
+        settled: waitForProviderChildExit(existing.child),
+      };
     }
     const displacedBrowserToken = existing?.browserMcpConfigured === true;
     if (existing) {
@@ -944,7 +952,11 @@ export class CodexCliAdapter {
     if (displacedBrowserToken && !active.browserMcpConfigured) {
       this.options.onSessionClosed?.(options.conversationId);
     }
-    return { id, events: this.#events(id, active, options) };
+    return {
+      id,
+      events: this.#events(id, active, options),
+      settled: waitForProviderChildExit(child),
+    };
   }
 
   cancel(id: string): boolean {

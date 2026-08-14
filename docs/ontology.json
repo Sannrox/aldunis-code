@@ -31,11 +31,11 @@
     },
     {
       "name": "ProviderRunExecutionModule",
-      "description": "A deep server-side Aldunis Code module that admits at most eight host-wide LocalConversation runs, then concentrates accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, normalized event streaming, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
+      "description": "A deep server-side Aldunis Code module that admits at most eight host-wide LocalConversation runs, then concentrates accepted run identity, canonical workspace binding, context assembly, provider selection, persistence, checkpointing, stdout-backpressured normalized event streaming, disconnected-transport cancellation, recovery, and terminal status behind one typed interface shared by HTTP, automation, and delegated follow-up adapters while provider-specific behavior remains in adapters."
     },
     {
       "name": "ProviderProcessTerminationCoordinator",
-      "description": "A deep server-side Aldunis Code module that coordinates one exact provider-child termination lifecycle across delayed cancellation and immediate terminal paths, clears scheduled and force timers on child close, promotes delayed termination without duplication, and preserves bounded SIGTERM-to-SIGKILL escalation without changing provider protocol or permission authority."
+      "description": "A deep server-side Aldunis Code module that coordinates one exact provider-child termination lifecycle across delayed cancellation and immediate terminal paths, exposes observable child settlement so run ownership is retained through process exit, clears scheduled and force timers on child close, promotes delayed termination without duplication, and preserves bounded SIGTERM-to-SIGKILL escalation without changing provider protocol or permission authority."
     },
     {
       "name": "PermissionMcpBoundary",
@@ -2830,6 +2830,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "ProviderRunExecutionModule",
+      "source": "GitHub Issue Sannrox/aldunis-code#1141",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1141; server/provider-run.ts#createProviderRunEventWriter; server/provider-run.ts#executeProviderRun; server/provider-process.ts#waitForProviderChildExit; server/provider.ts#ClaudeCodeAdapter.events; server/acp-provider.ts#AcpProviderAdapter.events",
+      "confidence": 1.0
+    },
+    {
       "subject": "ProviderControlRouteDispatchModule",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#675 and #777",
       "locator": "server/provider-control-routes.ts#withRequestCancellation; server/provider-control-routes.ts#handleProviderControlRoute",
@@ -3043,6 +3049,12 @@
       "subject": "ProviderProcessTerminationCoordinator",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#744 and #762",
       "locator": "server/provider-process.ts; server/codex-provider.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderProcessTerminationCoordinator",
+      "source": "GitHub Issue Sannrox/aldunis-code#1141",
+      "locator": "server/provider-process.ts#waitForProviderChildExit; server/provider-run.ts#executeProviderRun; server/acp-provider.ts#AcpProviderAdapter.events",
       "confidence": 1.0
     },
     {
