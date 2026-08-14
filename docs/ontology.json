@@ -503,7 +503,7 @@
     },
     {
       "name": "ConversationContextRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search with nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file and 4 MiB aggregate ceilings, concurrency-bounded browse inspection with descriptor-pinned text classification, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, context attachment reads pinned to stable descriptors within 64 KiB per-file and 256 KiB aggregate ceilings, and context-package cancellation, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates ConversationContextPin route recognition, request validation, canonical worktree selection, remote and managed-host admission, request-lifetime repository search with nonblocking no-follow descriptor-pinned reads within the 128 KiB per-file, 4 MiB aggregate, and 1,024-file inspection ceilings, concurrency-bounded browse inspection with descriptor-pinned text classification, descriptor-pinned image preview within the 2 MiB ceiling, bounded text preview, context attachment reads pinned to stable descriptors within 64 KiB per-file and 256 KiB aggregate ceilings, and context-package cancellation, nonblocking no-follow descriptor-pinned direct image reads and image copying within the 2 MiB ceiling, cross-process-serialized image staging with fixed byte, item, and 256-entry inspection bounds, descriptor-pinned context-package reads within one 2 MiB aggregate budget, and response mapping behind one internal dispatch interface without changing filesystem, repository, provider, or approval authority."
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
@@ -1747,6 +1747,12 @@
       "subject": "ConversationContextRouteDispatchModule",
       "source": "Aldunis Code Issue #924 bounded repository content-search reads",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/924; server/context.ts#readStableRepositorySearchFile; server/context.ts#browseRepositoryFiles",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ConversationContextRouteDispatchModule",
+      "source": "Aldunis Code Issue #1163 bounded repository content-search file inspections",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1163; server/context.ts#browseRepositoryFiles",
       "confidence": 1.0
     },
     {
