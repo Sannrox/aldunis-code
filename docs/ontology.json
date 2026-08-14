@@ -394,6 +394,10 @@
       "description": "The host-owned registry of provider input deadline timers. It retains at most 32 live timers across all runs, permits replacement of an existing request at capacity, and releases admission on answer, expiry, or run teardown without becoming input authority."
     },
     {
+      "name": "ProviderOutputFramingBoundary",
+      "description": "The Aldunis Code transport boundary that frames newline-delimited Claude, Codex, Shikigami, and declarative ACP provider output in raw bytes within the adapter's 1 MiB message ceiling, retains bounded chunk slices, copies each completed line at most once before UTF-8 decoding, and preserves each adapter's malformed-message, incomplete-trailer, cancellation, and child-lifecycle semantics without changing provider or permission authority."
+    },
+    {
       "name": "ChildInputCoordinationReceipt",
       "description": "A durable receipt proving which child input request was answered, its route, and optional coordinating parent. It stores an answer digest rather than provider-visible parent context."
     },
@@ -3231,6 +3235,12 @@
       "subject": "uses_workspace_rewind_session",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#949",
       "locator": "src/features/code/workspace-rewind-session.ts#useWorkspaceRewindSession",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ProviderOutputFramingBoundary",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1151",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1151; server/bounded-line-reader.mjs; server/provider.ts; server/codex-provider.ts; server/acp-provider.ts; server/shikigami-provider.ts",
       "confidence": 1.0
     }
   ]

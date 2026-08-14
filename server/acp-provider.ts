@@ -2,7 +2,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, open } from "node:fs/promises";
 import { isAbsolute, resolve as resolvePath } from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { PermissionBroker } from "./permission.ts";
 import {
   type ProviderEvent,
@@ -15,6 +14,7 @@ import {
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
 import { JsonLineWriter } from "./json-line-writer.mjs";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 import { acpSetModelRequest, parseAcpSessionModels } from "./acp-models.ts";
 import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
@@ -781,33 +781,28 @@ export class AcpProviderAdapter {
   }
 
   async *#lines(child: ChildProcessWithoutNullStreams): AsyncIterable<JsonRecord> {
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    for await (const chunk of child.stdout) {
-      buffer += decoder.write(chunk);
-      if (Buffer.byteLength(buffer) > MAX_ACP_MESSAGE_BYTES) {
-        throw new ProviderProtocolError("ACP emitted an oversized message.");
-      }
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line) {
-          let value: unknown;
-          try {
-            value = JSON.parse(line);
-          } catch {
-            throw new ProviderProtocolError("ACP emitted malformed JSON.");
-          }
-          const message = record(value);
-          if (!message) throw new ProviderProtocolError("ACP emitted a malformed message.");
-          yield message;
+    for await (const rawLine of readBoundedLines(
+      child.stdout,
+      MAX_ACP_MESSAGE_BYTES,
+      "ACP emitted an oversized message.",
+      {
+        incompleteMessage: "ACP emitted an incomplete message.",
+        error: (message) => new ProviderProtocolError(message),
+      },
+    )) {
+      const line = rawLine.toString("utf8").trim();
+      if (line) {
+        let value: unknown;
+        try {
+          value = JSON.parse(line);
+        } catch {
+          throw new ProviderProtocolError("ACP emitted malformed JSON.");
         }
-        newline = buffer.indexOf("\n");
+        const message = record(value);
+        if (!message) throw new ProviderProtocolError("ACP emitted a malformed message.");
+        yield message;
       }
     }
-    buffer += decoder.end();
-    if (buffer.trim()) throw new ProviderProtocolError("ACP emitted an incomplete message.");
   }
 
   async *#events(

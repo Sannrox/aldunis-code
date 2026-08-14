@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { electronMcpEnvironment } from "./electron-runtime.ts";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 import { type ApprovalSnapshot, isMutatingTool, PermissionBroker } from "./permission.ts";
 import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 import { normalizeClaudeModelSlug } from "./profiles.ts";
@@ -599,70 +600,67 @@ export class ClaudeCodeAdapter {
       mode: InteractionMode;
     },
   ): AsyncIterable<ProviderEvent> {
-    let buffer = "";
     let protocolFailed = false;
     try {
       try {
-        providerOutput: for await (const chunk of active.child.stdout) {
-          buffer += chunk.toString("utf8");
-          if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
-            throw new ProviderProtocolError("Claude emitted an oversized event.");
-          }
-          let newline = buffer.indexOf("\n");
-          while (newline !== -1) {
-            const line = buffer.slice(0, newline).trim();
-            buffer = buffer.slice(newline + 1);
-            if (line) {
-              let parsed: unknown;
-              try {
-                parsed = JSON.parse(line);
-              } catch {
-                throw new ProviderProtocolError("Claude emitted malformed JSON.");
+        providerOutput: for await (const rawLine of readBoundedLines(
+          active.child.stdout,
+          MAX_PROVIDER_LINE_BYTES,
+          "Claude emitted an oversized event.",
+          {
+            incompleteMessage: "Claude emitted an incomplete event.",
+            error: (message) => new ProviderProtocolError(message),
+          },
+        )) {
+          const line = rawLine.toString("utf8").trim();
+          if (line) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(line);
+            } catch {
+              throw new ProviderProtocolError("Claude emitted malformed JSON.");
+            }
+            for (const event of normalizeClaudeEvent(parsed)) {
+              if (event.kind !== "tool_requested") {
+                yield event;
+                if (event.kind === "failed") {
+                  protocolFailed = true;
+                  terminateProviderChild(active.child);
+                  break providerOutput;
+                }
+                if (event.kind === "tool_finished") {
+                  const approval = this.permissions.approvalFor(id, event.toolCallId);
+                  if (approval && approval.state !== "pending") {
+                    yield { kind: "approval_resolved", id: approval.id, state: approval.state };
+                  }
+                }
+                continue;
               }
-              for (const event of normalizeClaudeEvent(parsed)) {
-                if (event.kind !== "tool_requested") {
-                  yield event;
-                  if (event.kind === "failed") {
-                    protocolFailed = true;
-                    terminateProviderChild(active.child);
-                    break providerOutput;
-                  }
-                  if (event.kind === "tool_finished") {
-                    const approval = this.permissions.approvalFor(id, event.toolCallId);
-                    if (approval && approval.state !== "pending") {
-                      yield { kind: "approval_resolved", id: approval.id, state: approval.state };
-                    }
-                  }
-                  continue;
+              yield {
+                kind: "tool_started",
+                toolCallId: event.toolCallId,
+                name: event.name,
+              };
+              if (isMutatingTool(event.name)) {
+                if (context.mode !== "build") {
+                  throw new ProviderProtocolError(
+                    `Claude requested mutating tool ${event.name} while ${context.mode} mode was active.`,
+                  );
                 }
-                yield {
-                  kind: "tool_started",
+                const approval = this.permissions.register({
+                  runId: id,
+                  conversationId: context.conversationId,
+                  repository: context.repository,
+                  worktree: context.worktree,
                   toolCallId: event.toolCallId,
-                  name: event.name,
-                };
-                if (isMutatingTool(event.name)) {
-                  if (context.mode !== "build") {
-                    throw new ProviderProtocolError(
-                      `Claude requested mutating tool ${event.name} while ${context.mode} mode was active.`,
-                    );
-                  }
-                  const approval = this.permissions.register({
-                    runId: id,
-                    conversationId: context.conversationId,
-                    repository: context.repository,
-                    worktree: context.worktree,
-                    toolCallId: event.toolCallId,
-                    toolName: event.name,
-                    toolInput: event.input,
-                  });
-                  if (approval) yield { kind: "approval_pending", ...approval };
-                }
+                  toolName: event.name,
+                  toolInput: event.input,
+                });
+                if (approval) yield { kind: "approval_pending", ...approval };
               }
             }
-            newline = buffer.indexOf("\n");
           }
         }
-        if (buffer.trim()) throw new ProviderProtocolError("Claude emitted an incomplete event.");
       } catch (error) {
         protocolFailed = true;
         active.child.kill("SIGTERM");

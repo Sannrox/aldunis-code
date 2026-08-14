@@ -16,7 +16,6 @@ import { mkdir, open, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import TOML from "@iarna/toml";
 import { withElectronRunAsNode } from "./electron-runtime.ts";
@@ -32,6 +31,7 @@ import {
   ProviderProtocolError,
 } from "./provider.ts";
 import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 
 const execFileAsync = promisify(execFile);
 const SUPPORTED_SHIKIGAMI_MAJOR = 1;
@@ -1475,26 +1475,17 @@ export class ShikigamiAdapter {
   }
 
   async *#stderrLines(child: ChildProcessWithoutNullStreams): AsyncGenerator<string> {
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    for await (const chunk of child.stderr) {
-      buffer += decoder.write(chunk as Buffer);
-      let index = buffer.indexOf("\n");
-      while (index >= 0) {
-        const line = buffer.slice(0, index);
-        buffer = buffer.slice(index + 1);
-        if (line.length > MAX_PROVIDER_LINE_BYTES) {
-          throw new ProviderProtocolError("Shikigami event line exceeded the size limit.");
-        }
-        yield line;
-        index = buffer.indexOf("\n");
-      }
-      if (buffer.length > MAX_PROVIDER_LINE_BYTES) {
-        throw new ProviderProtocolError("Shikigami event line exceeded the size limit.");
-      }
+    for await (const rawLine of readBoundedLines(
+      child.stderr,
+      MAX_PROVIDER_LINE_BYTES,
+      "Shikigami event line exceeded the size limit.",
+      {
+        trailer: "yield",
+        error: (message) => new ProviderProtocolError(message),
+      },
+    )) {
+      yield rawLine.toString("utf8");
     }
-    buffer += decoder.end();
-    if (buffer) yield buffer;
   }
 
   #readAll(stream: NodeJS.ReadableStream, maxBytes = 256 * 1024): Promise<string> {

@@ -2,7 +2,6 @@ import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child
 import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { MAX_APPROVAL_PATHS, PermissionBroker } from "./permission.ts";
 import {
@@ -22,6 +21,7 @@ import {
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import { BROWSER_MCP_NAME } from "./browser.ts";
 import { JsonLineWriter } from "./json-line-writer.mjs";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 import {
   scheduleProviderChildTermination,
   terminateProviderChild,
@@ -1112,37 +1112,28 @@ export class CodexCliAdapter {
     child: ChildProcessWithoutNullStreams,
     options?: { allowIncompleteTrailer?: () => boolean },
   ): AsyncIterable<JsonRecord> {
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    for await (const chunk of child.stdout.iterator({ destroyOnReturn: false })) {
-      buffer += decoder.write(chunk);
-      if (Buffer.byteLength(buffer) > MAX_PROVIDER_LINE_BYTES) {
-        throw new ProviderProtocolError("Codex emitted an oversized message.");
-      }
-      let newline = buffer.indexOf("\n");
-      while (newline !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (line) {
-          let value: unknown;
-          try {
-            value = JSON.parse(line);
-          } catch {
-            throw new ProviderProtocolError("Codex emitted malformed JSON.");
-          }
-          const message = record(value);
-          if (!message) throw new ProviderProtocolError("Codex emitted a malformed message.");
-          yield message;
+    for await (const rawLine of readBoundedLines(
+      child.stdout.iterator({ destroyOnReturn: false }),
+      MAX_PROVIDER_LINE_BYTES,
+      "Codex emitted an oversized message.",
+      {
+        trailer: () => (options?.allowIncompleteTrailer?.() ? "discard" : "reject"),
+        incompleteMessage: "Codex emitted an incomplete message.",
+        error: (message) => new ProviderProtocolError(message),
+      },
+    )) {
+      const line = rawLine.toString("utf8").trim();
+      if (line) {
+        let value: unknown;
+        try {
+          value = JSON.parse(line);
+        } catch {
+          throw new ProviderProtocolError("Codex emitted malformed JSON.");
         }
-        newline = buffer.indexOf("\n");
+        const message = record(value);
+        if (!message) throw new ProviderProtocolError("Codex emitted a malformed message.");
+        yield message;
       }
-    }
-    buffer += decoder.end();
-    // After we intentionally terminate the app-server (terminal failure,
-    // cancel), stdout may end mid-line. Do not overwrite a more specific
-    // terminal event with a generic incomplete-message protocol error.
-    if (buffer.trim() && !options?.allowIncompleteTrailer?.()) {
-      throw new ProviderProtocolError("Codex emitted an incomplete message.");
     }
   }
 
