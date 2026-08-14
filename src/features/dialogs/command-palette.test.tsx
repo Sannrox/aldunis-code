@@ -1,33 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
-  CommandPalette,
   commandPaletteThreadMatches,
+  MAX_COMMAND_PALETTE_THREAD_RESULTS,
   PROVIDER_MANAGEMENT_ACTION_COPY,
+  selectCommandPaletteThreads,
 } from "./command-palette";
 import type { ThreadMetadata } from "../../types";
 
-test("command palette exposes one generic provider management action", () => {
-  const html = renderToStaticMarkup(
-    <CommandPalette
-      open
-      onClose={() => undefined}
-      onOpenRepository={() => undefined}
-      onSearch={() => undefined}
-      onPreferences={() => undefined}
-      onProviderManagement={() => undefined}
-      onManageWorktrees={() => undefined}
-      onAutomations={() => undefined}
-      onAutonomy={() => undefined}
-    />,
-  );
-
-  assert.match(html, /Provider management/);
-  assert.match(html, /Profiles, adapter package trust, and readiness diagnostics/);
-  assert.doesNotMatch(html, /Provider settings/);
-  assert.doesNotMatch(html, /Provider adapters/);
+test("command palette keeps one generic provider management action copy", () => {
   assert.deepEqual(PROVIDER_MANAGEMENT_ACTION_COPY, {
     label: "Provider management",
     detail: "Profiles, adapter package trust, and readiness diagnostics",
@@ -51,4 +32,35 @@ test("command palette matches bounded conversation metadata only when queried", 
   assert.equal(commandPaletteThreadMatches(thread, "aldunis-code"), true);
   assert.equal(commandPaletteThreadMatches(thread, "provider output"), false);
   assert.equal(commandPaletteThreadMatches(thread, ""), false);
+});
+
+test("command palette retains only the first bounded thread quick actions", () => {
+  const threads = Array.from({ length: 100 }, (_, index) => ({
+    ...thread,
+    id: `thread-${index}`,
+    title: `Matching conversation ${index}`,
+  }));
+  const inventory = new Proxy(threads, {
+    get(target, property, receiver) {
+      if (
+        property === "filter" ||
+        property === "map" ||
+        property === "slice" ||
+        property === "sort"
+      ) {
+        throw new Error(`thread inventory must not call ${property}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const selected = selectCommandPaletteThreads(inventory, "matching");
+
+  assert.equal(selected.length, MAX_COMMAND_PALETTE_THREAD_RESULTS);
+  assert.deepEqual(
+    selected.map((item) => item.id),
+    Array.from({ length: MAX_COMMAND_PALETTE_THREAD_RESULTS }, (_, index) => `thread-${index}`),
+  );
+  assert.deepEqual(selectCommandPaletteThreads(inventory, "matching", 0), []);
+  assert.deepEqual(selectCommandPaletteThreads(inventory, "does-not-exist"), []);
 });

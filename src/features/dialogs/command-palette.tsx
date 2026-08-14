@@ -11,6 +11,7 @@ export const PROVIDER_MANAGEMENT_ACTION_COPY = {
   label: "Provider management",
   detail: "Profiles, adapter package trust, and readiness diagnostics",
 } as const;
+export const MAX_COMMAND_PALETTE_THREAD_RESULTS = 8;
 
 export function commandPaletteThreadMatches(thread: ThreadMetadata, query: string): boolean {
   const normalized = query.trim().toLocaleLowerCase();
@@ -18,6 +19,22 @@ export function commandPaletteThreadMatches(thread: ThreadMetadata, query: strin
   return [thread.title, thread.projectName, thread.worktree].some((value) =>
     value.toLocaleLowerCase().includes(normalized),
   );
+}
+
+export function selectCommandPaletteThreads(
+  threads: readonly ThreadMetadata[],
+  query: string,
+  limit = MAX_COMMAND_PALETTE_THREAD_RESULTS,
+): ThreadMetadata[] {
+  const capacity = Math.max(0, limit);
+  if (capacity === 0) return [];
+  const selected: ThreadMetadata[] = [];
+  for (const thread of threads) {
+    if (!commandPaletteThreadMatches(thread, query)) continue;
+    selected.push(thread);
+    if (selected.length === capacity) break;
+  }
+  return selected;
 }
 
 export function CommandPalette({
@@ -121,14 +138,12 @@ export function CommandPalette({
               },
             ]
           : []),
-        ...threads
-          .filter((thread) => commandPaletteThreadMatches(thread, query))
-          .map((thread) => ({
-            id: `thread:${thread.id}`,
-            label: `Open: ${thread.title || "Untitled conversation"}`,
-            detail: `${thread.projectName} · ${thread.worktree}`,
-            run: () => onOpenConversation(thread.id),
-          })),
+        ...selectCommandPaletteThreads(threads, query).map((thread) => ({
+          id: `thread:${thread.id}`,
+          label: `Open: ${thread.title || "Untitled conversation"}`,
+          detail: `${thread.projectName} · ${thread.worktree}`,
+          run: () => onOpenConversation(thread.id),
+        })),
       ].filter((action) => {
         const q = query.toLocaleLowerCase();
         return (
