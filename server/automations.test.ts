@@ -220,6 +220,87 @@ test("scheduler removes idle timers and wakes after enabled automation mutations
   assert.equal(timers.size, 0);
 });
 
+test("quiet scheduler ticks reuse their successful automation inventory read", async () => {
+  let listCalls = 0;
+  let resolveScheduled!: () => void;
+  const scheduled = new Promise<void>((resolve) => {
+    resolveScheduled = resolve;
+  });
+  const timer = { unref: () => undefined };
+  const scheduler = new AutomationScheduler(
+    {
+      list: async () => {
+        listCalls += 1;
+        return [
+          baseAutomation({
+            lastRunAt: "2026-06-01T00:00:00.000Z",
+            schedule: { kind: "interval", seconds: 3_600 },
+          }),
+        ];
+      },
+    } as AutomationStore,
+    {
+      isThreadBusy: async () => false,
+      fire: async () => undefined,
+      now: () => new Date("2026-06-01T00:00:00.000Z"),
+      timers: {
+        setTimeout: () => {
+          resolveScheduled();
+          return timer;
+        },
+        clearTimeout: () => undefined,
+      },
+    },
+  );
+
+  scheduler.start();
+  await scheduled;
+  assert.equal(listCalls, 1);
+  scheduler.stop();
+});
+
+test("scheduler retries after a transient scheduling inventory read failure", async () => {
+  let schedulingReads = 0;
+  let resolveScheduled!: () => void;
+  const scheduled = new Promise<void>((resolve) => {
+    resolveScheduled = resolve;
+  });
+  const timer = { unref: () => undefined };
+  const automation = baseAutomation({
+    lastRunAt: "2026-06-01T00:00:00.000Z",
+    schedule: { kind: "interval", seconds: 3_600 },
+  });
+  const scheduler = new AutomationScheduler(
+    {
+      list: async () => {
+        throw new Error("scheduler must use reliable inventory reads");
+      },
+      listForScheduling: async () => {
+        schedulingReads += 1;
+        if (schedulingReads === 1) throw new Error("temporary EIO");
+        return [automation];
+      },
+    } as AutomationStore,
+    {
+      isThreadBusy: async () => false,
+      fire: async () => undefined,
+      now: () => new Date("2026-06-01T00:00:00.000Z"),
+      timers: {
+        setTimeout: () => {
+          resolveScheduled();
+          return timer;
+        },
+        clearTimeout: () => undefined,
+      },
+    },
+  );
+
+  scheduler.start();
+  await scheduled;
+  assert.equal(schedulingReads, 2);
+  scheduler.stop();
+});
+
 test("scheduler serializes mutation refreshes behind an active store read", async () => {
   const releases: Array<() => void> = [];
   let listCalls = 0;
