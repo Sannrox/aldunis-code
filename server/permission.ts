@@ -31,6 +31,13 @@ interface PendingApproval extends ApprovalSnapshot {
   timer: NodeJS.Timeout;
 }
 
+interface PendingPermissionCallback {
+  key: string;
+  runId: string;
+  resolve: (approval: PendingApproval | null) => void;
+  timer: NodeJS.Timeout;
+}
+
 export type PermissionDecision =
   | { behavior: "allow"; updatedInput: Record<string, unknown> }
   | { behavior: "deny"; message: string };
@@ -59,6 +66,8 @@ const MAX_DETAIL_LENGTH = 180;
 export const MAX_APPROVAL_PATHS = 50;
 export const MAX_LIVE_APPROVALS = 32;
 export const MAX_RETAINED_APPROVALS = 256;
+export const MAX_WAITING_PERMISSION_CALLBACKS = MAX_LIVE_APPROVALS;
+export const PERMISSION_REGISTRATION_WAIT_MS = 2_000;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -180,8 +189,13 @@ export class PermissionBroker {
   readonly #claimed = new Set<string>();
   readonly #resolving = new Set<string>();
   readonly #listeners = new Set<(approval: ApprovalSnapshot) => void>();
+  readonly #waitingCallbacks = new Map<string, PendingPermissionCallback[]>();
+  #waitingCallbackCount = 0;
 
-  constructor(private readonly timeoutMs = 5 * 60_000) {}
+  constructor(
+    private readonly timeoutMs = 5 * 60_000,
+    private readonly registrationWaitMs = PERMISSION_REGISTRATION_WAIT_MS,
+  ) {}
 
   subscribe(listener: (approval: ApprovalSnapshot) => void): () => void {
     this.#listeners.add(listener);
@@ -236,6 +250,7 @@ export class PermissionBroker {
     };
     approval.timer.unref();
     this.#approvals.set(id, approval);
+    this.#claimWaitingCallback(approval);
     return this.#snapshot(approval);
   }
 
@@ -247,28 +262,15 @@ export class PermissionBroker {
   ): Promise<PermissionDecision> {
     this.#assertToken(runId, token);
     const inputDigest = digest(toolInput);
-    let approval: PendingApproval | undefined;
-    for (let attempt = 0; attempt < 200 && !approval; attempt += 1) {
-      approval = [...this.#approvals.values()].find(
-        (candidate) =>
-          candidate.runId === runId &&
-          candidate.toolName === toolName &&
-          candidate.inputDigest === inputDigest &&
-          candidate.state === "pending" &&
-          !this.#claimed.has(candidate.id),
-      );
-      if (!approval) await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    const approval =
+      this.#claimMatchingApproval(runId, toolName, inputDigest) ??
+      (await this.#waitForMatchingApproval(runId, toolName, inputDigest));
     if (!approval) {
       return {
         behavior: "deny",
         message: "Aldunis Code rejected an unmatched permission request.",
       };
     }
-    // Claude's permission-prompt callback currently supplies tool name and input
-    // but no tool-use identity. Claim one registered approval synchronously before
-    // waiting so concurrent byte-identical callbacks cannot share allow-once.
-    this.#claimed.add(approval.id);
     return approval.decision;
   }
 
@@ -408,6 +410,92 @@ export class PermissionBroker {
     return this.#approvals.size;
   }
 
+  /** Test and diagnostics: provider callbacks awaiting approval registration. */
+  get waitingPermissionCallbackCount(): number {
+    return this.#waitingCallbackCount;
+  }
+
+  #approvalWaitKey(runId: string, toolName: string, inputDigest: string): string {
+    return `${runId}\0${toolName}\0${inputDigest}`;
+  }
+
+  #claimMatchingApproval(
+    runId: string,
+    toolName: string,
+    inputDigest: string,
+  ): PendingApproval | null {
+    for (const approval of this.#approvals.values()) {
+      if (
+        approval.runId === runId &&
+        approval.toolName === toolName &&
+        approval.inputDigest === inputDigest &&
+        approval.state === "pending" &&
+        !this.#claimed.has(approval.id)
+      ) {
+        this.#claimed.add(approval.id);
+        return approval;
+      }
+    }
+    return null;
+  }
+
+  async #waitForMatchingApproval(
+    runId: string,
+    toolName: string,
+    inputDigest: string,
+  ): Promise<PendingApproval | null> {
+    if (this.#waitingCallbackCount >= MAX_WAITING_PERMISSION_CALLBACKS) return null;
+    const key = this.#approvalWaitKey(runId, toolName, inputDigest);
+    return new Promise<PendingApproval | null>((resolve) => {
+      const waiter: PendingPermissionCallback = {
+        key,
+        runId,
+        resolve,
+        timer: setTimeout(() => {
+          this.#removeWaitingCallback(waiter);
+          resolve(null);
+        }, this.registrationWaitMs),
+      };
+      const bucket = this.#waitingCallbacks.get(key);
+      if (bucket) bucket.push(waiter);
+      else this.#waitingCallbacks.set(key, [waiter]);
+      this.#waitingCallbackCount += 1;
+    });
+  }
+
+  #claimWaitingCallback(approval: PendingApproval): void {
+    const key = this.#approvalWaitKey(approval.runId, approval.toolName, approval.inputDigest);
+    const bucket = this.#waitingCallbacks.get(key);
+    const waiter = bucket?.shift();
+    if (!waiter) return;
+    if (bucket.length === 0) this.#waitingCallbacks.delete(key);
+    this.#waitingCallbackCount -= 1;
+    clearTimeout(waiter.timer);
+    this.#claimed.add(approval.id);
+    waiter.resolve(approval);
+  }
+
+  #removeWaitingCallback(waiter: PendingPermissionCallback): void {
+    const bucket = this.#waitingCallbacks.get(waiter.key);
+    if (!bucket) return;
+    const index = bucket.indexOf(waiter);
+    if (index < 0) return;
+    bucket.splice(index, 1);
+    if (bucket.length === 0) this.#waitingCallbacks.delete(waiter.key);
+    this.#waitingCallbackCount -= 1;
+    clearTimeout(waiter.timer);
+  }
+
+  #closeWaitingCallbacks(runId: string): void {
+    for (const bucket of [...this.#waitingCallbacks.values()]) {
+      for (const waiter of [...bucket]) {
+        if (waiter.runId !== runId) continue;
+        this.#removeWaitingCallback(waiter);
+        waiter.resolve(null);
+      }
+    }
+  }
+
   #requireLiveApproval(
     id: string,
     context: {
@@ -472,6 +560,7 @@ export class PermissionBroker {
   }
 
   #forgetRun(runId: string): void {
+    this.#closeWaitingCallbacks(runId);
     for (const [id, approval] of this.#approvals) {
       if (approval.runId !== runId) continue;
       clearTimeout(approval.timer);

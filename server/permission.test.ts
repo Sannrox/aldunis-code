@@ -4,6 +4,7 @@ import {
   describeMutation,
   MAX_LIVE_APPROVALS,
   MAX_RETAINED_APPROVALS,
+  MAX_WAITING_PERMISSION_CALLBACKS,
   PermissionBroker,
   PermissionError,
 } from "./permission.ts";
@@ -130,6 +131,78 @@ test("identical concurrent callbacks atomically claim distinct registered approv
 
   assert.equal(broker.decide(second.id, decisionContext(secondContext), "deny").state, "denied");
   assert.equal((await secondWaiting).behavior, "deny");
+});
+
+test("provider callbacks wait for registration without polling", async () => {
+  const broker = new PermissionBroker(undefined, 100);
+  const token = broker.createRunToken(context.runId);
+  const waiting = broker.awaitDecision(context.runId, token, context.toolName, context.toolInput);
+  assert.equal(broker.waitingPermissionCallbackCount, 1);
+
+  const approval = broker.register(context);
+  assert.ok(approval);
+  assert.equal(broker.waitingPermissionCallbackCount, 0);
+  broker.decide(approval.id, decisionContext(), "allow_once");
+  assert.deepEqual(await waiting, { behavior: "allow", updatedInput: context.toolInput });
+});
+
+test("callbacks arriving first atomically claim distinct identical approvals", async () => {
+  const broker = new PermissionBroker(undefined, 100);
+  const token = broker.createRunToken(context.runId);
+  const waits = [
+    broker.awaitDecision(context.runId, token, context.toolName, context.toolInput),
+    broker.awaitDecision(context.runId, token, context.toolName, context.toolInput),
+  ];
+  assert.equal(broker.waitingPermissionCallbackCount, 2);
+
+  const first = broker.register(context);
+  const secondContext = { ...context, toolCallId: "tool-2" };
+  const second = broker.register(secondContext);
+  assert.ok(first);
+  assert.ok(second);
+  assert.equal(broker.waitingPermissionCallbackCount, 0);
+  broker.decide(first.id, decisionContext(), "allow_once");
+  broker.decide(second.id, decisionContext(secondContext), "deny");
+  assert.deepEqual(await waits[0], { behavior: "allow", updatedInput: context.toolInput });
+  assert.equal((await waits[1])?.behavior, "deny");
+});
+
+test("permission callback waiters are bounded and released on timeout or run close", async () => {
+  const timeoutBroker = new PermissionBroker(undefined, 5);
+  const timeoutToken = timeoutBroker.createRunToken("run-timeout");
+  const timedOut = timeoutBroker.awaitDecision("run-timeout", timeoutToken, "Edit", {
+    file_path: "missing",
+  });
+  assert.equal(timeoutBroker.waitingPermissionCallbackCount, 1);
+  assert.equal((await timedOut).behavior, "deny");
+  assert.equal(timeoutBroker.waitingPermissionCallbackCount, 0);
+
+  const broker = new PermissionBroker(undefined, 1_000);
+  const waits: Array<Promise<unknown>> = [];
+  for (let index = 0; index < MAX_WAITING_PERMISSION_CALLBACKS; index += 1) {
+    const runId = `run-waiting-${index}`;
+    waits.push(
+      broker.awaitDecision(runId, broker.createRunToken(runId), "Edit", {
+        file_path: `missing-${index}`,
+      }),
+    );
+  }
+  assert.equal(broker.waitingPermissionCallbackCount, MAX_WAITING_PERMISSION_CALLBACKS);
+  const overflowRunId = "run-waiting-overflow";
+  const overflow = broker.awaitDecision(
+    overflowRunId,
+    broker.createRunToken(overflowRunId),
+    "Edit",
+    { file_path: "overflow" },
+  );
+  assert.equal((await overflow).behavior, "deny");
+  assert.equal(broker.waitingPermissionCallbackCount, MAX_WAITING_PERMISSION_CALLBACKS);
+
+  for (let index = 0; index < MAX_WAITING_PERMISSION_CALLBACKS; index += 1) {
+    broker.closeRun(`run-waiting-${index}`, "cancelled");
+  }
+  await Promise.all(waits);
+  assert.equal(broker.waitingPermissionCallbackCount, 0);
 });
 
 test("registered decision identifiers fail closed when missing, mismatched, or replayed", async () => {
@@ -351,7 +424,7 @@ test("deny, cancellation, expiry, and provider failure resolve fail-closed", asy
 });
 
 test("cross-worktree and unmatched provider requests are rejected", async () => {
-  const broker = new PermissionBroker();
+  const broker = new PermissionBroker(undefined, 5);
   const token = broker.createRunToken(context.runId);
   const approval = broker.register(context);
   assert.ok(approval);

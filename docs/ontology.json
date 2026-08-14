@@ -38,6 +38,10 @@
       "description": "The Aldunis-owned Claude approval MCP child boundary that frames provider JSON-RPC messages in raw bytes within a 1 MiB ceiling before UTF-8 decoding, retains bounded chunk slices and copies each complete line at most once, applies stdin backpressure while at most eight broker requests are active, and reads each broker decision within the five-minute approval window plus a fixed transport margin and a 64 KiB response ceiling."
     },
     {
+      "name": "PermissionBroker",
+      "description": "The Aldunis-owned local approval coordinator that retains at most 32 live tool payloads, 256 total live or terminal records, and 32 authenticated provider callbacks awaiting exact run, tool, and input-digest registration; it atomically claims one approval per callback, uses one deadline timer per waiter, releases waiters on match, timeout, or run close, and never grants permission without an explicit scoped decision."
+    },
+    {
       "name": "ProviderControlRouteDispatchModule",
       "description": "A deep server-side Aldunis Code module that concentrates provider capabilities, request-lifetime-cancelled Codex skill discovery, approval projection, run admission dispatch, permission requests, and ordered multi-adapter cancellation behind one internal route interface while provider-specific protocols, permission authority, and run execution remain in their existing adapters and modules."
     },
@@ -582,6 +586,16 @@
       "description": "The local host delegates accepted HTTP requests and request-scoped authority facts to one internal dispatch module without creating a new network, product, or trust seam.",
       "domain": "AldunisLocalHost",
       "range": "LocalApiDispatchModule",
+      "cardinality": {
+        "min": 1,
+        "max": 1
+      }
+    },
+    {
+      "name": "coordinates_provider_permissions",
+      "description": "The local host delegates bounded provider callback and approval matching plus explicit scoped decision resolution to PermissionBroker without changing provider, filesystem, tenant, or approval authority.",
+      "domain": "AldunisLocalHost",
+      "range": "PermissionBroker",
       "cardinality": {
         "min": 1,
         "max": 1
@@ -2151,6 +2165,18 @@
       "subject": "PermissionMcpBoundary",
       "source": "Aldunis Code Issue #907 raw-byte permission MCP request framing",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/907; server/permission-mcp.mjs#processInput",
+      "confidence": 1.0
+    },
+    {
+      "subject": "PermissionBroker",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1105",
+      "locator": "server/permission.ts#PermissionBroker; server/provider-control-routes.ts#handleProviderPermissionRequest; https://github.com/Sannrox/aldunis-code/issues/1105",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_provider_permissions",
+      "source": "Aldunis Code PermissionBroker host composition",
+      "locator": "server/host.ts#createLocalHost; server/permission.ts#PermissionBroker; https://github.com/Sannrox/aldunis-code/issues/1105",
       "confidence": 1.0
     },
     {
