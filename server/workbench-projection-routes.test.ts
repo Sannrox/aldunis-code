@@ -760,6 +760,7 @@ test("history uses one atomic thread index without traversing global collections
     checkpoints: forbidden,
   } as StateProjection;
   const conversationHistory = {
+    revisionByThread: new Map([[thread.id, 7]]),
     threadById: new Map([[thread.id, thread]]),
     turnsByThread: new Map([[thread.id, [turn]]]),
     messagesByThread: new Map([[thread.id, [message]]]),
@@ -800,10 +801,35 @@ test("history uses one atomic thread index without traversing global collections
     (value?.turns as Array<{ id: string }>).map((row) => row.id),
     [turn.id],
   );
+  assert.equal(value?.sequence, 7);
   assert.deepEqual(
     (value?.messages as Array<{ id: string }>).map((row) => row.id),
     [message.id],
   );
+
+  let status = 0;
+  await handleWorkbenchProjectionRoute(
+    "/api/state/conversations/history",
+    request,
+    response,
+    context({
+      readJson: async () => ({ threadId: thread.id, knownSequence: 7 }),
+      state: {
+        inspect: async () => assert.fail("history should use the atomic indexed snapshot"),
+        inspectWorkbenchProjection: async () => ({
+          projection: { ...inspected, sequence: 99 },
+          turnsByThread: conversationHistory.turnsByThread,
+          delegatedMessagesByTurn: new Map(),
+          delegatedActivitiesByTurn: new Map(),
+          conversationHistory,
+        }),
+      },
+      sendStatus: (_response: ServerResponse, value: number) => {
+        status = value;
+      },
+    }) as never,
+  );
+  assert.equal(status, 204);
 });
 
 test("search enforces archive scope and managed visibility", async () => {

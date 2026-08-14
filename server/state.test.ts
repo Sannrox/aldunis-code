@@ -55,6 +55,44 @@ test("fresh stores create a missing state directory before the first write", asy
   assert.equal((await store.load()).projects[0].id, "project-1");
 });
 
+test("conversation history revisions advance only for the owning transcript", async () => {
+  const { directory, store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Inspect",
+    mode: "ask",
+    provider: "codex-cli",
+  });
+  const first = await store.inspectWorkbenchProjection();
+  const firstSequence = first.projection.sequence;
+  const firstRevision = first.conversationHistory.revisionByThread.get(thread.id);
+  assert.equal(firstRevision, firstSequence);
+
+  await store.saveProject({ id: "project-1", name: "renamed", root: "/fixture" });
+  const unrelated = await store.inspectWorkbenchProjection();
+  assert.ok(unrelated.projection.sequence > firstSequence);
+  assert.equal(unrelated.conversationHistory.revisionByThread.get(thread.id), firstRevision);
+
+  await store.recordProviderEvent(thread.id, turn.id, "codex-cli", {
+    kind: "tool_started",
+    toolCallId: "tool-1",
+    name: "Read",
+  });
+  const changed = await store.inspectWorkbenchProjection();
+  assert.equal(
+    changed.conversationHistory.revisionByThread.get(thread.id),
+    changed.projection.sequence,
+  );
+
+  const reloaded = await new LocalStateStore(directory).inspectWorkbenchProjection();
+  assert.equal(
+    reloaded.conversationHistory.revisionByThread.get(thread.id),
+    reloaded.projection.sequence,
+  );
+});
+
 test("versioned projects, threads, turns, messages, activities, and sessions rebuild deterministically", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

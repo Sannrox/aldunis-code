@@ -649,6 +649,7 @@ export type DelegatedMessagesByTurnIndex = ReadonlyMap<string, ReadonlyMap<strin
 export type DelegatedActivitiesByTurnIndex = ReadonlyMap<string, ReadonlyMap<string, Activity>>;
 type RowsByThread<T> = ReadonlyMap<string, readonly T[]>;
 export interface ConversationHistoryIndex {
+  revisionByThread: ReadonlyMap<string, number>;
   threadById: ReadonlyMap<string, Thread>;
   turnByProviderRunId: ReadonlyMap<string, Turn>;
   turnsByThread: TurnsByThreadIndex;
@@ -690,6 +691,7 @@ interface ProviderEventContext {
 }
 
 interface MutableConversationHistoryIndex extends ConversationHistoryIndex {
+  revisionByThread: Map<string, number>;
   threadById: Map<string, Thread>;
   turnByProviderRunId: Map<string, Turn>;
   turnsByThread: Map<string, Turn[]>;
@@ -742,6 +744,9 @@ function buildConversationHistoryIndex(
   const threadIdByTurn = new Map(projection.turns.map((turn) => [turn.id, turn.threadId]));
   const threadForTurn = (row: { turnId: string }) => threadIdByTurn.get(row.turnId) ?? "";
   return {
+    // Rebuilds conservatively invalidate every conversation once. Subsequent
+    // live events advance only the exact history they can change.
+    revisionByThread: new Map(projection.threads.map((thread) => [thread.id, projection.sequence])),
     threadById: new Map(projection.threads.map((thread) => [thread.id, thread])),
     turnByProviderRunId: new Map(
       projection.turns.flatMap((turn) =>
@@ -1416,6 +1421,38 @@ function rebuildDelegatedTranscriptIndexes(
   }
 }
 
+function historyThreadIdForEvent(
+  event: StateEvent,
+  history: MutableConversationHistoryIndex,
+): string | null {
+  switch (event.type) {
+    case "thread_saved":
+      return event.thread.id;
+    case "fork_created":
+      return event.thread.id;
+    case "turn_saved":
+      return event.turn.threadId;
+    case "message_saved":
+      return history.threadIdByTurn.get(event.message.turnId) ?? null;
+    case "activity_saved":
+      return history.threadIdByTurn.get(event.activity.turnId) ?? null;
+    case "plan_saved":
+      return event.plan.threadId;
+    case "context_receipt_saved":
+      return event.contextReceipt.threadId;
+    case "governance_correlation_saved":
+      return event.governanceCorrelation.threadId;
+    case "provider_session_saved":
+      return event.providerSession.threadId;
+    case "checkpoint_saved":
+      return event.checkpoint.threadId;
+    case "input_request_saved":
+      return event.inputRequest.threadId;
+    default:
+      return null;
+  }
+}
+
 function applyEvent(
   projection: StateProjection,
   envelope: EventEnvelope,
@@ -1664,6 +1701,10 @@ function applyEvent(
     replaceByIdDuringReplay(projection.autonomyHooks, event.autonomyHook, replayIndexes);
   } else {
     throw new LocalStateError("Local history contains an unsupported event type.");
+  }
+  if (conversationHistory) {
+    const threadId = historyThreadIdForEvent(event, conversationHistory);
+    if (threadId) conversationHistory.revisionByThread.set(threadId, envelope.sequence);
   }
   projection.sequence = envelope.sequence;
 }
@@ -2458,6 +2499,10 @@ export class LocalStateStore {
         }
         message.eventSequence = envelope.sequence;
         this.#projection.sequence = envelope.sequence;
+        const threadId = this.#conversationHistory.threadIdByTurn.get(message.turnId);
+        if (threadId) {
+          this.#conversationHistory.revisionByThread.set(threadId, envelope.sequence);
+        }
         return;
       }
       applyEvent(

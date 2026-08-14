@@ -126,13 +126,6 @@ export type PersistedConversationRestoration =
       pendingRunId: string | null;
     };
 
-/** Complete normalized identity for suppressing redundant renderer application. */
-export function persistedConversationRestorationFingerprint(
-  restoration: PersistedConversationRestoration,
-): string {
-  return JSON.stringify(restoration);
-}
-
 export type PersistedRestorationApplication = { target: string; fingerprint: string } | null;
 
 /** Reset on an unbound composer; otherwise decide whether normalized state must be reapplied. */

@@ -153,7 +153,6 @@ import {
   type RestoredTurnStatus,
 } from "../../lib/thread-status-transition";
 import {
-  persistedConversationRestorationFingerprint,
   reconcilePersistedRestorationApplication,
   restorePersistedConversation,
   type PersistedRestorationApplication,
@@ -1521,10 +1520,9 @@ export function Conversation({
         repository.selectedWorktree,
         provider,
       ].join("\0");
-      const restorationFingerprint = persistedConversationRestorationFingerprint(restoration);
       const application = reconcilePersistedRestorationApplication(appliedRestoration.current, {
         target: restorationTarget,
-        fingerprint: restorationFingerprint,
+        fingerprint: String(projection.sequence),
       });
       appliedRestoration.current = application.current;
       const shouldApplyRestoration = application.apply;
