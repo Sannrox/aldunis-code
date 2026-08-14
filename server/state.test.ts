@@ -3863,6 +3863,98 @@ test("assistant stream updates remain coherent with concurrent durable writes", 
   assert.equal(rebuiltAssistant?.text, liveAssistant?.text);
 });
 
+test("assistant tokens stay off the write queue while a journal write is in flight", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-state-"));
+  let enqueued = 0;
+  let holdNextWrite = false;
+  let releaseWrite!: () => void;
+  const heldWrite = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  let markInFlight!: () => void;
+  const sawInFlight = new Promise<void>((resolve) => {
+    markInFlight = resolve;
+  });
+  const store = new LocalStateStore(directory, {
+    onWriteEnqueued: () => {
+      enqueued += 1;
+    },
+    holdWrite: async () => {
+      if (!holdNextWrite) return;
+      markInFlight();
+      await heldWrite;
+    },
+  });
+
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const { thread, turn } = await store.startTurn({
+    projectId: "project-1",
+    worktree: "/fixture",
+    prompt: "Stream during fsync",
+    mode: "ask",
+    provider: "claude-code",
+  });
+  const enqueuedAfterSetup = enqueued;
+
+  holdNextWrite = true;
+  const blocker = store.saveProject({
+    id: "project-1",
+    name: "in-flight",
+    root: "/fixture",
+  });
+  await sawInFlight;
+  assert.equal(enqueued, enqueuedAfterSetup + 1);
+
+  const tokenCount = 20;
+  await Promise.all(
+    Array.from({ length: tokenCount }, () =>
+      store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+        kind: "assistant_text",
+        text: "x",
+      }),
+    ),
+  );
+  assert.equal(enqueued, enqueuedAfterSetup + 1);
+
+  const live = await store.inspect();
+  const assistant = live.messages.find(
+    (message) => message.turnId === turn.id && message.role === "assistant",
+  );
+  assert.equal(assistant?.text, "x".repeat(tokenCount));
+  const heldLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal([...heldLog.matchAll(/"type":"message_saved"/g)].length, 1);
+
+  const chunk = "y".repeat(LocalStateStore.ASSISTANT_CHECKPOINT_CHARS);
+  const checkpoint = store.recordProviderEvent(thread.id, turn.id, "claude-code", {
+    kind: "assistant_text",
+    text: chunk,
+  });
+  await Promise.resolve();
+  assert.equal(enqueued, enqueuedAfterSetup + 2);
+  assert.equal(
+    (await store.inspect()).messages.find(
+      (message) => message.turnId === turn.id && message.role === "assistant",
+    )?.text,
+    `${"x".repeat(tokenCount)}${chunk}`,
+  );
+  const stillHeldLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal([...stillHeldLog.matchAll(/"type":"message_saved"/g)].length, 1);
+  assert.doesNotMatch(stillHeldLog, /"type":"message_text_appended"/);
+
+  holdNextWrite = false;
+  releaseWrite();
+  await Promise.all([blocker, checkpoint]);
+
+  const afterLog = await readFile(join(directory, "events.v1.jsonl"), "utf8");
+  assert.equal([...afterLog.matchAll(/"type":"message_saved"/g)].length, 2);
+  assert.equal(
+    (await new LocalStateStore(directory).load()).messages.find(
+      (message) => message.turnId === turn.id && message.role === "assistant",
+    )?.text,
+    `${"x".repeat(tokenCount)}${chunk}`,
+  );
+});
+
 test("assistant chunks cannot be overtaken by a queued turn boundary", async () => {
   const { directory, store } = await fixtureStore();
   await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });

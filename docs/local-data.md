@@ -98,7 +98,9 @@ seconds as an explicitly stale fallback.
 - Provider assistant streams are buffered and flushed as one durable message
   per segment (between tools, approvals, input prompts, or turn end). The open
   segment is the live inspect-visible record; later tokens mutate it in place
-  so retained history is not scanned or cloned on each chunk. Segments also
+  so retained history is not scanned or cloned on each chunk. Tokens append to
+  that live segment even while a journal fsync is in flight; only the 4 KiB
+  soft-checkpoint (and segment close) enter the write queue. Segments also
   soft-checkpoint about every 4 KiB of growth and on host close so a long
   text-only reply is not only in RAM. Host recovery collapses older
   token-per-event assistant rows when rewriting history so long ACP streams do

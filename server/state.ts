@@ -55,6 +55,15 @@ export interface LocalStateStoreOptions {
    * interleave with later appends before initialization finishes.
    */
   holdHistoryRead?: () => Promise<void>;
+  /**
+   * Test-only seam: count write-queue admissions without waiting for fsync.
+   */
+  onWriteEnqueued?: () => void;
+  /**
+   * Test-only seam: pause at the start of each write-queue job so callers can
+   * observe live inspect state while a journal write is in flight.
+   */
+  holdWrite?: () => Promise<void>;
 }
 
 export interface Project {
@@ -2143,7 +2152,6 @@ export class LocalStateStore {
   #delegatedChildTurnIds = new Set<string>();
   #conversationHistory = buildConversationHistoryIndex(this.#projection, this.#turnsByThread);
   #writeQueue: Promise<void> = Promise.resolve();
-  #pendingWriteOperations = 0;
   #writeFailure: unknown | null = null;
   #loaded = false;
   #loadPromise: Promise<void> | null = null;
@@ -2169,9 +2177,10 @@ export class LocalStateStore {
   }
 
   #enqueueWrite<T>(action: () => Promise<T>): Promise<T> {
-    this.#pendingWriteOperations += 1;
-    const operation = this.#writeQueue.then(action).finally(() => {
-      this.#pendingWriteOperations -= 1;
+    this.#options.onWriteEnqueued?.();
+    const operation = this.#writeQueue.then(async () => {
+      if (this.#options.holdWrite) await this.#options.holdWrite();
+      return action();
     });
     this.#writeQueue = operation.then(
       () => undefined,
@@ -2777,24 +2786,17 @@ export class LocalStateStore {
     if (!text) return;
     await this.#ensureLoaded();
     if (this.#writeFailure) throw this.#writeFailure;
-    if (this.#pendingWriteOperations === 0) {
-      // The idle fast path mutates synchronously, preserving admission order
-      // without allocating a promise per provider token.
-      const segment = this.#appendOpenAssistantText(turnId, text);
-      if (
-        segment.text.length - (this.#openAssistantDurableLength.get(turnId) ?? 0) <
-        LocalStateStore.ASSISTANT_CHECKPOINT_CHARS
-      ) {
-        return;
-      }
-      await this.#enqueueWrite(() => this.#checkpointOpenAssistant(turnId, segment));
+    // Always mutate the live open segment so inspect sees tokens during an
+    // in-flight journal fsync. Only the 4 KiB soft-checkpoint is a write-queue
+    // job; enqueue-per-token created a promise/lock convoy behind handle.sync().
+    const segment = this.#appendOpenAssistantText(turnId, text);
+    if (
+      segment.text.length - (this.#openAssistantDurableLength.get(turnId) ?? 0) <
+      LocalStateStore.ASSISTANT_CHECKPOINT_CHARS
+    ) {
       return;
     }
-    await this.#enqueueWrite(async () => {
-      if (this.#writeFailure) throw this.#writeFailure;
-      const segment = this.#appendOpenAssistantText(turnId, text);
-      await this.#checkpointOpenAssistant(turnId, segment);
-    });
+    await this.#enqueueWrite(() => this.#checkpointOpenAssistant(turnId, segment));
   }
 
   async #flushOpenAssistant(turnId: string): Promise<void> {
