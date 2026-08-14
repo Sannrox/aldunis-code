@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   coalesceConsecutiveAssistantMessages,
+  isolateProjectionCollections,
   LocalStateError,
   LocalStateStore,
   MAX_EVENT_ENVELOPE_BYTES,
@@ -28,6 +29,23 @@ class LifecycleIndexOnlyStore extends LocalStateStore {
     throw new Error("conversation lifecycle mutations must not clone the full projection");
   }
 }
+
+test("history rewrite isolation copies collections without cloning immutable records", async () => {
+  const { store } = await fixtureStore();
+  await store.saveProject({ id: "project-1", name: "fixture", root: "/fixture" });
+  const projection = await store.load();
+  const isolated = isolateProjectionCollections(projection);
+  const collectionKeys = Object.keys(projection).filter((key) =>
+    Array.isArray(projection[key as keyof StateProjection]),
+  ) as Array<keyof StateProjection>;
+
+  for (const key of collectionKeys) {
+    assert.notEqual(isolated[key], projection[key], `${String(key)} collection must be isolated`);
+  }
+  assert.equal(isolated.projects[0], projection.projects[0]);
+  isolated.projects[0] = { ...isolated.projects[0]!, name: "changed" };
+  assert.equal(projection.projects[0]?.name, "fixture");
+});
 
 test("fresh stores create a missing state directory before the first write", async () => {
   const parent = await mkdtemp(join(tmpdir(), "aldunis-state-parent-"));
