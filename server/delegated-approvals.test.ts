@@ -84,6 +84,44 @@ test("delegated approvals project only current pending child authority", () => {
   assert.deepEqual(projectDelegatedApprovals(state, [approval({ runId: "stale-run" })]), []);
 });
 
+test("delegated approval projection indexes only pending child turns", () => {
+  const state = fixture();
+  state.turns.unshift(
+    ...Array.from({ length: 100 }, (_, index) => ({
+      ...state.turns[0],
+      id: `unrelated-turn-${index}`,
+      threadId: `unrelated-thread-${index}`,
+      providerRunId: `unrelated-run-${index}`,
+    })),
+  );
+  state.turns = new Proxy(state.turns, {
+    get(target, property, receiver) {
+      if (property === Symbol.iterator || property === "map") {
+        throw new Error("delegated approval projection must not materialize the turn ledger");
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  assert.equal(projectDelegatedApprovals(state, [approval()]).length, 1);
+});
+
+test("delegated approval projection skips retained history without pending authority", () => {
+  const state = fixture();
+  state.turns = new Proxy(state.turns, {
+    get() {
+      throw new Error("retained turns must stay untouched without a pending approval");
+    },
+  });
+  state.delegatedRelationships = new Proxy(state.delegatedRelationships, {
+    get() {
+      throw new Error("relationships must stay untouched without a pending approval");
+    },
+  });
+
+  assert.deepEqual(projectDelegatedApprovals(state, [approval({ state: "denied" })]), []);
+});
+
 test("parent-routed approval requires the exact live relationship and approval", () => {
   const state = fixture();
   assert.doesNotThrow(() =>

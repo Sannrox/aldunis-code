@@ -12,18 +12,29 @@ export function projectDelegatedApprovals(
   projection: StateProjection,
   approvals: ApprovalSnapshot[],
 ): DelegatedApprovalProjection[] {
-  const latestTurnByThread = new Map<string, StateProjection["turns"][number]>();
-  for (const turn of projection.turns) latestTurnByThread.set(turn.threadId, turn);
-  const relationshipByChild = new Map(
-    projection.delegatedRelationships.map((relationship) => [
-      relationship.childThreadId,
-      relationship,
-    ]),
-  );
+  const pending = approvals.filter((approval) => approval.state === "pending");
+  if (pending.length === 0) return [];
 
-  return approvals
+  const remainingChildIds = new Set(pending.map((approval) => approval.conversationId));
+  const latestTurnByThread = new Map<string, StateProjection["turns"][number]>();
+  for (let index = projection.turns.length - 1; index >= 0; index -= 1) {
+    const turn = projection.turns[index];
+    if (!remainingChildIds.delete(turn.threadId)) continue;
+    latestTurnByThread.set(turn.threadId, turn);
+    if (remainingChildIds.size === 0) break;
+  }
+
+  const relationshipByChild = new Map<string, StateProjection["delegatedRelationships"][number]>();
+  const unmatchedRelationships = new Set(pending.map((approval) => approval.conversationId));
+  for (let index = projection.delegatedRelationships.length - 1; index >= 0; index -= 1) {
+    const relationship = projection.delegatedRelationships[index];
+    if (!unmatchedRelationships.delete(relationship.childThreadId)) continue;
+    relationshipByChild.set(relationship.childThreadId, relationship);
+    if (unmatchedRelationships.size === 0) break;
+  }
+
+  return pending
     .flatMap((approval) => {
-      if (approval.state !== "pending") return [];
       const relationship = relationshipByChild.get(approval.conversationId);
       const turn = relationship ? latestTurnByThread.get(relationship.childThreadId) : undefined;
       if (
