@@ -40,7 +40,6 @@ export interface WorkbenchProjectionRouteContext {
 }
 
 type ThreadSearchProjection = Pick<StateProjection, "projects" | "threads">;
-type UsageProjection = Pick<StateProjection, "projects" | "threads" | "turns" | "usageReceipts">;
 type ManagedAuxiliaryIndexes = Pick<
   ConversationHistoryIndex,
   | "providerSessionsByThread"
@@ -250,18 +249,47 @@ export function filterManagedOrchestrationProjection(
   };
 }
 
-export function filterManagedUsageReceipts(
-  projection: UsageProjection,
+export function consumeManagedUsageReceipts(
+  projection: ThreadSearchProjection,
+  indexes: Pick<ConversationHistoryIndex, "turnsByThread" | "usageReceiptsByThread">,
   managedHost: Pick<ManagedHost, "repositoryForRoot">,
-): StateProjection["usageReceipts"] {
-  const { threads } = filterManagedThreadSearchProjection(projection, managedHost);
-  const threadIds = new Set(threads.map((thread) => thread.id));
-  const turnIds = new Set(
-    projection.turns.filter((turn) => threadIds.has(turn.threadId)).map((turn) => turn.id),
-  );
-  return projection.usageReceipts.filter(
-    (receipt) => threadIds.has(receipt.threadId) && turnIds.has(receipt.turnId),
-  );
+  consume: (receipt: StateProjection["usageReceipts"][number]) => void,
+): void {
+  const projectIds = new Set<string>();
+  for (const project of projection.projects) {
+    try {
+      managedHost.repositoryForRoot(project.root);
+      projectIds.add(project.id);
+    } catch {
+      // Projects outside the authenticated managed catalogue remain hidden.
+    }
+  }
+  for (const thread of projection.threads) {
+    if (!projectIds.has(thread.projectId)) continue;
+    const turns = indexes.turnsByThread.get(thread.id);
+    const receipts = indexes.usageReceiptsByThread.get(thread.id);
+    if (!turns?.length || !receipts?.length) continue;
+    const turnIds: string[] = [];
+    for (const turn of turns) {
+      if (turn.threadId === thread.id) turnIds.push(turn.id);
+    }
+    turnIds.sort();
+    const hasTurn = (turnId: string) => {
+      let low = 0;
+      let high = turnIds.length - 1;
+      while (low <= high) {
+        const middle = (low + high) >>> 1;
+        const candidate = turnIds[middle]!;
+        if (candidate === turnId) return true;
+        if (candidate < turnId) low = middle + 1;
+        else high = middle - 1;
+      }
+      return false;
+    };
+    for (const receipt of receipts) {
+      if (receipt.threadId === thread.id && hasTurn(receipt.turnId)) consume(receipt);
+    }
+  }
 }
 
 export function filterManagedWorkbenchListProjection(

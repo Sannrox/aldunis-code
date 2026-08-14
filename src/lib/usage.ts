@@ -81,6 +81,9 @@ export interface UsageReport {
   daily: UsageDailyPoint[];
 }
 
+export type UsageReceiptSource =
+  Iterable<UsageReceipt> | ((consume: (receipt: UsageReceipt) => void) => void);
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_USAGE_TOTAL = Number.MAX_SAFE_INTEGER;
 
@@ -151,7 +154,7 @@ export function isUsageRangeDays(value: unknown): value is UsageRangeDays {
 }
 
 export function buildUsageReport(
-  receipts: UsageReceipt[],
+  receipts: UsageReceiptSource,
   rangeDays: UsageRangeDays,
   now = new Date(),
 ): UsageReport {
@@ -187,10 +190,10 @@ export function buildUsageReport(
 
   const startTime = start.getTime();
   const endTime = end.getTime();
-  for (const receipt of receipts) {
-    if (receipt.status === "running") continue;
+  const aggregate = (receipt: UsageReceipt) => {
+    if (receipt.status === "running") return;
     const observedAt = Date.parse(receipt.updatedAt);
-    if (!Number.isFinite(observedAt) || observedAt < startTime || observedAt > endTime) continue;
+    if (!Number.isFinite(observedAt) || observedAt < startTime || observedAt > endTime) return;
 
     totals.observedTurns += 1;
     if (receipt.status === "completed") totals.completedTurns += 1;
@@ -250,6 +253,11 @@ export function buildUsageReport(
     totals.reasoningOutputTokens = addTotal(totals.reasoningOutputTokens, reasoning);
     totals.reportedCostUsd = addCost(totals.reportedCostUsd, receipt.reportedCostUsd);
     if (costValue(receipt.reportedCostUsd) !== null) totals.pricedTurns += 1;
+  };
+  if (typeof receipts === "function") {
+    receipts(aggregate);
+  } else {
+    for (const receipt of receipts) aggregate(receipt);
   }
 
   return {

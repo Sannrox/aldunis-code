@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import {
+  consumeManagedUsageReceipts,
   filterManagedOrchestrationProjection,
-  filterManagedUsageReceipts,
   filterManagedWorkbenchListProjection,
   handleWorkbenchProjectionRoute,
   selectNewestThreadMatches,
@@ -152,13 +152,40 @@ test("managed usage filtering traverses only usage-scoped state", () => {
       updatedAt: "t1",
     },
   );
+  const rejectArrayMaterialization = <T>(items: T[]): T[] =>
+    new Proxy(items, {
+      get(target, property, receiver) {
+        if (
+          property === "filter" ||
+          property === "map" ||
+          property === "slice" ||
+          property === "sort"
+        ) {
+          throw new Error(`managed usage inventory must not call ${property}`);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  const activeTurns = value.turns.filter((turn) => turn.threadId === "active");
+  const hiddenTurns = value.turns.filter((turn) => turn.threadId === "hidden");
+  const activeReceipts = value.usageReceipts.filter((receipt) => receipt.threadId === "active");
+  const hiddenReceipts = value.usageReceipts.filter((receipt) => receipt.threadId === "hidden");
 
-  const filtered = filterManagedUsageReceipts(
+  const filtered: StateProjection["usageReceipts"] = [];
+  consumeManagedUsageReceipts(
     {
-      projects: value.projects,
-      threads: value.threads,
-      turns: value.turns,
-      usageReceipts: value.usageReceipts,
+      projects: rejectArrayMaterialization(value.projects),
+      threads: rejectArrayMaterialization(value.threads),
+    },
+    {
+      turnsByThread: new Map([
+        ["active", rejectArrayMaterialization(activeTurns)],
+        ["hidden", rejectArrayMaterialization(hiddenTurns)],
+      ]),
+      usageReceiptsByThread: new Map([
+        ["active", rejectArrayMaterialization(activeReceipts)],
+        ["hidden", rejectArrayMaterialization(hiddenReceipts)],
+      ]),
     },
     {
       repositoryForRoot(root) {
@@ -166,6 +193,7 @@ test("managed usage filtering traverses only usage-scoped state", () => {
         return {} as never;
       },
     },
+    (receipt) => filtered.push(receipt),
   );
 
   assert.deepEqual(

@@ -82,8 +82,8 @@ import { handleMailboxRoute } from "./mailbox-routes.ts";
 import { handleDeliveryRoute } from "./delivery-routes.ts";
 import { handleConversationForkRoute } from "./conversation-fork-routes.ts";
 import {
+  consumeManagedUsageReceipts,
   filterManagedThreadSearchProjection,
-  filterManagedUsageReceipts,
   handleWorkbenchProjectionRoute,
 } from "./workbench-projection-routes.ts";
 import { handleStateMaintenanceRoute } from "./state-maintenance-routes.ts";
@@ -445,11 +445,26 @@ async function handleApi(
       if (!isUsageRangeDays(rangeDays)) {
         throw new LocalStateError("Usage range must be 7, 30, or 90 days.", 400);
       }
-      const projection = await state.inspect();
-      const visibleUsageReceipts = managedHost
-        ? filterManagedUsageReceipts(projection, managedHost)
-        : projection.usageReceipts;
-      sendJson(response, 200, buildUsageReport(visibleUsageReceipts, rangeDays));
+      if (managedHost) {
+        const indexed = await state.inspectWorkbenchProjection();
+        sendJson(
+          response,
+          200,
+          buildUsageReport(
+            (consume) =>
+              consumeManagedUsageReceipts(
+                indexed.projection,
+                indexed.conversationHistory,
+                managedHost,
+                consume,
+              ),
+            rangeDays,
+          ),
+        );
+      } else {
+        const projection = await state.inspect();
+        sendJson(response, 200, buildUsageReport(projection.usageReceipts, rangeDays));
+      }
       return true;
     }
     if (
