@@ -507,7 +507,7 @@
     },
     {
       "name": "CheckpointRewindRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates checkpoint preview, file-diff, and rewind route recognition, canonical worktree selection, checkpoint identity and Git state validation, streamed staged compatibility records and selective Git-attribute inventory queries with bounded records, stderr, deadlines, termination, and child cleanup, active-turn exclusion, fixed-buffer temporary-index transfer into the exclusive Git lock, rewind ordering, checkpoint persistence, and response mapping behind one internal dispatch interface without changing repository, filesystem, provider, or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates checkpoint preview, file-diff, and rewind route recognition, canonical worktree selection, checkpoint identity and Git state validation, streamed staged compatibility records, selective tracked Git-attribute inventory queries, changed-path classification that limits attribute and filesystem inspection to paths requiring it, and bounded records, stderr, deadlines, termination, and child cleanup, active-turn exclusion, fixed-buffer temporary-index transfer into the exclusive Git lock, rewind ordering, checkpoint persistence, and response mapping behind one internal dispatch interface without changing repository, filesystem, provider, or approval authority."
     },
     {
       "name": "ConversationWorkspaceRouteDispatchModule",
@@ -1819,6 +1819,12 @@
       "subject": "CheckpointRewindRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1179",
       "locator": "server/repository.ts#checkpointInventoryHasRecord; server/repository.ts#assertCheckpointable",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CheckpointRewindRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1181",
+      "locator": "server/repository.ts#assertCheckpointable",
       "confidence": 1.0
     },
     {

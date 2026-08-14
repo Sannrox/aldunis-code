@@ -296,7 +296,7 @@ export async function checkpointGitDirectory(worktree: string): Promise<string> 
   return realpath(resolve(worktree, value));
 }
 
-async function assertCheckpointable(worktree: string, allowChanges: boolean): Promise<void> {
+export async function assertCheckpointable(worktree: string, allowChanges: boolean): Promise<void> {
   const hasSubmodule = await checkpointInventoryHasRecord(
     worktree,
     ["ls-files", "--stage", "-z"],
@@ -328,9 +328,14 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
     );
   }
   const changedPaths: string[] = [];
+  const untrackedPaths: string[] = [];
+  const filesystemPaths: string[] = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
-    changedPaths.push(entry.slice(3));
+    const path = entry.slice(3);
+    changedPaths.push(path);
+    if (entry.startsWith("?? ")) untrackedPaths.push(path);
+    if (entry[0] !== "D" && entry[1] !== "D") filesystemPaths.push(path);
     if (
       (entry[0] === "R" || entry[0] === "C" || entry[1] === "R" || entry[1] === "C") &&
       entries[index + 1]
@@ -347,14 +352,14 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
       409,
     );
   }
-  for (let index = 0; index < changedPaths.length; index += 200) {
+  for (let index = 0; index < untrackedPaths.length; index += 200) {
     const attributes = await git(worktree, [
       "check-attr",
       "-z",
       "filter",
       "working-tree-encoding",
       "--",
-      ...changedPaths.slice(index, index + 200),
+      ...untrackedPaths.slice(index, index + 200),
     ]);
     const fields = attributes.split("\0").filter(Boolean);
     for (let field = 0; field < fields.length; field += 3) {
@@ -373,15 +378,24 @@ async function assertCheckpointable(worktree: string, allowChanges: boolean): Pr
     }
   }
   if (changedPaths.length > 0) {
-    const trackedModes = await git(worktree, ["ls-files", "--stage", "--", ...changedPaths]);
-    if (trackedModes.split("\n").some((line) => line.startsWith("120000 "))) {
+    const changed = new Set(changedPaths);
+    const hasChangedSymlink = await checkpointInventoryHasRecord(
+      worktree,
+      ["ls-files", "--stage", "-z"],
+      (record) => {
+        if (record.subarray(0, 7).toString("ascii") !== "120000 ") return false;
+        const separator = record.indexOf(9);
+        return separator >= 0 && changed.has(record.subarray(separator + 1).toString("utf8"));
+      },
+    );
+    if (hasChangedSymlink) {
       throw new RepositoryError(
         "Checkpoints are unavailable when a changed path is a symlink.",
         409,
       );
     }
   }
-  for (const path of changedPaths) {
+  for (const path of filesystemPaths) {
     try {
       const details = await lstat(join(worktree, path));
       if (details.isSymbolicLink()) {

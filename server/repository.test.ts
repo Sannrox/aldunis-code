@@ -10,12 +10,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  assertCheckpointable,
   captureCheckpoint,
   checkpointDiff,
   checkpointReference,
@@ -306,6 +307,63 @@ test("clean checkpoint capture streams inventories larger than the Git buffer ce
     const checkpoint = await captureCheckpoint(root, false);
     const headTree = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD^{tree}"]);
     assert.equal(checkpoint.identity, headTree.stdout.trim());
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dirty checkpoint capture bounds compatibility scans below the status ceiling", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-dirty-checkpoint-"));
+  try {
+    await execFileAsync("git", ["init", "-q", root]);
+    const empty = join(root, "empty");
+    await writeFile(empty, "");
+    const blob = await execFileAsync("git", ["-C", root, "hash-object", "-w", "empty"]);
+    await rm(empty);
+    const update = spawn("git", ["-C", root, "update-index", "--index-info"], {
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    let stderr = "";
+    update.stderr.setEncoding("utf8");
+    update.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    for (let index = 0; index < 40_000; index += 1) {
+      const record = `100644 ${blob.stdout.trim()}\tf/${index.toString().padStart(6, "0")}\n`;
+      if (!update.stdin.write(record)) {
+        await new Promise<void>((resolve) => update.stdin.once("drain", resolve));
+      }
+    }
+    update.stdin.end();
+    const updateCode = await new Promise<number | null>((resolve, reject) => {
+      update.once("error", reject);
+      update.once("close", resolve);
+    });
+    assert.equal(updateCode, 0, stderr);
+    const tree = await execFileAsync("git", ["-C", root, "write-tree"]);
+    const commit = await execFileAsync("git", [
+      "-C",
+      root,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit-tree",
+      tree.stdout.trim(),
+      "-m",
+      "dirty fixture",
+    ]);
+    await execFileAsync("git", ["-C", root, "update-ref", "HEAD", commit.stdout.trim()]);
+    const status = await execFileAsync(
+      "git",
+      ["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      { maxBuffer: 4 * 1024 * 1024 },
+    );
+    assert.ok(Buffer.byteLength(status.stdout) < 4 * 1024 * 1024);
+
+    await assertCheckpointable(root, true);
+    const retainedTree = await execFileAsync("git", ["-C", root, "write-tree"]);
+    assert.equal(retainedTree.stdout.trim(), tree.stdout.trim());
   } finally {
     await rm(root, { recursive: true, force: true });
   }
