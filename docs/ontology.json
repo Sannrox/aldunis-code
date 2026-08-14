@@ -277,7 +277,7 @@
     },
     {
       "name": "LocalApplicationHost",
-      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, request routing, and Tailscale lifecycle commands within fixed runtime and output budgets inside its implementation."
+      "description": "The Aldunis Code composition module that constructs the loopback, remote, managed, or desktop HTTP host through one named options interface while keeping stores, provider adapters, permission brokers, schedulers, request routing, and Tailscale lifecycle commands within fixed runtime and output budgets inside its implementation; API request bodies retain at most 256 raw fragments before hierarchical compaction through 64 KiB-targeted batches while preserving exact route byte ceilings and authenticated body identity."
     },
     {
       "name": "LocalUsageReceipt",
@@ -2269,6 +2269,12 @@
       "subject": "LocalApplicationHost",
       "source": "Aldunis Code local host composition interface",
       "locator": "server/host.ts#LocalHostOptions; server/host.ts#createLocalHost; server/tailscale-command.ts#runTailscaleCommand; Issue #575",
+      "confidence": 1.0
+    },
+    {
+      "subject": "LocalApplicationHost",
+      "source": "Aldunis Code Issue #1157 bounded request-body fragment retention",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1157; server/bounded-byte-reader.mjs#readBoundedBytes; server/host.ts#readJson; server/host.ts#bufferRequest",
       "confidence": 1.0
     },
     {
