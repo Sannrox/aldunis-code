@@ -202,6 +202,10 @@
       "description": "The Aldunis Code ACP adapter boundary that exchanges newline-delimited JSON-RPC with one provider subprocess, serializes host-to-provider messages through stdin backpressure before consuming additional provider requests, and terminates the exact child on cancellation, timeout, spawn failure, protocol failure, or durable turn completion without changing provider or permission authority."
     },
     {
+      "name": "CodexProviderTransportBoundary",
+      "description": "The Aldunis Code Codex CLI adapter boundary that exchanges newline-delimited app-server JSON-RPC with one reusable provider subprocess, serializes run-time host-to-provider messages through stdin backpressure before consuming additional provider requests, and preserves bounded session reuse, cancellation, input, approval, protocol-failure, and exact-child lifecycle behavior without changing provider or permission authority."
+    },
+    {
       "name": "ShikigamiCheckpointResumeBoundary",
       "description": "The Shikigami provider boundary that accepts a provider-confirmed run UUID, loads the matching checkpoint, and requires the canonical workspace and adapter identity to match before native resume.",
       "properties": [
@@ -2843,6 +2847,12 @@
       "subject": "AcpProviderTransportBoundary",
       "source": "GitHub Issue Sannrox/aldunis-code#1144",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1144; server/acp-provider.ts#AcpProviderAdapter; server/acp-provider-lifecycle.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "CodexProviderTransportBoundary",
+      "source": "GitHub Issue Sannrox/aldunis-code#1147",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1147; server/codex-provider.ts#CodexCliAdapter; server/codex-provider.test.ts",
       "confidence": 1.0
     },
     {
