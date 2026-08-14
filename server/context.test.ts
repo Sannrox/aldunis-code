@@ -283,7 +283,7 @@ test("file discovery is repository-scoped and hides protected names", async () =
   assert.equal(files.includes("api-key.config.js"), true);
 });
 
-test("bounded filename and context-package projections stream beyond 4 MiB", async () => {
+test("bounded repository projections stream beyond 4 MiB", async () => {
   const root = await mkdtemp(join(tmpdir(), "aldunis-context-large-search-index-"));
   try {
     await new Promise<void>((resolve, reject) => {
@@ -344,6 +344,9 @@ test("bounded filename and context-package projections stream beyond 4 MiB", asy
       assembled.entries.find((entry) => entry.omissionReason === "package inspection limit")?.path,
       "4802 additional files",
     );
+    const browsed = await browseRepositoryFiles(root, "definitely-absent");
+    assert.deepEqual(browsed.files, []);
+    assert.equal(browsed.truncated, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

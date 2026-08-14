@@ -460,16 +460,13 @@ interface ContextPackageCandidate {
   source: ContextReceiptSource;
 }
 
-function compareContextPackageCandidate(
-  left: ContextPackageCandidate,
-  right: ContextPackageCandidate,
-): number {
+function compareRepositoryPath(left: { path: string }, right: { path: string }): number {
   return left.path.localeCompare(right.path);
 }
 
-function retainEarliestContextCandidate(
-  retained: ContextPackageCandidate[],
-  candidate: ContextPackageCandidate,
+function retainEarliestRepositoryPath<T extends { path: string }>(
+  retained: T[],
+  candidate: T,
   limit: number,
 ): void {
   if (limit <= 0) return;
@@ -478,13 +475,13 @@ function retainEarliestContextCandidate(
     let index = retained.length - 1;
     while (index > 0) {
       const parent = Math.floor((index - 1) / 2);
-      if (compareContextPackageCandidate(retained[parent], retained[index]) >= 0) break;
+      if (compareRepositoryPath(retained[parent], retained[index]) >= 0) break;
       [retained[parent], retained[index]] = [retained[index]!, retained[parent]!];
       index = parent;
     }
     return;
   }
-  if (compareContextPackageCandidate(candidate, retained[0]!) >= 0) return;
+  if (compareRepositoryPath(candidate, retained[0]!) >= 0) return;
   retained[0] = candidate;
   let index = 0;
   for (;;) {
@@ -492,11 +489,10 @@ function retainEarliestContextCandidate(
     if (left >= retained.length) return;
     const right = left + 1;
     const larger =
-      right < retained.length &&
-      compareContextPackageCandidate(retained[right]!, retained[left]!) > 0
+      right < retained.length && compareRepositoryPath(retained[right]!, retained[left]!) > 0
         ? right
         : left;
-    if (compareContextPackageCandidate(retained[index]!, retained[larger]!) >= 0) return;
+    if (compareRepositoryPath(retained[index]!, retained[larger]!) >= 0) return;
     [retained[index], retained[larger]] = [retained[larger]!, retained[index]!];
     index = larger;
   }
@@ -534,7 +530,7 @@ async function contextPackageInventory(
     const instruction = isProviderInstruction(path);
     if (instruction && includeProviderInstructions) {
       totalInstructions += 1;
-      retainEarliestContextCandidate(
+      retainEarliestRepositoryPath(
         instructions,
         { path, source: "provider_managed_instruction" },
         MAX_CONTEXT_PACKAGE_INSTRUCTION_ENTRIES,
@@ -555,7 +551,7 @@ async function contextPackageInventory(
     }
     if (!source) return;
     totalPaths += 1;
-    retainEarliestContextCandidate(retained, { path, source }, MAX_CONTEXT_PACKAGE_INSPECTED_FILES);
+    retainEarliestRepositoryPath(retained, { path, source }, MAX_CONTEXT_PACKAGE_INSPECTED_FILES);
   };
   const internalAbort = new AbortController();
   const inventorySignal = signal
@@ -582,11 +578,11 @@ async function contextPackageInventory(
     internalAbort.abort();
   }
   return {
-    paths: retained.sort(compareContextPackageCandidate),
+    paths: retained.sort(compareRepositoryPath),
     totalPaths,
     availableFiles,
     matchedFolders,
-    instructions: instructions.sort(compareContextPackageCandidate),
+    instructions: instructions.sort(compareRepositoryPath),
     totalInstructions,
   };
 }
@@ -681,7 +677,7 @@ export async function assembleContextPackage(
   let inspectedBytes = 0;
   const totalPaths = inventory.totalPaths + composerCandidates.length;
   const paths = [...inventory.paths, ...composerCandidates]
-    .sort(compareContextPackageCandidate)
+    .sort(compareRepositoryPath)
     .slice(0, MAX_CONTEXT_PACKAGE_INSPECTED_FILES);
   let pathIndex = 0;
   for (
@@ -1082,6 +1078,70 @@ export async function searchRepositoryFiles(
   return matches;
 }
 
+async function browseRepositoryInventory(
+  worktree: string,
+  needle: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<{
+  nameMatches: Array<{ path: string; match: RepositoryFileResult["match"] }>;
+  inspectionCandidates: string[];
+  totalNameMatches: number;
+  totalInspectionCandidates: number;
+}> {
+  const nameMatches: Array<{ path: string; match: RepositoryFileResult["match"] }> = [];
+  const inspectionCandidates: Array<{ path: string }> = [];
+  let totalNameMatches = 0;
+  let totalInspectionCandidates = 0;
+  const admit = (path: string, untracked: boolean): void => {
+    if (
+      (untracked && isLocalRuntimePath(path)) ||
+      isHidden(path) ||
+      isSecretLikePath(path) ||
+      isComposerAttachmentPath(path)
+    ) {
+      return;
+    }
+    if (!needle || path.toLocaleLowerCase().includes(needle)) {
+      totalNameMatches += 1;
+      retainEarliestRepositoryPath(nameMatches, { path, match: needle ? "name" : null }, limit);
+      return;
+    }
+    totalInspectionCandidates += 1;
+    retainEarliestRepositoryPath(inspectionCandidates, { path }, MAX_SEARCH_INSPECTED_FILES);
+  };
+  const internalAbort = new AbortController();
+  const inventorySignal = signal
+    ? AbortSignal.any([signal, internalAbort.signal])
+    : internalAbort.signal;
+  const tasks = [
+    streamRepositoryPaths(worktree, ["ls-files", "--cached", "-z"], false, admit, inventorySignal),
+    streamRepositoryPaths(
+      worktree,
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      true,
+      admit,
+      inventorySignal,
+    ),
+  ];
+  try {
+    await Promise.all(tasks);
+  } catch (error) {
+    internalAbort.abort();
+    await Promise.allSettled(tasks);
+    signal?.throwIfAborted();
+    throw error;
+  } finally {
+    internalAbort.abort();
+  }
+  return {
+    nameMatches: nameMatches.sort(compareRepositoryPath),
+    inspectionCandidates: inspectionCandidates.sort(compareRepositoryPath).map(({ path }) => path),
+    totalNameMatches,
+    totalInspectionCandidates,
+  };
+}
+
 export async function browseRepositoryFiles(
   worktree: string,
   query: string,
@@ -1090,22 +1150,15 @@ export async function browseRepositoryFiles(
   operations: RepositoryBrowseOperations = repositoryBrowseOperations,
 ): Promise<{ files: RepositoryFileResult[]; truncated: boolean }> {
   const needle = query.trim().toLocaleLowerCase();
-  const paths = await repositoryPaths(worktree, signal);
-  const matches: Array<{ path: string; match: RepositoryFileResult["match"] }> = [];
+  const boundedLimit = Math.max(1, Math.min(limit, 200));
+  const inventory = await browseRepositoryInventory(worktree, needle, boundedLimit, signal);
+  const matches = [...inventory.nameMatches];
   let searchedBytes = 0;
   let inspectedFiles = 0;
-  let searchBudgetExhausted = false;
-  for (const path of paths) {
+  for (const path of inventory.inspectionCandidates) {
     if (signal?.aborted) throw signal.reason;
-    // Staged composer images are attachable context, not a browse surface.
-    if (isComposerAttachmentPath(path)) continue;
-    if (!needle || path.toLocaleLowerCase().includes(needle)) {
-      matches.push({ path, match: needle ? "name" : null });
-      continue;
-    }
     if (searchedBytes >= MAX_SEARCH_BYTES || inspectedFiles >= MAX_SEARCH_INSPECTED_FILES) {
-      searchBudgetExhausted = true;
-      continue;
+      break;
     }
     inspectedFiles += 1;
     try {
@@ -1124,11 +1177,12 @@ export async function browseRepositoryFiles(
       // Inaccessible and racing files remain discoverable only through a name match.
     }
   }
-  const boundedLimit = Math.max(1, Math.min(limit, 200));
-  const selected = matches.slice(0, boundedLimit);
+  const selected = matches.sort(compareRepositoryPath).slice(0, boundedLimit);
+  const totalMatches = inventory.totalNameMatches + matches.length - inventory.nameMatches.length;
+  const searchBudgetExhausted = inventory.totalInspectionCandidates > inspectedFiles;
   return {
     files: await inspectRepositoryFiles(worktree, selected, signal, operations),
-    truncated: matches.length > selected.length || searchBudgetExhausted,
+    truncated: totalMatches > selected.length || searchBudgetExhausted,
   };
 }
 
