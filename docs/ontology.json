@@ -198,6 +198,10 @@
       "description": "The Aldunis Code ACP client boundary that resolves delegated text reads within the canonical conversation worktree, admits only stable regular files, and reads at most 1 MiB through one descriptor while special files and concurrent changes fail closed."
     },
     {
+      "name": "AcpProviderTransportBoundary",
+      "description": "The Aldunis Code ACP adapter boundary that exchanges newline-delimited JSON-RPC with one provider subprocess, serializes host-to-provider messages through stdin backpressure before consuming additional provider requests, and terminates the exact child on cancellation, timeout, spawn failure, protocol failure, or durable turn completion without changing provider or permission authority."
+    },
+    {
       "name": "ShikigamiCheckpointResumeBoundary",
       "description": "The Shikigami provider boundary that accepts a provider-confirmed run UUID, loads the matching checkpoint, and requires the canonical workspace and adapter identity to match before native resume.",
       "properties": [
@@ -2833,6 +2837,12 @@
       "subject": "ProviderRunExecutionModule",
       "source": "GitHub Issue Sannrox/aldunis-code#1141",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1141; server/provider-run.ts#createProviderRunEventWriter; server/provider-run.ts#executeProviderRun; server/provider-process.ts#waitForProviderChildExit; server/provider.ts#ClaudeCodeAdapter.events; server/acp-provider.ts#AcpProviderAdapter.events",
+      "confidence": 1.0
+    },
+    {
+      "subject": "AcpProviderTransportBoundary",
+      "source": "GitHub Issue Sannrox/aldunis-code#1144",
+      "locator": "https://github.com/Sannrox/aldunis-code/issues/1144; server/acp-provider.ts#AcpProviderAdapter; server/acp-provider-lifecycle.test.ts",
       "confidence": 1.0
     },
     {

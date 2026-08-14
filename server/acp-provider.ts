@@ -14,6 +14,7 @@ import {
 } from "./provider.ts";
 import { normalizeBrowserObservation } from "./browser-observation.ts";
 import type { InstalledProviderAdapter } from "./provider-adapters.ts";
+import { JsonLineWriter } from "./json-line-writer.mjs";
 import { acpSetModelRequest, parseAcpSessionModels } from "./acp-models.ts";
 import { terminateProviderChild, waitForProviderChildExit } from "./provider-process.ts";
 import { constrainPath, RepositoryError } from "./repository.ts";
@@ -702,6 +703,7 @@ export async function acpReadTextFile(
 
 interface ActiveRun {
   child: ChildProcessWithoutNullStreams;
+  input: JsonLineWriter;
   cancelled: boolean;
   sessionId: string | null;
   loadSession: boolean;
@@ -736,6 +738,7 @@ export class AcpProviderAdapter {
     child.stderr.resume();
     const active = {
       child,
+      input: new JsonLineWriter(child.stdin),
       cancelled: false,
       sessionId: null,
       loadSession: false,
@@ -759,20 +762,18 @@ export class AcpProviderAdapter {
     active.cancelled = true;
     this.permissions.closeRun(id, "cancelled");
     if (active.sessionId) {
-      this.#send(active.child, {
+      void this.#send(active, {
         jsonrpc: "2.0",
         method: "session/cancel",
         params: { sessionId: active.sessionId },
-      });
+      }).catch(() => undefined);
     }
     this.#terminate(active.child);
     return true;
   }
 
-  #send(child: ChildProcessWithoutNullStreams, value: unknown): void {
-    if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-      child.stdin.write(`${JSON.stringify(value)}\n`, () => {});
-    }
+  #send(active: ActiveRun, value: unknown): Promise<void> {
+    return active.input.write(value);
   }
 
   #terminate(child: ChildProcessWithoutNullStreams): void {
@@ -832,20 +833,21 @@ export class AcpProviderAdapter {
       }, milliseconds);
       phaseTimer.unref();
     };
-    this.#send(active.child, {
-      jsonrpc: "2.0",
-      id: 0,
-      method: "initialize",
-      params: {
-        protocolVersion: 1,
-        // Grok Build delegates tool reads via client fs/read_text_file; serve
-        // worktree-bounded reads only. Writes stay disabled.
-        clientCapabilities: { fs: { readTextFile: true, writeTextFile: false }, terminal: false },
-        clientInfo: { name: "aldunis-code", version: "0.1.0" },
-      },
-    });
     try {
+      await this.#send(active, {
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: 1,
+          // Grok Build delegates tool reads via client fs/read_text_file; serve
+          // worktree-bounded reads only. Writes stay disabled.
+          clientCapabilities: { fs: { readTextFile: true, writeTextFile: false }, terminal: false },
+          clientInfo: { name: "aldunis-code", version: "0.1.0" },
+        },
+      });
       for await (const message of this.#lines(active.child)) {
+        await active.input.drained();
         if (message.method === undefined && message.id === 0) {
           if (message.error) throw new ProviderProtocolError("ACP initialization failed.");
           const initialized = record(message.result);
@@ -868,7 +870,7 @@ export class AcpProviderAdapter {
               "This adapter cannot resume the existing session. Start a new conversation or install a resume-capable version.",
             );
           }
-          this.#send(active.child, {
+          await this.#send(active, {
             jsonrpc: "2.0",
             id: 1,
             ...sessionRequest,
@@ -896,7 +898,7 @@ export class AcpProviderAdapter {
           };
           // Apply model before the first prompt when the agent advertises models.
           if (selectedModel) {
-            this.#send(active.child, {
+            await this.#send(active, {
               jsonrpc: "2.0",
               id: 3,
               ...acpSetModelRequest(active.sessionId, selectedModel),
@@ -904,7 +906,7 @@ export class AcpProviderAdapter {
             setPhaseTimeout(ACP_HANDSHAKE_TIMEOUT_MS);
             continue;
           }
-          this.#send(active.child, {
+          await this.#send(active, {
             jsonrpc: "2.0",
             id: 2,
             ...acpPromptRequest(active.sessionId, options.prompt),
@@ -916,7 +918,7 @@ export class AcpProviderAdapter {
           if (!active.sessionId)
             throw new ProviderProtocolError("ACP completed without a session.");
           setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
-          this.#send(active.child, {
+          await this.#send(active, {
             jsonrpc: "2.0",
             id: 2,
             ...acpPromptRequest(active.sessionId, options.prompt),
@@ -938,13 +940,13 @@ export class AcpProviderAdapter {
             setPhaseTimeout(ACP_RUN_TIMEOUT_MS);
             try {
               const result = await acpReadTextFile(options.worktree, message.params);
-              this.#send(active.child, {
+              await this.#send(active, {
                 jsonrpc: "2.0",
                 id: message.id as RpcId,
                 result,
               });
             } catch (error) {
-              this.#send(active.child, {
+              await this.#send(active, {
                 jsonrpc: "2.0",
                 id: message.id as RpcId,
                 error: {
@@ -959,7 +961,7 @@ export class AcpProviderAdapter {
             continue;
           }
           if (message.method !== "session/request_permission") {
-            this.#send(active.child, {
+            await this.#send(active, {
               jsonrpc: "2.0",
               id: message.id as RpcId,
               error: { code: -32601, message: "Aldunis Code does not support this ACP request." },
@@ -1008,7 +1010,7 @@ export class AcpProviderAdapter {
             options.mode !== "build" ||
             !this.adapter.manifest.capabilities.tools
           ) {
-            this.#send(active.child, {
+            await this.#send(active, {
               jsonrpc: "2.0",
               id: message.id as RpcId,
               result: { outcome: { outcome: "cancelled" } },
@@ -1043,7 +1045,7 @@ export class AcpProviderAdapter {
           const task = this.permissions
             .awaitRegisteredDecision(id, token, approval.id)
             .then((decision) =>
-              this.#send(active.child, {
+              this.#send(active, {
                 jsonrpc: "2.0",
                 id: message.id as RpcId,
                 result: {
@@ -1055,12 +1057,13 @@ export class AcpProviderAdapter {
               }),
             )
             .catch(() =>
-              this.#send(active.child, {
+              this.#send(active, {
                 jsonrpc: "2.0",
                 id: message.id as RpcId,
                 result: { outcome: { outcome: "cancelled" } },
               }),
             )
+            .catch(() => undefined)
             .finally(() => approvalTasks.delete(task));
           approvalTasks.add(task);
           continue;
@@ -1085,14 +1088,18 @@ export class AcpProviderAdapter {
         }
       }
     } catch (error) {
-      protocolFailed = true;
-      terminal = true;
-      this.#terminate(active.child);
-      yield {
-        kind: "failed",
-        message:
-          error instanceof ProviderProtocolError ? error.message : "ACP stream processing failed.",
-      };
+      if (!active.cancelled && !active.timedOut && !active.spawnFailed) {
+        protocolFailed = true;
+        terminal = true;
+        this.#terminate(active.child);
+        yield {
+          kind: "failed",
+          message:
+            error instanceof ProviderProtocolError
+              ? error.message
+              : "ACP stream processing failed.",
+        };
+      }
     } finally {
       clearTimeout(phaseTimer);
       this.#active.delete(id);
