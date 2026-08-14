@@ -20,10 +20,12 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
+  MAX_GIT_TREE_RECORD_BYTES,
   MAX_RELEASE_MANIFEST_BYTES,
   MAX_RELEASE_PACKAGE_MANIFEST_BYTES,
   type ArtifactFileOperations,
   consumeGitBlobBatch,
+  consumeGitTreeRecords,
   deliveryCandidateIdentity,
   hashArtifactFile,
   hashReleaseLockFile,
@@ -348,6 +350,52 @@ test("source-tree batching preserves regular, executable, Unicode, and empty blo
     await sourceTreeDigest(root),
     "sha256:db430f408c900e2735c3750892e97d5e34b3e690fbf2d1db3941a4bf58e82b92",
   );
+});
+
+test("Git tree parsing streams canonical entries across arbitrary chunk boundaries", async () => {
+  const firstOid = "1".repeat(40);
+  const secondOid = "2".repeat(40);
+  const output = Buffer.from(
+    `100644 blob ${firstOid}\talpha.txt\0` + `100755 blob ${secondOid}\tzeta.sh\0`,
+  );
+  const entries = [];
+  for await (const entry of consumeGitTreeRecords(
+    Readable.from([
+      output.subarray(0, 5),
+      output.subarray(5, 51),
+      output.subarray(51, output.length - 3),
+      output.subarray(output.length - 3),
+    ]),
+  )) {
+    entries.push({
+      path: entry.path.toString("utf8"),
+      mode: entry.mode.toString("ascii"),
+      oid: entry.oid,
+    });
+  }
+
+  assert.deepEqual(entries, [
+    { path: "alpha.txt", mode: "100644", oid: firstOid },
+    { path: "zeta.sh", mode: "100755", oid: secondOid },
+  ]);
+});
+
+test("Git tree parsing fails closed on malformed, unordered, and oversized records", async () => {
+  const oid = "1".repeat(40);
+  const invalid = [
+    Buffer.from(`100644 blob ${oid}\tincomplete`),
+    Buffer.from(`100644 blob ${oid}\tzeta\0` + `100644 blob ${oid}\talpha\0`),
+    Buffer.from(`120000 blob ${oid}\tlink\0`),
+    Buffer.concat([Buffer.from(`100644 blob ${oid}\t`), Buffer.from([0xff, 0])]),
+    Buffer.concat([Buffer.alloc(MAX_GIT_TREE_RECORD_BYTES + 1, 0x61), Buffer.from([0])]),
+  ];
+  for (const output of invalid) {
+    await assert.rejects(async () => {
+      for await (const _entry of consumeGitTreeRecords(Readable.from([output]))) {
+        // Consume the complete stream so delayed framing failures are observable.
+      }
+    });
+  }
 });
 
 test("Git blob batch parsing streams exact objects across arbitrary chunk boundaries", async () => {
