@@ -4235,6 +4235,7 @@ export class LocalStateStore {
 
   async recoverInterruptedTurns(): Promise<void> {
     await this.#compact((current) => {
+      let changed = false;
       const inputReceiptByRequest = new Map(
         current.inputReceipts.map((receipt) => [receipt.requestId, receipt]),
       );
@@ -4270,6 +4271,7 @@ export class LocalStateStore {
           persistedFollowUpAt && persistedFollowUpAt >= receipt.createdAt,
         );
         if (persistedFollowUp) continue;
+        changed = true;
         replaceById(current.inputRequests, {
           ...request,
           state: "pending",
@@ -4292,6 +4294,7 @@ export class LocalStateStore {
         if (request.responseMode !== "native_resume") continue;
         const thread = threadById.get(request.threadId);
         if (thread?.provider !== "shikigami" || request.resumeState === "unavailable") continue;
+        changed = true;
         replaceById(current.inputRequests, {
           ...request,
           resumeState: "unavailable",
@@ -4324,6 +4327,7 @@ export class LocalStateStore {
           }
         }
       }
+      return changed;
     });
     await this.#writeQueue;
     const projection = this.#projection;
@@ -5049,13 +5053,14 @@ export class LocalStateStore {
     });
   }
 
-  async #compact(change: (projection: StateProjection) => void): Promise<void> {
+  async #compact(change: (projection: StateProjection) => void | boolean): Promise<void> {
     await this.#flushAllOpenAssistants();
     await this.#ensureLoaded();
     const operation = this.#enqueueWrite(async () => {
       if (this.#writeFailure) throw this.#writeFailure;
       const next = isolateProjectionCollections(this.#projection);
-      change(next);
+      const changed = change(next);
+      if (changed === false) return;
       // History rewrites always collapse stream-token rows so deletion and
       // retention reclaim fsync-heavy assistant logs from earlier hosts.
       next.messages = coalesceConsecutiveAssistantMessages(next.messages, next.activities);
