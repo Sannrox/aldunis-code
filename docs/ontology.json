@@ -10,6 +10,10 @@
       "description": "The local Aldunis Code HTTP host that composes repository, provider, approval, persistence, automation, projection, and presentation modules while preserving loopback and authenticated managed-mode authority."
     },
     {
+      "name": "StaticAssetStream",
+      "description": "A request-scoped Aldunis Code static-file ReadStream whose file descriptor, response listener, and pipe buffers are admitted within one host-wide 64-stream ceiling and released on source close, source error, or response disconnect."
+    },
+    {
       "name": "WakeStreamCoordinator",
       "description": "A request-scoped Aldunis Code host module that bounds thread-status invalidation buffering, honors HTTP writable backpressure, retains only the latest transition per bounded thread set, serializes managed visibility projection once per burst, and releases queued work and drain listeners on disconnect."
     },
@@ -617,6 +621,16 @@
       "cardinality": {
         "min": 0,
         "max": 32
+      }
+    },
+    {
+      "name": "coordinates_static_asset_streaming",
+      "description": "The local host admits at most 64 simultaneous static asset file streams after path resolution and before ReadStream construction, preserving content delivery while bounding file descriptors and pipe buffers.",
+      "domain": "AldunisLocalHost",
+      "range": "StaticAssetStream",
+      "cardinality": {
+        "min": 0,
+        "max": 64
       }
     },
     {
@@ -3053,6 +3067,18 @@
       "subject": "coordinates_wake_stream_delivery",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#767 and #1134",
       "locator": "server/wake-stream-routes.ts#WakeStreamAdmission; server/wake-stream-routes.ts#handleWakeStreamRoute; server/wake-stream.ts; https://github.com/Sannrox/aldunis-code/issues/1134",
+      "confidence": 1.0
+    },
+    {
+      "subject": "StaticAssetStream",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1137",
+      "locator": "server/host.ts#StaticAssetAdmission; server/host.ts#serveStatic; server/host.ts#pipeStaticAsset; https://github.com/Sannrox/aldunis-code/issues/1137",
+      "confidence": 1.0
+    },
+    {
+      "subject": "coordinates_static_asset_streaming",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1137",
+      "locator": "server/host.ts#createLocalHost; server/host.ts#StaticAssetAdmission; server/host.ts#serveStatic; https://github.com/Sannrox/aldunis-code/issues/1137",
       "confidence": 1.0
     },
     {
