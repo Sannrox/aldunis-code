@@ -419,6 +419,16 @@ type StateEvent =
   | { type: "thread_saved"; thread: Thread }
   | { type: "turn_saved"; turn: Turn }
   | { type: "message_saved"; message: Message }
+  | {
+      type: "message_text_appended";
+      messageTextAppend: {
+        schemaVersion: 2;
+        id: string;
+        turnId: string;
+        offset: number;
+        text: string;
+      };
+    }
   | { type: "activity_saved"; activity: Activity }
   | { type: "plan_saved"; plan: PlanArtifact }
   | { type: "context_receipt_saved"; contextReceipt: ContextReceipt }
@@ -1461,6 +1471,8 @@ function historyThreadIdForEvent(
       return event.turn.threadId;
     case "message_saved":
       return history.threadIdByTurn.get(event.message.turnId) ?? null;
+    case "message_text_appended":
+      return history.threadIdByTurn.get(event.messageTextAppend.turnId) ?? null;
     case "activity_saved":
       return history.threadIdByTurn.get(event.activity.turnId) ?? null;
     case "plan_saved":
@@ -1528,6 +1540,33 @@ function applyEvent(
   } else if (event.type === "message_saved") {
     const next = { ...event.message, eventSequence: envelope.sequence };
     replaceByIdDuringReplay(projection.messages, next, replayIndexes);
+    const threadId = conversationHistory?.threadIdByTurn.get(next.turnId);
+    if (conversationHistory && threadId)
+      indexSavedThreadRow(conversationHistory.messagesByThread, threadId, next);
+    if (messagesByTurn && delegatedChildTurnIds?.has(next.turnId))
+      indexSavedRow(messagesByTurn, next);
+  } else if (event.type === "message_text_appended") {
+    const append = event.messageTextAppend;
+    const existingIndex = replayIndexes
+      ? replayIndex(projection.messages, replayIndexes).get(append.id)
+      : projection.messages.findIndex((message) => message.id === append.id);
+    if (existingIndex === undefined || existingIndex < 0) {
+      throw new LocalStateError("Local history appends text to a missing message.");
+    }
+    const existing = projection.messages[existingIndex]!;
+    if (
+      existing.turnId !== append.turnId ||
+      existing.role !== "assistant" ||
+      existing.text.length !== append.offset
+    ) {
+      throw new LocalStateError("Local history appends text to a conflicting message.");
+    }
+    const next = {
+      ...existing,
+      text: existing.text + append.text,
+      eventSequence: envelope.sequence,
+    };
+    projection.messages[existingIndex] = next;
     const threadId = conversationHistory?.threadIdByTurn.get(next.turnId);
     if (conversationHistory && threadId)
       indexSavedThreadRow(conversationHistory.messagesByThread, threadId, next);
@@ -1761,6 +1800,7 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
     thread_saved: "thread",
     turn_saved: "turn",
     message_saved: "message",
+    message_text_appended: "messageTextAppend",
     activity_saved: "activity",
     plan_saved: "plan",
     context_receipt_saved: "contextReceipt",
@@ -1797,9 +1837,18 @@ function parseEnvelope(line: string, lineNumber: number): EventEnvelope {
         typeof forkThread.id !== "string")) ||
     (key === "providerSession"
       ? typeof payload.threadId !== "string" || typeof payload.sessionId !== "string"
-      : key === "conversationDeletion"
-        ? typeof payload.threadId !== "string"
-        : typeof payload.id !== "string")
+      : key === "messageTextAppend"
+        ? typeof payload.id !== "string" ||
+          payload.id.length === 0 ||
+          typeof payload.turnId !== "string" ||
+          payload.turnId.length === 0 ||
+          !Number.isSafeInteger(payload.offset) ||
+          Number(payload.offset) < 0 ||
+          typeof payload.text !== "string" ||
+          payload.text.length === 0
+        : key === "conversationDeletion"
+          ? typeof payload.threadId !== "string"
+          : typeof payload.id !== "string")
   ) {
     throw new LocalStateError(`Local history is corrupt at line ${lineNumber}.`);
   }
@@ -2511,13 +2560,27 @@ export class LocalStateStore {
     return result;
   }
 
-  async #writeMessageEnvelope(message: Message): Promise<void> {
+  async #writeMessageEnvelope(message: Message, durableLength = 0): Promise<void> {
+    const appendedText = durableLength > 0 ? message.text.slice(durableLength) : null;
+    if (appendedText !== null && !appendedText) return;
     const envelope: EventEnvelope = {
       schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
       sequence: this.#projection.sequence + 1,
       id: randomUUID(),
       recordedAt: new Date().toISOString(),
-      event: { type: "message_saved", message: { ...message } },
+      event:
+        appendedText === null
+          ? { type: "message_saved", message: { ...message } }
+          : {
+              type: "message_text_appended",
+              messageTextAppend: {
+                schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+                id: message.id,
+                turnId: message.turnId,
+                offset: durableLength,
+                text: appendedText,
+              },
+            },
     };
     const serialized = JSON.stringify(envelope);
     assertEventEnvelopeSize(serialized);
@@ -2611,7 +2674,7 @@ export class LocalStateStore {
     ) {
       return;
     }
-    await this.#writeMessageEnvelope(segment);
+    await this.#writeMessageEnvelope(segment, this.#openAssistantDurableLength.get(turnId) ?? 0);
     this.#openAssistantDurableLength.set(turnId, segment.text.length);
   }
 
@@ -2666,7 +2729,7 @@ export class LocalStateStore {
         return;
       }
       // Keep the map entry until the write succeeds so a failed fsync can retry.
-      await this.#writeMessageEnvelope(segment);
+      await this.#writeMessageEnvelope(segment, durableLength);
       this.#openAssistantByTurn.delete(turnId);
       this.#openAssistantEndsWithWhitespace.delete(turnId);
       this.#openAssistantDurableLength.delete(turnId);
