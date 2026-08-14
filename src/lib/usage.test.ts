@@ -95,6 +95,39 @@ test("usage reports aggregate bounded receipts and ignore running or stale recor
   assert.equal(report.endDate, "2026-08-08");
 });
 
+test("usage reports stream the retained receipt inventory without array materialization", () => {
+  const source = [
+    receipt({ id: "usage-first", turnId: "turn-first", inputTokens: 10, outputTokens: 2 }),
+    receipt({ id: "usage-running", turnId: "turn-running", status: "running" }),
+    receipt({
+      id: "usage-stale",
+      turnId: "turn-stale",
+      updatedAt: "2026-07-01T08:00:00.000Z",
+    }),
+  ];
+  const receipts = new Proxy(source, {
+    get(target, property, receiver) {
+      if (
+        property === "filter" ||
+        property === "map" ||
+        property === "slice" ||
+        property === "sort"
+      ) {
+        throw new Error(`receipt inventory must not call ${property}`);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+
+  const report = buildUsageReport(receipts, 7, new Date(now));
+
+  assert.equal(report.totals.observedTurns, 1);
+  assert.equal(report.totals.completedTurns, 1);
+  assert.equal(report.totals.processedTokens, 12);
+  assert.equal(report.providers[0]?.turns, 1);
+  assert.equal(report.models[0]?.turns, 1);
+});
+
 test("usage reports do not sum cumulative provider totals", () => {
   const report = buildUsageReport(
     [
@@ -109,6 +142,22 @@ test("usage reports do not sum cumulative provider totals", () => {
   assert.equal(report.totals.processedTokens, 0);
   assert.equal(report.providers[0]?.processedTokens, 0);
   assert.equal(report.daily.find((item) => item.date === "2026-08-08")?.processedTokens, 0);
+});
+
+test("usage reports preserve the shared unknown-model bucket", () => {
+  const report = buildUsageReport(
+    [
+      receipt({ id: "usage-null", turnId: "turn-null", model: null, inputTokens: 1 }),
+      receipt({ id: "usage-empty", turnId: "turn-empty", model: "", outputTokens: 2 }),
+    ],
+    7,
+    new Date(now),
+  );
+
+  assert.equal(report.models.length, 1);
+  assert.equal(report.models[0]?.model, null);
+  assert.equal(report.models[0]?.turns, 2);
+  assert.equal(report.models[0]?.processedTokens, 3);
 });
 
 test("usage reports include Claude cache input categories", () => {

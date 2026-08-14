@@ -158,18 +158,10 @@ export function buildUsageReport(
   const { start, end } = createRange(now, rangeDays);
   const startDate = dayKey(start);
   const endDate = dayKey(end);
-  const inRange = receipts
-    .filter((receipt) => receipt.status !== "running")
-    .filter((receipt) => {
-      const observedAt = Date.parse(receipt.updatedAt);
-      return (
-        Number.isFinite(observedAt) && observedAt >= start.getTime() && observedAt <= end.getTime()
-      );
-    });
 
   const totals: UsageTotals = {
-    observedTurns: inRange.length,
-    completedTurns: inRange.filter((receipt) => receipt.status === "completed").length,
+    observedTurns: 0,
+    completedTurns: 0,
     inputTokens: 0,
     outputTokens: 0,
     processedTokens: 0,
@@ -180,12 +172,12 @@ export function buildUsageReport(
     pricedTurns: 0,
   };
   const providers = new Map<ProviderId, UsageProviderSummary>();
-  const models = new Map<string, UsageModelSummary>();
-  const daily = new Map<string, UsageDailyPoint>();
+  const models = new Map<ProviderId, Map<string, UsageModelSummary>>();
+  const daily: UsageDailyPoint[] = [];
 
   for (let index = 0; index < rangeDays; index += 1) {
     const date = dayKey(new Date(start.getTime() + index * DAY_MS));
-    daily.set(date, {
+    daily.push({
       date,
       label: dayLabel(date),
       processedTokens: 0,
@@ -193,7 +185,15 @@ export function buildUsageReport(
     });
   }
 
-  for (const receipt of inRange) {
+  const startTime = start.getTime();
+  const endTime = end.getTime();
+  for (const receipt of receipts) {
+    if (receipt.status === "running") continue;
+    const observedAt = Date.parse(receipt.updatedAt);
+    if (!Number.isFinite(observedAt) || observedAt < startTime || observedAt > endTime) continue;
+
+    totals.observedTurns += 1;
+    if (receipt.status === "completed") totals.completedTurns += 1;
     const input = tokenValue(receipt.inputTokens) ?? 0;
     const output = tokenValue(receipt.outputTokens) ?? 0;
     const cached = tokenValue(receipt.cachedInputTokens) ?? 0;
@@ -215,9 +215,10 @@ export function buildUsageReport(
     if (costValue(receipt.reportedCostUsd) !== null) provider.pricedTurns += 1;
     providers.set(receipt.provider, provider);
 
-    const modelKey = `${receipt.provider}\n${receipt.model ?? ""}`;
+    const providerModels = models.get(receipt.provider) ?? new Map();
+    const modelKey = receipt.model ?? "";
     const model =
-      models.get(modelKey) ??
+      providerModels.get(modelKey) ??
       ({
         provider: receipt.provider,
         model: receipt.model,
@@ -232,10 +233,10 @@ export function buildUsageReport(
     model.inputTokens = addTotal(model.inputTokens, input);
     model.outputTokens = addTotal(model.outputTokens, output);
     model.reportedCostUsd = addCost(model.reportedCostUsd, receipt.reportedCostUsd);
-    models.set(modelKey, model);
+    providerModels.set(modelKey, model);
+    models.set(receipt.provider, providerModels);
 
-    const date = dayKey(receipt.updatedAt);
-    const point = daily.get(date);
+    const point = daily[Math.floor((observedAt - startTime) / DAY_MS)];
     if (point) {
       point.processedTokens = addTotal(point.processedTokens, processed);
       point.reportedCostUsd = addCost(point.reportedCostUsd, receipt.reportedCostUsd);
@@ -261,12 +262,14 @@ export function buildUsageReport(
       (left, right) =>
         right.processedTokens - left.processedTokens || left.provider.localeCompare(right.provider),
     ),
-    models: [...models.values()].sort(
-      (left, right) =>
-        right.processedTokens - left.processedTokens ||
-        left.provider.localeCompare(right.provider) ||
-        (left.model ?? "").localeCompare(right.model ?? ""),
-    ),
-    daily: [...daily.values()],
+    models: [...models.values()]
+      .flatMap((providerModels) => [...providerModels.values()])
+      .sort(
+        (left, right) =>
+          right.processedTokens - left.processedTokens ||
+          left.provider.localeCompare(right.provider) ||
+          (left.model ?? "").localeCompare(right.model ?? ""),
+      ),
+    daily,
   };
 }
