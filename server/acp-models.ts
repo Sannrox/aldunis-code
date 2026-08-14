@@ -7,6 +7,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readBoundedLines } from "./bounded-line-reader.mjs";
 import type { ReasoningEffort } from "./provider.ts";
 
 export interface AcpDiscoveredModel {
@@ -328,24 +329,7 @@ export async function probeAcpModels(options: {
       options.signal?.addEventListener("abort", abort, { once: true });
       if (options.signal?.aborted) abort();
 
-      let bufferedChunks: Buffer[] = [];
-      let bufferedBytes = 0;
       let sawInit = false;
-
-      const appendBuffered = (chunk: Buffer) => {
-        if (chunk.length === 0) return;
-        bufferedChunks.push(chunk);
-        bufferedBytes += chunk.length;
-      };
-      const takeBuffered = () => {
-        const line =
-          bufferedChunks.length === 1
-            ? bufferedChunks[0]
-            : Buffer.concat(bufferedChunks, bufferedBytes);
-        bufferedChunks = [];
-        bufferedBytes = 0;
-        return line;
-      };
 
       const send = (value: unknown) => {
         if (!child.stdin.destroyed && !child.stdin.writableEnded) {
@@ -367,21 +351,15 @@ export async function probeAcpModels(options: {
         },
       });
 
-      child.stdout.on("data", (chunk: Buffer | string) => {
-        if (settled) return;
-        const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        let offset = 0;
-        let newline = incoming.indexOf(0x0a, offset);
-        while (newline !== -1) {
-          const segment = incoming.subarray(offset, newline);
-          if (bufferedBytes + segment.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
-            finish([]);
-            return;
-          }
-          appendBuffered(segment);
-          const line = takeBuffered().toString("utf8").trim();
-          offset = newline + 1;
-          newline = incoming.indexOf(0x0a, offset);
+      void (async () => {
+        for await (const rawLine of readBoundedLines(
+          child.stdout,
+          MAX_ACP_MODEL_PROBE_MESSAGE_BYTES,
+          "ACP model probe emitted an oversized message.",
+          { trailer: "discard" },
+        )) {
+          if (settled) return;
+          const line = rawLine.toString("utf8").trim();
           if (!line) continue;
           let message: JsonRecord;
           try {
@@ -415,17 +393,8 @@ export async function probeAcpModels(options: {
             return;
           }
         }
-        const remainder = incoming.subarray(offset);
-        if (bufferedBytes + remainder.length > MAX_ACP_MODEL_PROBE_MESSAGE_BYTES) {
-          finish([]);
-          return;
-        }
-        appendBuffered(remainder);
-      });
-
-      child.stdout.on("end", () => {
         if (!sawInit) finish([]);
-      });
+      })().catch(() => finish([]));
     }).then((models) => {
       options.signal?.throwIfAborted();
       return models;
