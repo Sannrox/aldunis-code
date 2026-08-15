@@ -25,6 +25,10 @@ const LOCAL_BRANCH_DISCOVERY_TIMEOUT_MS = 5_000;
 const MAX_LOCAL_BRANCH_RECORD_BYTES = 64 * 1024;
 const MAX_LOCAL_BRANCH_STDERR_BYTES = 64 * 1024;
 export const MAX_LOCAL_BRANCH_SUGGESTIONS = 256;
+const DEFAULT_BRANCH_REMOTE_INSPECTION_TIMEOUT_MS = 5_000;
+const MAX_DEFAULT_BRANCH_REMOTE_RECORD_BYTES = 64 * 1024;
+const MAX_DEFAULT_BRANCH_REMOTE_STDERR_BYTES = 64 * 1024;
+export const MAX_DEFAULT_BRANCH_REMOTES = 256;
 const DEFAULT_BRANCH_CANDIDATES = new Set(["main", "master", "trunk", "develop"]);
 const INDEX_COPY_BUFFER_BYTES = 256 * 1024;
 const CHECKPOINT_INVENTORY_TIMEOUT_MS = 15_000;
@@ -100,9 +104,13 @@ async function git(
   }
 }
 
-async function optionalGit(worktree: string, args: string[]): Promise<string | null> {
+async function optionalGitCommand(
+  worktree: string,
+  args: string[],
+  command = "git",
+): Promise<string | null> {
   try {
-    const result = await execFileAsync("git", ["-C", worktree, ...args], {
+    const result = await execFileAsync(command, ["-C", worktree, ...args], {
       encoding: "utf8",
       timeout: 5_000,
       maxBuffer: 1024 * 1024,
@@ -1069,6 +1077,154 @@ export async function repositoryLocalBranchProjection(
   return { branches, count, truncated: count > branches.length };
 }
 
+async function streamDefaultBranchGitLines(
+  root: string,
+  args: string[],
+  command: string,
+  timeoutMs: number,
+  admit: (record: Buffer) => boolean | void,
+): Promise<{ stopped: boolean }> {
+  const child = spawn(command, ["-C", root, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_DEFAULT_BRANCH_REMOTE_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_DEFAULT_BRANCH_REMOTE_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  let pending = Buffer.alloc(0);
+  let stopped = false;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, timeoutMs);
+  timeout.unref?.();
+  const accept = (record: Buffer) => {
+    if (record.length > MAX_DEFAULT_BRANCH_REMOTE_RECORD_BYTES) {
+      throw new RepositoryError("A remote metadata record exceeded its resource limit.", 409);
+    }
+    if (admit(record) === false) {
+      stopped = true;
+      stop();
+    }
+  };
+  try {
+    for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(10, start);
+        if (end < 0) break;
+        accept(joined.subarray(start, end));
+        start = end + 1;
+        if (stopped) break;
+      }
+      if (stopped) break;
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_DEFAULT_BRANCH_REMOTE_RECORD_BYTES) {
+        throw new RepositoryError("A remote metadata record exceeded its resource limit.", 409);
+      }
+    }
+    const completion = await exit;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while inspecting remote defaults.", 409);
+    }
+    if (!stopped && pending.length > 0) accept(pending);
+    if (!stopped && completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(detail || "Git could not inspect remote defaults.", 409);
+    }
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while inspecting remote defaults.", 409);
+    }
+    throw new RepositoryError("Git could not inspect remote defaults.", 409);
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+  return { stopped };
+}
+
+async function configuredRepositoryRemotes(
+  root: string,
+  command: string,
+  timeoutMs: number,
+): Promise<{ remotes: Set<string>; overflow: boolean }> {
+  const remotes = new Set<string>();
+  let overflow = false;
+  await streamDefaultBranchGitLines(root, ["remote"], command, timeoutMs, (record) => {
+    const remote = record.toString("utf8").replace(/\r$/, "");
+    if (!remote) throw new RepositoryError("Git returned malformed remote metadata.", 409);
+    if (remotes.has(remote)) return;
+    if (remotes.size >= MAX_DEFAULT_BRANCH_REMOTES) {
+      overflow = true;
+      return false;
+    }
+    remotes.add(remote);
+  });
+  return { remotes, overflow };
+}
+
+interface RepositoryRemoteHead {
+  branch: string;
+  ref: string;
+}
+
+async function agreedRepositoryRemoteHead(
+  root: string,
+  configuredRemotes: ReadonlySet<string>,
+  command: string,
+  timeoutMs: number,
+): Promise<{ head: RepositoryRemoteHead | null; conflict: boolean }> {
+  let head: RepositoryRemoteHead | null = null;
+  let conflict = false;
+  await streamDefaultBranchGitLines(
+    root,
+    ["for-each-ref", "--format=%(refname:lstrip=2)%00%(symref:lstrip=2)", "refs/remotes/*/HEAD"],
+    command,
+    timeoutMs,
+    (record) => {
+      const separator = record.indexOf(0);
+      if (separator <= 0 || record.indexOf(0, separator + 1) >= 0) {
+        throw new RepositoryError("Git returned malformed remote HEAD metadata.", 409);
+      }
+      const refName = record.subarray(0, separator).toString("utf8");
+      const symbolicTarget = record.subarray(separator + 1).toString("utf8");
+      if (!refName.endsWith("/HEAD")) return;
+      const remote = refName.slice(0, -"/HEAD".length);
+      if (!configuredRemotes.has(remote) || !symbolicTarget.startsWith(`${remote}/`)) return;
+      const branch = symbolicTarget.slice(remote.length + 1);
+      if (!branch) return;
+      if (head && head.branch !== branch) {
+        conflict = true;
+        return false;
+      }
+      head ??= { branch, ref: symbolicTarget };
+    },
+  );
+  return { head, conflict };
+}
+
 /**
  * Resolve the repository default branch used when the operator does not pick
  * an explicit worktree base.
@@ -1082,39 +1238,29 @@ export async function repositoryLocalBranchProjection(
  * its default branch cannot be determined. Managed worktree creation still
  * succeeds when the operator selects an explicit local base branch.
  */
-export async function repositoryDefaultBranch(worktreePath: string): Promise<string | null> {
+export async function repositoryDefaultBranch(
+  worktreePath: string,
+  command = "git",
+  timeoutMs = DEFAULT_BRANCH_REMOTE_INSPECTION_TIMEOUT_MS,
+): Promise<string | null> {
   const root = await canonicalizeRepositoryRoot(worktreePath);
-  const remotes = (await optionalGit(root, ["remote"]))?.split(/\r?\n/).filter(Boolean) ?? [];
-  const remoteHeads: Array<{ remote: string; branch: string; ref: string }> = [];
-  for (const remote of remotes) {
-    const remoteHead = await optionalGit(root, [
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      `refs/remotes/${remote}/HEAD`,
-    ]);
-    if (!remoteHead || !remoteHead.startsWith(`${remote}/`)) continue;
-    remoteHeads.push({
-      remote,
-      branch: remoteHead.slice(remote.length + 1),
-      ref: remoteHead,
-    });
-  }
-  const remoteBranches = new Set(remoteHeads.map((head) => head.branch));
-  if (remoteBranches.size > 1) {
-    return null;
-  }
-  if (remoteHeads.length > 0) {
-    const { branch, ref } = remoteHeads[0]!;
-    const localBranch = await optionalGit(root, [
-      "rev-parse",
-      "--verify",
-      `refs/heads/${branch}^{commit}`,
-    ]);
-    return localBranch === null ? ref : branch;
+  const { remotes, overflow } = await configuredRepositoryRemotes(root, command, timeoutMs);
+  if (overflow) return null;
+  if (remotes.size > 0) {
+    const remoteHead = await agreedRepositoryRemoteHead(root, remotes, command, timeoutMs);
+    if (remoteHead.conflict) return null;
+    if (remoteHead.head) {
+      const { branch, ref } = remoteHead.head;
+      const localBranch = await optionalGitCommand(
+        root,
+        ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`],
+        command,
+      );
+      return localBranch === null ? ref : branch;
+    }
   }
 
-  const localBranches = await repositoryLocalBranches(root);
+  const localBranches = (await repositoryLocalBranchProjection(root, command)).branches;
   for (const candidate of ["main", "master", "trunk"]) {
     if (candidate && localBranches.includes(candidate)) return candidate;
   }
