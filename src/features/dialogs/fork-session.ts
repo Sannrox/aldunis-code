@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { hostFetch } from "../../lib/host-fetch";
 import type { ForkPreview, ProviderId, WorkspaceMode } from "../../types";
 
 export type ForkFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -70,7 +71,7 @@ export class ReviewedForkSessionModule {
   private readonly request: ForkFetch;
 
   constructor(adapters: ReviewedForkSessionAdapters = {}) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
   }
 
   getSnapshot = (): ReviewedForkSnapshot => this.snapshot;

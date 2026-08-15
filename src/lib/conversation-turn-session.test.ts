@@ -79,6 +79,50 @@ test("start streams NDJSON events and reports accepted turn identities", async (
   assert.equal(actions.filter((action) => action.type === "provider_event").length, 2);
 });
 
+test("default turn transport keeps Window.fetch bound to the global", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = function windowFetch(this: unknown, input: RequestInfo | URL) {
+    if (this !== globalThis) {
+      throw new TypeError("Can only call Window.fetch on instances of Window");
+    }
+    assert.equal(String(input), "/api/provider/runs");
+    return Promise.resolve(
+      new Response(ndjsonStream([]), {
+        status: 200,
+        headers: {
+          "x-provider-run-id": "run-sk",
+          "x-thread-id": "thread-sk",
+          "x-turn-id": "turn-sk",
+        },
+      }),
+    );
+  } as typeof fetch;
+  try {
+    const actions: ConversationRunAction[] = [];
+    const session = new ConversationTurnSessionModule({
+      now: () => "2026-08-15T17:00:00.000Z",
+    });
+    const result = await session.start({
+      body: { ...startBody(), provider: "shikigami" },
+      epoch: 1,
+      providerName: "Shikigami",
+      dispatch: (action) => actions.push(action),
+    });
+    assert.deepEqual(result, {
+      status: "completed",
+      runId: "run-sk",
+      threadId: "thread-sk",
+      turnId: "turn-sk",
+    });
+    assert.equal(
+      actions.some((action) => action.type === "transport_failed"),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("start failure before accept restores through failed/unaccepted result", async () => {
   const actions: ConversationRunAction[] = [];
   const session = new ConversationTurnSessionModule({

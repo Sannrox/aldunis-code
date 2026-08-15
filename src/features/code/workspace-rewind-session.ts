@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { hostFetch } from "../../lib/host-fetch";
 import type { CheckpointFile } from "../../types";
 
 export type RewindFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -61,7 +62,7 @@ export class WorkspaceRewindSessionModule {
   private readonly request: RewindFetch;
 
   constructor(adapters: WorkspaceRewindSessionAdapters = {}) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
   }
 
   getSnapshot = (): WorkspaceRewindSnapshot => this.snapshot;

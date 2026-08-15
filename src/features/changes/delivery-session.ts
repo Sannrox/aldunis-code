@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { hostFetch } from "../../lib/host-fetch";
 import type { DeliveryAction, DeliveryContext, DeliveryPlan, PullRequestDraft } from "../../types";
 
 export type DeliveryFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -90,7 +91,7 @@ export class ReviewedDeliverySessionModule {
   private readonly request: DeliveryFetch;
 
   constructor(adapters: ReviewedDeliverySessionAdapters = {}) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
   }
 
   getSnapshot = (): ReviewedDeliverySnapshot => this.snapshot;
