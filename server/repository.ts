@@ -18,6 +18,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const WORKTREE_CLASSIFICATION_CONCURRENCY = 8;
+const WORKTREE_DISCOVERY_TIMEOUT_MS = 5_000;
+const MAX_WORKTREE_DISCOVERY_RECORD_BYTES = 64 * 1024;
+const MAX_WORKTREE_DISCOVERY_STDERR_BYTES = 64 * 1024;
 const INDEX_COPY_BUFFER_BYTES = 256 * 1024;
 const CHECKPOINT_INVENTORY_TIMEOUT_MS = 15_000;
 const MAX_CHECKPOINT_INVENTORY_RECORD_BYTES = 64 * 1024;
@@ -803,26 +806,102 @@ export async function canonicalizeDiscoveredWorktreePaths(
   return new Set(canonicalPaths.filter((path): path is string => path !== null));
 }
 
-export async function discoverWorktrees(root: string): Promise<WorktreeMetadata[]> {
-  const result = await execFileAsync("git", ["-C", root, "worktree", "list", "--porcelain", "-z"], {
-    encoding: "utf8",
-    timeout: 5_000,
-    maxBuffer: 1024 * 1024,
+export async function discoverWorktrees(
+  root: string,
+  command = "git",
+): Promise<WorktreeMetadata[]> {
+  const child = spawn(command, ["-C", root, "worktree", "list", "--porcelain", "-z"], {
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  const fields = result.stdout.split("\0").filter(Boolean);
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_WORKTREE_DISCOVERY_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_WORKTREE_DISCOVERY_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  let pending = Buffer.alloc(0);
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, WORKTREE_DISCOVERY_TIMEOUT_MS);
+  timeout.unref?.();
   const records: DiscoveredWorktreeRecord[] = [];
   let current: DiscoveredWorktreeRecord | undefined;
-
-  for (const field of fields) {
-    const separator = field.indexOf(" ");
-    const key = separator === -1 ? field : field.slice(0, separator);
-    const value = separator === -1 ? true : field.slice(separator + 1);
-    if (key === "worktree") {
-      current = { worktree: value };
-      records.push(current);
-    } else if (current) {
-      current[key] = value;
+  try {
+    for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        if (end - start > MAX_WORKTREE_DISCOVERY_RECORD_BYTES) {
+          throw new RepositoryError(
+            "A worktree inventory record exceeded its resource limit.",
+            409,
+          );
+        }
+        const field = joined.toString("utf8", start, end);
+        start = end + 1;
+        if (!field) {
+          current = undefined;
+          continue;
+        }
+        const separator = field.indexOf(" ");
+        const key = separator === -1 ? field : field.slice(0, separator);
+        const value = separator === -1 ? true : field.slice(separator + 1);
+        if (key === "worktree" && typeof value === "string" && value && !current) {
+          current = { worktree: value };
+          records.push(current);
+        } else if (current) {
+          current[key] = value;
+        } else {
+          throw new RepositoryError("Git returned a malformed worktree inventory.", 409);
+        }
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_WORKTREE_DISCOVERY_RECORD_BYTES) {
+        throw new RepositoryError("A worktree inventory record exceeded its resource limit.", 409);
+      }
     }
+    const completion = await exit;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while discovering worktrees.", 409);
+    }
+    if (pending.length > 0 || current) {
+      throw new RepositoryError("Git returned an incomplete worktree inventory.", 409);
+    }
+    if (completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(detail || "Git could not discover repository worktrees.", 409);
+    }
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while discovering worktrees.", 409);
+    }
+    throw new RepositoryError("Git could not discover repository worktrees.", 409);
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
   }
 
   return classifyDiscoveredWorktrees(records);

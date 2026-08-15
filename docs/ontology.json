@@ -371,11 +371,11 @@
     },
     {
       "name": "RepositoryOpeningInspection",
-      "description": "The Aldunis Code repository-open inspection that canonicalizes one selection, discovers and classifies its worktree inventory once, reuses that inventory to resolve the primary checkout, and then loads branch metadata without duplicating worktree subprocess or filesystem I/O."
+      "description": "The Aldunis Code repository-open inspection that canonicalizes one selection, streams and classifies its complete worktree inventory once through bounded Git records, stderr, deadline, termination, and cleanup, reuses that inventory to resolve the primary checkout, and then loads branch metadata without duplicating worktree subprocess or filesystem I/O."
     },
     {
       "name": "WorktreeDiscoveryCoordinator",
-      "description": "The host-owned repository adapter that reads the complete ordered Git worktree registry, classifies every entry exactly once, and projects deduplicated canonical membership for default local and enterprise-managed selection through at most eight concurrent filesystem chains without changing worktree ownership, authority, or freshness."
+      "description": "The host-owned repository adapter that streams the complete ordered Git worktree registry through bounded records, stderr, deadline, exact-child termination, and cleanup, rejects incomplete or malformed authority, classifies every entry exactly once, and projects deduplicated canonical membership for default local and enterprise-managed selection through at most eight concurrent filesystem chains without changing worktree ownership, authority, or freshness."
     },
     {
       "name": "ManagedShikigamiProfile",
@@ -2584,9 +2584,21 @@
       "confidence": 1.0
     },
     {
+      "subject": "RepositoryOpeningInspection",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1187",
+      "locator": "server/repository.ts#discoverWorktrees; server/worktree-discovery-concurrency.test.ts",
+      "confidence": 1.0
+    },
+    {
       "subject": "WorktreeDiscoveryCoordinator",
       "source": "Aldunis Code repository adapter and Issues #803, #807, and #809",
       "locator": "server/repository.ts#discoverWorktrees; server/repository.ts#classifyDiscoveredWorktrees; server/repository.ts#canonicalizeDiscoveredWorktreePaths; server/managed-host.ts#ManagedHost.selectWorktree; https://github.com/Sannrox/aldunis-code/issues/803; https://github.com/Sannrox/aldunis-code/issues/807; https://github.com/Sannrox/aldunis-code/issues/809",
+      "confidence": 1.0
+    },
+    {
+      "subject": "WorktreeDiscoveryCoordinator",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1187",
+      "locator": "server/repository.ts#discoverWorktrees; server/worktree-discovery-concurrency.test.ts",
       "confidence": 1.0
     },
     {

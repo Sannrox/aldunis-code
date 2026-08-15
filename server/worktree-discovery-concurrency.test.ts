@@ -1,11 +1,45 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   canonicalizeDiscoveredWorktreePaths,
   classifyDiscoveredWorktrees,
+  discoverWorktrees,
   openRepository,
   WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY,
 } from "./repository.ts";
+
+test("worktree discovery streams inventories beyond the former one MiB ceiling", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-discovery-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const fixture = join(directory, "git-fixture");
+  const count = 15_000;
+  await writeFile(
+    fixture,
+    `#!/bin/bash
+set -eu
+i=0
+while [ "$i" -lt ${count} ]; do
+  printf 'worktree /tmp\\0HEAD 0123456789012345678901234567890123456789\\0branch refs/heads/codex/synthetic-%08d\\0\\0' "$i"
+  i=$((i + 1))
+done
+`,
+  );
+  await chmod(fixture, 0o700);
+
+  const worktrees = await discoverWorktrees("/tmp", fixture);
+
+  assert.equal(worktrees.length, count);
+  assert.deepEqual(worktrees[0], {
+    path: "/tmp",
+    head: "0123456789012345678901234567890123456789",
+    branch: "codex/synthetic-00000000",
+    state: "available",
+  });
+  assert.equal(worktrees.at(-1)?.branch, "codex/synthetic-00014999");
+});
 
 test("repository opening reuses one discovered worktree inventory", async () => {
   const calls: string[] = [];
