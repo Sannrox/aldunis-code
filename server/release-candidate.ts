@@ -17,6 +17,7 @@ const CANDIDATE_DOMAIN = Buffer.from("ALDUNIS-DELIVERY-CANDIDATE-V1\0", "ascii")
 const GIT_BATCH_IDLE_TIMEOUT_MS = 20_000;
 const MAX_GIT_BATCH_HEADER_BYTES = 256;
 const MAX_GIT_BATCH_STDERR_BYTES = 64 * 1024;
+export const MAX_ARTIFACT_TREE_BYTES = 32 * 1024 * 1024;
 const MAX_SOURCE_TREE_BATCH_ENTRIES = 256;
 export const MAX_GIT_TREE_RECORD_BYTES = 64 * 1024;
 const ARTIFACT_FILE_READ_BUFFER_BYTES = 256 * 1024;
@@ -582,9 +583,10 @@ export async function sourceTreeDigest(worktree: string): Promise<string> {
 
 async function hashArtifactPath(
   hash: ReturnType<typeof createHash>,
-  worktree: string,
   root: string,
   path: string,
+  committedTree: CommittedArtifactTree,
+  directoryPath: string,
 ): Promise<number> {
   const entries = await readdir(path, { withFileTypes: true });
   if (entries.length === 0) {
@@ -594,7 +596,13 @@ async function hashArtifactPath(
     );
   }
   entries.sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)));
-  const committedEntries = await committedArtifactDirectoryEntries(worktree, path);
+  const committedEntries = committedTree.get(directoryPath);
+  if (!committedEntries) {
+    throw new RepositoryError(
+      "Tenkai artifact inputs must match their committed directory entries.",
+      409,
+    );
+  }
   if (committedEntries.size !== entries.length) {
     throw new RepositoryError(
       "Tenkai artifact inputs must match their committed directory entries.",
@@ -631,7 +639,13 @@ async function hashArtifactPath(
     hash.update(permissions);
     if (metadata.isDirectory()) {
       hashBytes(hash, Buffer.from("dir"));
-      size += await hashArtifactPath(hash, worktree, root, child);
+      size += await hashArtifactPath(
+        hash,
+        root,
+        child,
+        committedTree,
+        directoryPath ? `${directoryPath}/${entry.name}` : entry.name,
+      );
     } else if (metadata.isFile()) {
       hashBytes(hash, Buffer.from("file"));
       size += await hashArtifactFile(hash, child);
@@ -887,19 +901,153 @@ type CommittedArtifactDirectoryEntry = {
   type: "blob" | "tree";
 };
 
-async function committedArtifactDirectoryEntries(
+type CommittedArtifactTree = Map<string, Map<string, CommittedArtifactDirectoryEntry>>;
+
+export async function committedArtifactTreeEntries(
   worktree: string,
   path: string,
-): Promise<Map<string, CommittedArtifactDirectoryEntry>> {
+  command = "git",
+  timeoutMs = GIT_BATCH_IDLE_TIMEOUT_MS,
+  maximumBytes = MAX_ARTIFACT_TREE_BYTES,
+): Promise<CommittedArtifactTree> {
   const relativePath = relative(worktree, path).split(sep).join("/");
-  const tree = (
-    await git(
-      worktree,
-      ["ls-tree", "-z", relativePath ? `HEAD:${relativePath}` : "HEAD:"],
-      "buffer",
-    )
-  ).stdout as Buffer;
-  return parseCommittedArtifactDirectoryEntries(tree);
+  const child = spawn(
+    command,
+    ["-C", worktree, "ls-tree", "-r", "-t", "-z", relativePath ? `HEAD:${relativePath}` : "HEAD:"],
+    {
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, timeoutMs);
+  timer.unref();
+  const exit = new Promise<{ code: number | null; error: Error | null }>((resolveExit) => {
+    child.once("error", (error) => resolveExit({ code: null, error }));
+    child.once("close", (code) => resolveExit({ code, error: null }));
+  });
+  const stderr = (async () => {
+    const chunks: Buffer[] = [];
+    let retained = 0;
+    for await (const rawChunk of child.stderr) {
+      if (retained >= MAX_GIT_BATCH_STDERR_BYTES) continue;
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      const bounded = chunk.subarray(0, MAX_GIT_BATCH_STDERR_BYTES - retained);
+      chunks.push(bounded);
+      retained += bounded.length;
+    }
+    return Buffer.concat(chunks).toString("utf8").trim();
+  })().then(
+    (text) => ({ text, error: null }),
+    (error: unknown) => ({
+      text: "",
+      error: error instanceof Error ? error : new Error("Git artifact stderr drain failed."),
+    }),
+  );
+  try {
+    const chunks: Buffer[] = [];
+    let retained = 0;
+    for await (const rawChunk of child.stdout) {
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      if (retained + chunk.length > maximumBytes) {
+        throw new Error("Committed artifact tree output exceeds its byte limit.");
+      }
+      chunks.push(chunk);
+      retained += chunk.length;
+    }
+    const outcome = await exit;
+    const stderrOutcome = await stderr;
+    if (timedOut || outcome.error || stderrOutcome.error || outcome.code !== 0) {
+      throw new Error(
+        stderrOutcome.text ||
+          outcome.error?.message ||
+          stderrOutcome.error?.message ||
+          "Git artifact tree process failed.",
+      );
+    }
+    return parseCommittedArtifactTreeEntries(Buffer.concat(chunks, retained));
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.stdout.destroy();
+    child.stderr.destroy();
+    await exit;
+    await stderr;
+    if (error instanceof RepositoryError) throw error;
+    throw new RepositoryError("The committed artifact tree could not be inspected.", 409);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function parseCommittedArtifactTreeEntries(tree: Buffer): CommittedArtifactTree {
+  const directories: CommittedArtifactTree = new Map([["", new Map()]]);
+  let offset = 0;
+  while (offset < tree.length) {
+    const end = tree.indexOf(0, offset);
+    if (end < 0) {
+      throw new RepositoryError("Committed artifact tree output is incomplete.", 409);
+    }
+    if (end - offset > MAX_GIT_TREE_RECORD_BYTES) {
+      throw new RepositoryError("A committed artifact tree entry is too large.", 409);
+    }
+    const bytes = tree.subarray(offset, end);
+    offset = end + 1;
+    if (bytes.length === 0) continue;
+    const tab = bytes.indexOf(0x09);
+    const metadata = bytes.subarray(0, tab).toString("ascii").split(" ");
+    const pathBytes = bytes.subarray(tab + 1);
+    const entryPath = pathBytes.toString("utf8");
+    const parts = entryPath.split("/");
+    const name = parts.at(-1) ?? "";
+    const parent = parts.slice(0, -1).join("/");
+    const type = metadata[1];
+    const mode = metadata[0];
+    let entries = directories.get(parent);
+    if (!entries) {
+      entries = new Map();
+      directories.set(parent, entries);
+    }
+    if (
+      tab < 0 ||
+      metadata.length !== 3 ||
+      !Buffer.from(entryPath, "utf8").equals(pathBytes) ||
+      entryPath !== entryPath.normalize("NFC") ||
+      parts.some((part) => !part || part === "." || part === "..") ||
+      // eslint-disable-next-line no-control-regex -- canonical paths reject ASCII control bytes.
+      /[\u0000-\u001f\u007f]/u.test(entryPath) ||
+      !(
+        (type === "blob" && ["100644", "100755"].includes(mode)) ||
+        (type === "tree" && mode === "040000")
+      ) ||
+      entries.has(name)
+    ) {
+      throw new RepositoryError("Committed artifact tree entries are not canonical.", 409);
+    }
+    entries.set(name, {
+      mode: type === "tree" || mode === "100755" ? 0o755 : 0o644,
+      type,
+    });
+    if (type === "tree" && !directories.has(entryPath)) directories.set(entryPath, new Map());
+  }
+  for (const directory of directories.keys()) {
+    if (!directory) continue;
+    const parts = directory.split("/");
+    const name = parts.pop() ?? "";
+    const parent = parts.join("/");
+    if (directories.get(parent)?.get(name)?.type !== "tree") {
+      throw new RepositoryError("Committed artifact tree entries are not canonical.", 409);
+    }
+  }
+  return directories;
 }
 
 export function parseCommittedArtifactDirectoryEntries(
@@ -1000,7 +1148,8 @@ async function artifactDigest(
     hashBytes(hash, Buffer.from(input));
     if (metadata.isDirectory()) {
       hashBytes(hash, Buffer.from("dir"));
-      size += await hashArtifactPath(hash, canonicalWorktree, canonicalWorkdir, path);
+      const committedTree = await committedArtifactTreeEntries(canonicalWorktree, path);
+      size += await hashArtifactPath(hash, canonicalWorkdir, path, committedTree, "");
     } else if (metadata.isFile()) {
       hashBytes(hash, Buffer.from("file"));
       size += await hashArtifactFile(hash, path);

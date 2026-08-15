@@ -26,10 +26,12 @@ import {
   type ArtifactFileOperations,
   consumeGitBlobBatch,
   consumeGitTreeRecords,
+  committedArtifactTreeEntries,
   deliveryCandidateIdentity,
   hashArtifactFile,
   hashReleaseLockFile,
   parseCommittedArtifactDirectoryEntries,
+  parseCommittedArtifactTreeEntries,
   prepareReleaseCandidate,
   readCommittedReleaseManifest,
   readReleasePackageManifest,
@@ -488,6 +490,140 @@ test("committed artifact directory parsing fails closed on malformed records", (
   for (const output of invalid) {
     assert.throws(() => parseCommittedArtifactDirectoryEntries(output));
   }
+});
+
+test("committed artifact tree parsing groups nested metadata without per-directory queries", () => {
+  const oid = "1".repeat(40);
+  const tree = parseCommittedArtifactTreeEntries(
+    Buffer.from(
+      `040000 tree ${oid}\tassets\0` +
+        `100644 blob ${oid}\tassets/plain.txt\0` +
+        `040000 tree ${oid}\tassets/tools\0` +
+        `100755 blob ${oid}\tassets/tools/run.sh\0` +
+        `100644 blob ${oid}\troot.txt\0`,
+    ),
+  );
+
+  assert.deepEqual(
+    [...(tree.get("") ?? [])].map(([name, entry]) => [name, entry.type, entry.mode]),
+    [
+      ["assets", "tree", 0o755],
+      ["root.txt", "blob", 0o644],
+    ],
+  );
+  assert.deepEqual(
+    [...(tree.get("assets") ?? [])].map(([name, entry]) => [name, entry.type, entry.mode]),
+    [
+      ["plain.txt", "blob", 0o644],
+      ["tools", "tree", 0o755],
+    ],
+  );
+  assert.deepEqual(
+    [...(tree.get("assets/tools") ?? [])].map(([name, entry]) => [name, entry.type, entry.mode]),
+    [["run.sh", "blob", 0o755]],
+  );
+});
+
+test("committed artifact tree parsing rejects orphaned and duplicate nested records", () => {
+  const oid = "1".repeat(40);
+  const invalid = [
+    Buffer.from(`100644 blob ${oid}\tmissing/payload.txt\0`),
+    Buffer.from(`100644 blob ${oid}\tnested\0` + `100644 blob ${oid}\tnested/payload.txt\0`),
+    Buffer.from(
+      `040000 tree ${oid}\tnested\0` +
+        `100644 blob ${oid}\tnested/payload.txt\0` +
+        `100644 blob ${oid}\tnested/payload.txt\0`,
+    ),
+    Buffer.from(`040000 tree ${oid}\tnested\0` + `100644 blob ${oid}\tnested/../escape\0`),
+  ];
+  for (const output of invalid) {
+    assert.throws(() => parseCommittedArtifactTreeEntries(output));
+  }
+});
+
+test("committed artifact tree inspection uses one bounded child", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-artifact-tree-child-"));
+  const command = join(root, "git-fixture.mjs");
+  const calls = join(root, "calls.txt");
+  const oid = "1".repeat(40);
+  await writeFile(
+    command,
+    [
+      "#!/usr/bin/env node",
+      'import { appendFileSync } from "node:fs";',
+      `appendFileSync(${JSON.stringify(calls)}, "call\\n");`,
+      `process.stdout.write(${JSON.stringify(`100644 blob ${oid}\tpayload.txt\0`)});`,
+    ].join("\n"),
+  );
+  await chmod(command, 0o755);
+
+  const tree = await committedArtifactTreeEntries(root, root, command, 10_000);
+
+  assert.equal((await readFile(calls, "utf8")).trim(), "call");
+  assert.equal(tree.get("")?.get("payload.txt")?.mode, 0o644);
+});
+
+test("committed artifact tree inspection bounds output and deadline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-artifact-tree-bounds-"));
+  const oversized = join(root, "oversized.mjs");
+  const stalled = join(root, "stalled.mjs");
+  await writeFile(
+    oversized,
+    ["#!/usr/bin/env node", 'process.stdout.write(Buffer.alloc(128, "a"));'].join("\n"),
+  );
+  await writeFile(
+    stalled,
+    ["#!/usr/bin/env node", "setInterval(() => undefined, 1_000);"].join("\n"),
+  );
+  await chmod(oversized, 0o755);
+  await chmod(stalled, 0o755);
+
+  await assert.rejects(
+    () => committedArtifactTreeEntries(root, root, oversized, 1_000, 64),
+    /could not be inspected/,
+  );
+  const started = performance.now();
+  await assert.rejects(
+    () => committedArtifactTreeEntries(root, root, stalled, 25),
+    /could not be inspected/,
+  );
+  assert.ok(performance.now() - started < 1_000);
+});
+
+test("committed artifact tree inspection keeps one Git child across hundreds of directories", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-artifact-tree-scale-"));
+  const artifact = join(root, "artifact");
+  await mkdir(artifact);
+  for (let index = 0; index < 300; index += 1) {
+    const directory = join(artifact, `directory-${index.toString().padStart(3, "0")}`);
+    await mkdir(directory);
+    await writeFile(join(directory, "payload.txt"), "x\n");
+  }
+  await execFileAsync("git", ["-C", root, "init", "-q", "-b", "main"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "fixture"]);
+  const command = join(root, "git-wrapper.mjs");
+  const calls = join(root, "calls.txt");
+  await writeFile(
+    command,
+    [
+      "#!/usr/bin/env node",
+      'import { appendFileSync } from "node:fs";',
+      'import { spawnSync } from "node:child_process";',
+      `appendFileSync(${JSON.stringify(calls)}, "call\\n");`,
+      'const result = spawnSync("git", process.argv.slice(2), { stdio: "inherit" });',
+      "process.exit(result.status ?? 1);",
+    ].join("\n"),
+  );
+  await chmod(command, 0o755);
+
+  const tree = await committedArtifactTreeEntries(root, artifact, command);
+
+  assert.equal((await readFile(calls, "utf8")).trim(), "call");
+  assert.equal(tree.size, 301);
+  assert.equal(tree.get("directory-299")?.get("payload.txt")?.type, "blob");
 });
 
 test("artifact file hashing closes its handle and rejects concurrent file changes", async () => {
