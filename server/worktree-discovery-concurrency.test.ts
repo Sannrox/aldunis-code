@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import {
   canonicalizeDiscoveredWorktreePaths,
   classifyDiscoveredWorktrees,
   discoverWorktrees,
   openRepository,
+  repositoryLocalBranchProjection,
+  MAX_LOCAL_BRANCH_SUGGESTIONS,
   WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY,
 } from "./repository.ts";
+
+const execFile = promisify(execFileCallback);
 
 test("worktree discovery streams inventories beyond the former one MiB ceiling", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-discovery-"));
@@ -39,6 +45,63 @@ done
     state: "available",
   });
   assert.equal(worktrees.at(-1)?.branch, "codex/synthetic-00014999");
+});
+
+test("local branch discovery bounds suggestions while counting inventories beyond one MiB", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-local-branches-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await execFile("git", ["init", "--quiet", directory]);
+  const fixture = join(directory, "git-fixture");
+  const syntheticCount = 80_000;
+  await writeFile(
+    fixture,
+    `#!/bin/bash
+set -eu
+i=0
+while [ "$i" -lt ${syntheticCount} ]; do
+  printf 'zz/synthetic-%08d\\n' "$i"
+  i=$((i + 1))
+done
+printf 'main\\n'
+`,
+  );
+  await chmod(fixture, 0o700);
+
+  const projection = await repositoryLocalBranchProjection(directory, fixture);
+
+  assert.equal(projection.count, syntheticCount + 1);
+  assert.equal(projection.branches.length, MAX_LOCAL_BRANCH_SUGGESTIONS);
+  assert.equal(projection.truncated, true);
+  assert.equal(projection.branches.includes("main"), true);
+  assert.deepEqual(
+    projection.branches,
+    [...projection.branches].sort((left, right) => left.localeCompare(right)),
+  );
+});
+
+test("local branch discovery force-terminates a child that exceeds its deadline", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-local-branch-timeout-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await execFile("git", ["init", "--quiet", directory]);
+  const fixture = join(directory, "git-fixture");
+  const pidFile = join(directory, "fixture.pid");
+  await writeFile(
+    fixture,
+    `#!/bin/bash
+set -eu
+printf '%s' "$$" > ${JSON.stringify(pidFile)}
+trap '' TERM
+while true; do sleep 1; done
+`,
+  );
+  await chmod(fixture, 0o700);
+
+  await assert.rejects(
+    repositoryLocalBranchProjection(directory, fixture, 500),
+    /did not finish while discovering local branches/,
+  );
+  const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
+  assert.throws(() => process.kill(pid, 0));
 });
 
 test("repository opening reuses one discovered worktree inventory", async () => {
@@ -76,6 +139,8 @@ test("repository opening reuses one discovered worktree inventory", async () => 
     root: "/repo",
     defaultBranch: "main",
     localBranches: ["main", "topic"],
+    localBranchCount: 2,
+    localBranchesTruncated: false,
     selectedWorktree: "/repo-linked",
     worktrees,
   });

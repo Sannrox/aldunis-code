@@ -3,6 +3,7 @@ import type { RepositoryMetadata, WorktreeCreationPlan, WorktreeRemovalPlan } fr
 import { Button, ModalSurface } from "../../components/ui";
 import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktree-base";
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
+import { BranchSuggestionInput } from "./branch-suggestion-input";
 
 export function WorktreeDialog({
   repository,
@@ -174,37 +175,20 @@ export function WorktreeDialog({
       ) : (
         <form onSubmit={previewCreate}>
           <label htmlFor="worktree-base">Start from</label>
-          {baseOptions.length > 0 ? (
-            <select
-              id="worktree-base"
-              name="worktree-base"
-              value={baseOptions.includes(base) ? base : baseOptions[0]}
-              onChange={(event) => {
-                setBase(event.target.value);
-                setPlan(null);
-              }}
-              disabled={busy}
-            >
-              {baseOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                  {option === repository.defaultBranch ? " (default)" : ""}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              id="worktree-base"
-              name="worktree-base"
-              value={base}
-              onChange={(event) => {
-                setBase(event.target.value);
-                setPlan(null);
-              }}
-              placeholder="main"
-              disabled={busy}
-            />
-          )}
+          <BranchSuggestionInput
+            id="worktree-base"
+            name="worktree-base"
+            value={base}
+            options={baseOptions}
+            defaultBranch={repository.defaultBranch}
+            branchCount={repository.localBranchCount}
+            truncated={repository.localBranchesTruncated}
+            onChange={(value) => {
+              setBase(value);
+              setPlan(null);
+            }}
+            disabled={busy}
+          />
           {!canCreate && !branch.trim() ? null : !base.trim() ? (
             <p role="alert">Choose a starting branch before creating a worktree.</p>
           ) : null}

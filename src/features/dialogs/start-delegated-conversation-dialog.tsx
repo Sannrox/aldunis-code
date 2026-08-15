@@ -12,6 +12,7 @@ import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktr
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
 import { ConversationTurnSessionModule } from "../../lib/conversation-turn-session";
+import { BranchSuggestionInput } from "./branch-suggestion-input";
 
 const conversationTurnSession = new ConversationTurnSessionModule();
 
@@ -67,13 +68,6 @@ export function StartDelegatedConversationDialog({
     setBase(initialBase);
     setPlan(null);
   }, [initialBase]);
-  useEffect(() => {
-    if (baseOptions.length > 0 && base && !baseOptions.includes(base)) {
-      setBase(baseOptions[0]!);
-    } else if (baseOptions.length > 0 && !base.trim()) {
-      setBase(baseOptions[0]!);
-    }
-  }, [base, baseOptions]);
   const claudeProfileId =
     parent.profileId ??
     profiles.find((profile) => profile.id === "default:claude-code")?.id ??
@@ -309,35 +303,19 @@ export function StartDelegatedConversationDialog({
             {isolated && (
               <>
                 <label htmlFor={baseId}>Start from</label>
-                {baseOptions.length > 0 ? (
-                  <select
-                    id={baseId}
-                    value={baseOptions.includes(base) ? base : baseOptions[0]}
-                    onChange={(event) => {
-                      setBase(event.target.value);
-                      setPlan(null);
-                    }}
-                    disabled={busy}
-                  >
-                    {baseOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                        {option === repository?.defaultBranch ? " (default)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    id={baseId}
-                    value={base}
-                    onChange={(event) => {
-                      setBase(event.target.value);
-                      setPlan(null);
-                    }}
-                    placeholder="main"
-                    disabled={busy}
-                  />
-                )}
+                <BranchSuggestionInput
+                  id={baseId}
+                  value={base}
+                  options={baseOptions}
+                  defaultBranch={repository?.defaultBranch}
+                  branchCount={repository?.localBranchCount}
+                  truncated={repository?.localBranchesTruncated}
+                  onChange={(value) => {
+                    setBase(value);
+                    setPlan(null);
+                  }}
+                  disabled={busy}
+                />
               </>
             )}
             <p className="delegated-start-note">

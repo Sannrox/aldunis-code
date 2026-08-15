@@ -21,6 +21,11 @@ const WORKTREE_CLASSIFICATION_CONCURRENCY = 8;
 const WORKTREE_DISCOVERY_TIMEOUT_MS = 5_000;
 const MAX_WORKTREE_DISCOVERY_RECORD_BYTES = 64 * 1024;
 const MAX_WORKTREE_DISCOVERY_STDERR_BYTES = 64 * 1024;
+const LOCAL_BRANCH_DISCOVERY_TIMEOUT_MS = 5_000;
+const MAX_LOCAL_BRANCH_RECORD_BYTES = 64 * 1024;
+const MAX_LOCAL_BRANCH_STDERR_BYTES = 64 * 1024;
+export const MAX_LOCAL_BRANCH_SUGGESTIONS = 256;
+const DEFAULT_BRANCH_CANDIDATES = new Set(["main", "master", "trunk", "develop"]);
 const INDEX_COPY_BUFFER_BYTES = 256 * 1024;
 const CHECKPOINT_INVENTORY_TIMEOUT_MS = 15_000;
 const MAX_CHECKPOINT_INVENTORY_RECORD_BYTES = 64 * 1024;
@@ -41,6 +46,8 @@ export interface RepositoryMetadata {
   defaultBranch: string | null;
   /** Local branch names available as worktree creation bases. */
   localBranches: string[];
+  localBranchCount: number;
+  localBranchesTruncated: boolean;
   selectedWorktree: string;
   worktrees: WorktreeMetadata[];
 }
@@ -940,13 +947,126 @@ export async function resolveRepositoryMainRoot(
  * Sorted for stable UI presentation. Remote-only refs are excluded.
  */
 export async function repositoryLocalBranches(worktreePath: string): Promise<string[]> {
+  return (await repositoryLocalBranchProjection(worktreePath)).branches;
+}
+
+export interface LocalBranchProjection {
+  branches: string[];
+  count: number;
+  truncated: boolean;
+}
+
+function retainLocalBranch(branches: string[], branch: string): void {
+  let low = 0;
+  let high = branches.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (branches[middle].localeCompare(branch) < 0) low = middle + 1;
+    else high = middle;
+  }
+  branches.splice(low, 0, branch);
+  if (branches.length > MAX_LOCAL_BRANCH_SUGGESTIONS) branches.pop();
+}
+
+export async function repositoryLocalBranchProjection(
+  worktreePath: string,
+  command = "git",
+  timeoutMs = LOCAL_BRANCH_DISCOVERY_TIMEOUT_MS,
+): Promise<LocalBranchProjection> {
   const root = await canonicalizeRepositoryRoot(worktreePath);
-  const localBranches =
-    (await optionalGit(root, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]))
-      ?.split(/\r?\n/)
-      .map((branch) => branch.trim())
-      .filter(Boolean) ?? [];
-  return [...new Set(localBranches)].sort((left, right) => left.localeCompare(right));
+  const child = spawn(
+    command,
+    ["-C", root, "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_LOCAL_BRANCH_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_LOCAL_BRANCH_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  let pending = Buffer.alloc(0);
+  let count = 0;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const branches: string[] = [];
+  const retainedDefaultCandidates = new Set<string>();
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, timeoutMs);
+  timeout.unref?.();
+  const admit = (record: Buffer) => {
+    const branch = record.toString("utf8").replace(/\r$/, "").trim();
+    if (!branch) throw new RepositoryError("Git returned a malformed local branch inventory.", 409);
+    count += 1;
+    if (DEFAULT_BRANCH_CANDIDATES.has(branch)) retainedDefaultCandidates.add(branch);
+    retainLocalBranch(branches, branch);
+  };
+  try {
+    for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(10, start);
+        if (end < 0) break;
+        if (end - start > MAX_LOCAL_BRANCH_RECORD_BYTES) {
+          throw new RepositoryError("A local branch name exceeded its resource limit.", 409);
+        }
+        admit(joined.subarray(start, end));
+        start = end + 1;
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_LOCAL_BRANCH_RECORD_BYTES) {
+        throw new RepositoryError("A local branch name exceeded its resource limit.", 409);
+      }
+    }
+    const completion = await exit;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while discovering local branches.", 409);
+    }
+    if (pending.length > 0) admit(pending);
+    if (completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(detail || "Git could not discover local branches.", 409);
+    }
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    if (timedOut) {
+      throw new RepositoryError("Git did not finish while discovering local branches.", 409);
+    }
+    throw new RepositoryError("Git could not discover local branches.", 409);
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+  for (const candidate of retainedDefaultCandidates) {
+    if (!branches.includes(candidate)) branches.push(candidate);
+  }
+  branches.sort((left, right) => left.localeCompare(right));
+  while (branches.length > MAX_LOCAL_BRANCH_SUGGESTIONS) {
+    const removable = branches.findLastIndex((branch) => !retainedDefaultCandidates.has(branch));
+    if (removable < 0) break;
+    branches.splice(removable, 1);
+  }
+  return { branches, count, truncated: count > branches.length };
 }
 
 /**
@@ -1128,7 +1248,7 @@ interface OpenRepositoryOperations {
     worktrees: ReadonlyArray<Pick<WorktreeMetadata, "path">>,
   ): Promise<string>;
   defaultBranch(root: string): Promise<string | null>;
-  localBranches(root: string): Promise<string[]>;
+  localBranches(root: string): Promise<LocalBranchProjection | string[]>;
 }
 
 const openRepositoryOperations: OpenRepositoryOperations = {
@@ -1136,7 +1256,7 @@ const openRepositoryOperations: OpenRepositoryOperations = {
   discover: discoverWorktrees,
   resolveMainRoot: resolveRepositoryMainRoot,
   defaultBranch: repositoryDefaultBranch,
-  localBranches: repositoryLocalBranches,
+  localBranches: repositoryLocalBranchProjection,
 };
 
 export async function openRepository(
@@ -1146,10 +1266,17 @@ export async function openRepository(
   const selected = await operations.canonicalize(input);
   const worktrees = await operations.discover(selected);
   const mainRoot = await operations.resolveMainRoot(selected, worktrees);
-  const [defaultBranch, localBranches] = await Promise.all([
+  const [defaultBranch, localBranchResult] = await Promise.all([
     operations.defaultBranch(mainRoot),
     operations.localBranches(mainRoot),
   ]);
+  const localBranchProjection = Array.isArray(localBranchResult)
+    ? {
+        branches: localBranchResult,
+        count: localBranchResult.length,
+        truncated: false,
+      }
+    : localBranchResult;
   return {
     name:
       mainRoot.split(sep).filter(Boolean).at(-1) ??
@@ -1157,7 +1284,9 @@ export async function openRepository(
       mainRoot,
     root: mainRoot,
     defaultBranch,
-    localBranches,
+    localBranches: localBranchProjection.branches,
+    localBranchCount: localBranchProjection.count,
+    localBranchesTruncated: localBranchProjection.truncated,
     selectedWorktree: selected,
     worktrees,
   };

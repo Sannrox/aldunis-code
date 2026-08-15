@@ -371,7 +371,7 @@
     },
     {
       "name": "RepositoryOpeningInspection",
-      "description": "The Aldunis Code repository-open inspection that canonicalizes one selection, streams and classifies its complete worktree inventory once through bounded Git records, stderr, deadline, termination, and cleanup, reuses that inventory to resolve the primary checkout, and then loads branch metadata without duplicating worktree subprocess or filesystem I/O."
+      "description": "The Aldunis Code repository-open inspection that canonicalizes one selection, streams and classifies its complete worktree inventory once through bounded Git records, stderr, deadline, termination, and cleanup, reuses that inventory to resolve the primary checkout, and streams the complete local-head inventory while retaining at most 256 deterministic branch suggestions plus an exact count and truncation signal. The renderer keeps those suggestions bounded in a typed input while the host validates the exact requested local ref."
     },
     {
       "name": "WorktreeDiscoveryCoordinator",
@@ -2587,6 +2587,12 @@
       "subject": "RepositoryOpeningInspection",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1187",
       "locator": "server/repository.ts#discoverWorktrees; server/worktree-discovery-concurrency.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "RepositoryOpeningInspection",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1189",
+      "locator": "server/repository.ts#repositoryLocalBranchProjection; src/features/dialogs/branch-suggestion-input.tsx; server/worktree-discovery-concurrency.test.ts",
       "confidence": 1.0
     },
     {
