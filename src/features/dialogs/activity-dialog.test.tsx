@@ -127,3 +127,23 @@ test("activity rows explain the next bounded operator action", () => {
   assert.equal(activityWorktreeLabel("/Users/example/project/.worktrees/feature"), "feature");
   assert.equal(activityWorktreeLabel(""), "selected worktree");
 });
+
+test("settled failed conversations leave Attention and match the Completed label", () => {
+  const settledFailed = conversation("settled-failed", "failed", "2026-08-04T13:00:00.000Z");
+  const openFailed = conversation("open-failed", "failed");
+  const items = [settledFailed, openFailed];
+
+  assert.equal(activityBucket(settledFailed), "completed");
+  assert.equal(activityBucket(openFailed), "attention");
+  assert.equal(activityStatusLabel(settledFailed.status, settledFailed.settledAt), "Completed");
+  assert.equal(activityNextActionLabel(settledFailed), "Review outcome");
+  assert.deepEqual(activityCounts(items), { attention: 1, running: 0, completed: 1, idle: 0 });
+  assert.deepEqual(
+    filterActivity(items, "attention").map(({ id }) => id),
+    ["open-failed"],
+  );
+  assert.deepEqual(
+    selectActivityRows(items, "attention").rows.map(({ id }) => id),
+    ["open-failed"],
+  );
+});
