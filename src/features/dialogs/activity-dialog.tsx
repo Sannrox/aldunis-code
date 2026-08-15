@@ -19,12 +19,15 @@ export const ACTIVITY_FILTERS: ActivityFilter[] = [
 ];
 
 export function activityBucket(conversation: ConversationSummary): ActivityBucket {
+  // Settle is the operator's done signal. A last-turn failure must not keep the
+  // row in Attention after the sidebar has already moved it to Settled.
+  if (conversation.settledAt) return "completed";
   const status = conversation.status ?? "idle";
   if (status === "pending_approval" || status === "awaiting_input" || status === "failed") {
     return "attention";
   }
   if (status === "running") return "running";
-  if (status === "completed" || conversation.settledAt) return "completed";
+  if (status === "completed") return "completed";
   return "idle";
 }
 
@@ -93,6 +96,7 @@ export function activityStatusLabel(
 }
 
 export function activityNextActionLabel(conversation: ConversationSummary): string {
+  if (conversation.settledAt) return "Review outcome";
   switch (conversation.status) {
     case "pending_approval":
       return "Resolve approval";
@@ -105,7 +109,7 @@ export function activityNextActionLabel(conversation: ConversationSummary): stri
     case "completed":
       return "Review outcome";
     default:
-      return conversation.settledAt ? "Review outcome" : "Resume conversation";
+      return "Resume conversation";
   }
 }
 

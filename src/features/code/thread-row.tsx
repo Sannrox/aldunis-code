@@ -10,7 +10,12 @@ import {
   providerLabel,
 } from "./conversation-list";
 import { WORKSPACE_MODE_COPY } from "../../lib/workspace-mode";
-import { canSnooze, resolveSnoozePresets, type SnoozePreset } from "../../lib/thread-snooze";
+import {
+  canSettleConversation,
+  canSnooze,
+  resolveSnoozePresets,
+  type SnoozePreset,
+} from "../../lib/thread-snooze";
 import { prStatusAriaLabel, prStatusLabel } from "../../lib/branch-pr-status";
 
 export type ConversationLifecycleAction = "rename" | "pin" | "archive" | "restore" | "delete";
@@ -90,6 +95,9 @@ export function ThreadRow({
     [menuOpen, onSnooze],
   );
   const snoozeAllowed = Boolean(onSnooze) && canSnooze(conversation) && !archivedView;
+  const settleAllowed =
+    Boolean(showSettle && onSettle) && canSettleConversation(conversation) && !archivedView;
+  const lifecycleMutationAllowed = canSettleConversation(conversation);
   const hasMenuActions = Boolean(
     onAction || (showBeside && onOpenBeside) || snoozeAllowed || prStatus,
   );
@@ -259,14 +267,14 @@ export function ThreadRow({
         </div>
       </button>
       <div className="row-actions">
-        {showSettle && onSettle && (
+        {settleAllowed && (
           <button
             type="button"
             className="settle"
             aria-label={`Settle "${conversation.title}" · ${listLabel}`}
             onClick={(event) => {
               event.stopPropagation();
-              onSettle();
+              onSettle?.();
             }}
           >
             Settle
@@ -389,7 +397,7 @@ export function ThreadRow({
                         >
                           Restore
                         </button>
-                      ) : (
+                      ) : lifecycleMutationAllowed ? (
                         <button
                           type="button"
                           role="menuitem"
@@ -401,19 +409,21 @@ export function ThreadRow({
                         >
                           Archive
                         </button>
+                      ) : null}
+                      {lifecycleMutationAllowed && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMenuOpen(false);
+                            onAction("delete", menuTriggerRef.current);
+                          }}
+                        >
+                          Delete
+                        </button>
                       )}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="danger"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setMenuOpen(false);
-                          onAction("delete", menuTriggerRef.current);
-                        }}
-                      >
-                        Delete
-                      </button>
                     </>
                   )}
                 </div>,
