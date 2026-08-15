@@ -10,11 +10,94 @@ import { createLocalHost, pipeStaticAsset, serveStatic, StaticAssetAdmission } f
 import { PreviewManager } from "./preview.ts";
 import { LocalStateStore } from "./state.ts";
 
+const STATIC_LIFECYCLE_TIMEOUT_MS = 10_000;
+
 function assertFormerPositionalInterfaceDoesNotTypeCheck() {
   // @ts-expect-error The host seam accepts one named options object.
   createLocalHost("dist", new LocalStateStore());
 }
 void assertFormerPositionalInterfaceDoesNotTypeCheck;
+
+class ObservableStaticAssetAdmission extends StaticAssetAdmission {
+  readonly #waiters = new Set<(count: number) => void>();
+
+  override tryAcquire(): (() => void) | null {
+    const release = super.tryAcquire();
+    if (!release) return null;
+    this.#notify();
+    return () => {
+      release();
+      this.#notify();
+    };
+  }
+
+  waitForActive(expected: number, label: string): Promise<void> {
+    if (this.activeCount === expected) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#waiters.delete(onCount);
+        reject(
+          new assert.AssertionError({
+            actual: this.activeCount,
+            expected,
+            message: `timed out waiting for ${label}`,
+            operator: "strictEqual",
+          }),
+        );
+      }, STATIC_LIFECYCLE_TIMEOUT_MS);
+      const onCount = (count: number) => {
+        if (count !== expected) return;
+        clearTimeout(timer);
+        this.#waiters.delete(onCount);
+        resolve();
+      };
+      this.#waiters.add(onCount);
+    });
+  }
+
+  #notify(): void {
+    const count = this.activeCount;
+    for (const waiter of this.#waiters) waiter(count);
+  }
+}
+
+type HeldStaticResponse = PassThrough & {
+  statusCode: number;
+  responseHeaders: Record<string, string>;
+  writeHead(status: number, headers: Record<string, string>): HeldStaticResponse;
+  headed: Promise<number>;
+};
+
+function createHeldStaticResponse(): HeldStaticResponse {
+  let resolveHead!: (status: number) => void;
+  const stream = new PassThrough({ highWaterMark: 1 }) as HeldStaticResponse;
+  stream.statusCode = 0;
+  stream.responseHeaders = {};
+  stream.headed = new Promise((resolve) => {
+    resolveHead = resolve;
+  });
+  stream.writeHead = (status, headers) => {
+    stream.statusCode = status;
+    stream.responseHeaders = headers;
+    resolveHead(status);
+    return stream;
+  };
+  return stream;
+}
+
+async function waitForHeaded(response: HeldStaticResponse, label: string): Promise<number> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`timed out waiting for ${label}`));
+    }, STATIC_LIFECYCLE_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([response.headed, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 test("static asset reads close with an aborted response", async () => {
   const source = new PassThrough();
@@ -46,38 +129,20 @@ test("static asset admission rejects overflow before opening files and recovers 
   const directory = await mkdtemp(join(tmpdir(), "aldunis-static-admission-"));
   const asset = join(directory, "asset.js");
   await writeFile(asset, "x".repeat(1024 * 1024));
-  const admission = new StaticAssetAdmission(2);
+  const admission = new ObservableStaticAssetAdmission(2);
   const request = { url: "/asset.js" } as IncomingMessage;
-  const response = () => {
-    const stream = new PassThrough({ highWaterMark: 1 }) as PassThrough & {
-      statusCode: number;
-      responseHeaders: Record<string, string>;
-      writeHead(status: number, headers: Record<string, string>): typeof stream;
-    };
-    stream.statusCode = 0;
-    stream.responseHeaders = {};
-    stream.writeHead = (status, headers) => {
-      stream.statusCode = status;
-      stream.responseHeaders = headers;
-      return stream;
-    };
-    return stream;
-  };
-  const waitForActive = async (expected: number) => {
-    for (let attempt = 0; attempt < 100 && admission.activeCount !== expected; attempt += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    assert.equal(admission.activeCount, expected);
-  };
-  const first = response();
-  const second = response();
+  const first = createHeldStaticResponse();
+  const second = createHeldStaticResponse();
+  const recovered = createHeldStaticResponse();
 
   try {
     await serveStatic(request, first as unknown as ServerResponse, directory, admission);
     await serveStatic(request, second as unknown as ServerResponse, directory, admission);
-    await waitForActive(2);
+    await admission.waitForActive(2, "two admitted static streams");
+    assert.equal(await waitForHeaded(first, "first static stream headers"), 200);
+    assert.equal(await waitForHeaded(second, "second static stream headers"), 200);
 
-    const overflow = response();
+    const overflow = createHeldStaticResponse();
     await serveStatic(request, overflow as unknown as ServerResponse, directory, admission);
     assert.equal(overflow.statusCode, 503);
     assert.equal(overflow.responseHeaders["retry-after"], "1");
@@ -85,22 +150,21 @@ test("static asset admission rejects overflow before opening files and recovers 
     assert.equal(admission.activeCount, 2);
 
     first.destroy();
-    await waitForActive(1);
+    await first.closed;
+    await admission.waitForActive(1, "release after the first stream closes");
 
-    const recovered = response();
     await serveStatic(request, recovered as unknown as ServerResponse, directory, admission);
-    await waitForActive(2);
-    for (let attempt = 0; attempt < 100 && recovered.statusCode === 0; attempt += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    assert.equal(recovered.statusCode, 200);
+    await admission.waitForActive(2, "recovered static stream admission");
+    assert.equal(await waitForHeaded(recovered, "recovered static stream headers"), 200);
 
     second.destroy();
     recovered.destroy();
-    await waitForActive(0);
+    await Promise.all([second.closed, recovered.closed]);
+    await admission.waitForActive(0, "all static streams released");
   } finally {
     first.destroy();
     second.destroy();
+    recovered.destroy();
     await rm(directory, { recursive: true, force: true });
   }
 });
