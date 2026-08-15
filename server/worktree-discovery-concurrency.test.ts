@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,13 +9,65 @@ import {
   canonicalizeDiscoveredWorktreePaths,
   classifyDiscoveredWorktrees,
   discoverWorktrees,
+  MAX_DEFAULT_BRANCH_REMOTES,
   openRepository,
+  repositoryDefaultBranch,
   repositoryLocalBranchProjection,
   MAX_LOCAL_BRANCH_SUGGESTIONS,
   WORKTREE_DISCOVERY_CLASSIFICATION_CONCURRENCY,
 } from "./repository.ts";
 
 const execFile = promisify(execFileCallback);
+
+async function configuredRemoteFixture(count: number, withHeads: boolean) {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-default-remotes-"));
+  await execFile("git", ["init", "--quiet", directory]);
+  await execFile("git", [
+    "-C",
+    directory,
+    "-c",
+    "user.name=Aldunis Test",
+    "-c",
+    "user.email=test@example.invalid",
+    "commit",
+    "--allow-empty",
+    "--quiet",
+    "-m",
+    "fixture",
+  ]);
+  await execFile("git", ["-C", directory, "branch", "-M", "main"]);
+  const gitDirectory = join(directory, ".git");
+  const existingConfig = await readFile(join(gitDirectory, "config"), "utf8");
+  const remotes = Array.from(
+    { length: count },
+    (_, index) => `remote-${String(index).padStart(3, "0")}`,
+  );
+  await writeFile(
+    join(gitDirectory, "config"),
+    `${existingConfig}${remotes.map((remote) => `\n[remote "${remote}"]\n\turl = .\n`).join("")}`,
+  );
+  if (withHeads) {
+    const revision = (await execFile("git", ["-C", directory, "rev-parse", "HEAD"])).stdout.trim();
+    for (const remote of remotes) {
+      const remoteDirectory = join(gitDirectory, "refs", "remotes", remote);
+      await mkdir(remoteDirectory, { recursive: true });
+      await writeFile(join(remoteDirectory, "main"), `${revision}\n`);
+      await writeFile(join(remoteDirectory, "HEAD"), `ref: refs/remotes/${remote}/main\n`);
+    }
+  }
+  const calls = join(directory, "git-calls");
+  const wrapper = join(directory, "git-fixture");
+  await writeFile(
+    wrapper,
+    `#!/bin/bash
+set -eu
+printf '%s\\n' "$*" >> ${JSON.stringify(calls)}
+exec git "$@"
+`,
+  );
+  await chmod(wrapper, 0o700);
+  return { calls, directory, wrapper };
+}
 
 test("worktree discovery streams inventories beyond the former one MiB ceiling", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "aldunis-worktree-discovery-"));
@@ -99,6 +151,93 @@ while true; do sleep 1; done
   await assert.rejects(
     repositoryLocalBranchProjection(directory, fixture, 500),
     /did not finish while discovering local branches/,
+  );
+  const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
+  assert.throws(() => process.kill(pid, 0));
+});
+
+test("default branch remote overflow stops after one bounded Git child", async (t) => {
+  const fixture = await configuredRemoteFixture(MAX_DEFAULT_BRANCH_REMOTES + 44, false);
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+
+  assert.equal(await repositoryDefaultBranch(fixture.directory, fixture.wrapper), null);
+  const calls = (await readFile(fixture.calls, "utf8")).trim().split("\n");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, / remote$/);
+});
+
+test("default branch agreement uses constant Git children at the inspection ceiling", async (t) => {
+  const fixture = await configuredRemoteFixture(MAX_DEFAULT_BRANCH_REMOTES, true);
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+
+  assert.equal(await repositoryDefaultBranch(fixture.directory, fixture.wrapper), "main");
+  const calls = (await readFile(fixture.calls, "utf8")).trim().split("\n");
+  assert.equal(calls.length, 3);
+  assert.equal(
+    calls.some((call) => call.includes(" symbolic-ref ")),
+    false,
+  );
+  assert.equal(calls.filter((call) => call.includes(" for-each-ref ")).length, 1);
+});
+
+test("default branch inspection ignores unconfigured stale remote HEADs", async (t) => {
+  const fixture = await configuredRemoteFixture(1, true);
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const staleDirectory = join(fixture.directory, ".git", "refs", "remotes", "stale");
+  const revision = (
+    await execFile("git", ["-C", fixture.directory, "rev-parse", "HEAD"])
+  ).stdout.trim();
+  await mkdir(staleDirectory, { recursive: true });
+  await writeFile(join(staleDirectory, "develop"), `${revision}\n`);
+  await writeFile(join(staleDirectory, "HEAD"), "ref: refs/remotes/stale/develop\n");
+
+  assert.equal(await repositoryDefaultBranch(fixture.directory, fixture.wrapper), "main");
+});
+
+test("default branch inspection rejects malformed remote HEAD framing", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-default-remote-malformed-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await execFile("git", ["init", "--quiet", directory]);
+  const fixture = join(directory, "git-fixture");
+  await writeFile(
+    fixture,
+    `#!/bin/bash
+set -eu
+if [[ "$*" == *" for-each-ref "* ]]; then
+  printf 'origin/HEAD\\0origin/main\\0unexpected\\n'
+else
+  printf 'origin\\n'
+fi
+`,
+  );
+  await chmod(fixture, 0o700);
+
+  await assert.rejects(
+    repositoryDefaultBranch(directory, fixture),
+    /malformed remote HEAD metadata/,
+  );
+});
+
+test("default branch inspection force-terminates a child past its deadline", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-default-remote-timeout-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await execFile("git", ["init", "--quiet", directory]);
+  const fixture = join(directory, "git-fixture");
+  const pidFile = join(directory, "fixture.pid");
+  await writeFile(
+    fixture,
+    `#!/bin/bash
+set -eu
+printf '%s' "$$" > ${JSON.stringify(pidFile)}
+trap '' TERM
+while true; do sleep 1; done
+`,
+  );
+  await chmod(fixture, 0o700);
+
+  await assert.rejects(
+    repositoryDefaultBranch(directory, fixture, 500),
+    /did not finish while inspecting remote defaults/,
   );
   const pid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
   assert.throws(() => process.kill(pid, 0));
