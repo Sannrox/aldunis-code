@@ -27,6 +27,9 @@ export function shouldRefreshAfterRestoredTurn(
   previous: { turnId: string; status: RestoredTurnStatus } | null,
   current: { turnId: string; status: RestoredTurnStatus },
 ): boolean {
-  return previous?.turnId === current.turnId
-    && sidebarStatus(previous.status) !== sidebarStatus(current.status);
+  // The inbox list defaults to idle until a projection refresh lands. The first
+  // recovered observation — and a later turn with a new id — must still move
+  // Attention / Approval when the projected sidebar status changed.
+  const previousStatus = previous ? sidebarStatus(previous.status) : "idle";
+  return previousStatus !== sidebarStatus(current.status);
 }

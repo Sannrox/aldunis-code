@@ -33,18 +33,34 @@ test("refreshes when a restored active turn reaches a non-blocking terminal stat
   }
 });
 
-test("does not refresh initial, equivalent, or different-turn observations", () => {
+test("refreshes the first recovered attention status and a later turn id", () => {
   assert.equal(
-    shouldRefreshAfterRestoredTurn(null, { turnId: "turn-1", status: "completed" }),
-    false,
+    shouldRefreshAfterRestoredTurn(null, { turnId: "turn-1", status: "waiting_for_approval" }),
+    true,
+  );
+  assert.equal(
+    shouldRefreshAfterRestoredTurn(null, { turnId: "turn-1", status: "waiting_for_user" }),
+    true,
+  );
+  assert.equal(shouldRefreshAfterRestoredTurn(null, { turnId: "turn-1", status: "failed" }), true);
+  assert.equal(
+    shouldRefreshAfterRestoredTurn(
+      { turnId: "turn-1", status: "completed" },
+      { turnId: "turn-2", status: "waiting_for_approval" },
+    ),
+    true,
   );
   assert.equal(
     shouldRefreshAfterRestoredTurn(
       { turnId: "turn-1", status: "running" },
-      { turnId: "turn-1", status: "waiting_for_approval" },
+      { turnId: "turn-2", status: "completed" },
     ),
     true,
   );
+});
+
+test("does not refresh equivalent sidebar status, including first idle", () => {
+  assert.equal(shouldRefreshAfterRestoredTurn(null, { turnId: "turn-1", status: "idle" }), false);
   assert.equal(
     shouldRefreshAfterRestoredTurn(
       { turnId: "turn-1", status: "active" },
@@ -54,7 +70,7 @@ test("does not refresh initial, equivalent, or different-turn observations", () 
   );
   assert.equal(
     shouldRefreshAfterRestoredTurn(
-      { turnId: "turn-1", status: "running" },
+      { turnId: "turn-1", status: "completed" },
       { turnId: "turn-2", status: "completed" },
     ),
     false,

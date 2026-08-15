@@ -31,7 +31,7 @@ import {
 import { CodeSidebar, type ProjectFilter } from "./sidebar";
 import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
-import { branchFromWorktree, conversationListFromProjection } from "./conversation-list";
+import { branchFromWorktree } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
 import { Button, CloseButton, WorkbenchDialog } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
@@ -58,9 +58,15 @@ import {
   createWorkbenchProjectionSynchronization,
   isThreadStatusEvent,
   reconcileWorkbenchConversations,
+  workbenchProjectionSnapshot,
   type WorkbenchProjectionSnapshot,
   type WorkbenchStateProjection,
 } from "./workbench-projection-sync";
+import {
+  nextRestoreStateAfterProjectionAccept,
+  nextRestoreStateAfterRestoreFailure,
+  workbenchConversationPanesVisible,
+} from "./workbench-inbox-load";
 import { loadChangedFiles, loadFreshChangedFiles } from "../../lib/changed-files-load";
 import { ConversationLifecycleControl } from "../../lib/conversation-lifecycle-control";
 import { OptionalControlBoundary } from "../../components/optional-control-boundary";
@@ -841,6 +847,23 @@ export function CodeWorkbench({
     repository ? "loading" : "idle",
   );
   const [restoreAttempt, setRestoreAttempt] = useState(0);
+  const projectionAcceptedReference = useRef(false);
+  const acceptStateProjection = (snapshot: WorkbenchProjectionSnapshot) => {
+    projectionAcceptedReference.current = true;
+    setConversations((current) => reconcileWorkbenchConversations(snapshot.conversations, current));
+    setDelegatedRelationships(snapshot.delegatedRelationships);
+    setDelegatedOutcomes(snapshot.delegatedOutcomes);
+    setDelegatedApprovals(snapshot.delegatedApprovals);
+    setDelegatedInputs(snapshot.delegatedInputs);
+    setIncompleteDeletionIds(snapshot.incompleteDeletionIds);
+    if (snapshot.managedWorktreeCount !== undefined) {
+      setManagedWorktreeCount(snapshot.managedWorktreeCount);
+    }
+    if (snapshot.managedWorktreePaths !== undefined) {
+      setManagedWorktreePaths(snapshot.managedWorktreePaths);
+    }
+    setRestoreState((current) => nextRestoreStateAfterProjectionAccept(current));
+  };
   const splitReference = useRef<HTMLDivElement>(null);
   const restoredProjectReference = useRef<string | null>(null);
   /** Last projectId we asked the host to open for the active primary thread (dedupes async switch). */
@@ -896,11 +919,14 @@ export function CodeWorkbench({
   // fields so restore does not pay for a second sequential projection round-trip.
   useEffect(() => {
     let active = true;
+    projectionAcceptedReference.current = false;
     setRestoreState("loading");
     const restore = async () => {
       const projection = (await loadLocalStateProjection()) as WorkbenchStateProjection;
       if (!active) return;
-      const available = conversationListFromProjection(projection, null);
+      const snapshot = workbenchProjectionSnapshot(projection);
+      acceptStateProjection(snapshot);
+      const available = snapshot.conversations;
       // Only apply stored selection on the first successful load.
       if (restoredProjectReference.current === null) {
         const parameters = new URLSearchParams(window.location.search);
@@ -942,7 +968,12 @@ export function CodeWorkbench({
     void restore().catch(() => {
       if (!active) return;
       restoredProjectReference.current = null;
-      setRestoreState("failed");
+      setRestoreState((current) =>
+        nextRestoreStateAfterRestoreFailure({
+          current,
+          projectionAccepted: projectionAcceptedReference.current,
+        }),
+      );
     });
     return () => {
       active = false;
@@ -1061,20 +1092,6 @@ export function CodeWorkbench({
     : "";
   const primarySelectionKey = primaryId ?? `new:${primaryNewKey}`;
   const activeConversation = activePane === "secondary" ? secondary : primary;
-  const acceptStateProjection = (snapshot: WorkbenchProjectionSnapshot) => {
-    setConversations((current) => reconcileWorkbenchConversations(snapshot.conversations, current));
-    setDelegatedRelationships(snapshot.delegatedRelationships);
-    setDelegatedOutcomes(snapshot.delegatedOutcomes);
-    setDelegatedApprovals(snapshot.delegatedApprovals);
-    setDelegatedInputs(snapshot.delegatedInputs);
-    setIncompleteDeletionIds(snapshot.incompleteDeletionIds);
-    if (snapshot.managedWorktreeCount !== undefined) {
-      setManagedWorktreeCount(snapshot.managedWorktreeCount);
-    }
-    if (snapshot.managedWorktreePaths !== undefined) {
-      setManagedWorktreePaths(snapshot.managedWorktreePaths);
-    }
-  };
   const stateProjectionSynchronizationReference = useRef<ReturnType<
     typeof createWorkbenchProjectionSynchronization
   > | null>(null);
@@ -1436,6 +1453,8 @@ export function CodeWorkbench({
         repositoryRestoring={repositoryRestoring}
         projects={projects}
         projectFilter={projectFilter}
+        inboxLoadState={restoreState}
+        onRetryInboxLoad={() => setRestoreAttempt((value) => value + 1)}
         onProjectFilterChange={(filter) => {
           setProjectFilter(filter);
           if (filter === "all") closeSidebarAfterMobileNavigation();
@@ -1695,7 +1714,10 @@ export function CodeWorkbench({
                 </Button>
               </div>
             )}
-            {(restoreState === "ready" || !repository) && (
+            {workbenchConversationPanesVisible({
+              restoreState,
+              hasRepository: Boolean(repository),
+            }) && (
               <>
                 {secondaryId && (
                   <nav className="pane-switcher" aria-label="Visible conversation pane">

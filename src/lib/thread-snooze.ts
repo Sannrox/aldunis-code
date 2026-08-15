@@ -107,6 +107,15 @@ export function canSnooze(thread: Pick<ThreadSnoozeFields, "status">): boolean {
 }
 
 /**
+ * Host settle/archive/delete 409 while a turn is running or blocked on the
+ * operator. Failed last turns may be settled. Running may be snoozed.
+ */
+export function canSettleConversation(thread: Pick<ThreadSnoozeFields, "status">): boolean {
+  const status = thread.status ?? "idle";
+  return status !== "pending_approval" && status !== "awaiting_input" && status !== "running";
+}
+
+/**
  * Hidden from the ordinary inbox while the wake time is in the future and the
  * thread has not raised its hand for approval or input.
  */

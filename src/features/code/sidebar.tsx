@@ -26,6 +26,7 @@ import { ManagedAccountPanel } from "./managed-account-panel";
 import { SIDEBAR_TOGGLE_SHORTCUT_LABEL } from "../../lib/sidebar-state";
 import { snoozeWakeLabel, type SnoozePreset } from "../../lib/thread-snooze";
 import { startSidebarSnoozeClock } from "../../lib/sidebar-snooze-clock";
+import { sidebarInboxEmptyMode, type WorkbenchRestoreState } from "./workbench-inbox-load";
 
 export type ProjectFilter = "all" | string;
 
@@ -50,6 +51,8 @@ export function CodeSidebar({
   repositoryRestoring = false,
   projects,
   projectFilter,
+  inboxLoadState = "ready",
+  onRetryInboxLoad,
   onProjectFilterChange,
   onAddProject,
   onSelectProject,
@@ -95,6 +98,9 @@ export function CodeSidebar({
   projects: SavedProject[];
   /** "all" inbox or a single project id. */
   projectFilter: ProjectFilter;
+  /** Inbox restore/sync outcome. Failed loads must not look like a genuine empty list. */
+  inboxLoadState?: WorkbenchRestoreState;
+  onRetryInboxLoad?: () => void;
   onProjectFilterChange: (filter: ProjectFilter) => void;
   /** Rare: open path picker to register a new project. */
   onAddProject: () => void;
@@ -161,6 +167,10 @@ export function CodeSidebar({
     () => groupSidebarConversations(conversations, showingArchived, nowMs),
     [conversations, showingArchived, nowMs],
   );
+  const inboxEmptyMode = sidebarInboxEmptyMode({
+    restoreState: inboxLoadState,
+    hasVisibleConversations: conversations.length > 0,
+  });
 
   useEffect(() => {
     if (!sidebarOpen) return;
@@ -648,7 +658,25 @@ export function CodeSidebar({
                 );
               })}
             </div>
-            {active.length === 0 && attention.length === 0 && projects.length > 0 && (
+            {inboxEmptyMode === "loading" && (
+              <div className="empty-list" role="status">
+                <span>Restoring conversations…</span>
+              </div>
+            )}
+            {inboxEmptyMode === "failed" && (
+              <div className="empty-list" role="alert">
+                <span>Local conversations could not be loaded.</span>
+                <button
+                  type="button"
+                  className="empty-list-action"
+                  aria-label="Retry loading local conversations"
+                  onClick={onRetryInboxLoad}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {inboxEmptyMode === "empty" && projects.length > 0 && (
               <div className="empty-list">
                 <span>
                   {showingArchived

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assertValidSnoozeUntil,
+  canSettleConversation,
   canSnooze,
   isEffectivelySnoozed,
   resolveSnoozePresets,
@@ -70,6 +71,15 @@ test("canSnooze rejects only operator-blocking statuses", () => {
   assert.equal(canSnooze({ status: "pending_approval" }), false);
   assert.equal(canSnooze({ status: "awaiting_input" }), false);
   assert.equal(threadNeedsAttentionWhileSnoozed({ status: "pending_approval" }), true);
+});
+
+test("canSettleConversation matches host settle/archive/delete 409s", () => {
+  assert.equal(canSettleConversation({ status: "idle" }), true);
+  assert.equal(canSettleConversation({ status: "completed" }), true);
+  assert.equal(canSettleConversation({ status: "failed" }), true);
+  assert.equal(canSettleConversation({ status: "running" }), false);
+  assert.equal(canSettleConversation({ status: "pending_approval" }), false);
+  assert.equal(canSettleConversation({ status: "awaiting_input" }), false);
 });
 
 test("wake labels compact remaining time", () => {
