@@ -438,6 +438,10 @@ export interface DeliveryContext {
   remotes: Array<{ name: string; url: string }>;
   staged: string[];
   unstaged: string[];
+  stagedCount: number;
+  unstagedCount: number;
+  changedCount: number;
+  truncated: boolean;
 }
 export interface DeliveryPlan {
   id: string;

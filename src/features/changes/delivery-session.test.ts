@@ -12,6 +12,10 @@ const context = (): DeliveryContext => ({
   remotes: [{ name: "origin", url: "https://example.test/repo.git" }],
   staged: [],
   unstaged: ["src/a.ts"],
+  stagedCount: 0,
+  unstagedCount: 1,
+  changedCount: 1,
+  truncated: false,
 });
 
 const plan = (): DeliveryPlan => ({

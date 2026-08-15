@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { MAX_PENDING_APPROVAL_PLANS, retainBoundedPendingPlan } from "./pending-plan-retention.ts";
@@ -9,6 +9,10 @@ const execFileAsync = promisify(execFile);
 const PLAN_TTL_MS = 5 * 60_000;
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
 const MAX_DRAFT_PATHS = 40;
+export const MAX_DELIVERY_CHANGED_PATHS = 256;
+const MAX_DELIVERY_STATUS_RECORD_BYTES = 64 * 1024;
+const MAX_DELIVERY_STATUS_STDERR_BYTES = 64 * 1024;
+const DELIVERY_STATUS_TIMEOUT_MS = 15_000;
 
 export type DeliveryAction = "stage" | "commit" | "push" | "pull_request";
 
@@ -21,6 +25,10 @@ export interface DeliveryContext {
   remotes: Array<{ name: string; url: string }>;
   staged: string[];
   unstaged: string[];
+  stagedCount: number;
+  unstagedCount: number;
+  changedCount: number;
+  truncated: boolean;
 }
 
 export interface DeliveryPlan {
@@ -66,6 +74,194 @@ async function git(worktree: string, args: string[]) {
   return run(worktree, "git", args);
 }
 
+function comparePaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function retainDeliveryPath(paths: string[], path: string): void {
+  if (path.length > 1_024 || paths.includes(path)) return;
+  let low = 0;
+  let high = paths.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (comparePaths(paths[middle]!, path) < 0) low = middle + 1;
+    else high = middle;
+  }
+  if (paths.length >= MAX_DELIVERY_CHANGED_PATHS && low >= paths.length) return;
+  paths.splice(low, 0, path);
+  if (paths.length > MAX_DELIVERY_CHANGED_PATHS) paths.pop();
+}
+
+interface DeliveryStatusProjection {
+  staged: string[];
+  unstaged: string[];
+  stagedCount: number;
+  unstagedCount: number;
+  changedCount: number;
+}
+
+async function readDeliveryStatus(worktree: string): Promise<DeliveryStatusProjection> {
+  const child = spawn(
+    "git",
+    ["-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        GIT_LITERAL_PATHSPECS: "1",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    },
+  );
+  const exit = new Promise<{ code: number | null; childSignal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, childSignal) => resolveExit({ code, childSignal }));
+    },
+  );
+  const projection: DeliveryStatusProjection = {
+    staged: [],
+    unstaged: [],
+    stagedCount: 0,
+    unstagedCount: 0,
+    changedCount: 0,
+  };
+  const stderr: Buffer[] = [];
+  let stderrBytes = 0;
+  let pending = Buffer.alloc(0);
+  let renameState: { staged: boolean; unstaged: boolean } | null = null;
+  let timedOut = false;
+  let escalation: ReturnType<typeof setTimeout> | null = null;
+  const stop = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    child.kill("SIGTERM");
+    escalation ??= setTimeout(() => child.kill("SIGKILL"), 250);
+    escalation.unref?.();
+  };
+  child.stderr.on("data", (chunk: Buffer) => {
+    if (stderrBytes >= MAX_DELIVERY_STATUS_STDERR_BYTES) return;
+    const retained = chunk.subarray(0, MAX_DELIVERY_STATUS_STDERR_BYTES - stderrBytes);
+    stderr.push(Buffer.from(retained));
+    stderrBytes += retained.length;
+  });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    stop();
+  }, DELIVERY_STATUS_TIMEOUT_MS);
+  timeout.unref?.();
+  const retain = (path: string, staged: boolean, unstaged: boolean) => {
+    projection.changedCount += 1;
+    if (staged) {
+      projection.stagedCount += 1;
+      retainDeliveryPath(projection.staged, path);
+    }
+    if (unstaged) {
+      projection.unstagedCount += 1;
+      retainDeliveryPath(projection.unstaged, path);
+    }
+  };
+  const accept = (record: Buffer) => {
+    if (record.length > MAX_DELIVERY_STATUS_RECORD_BYTES) {
+      throw new RepositoryError("A delivery status record exceeded its resource limit.", 409);
+    }
+    if (renameState) {
+      retain(record.toString("utf8"), renameState.staged, renameState.unstaged);
+      renameState = null;
+      return;
+    }
+    if (record.length < 3 || record[2] !== 32) {
+      throw new RepositoryError("Git returned an invalid delivery status record.", 409);
+    }
+    const index = String.fromCharCode(record[0]!);
+    const worktreeState = String.fromCharCode(record[1]!);
+    const staged = index !== " " && index !== "?";
+    const unstaged = worktreeState !== " " || index === "?";
+    retain(record.subarray(3).toString("utf8"), staged, unstaged);
+    if (index === "R" || index === "C" || worktreeState === "R" || worktreeState === "C") {
+      renameState = { staged, unstaged };
+    }
+  };
+  try {
+    for await (const chunk of child.stdout) {
+      const bytes = chunk as Buffer;
+      const joined = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+      let start = 0;
+      for (;;) {
+        const end = joined.indexOf(0, start);
+        if (end < 0) break;
+        accept(joined.subarray(start, end));
+        start = end + 1;
+      }
+      pending = Buffer.from(joined.subarray(start));
+      if (pending.length > MAX_DELIVERY_STATUS_RECORD_BYTES) {
+        throw new RepositoryError("A delivery status record exceeded its resource limit.", 409);
+      }
+    }
+    const completion = await exit;
+    if (timedOut) throw new RepositoryError("Git did not finish inspecting delivery state.", 409);
+    if (pending.length > 0 || renameState) {
+      throw new RepositoryError("Git returned an incomplete delivery status inventory.", 409);
+    }
+    if (completion.code !== 0) {
+      const detail = Buffer.concat(stderr, stderrBytes).toString("utf8").trim();
+      throw new RepositoryError(sanitizeDiagnostic(detail) || "The Git action failed.", 409);
+    }
+    return projection;
+  } catch (error) {
+    if (error instanceof RepositoryError) throw error;
+    throw new RepositoryError("The Git action failed.", 409);
+  } finally {
+    clearTimeout(timeout);
+    stop();
+    await exit.catch(() => undefined);
+    if (escalation) clearTimeout(escalation);
+  }
+}
+
+function statusPaths(status: string): Set<string> {
+  const fields = status.split("\0");
+  const paths = new Set<string>();
+  for (let position = 0; position < fields.length; position += 1) {
+    const field = fields[position];
+    if (!field) continue;
+    paths.add(field.slice(3));
+    if (field[0] === "R" || field[0] === "C" || field[1] === "R" || field[1] === "C") {
+      const previousPath = fields[++position];
+      if (previousPath) paths.add(previousPath);
+    }
+  }
+  return paths;
+}
+
+function unstagedStatusPaths(status: string): Set<string> {
+  const fields = status.split("\0");
+  const paths = new Set<string>();
+  for (let position = 0; position < fields.length; position += 1) {
+    const field = fields[position];
+    if (!field) continue;
+    const unstaged = field[1] !== " " || field[0] === "?";
+    if (unstaged) paths.add(field.slice(3));
+    if (field[0] === "R" || field[0] === "C" || field[1] === "R" || field[1] === "C") {
+      const previousPath = fields[++position];
+      if (unstaged && previousPath) paths.add(previousPath);
+    }
+  }
+  return paths;
+}
+
+async function mixedStagedPaths(worktree: string, staged: string[]): Promise<string[]> {
+  const mixed = new Set<string>();
+  for (let index = 0; index < staged.length; index += 50) {
+    const batch = staged.slice(index, index + 50);
+    const status = (await git(worktree, ["status", "--porcelain=v1", "-z", "--", ...batch])).stdout;
+    const unstaged = unstagedStatusPaths(status);
+    for (const path of batch) {
+      if (unstaged.has(path)) mixed.add(path);
+    }
+  }
+  return [...mixed];
+}
+
 async function fingerprint(
   worktree: string,
   action: DeliveryAction,
@@ -75,6 +271,10 @@ async function fingerprint(
   const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
   if (action === "stage") {
     const status = (await git(worktree, ["status", "--porcelain=v1", "-z", "--", ...paths])).stdout;
+    const changed = statusPaths(status);
+    if (paths.some((path) => !changed.has(path))) {
+      throw new RepositoryError("Only currently changed files can be staged.", 409);
+    }
     const hashes: string[] = [];
     for (const path of paths) {
       const object = await git(worktree, ["hash-object", "--", path]).catch(() => null);
@@ -168,38 +368,19 @@ export async function inspectDelivery(
   repository: string,
   worktree: string,
 ): Promise<DeliveryContext> {
-  const [branchResult, upstreamResult, remotesResult, statusResult] = await Promise.all([
+  const [branchResult, upstreamResult, remotesResult, status] = await Promise.all([
     git(worktree, ["branch", "--show-current"]),
     git(worktree, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).catch(
       () => null,
     ),
     git(worktree, ["remote", "-v"]),
-    git(worktree, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
+    readDeliveryStatus(worktree),
   ]);
   const branch = branchResult.stdout.trim() || null;
   const remoteMap = new Map<string, string>();
   for (const line of remotesResult.stdout.trim().split("\n").filter(Boolean)) {
     const match = line.match(/^(\S+)\s+(\S+)\s+\(push\)$/);
     if (match) remoteMap.set(match[1], match[2]);
-  }
-  const staged = new Set<string>();
-  const unstaged = new Set<string>();
-  const fields = statusResult.stdout.split("\0");
-  for (let position = 0; position < fields.length; position += 1) {
-    const field = fields[position];
-    if (!field) continue;
-    const index = field[0];
-    const worktreeState = field[1];
-    const path = field.slice(3);
-    if (index !== " " && index !== "?") staged.add(path);
-    if (worktreeState !== " " || index === "?") unstaged.add(path);
-    if (index === "R" || index === "C" || worktreeState === "R" || worktreeState === "C") {
-      const previousPath = fields[++position];
-      if (previousPath) {
-        if (index !== " ") staged.add(previousPath);
-        if (worktreeState !== " ") unstaged.add(previousPath);
-      }
-    }
   }
   return {
     repository,
@@ -208,8 +389,13 @@ export async function inspectDelivery(
     detached: branch === null,
     upstream: upstreamResult?.stdout.trim() || null,
     remotes: [...remoteMap].map(([name, url]) => ({ name, url: remoteDestination(url) })),
-    staged: [...staged].sort(),
-    unstaged: [...unstaged].sort(),
+    staged: status.staged,
+    unstaged: status.unstaged,
+    stagedCount: status.stagedCount,
+    unstagedCount: status.unstagedCount,
+    changedCount: status.changedCount,
+    truncated:
+      status.stagedCount > status.staged.length || status.unstagedCount > status.unstaged.length,
   };
 }
 
@@ -245,7 +431,7 @@ export function pullRequestDraft(context: DeliveryContext, baseInput: unknown): 
   const base = assertText(baseInput, "A base branch", 240);
   const paths = [...new Set([...context.staged, ...context.unstaged])].sort();
   const changedFiles = paths.slice(0, MAX_DRAFT_PATHS);
-  const omittedFiles = Math.max(0, paths.length - changedFiles.length);
+  const omittedFiles = Math.max(0, context.changedCount - changedFiles.length);
   const title = `Update ${branchTitle(context.branch)}`.slice(0, 120).trim();
   const pathLines =
     changedFiles.length > 0
@@ -261,7 +447,7 @@ export function pullRequestDraft(context: DeliveryContext, baseInput: unknown): 
     "## Review surface",
     `- Head: \`${markdownCode(context.branch)}\``,
     `- Base: \`${markdownCode(base)}\``,
-    `- Changed paths: ${paths.length}`,
+    `- Changed paths: ${context.changedCount}`,
     "",
     "## Changed paths",
     ...pathLines,
@@ -328,18 +514,20 @@ export class DeliveryBroker {
     if (action === "stage") {
       const paths = Array.isArray(input.paths) ? [...new Set(input.paths.map(assertPath))] : [];
       if (!paths.length) throw new RepositoryError("Select at least one changed file to stage.");
-      const known = new Set([...context.staged, ...context.unstaged]);
-      if (paths.some((path) => !known.has(path))) {
-        throw new RepositoryError("Only currently changed files can be staged.", 409);
-      }
       args = ["add", "--", ...paths];
       summary = `Stage ${paths.length} selected ${paths.length === 1 ? "file" : "files"}`;
       details = paths;
     } else if (action === "commit") {
       const message = assertText(input.message, "A commit message", 240);
+      if (context.stagedCount > context.staged.length) {
+        throw new RepositoryError(
+          `Commit review is limited to ${MAX_DELIVERY_CHANGED_PATHS} staged files. Split the commit before continuing.`,
+          409,
+        );
+      }
       if (!context.staged.length)
         throw new RepositoryError("Stage reviewed changes before committing.", 409);
-      const mixed = context.staged.filter((path) => context.unstaged.includes(path));
+      const mixed = await mixedStagedPaths(worktree, context.staged);
       if (mixed.length) {
         throw new RepositoryError(
           `Commit review requires staged files without additional unstaged edits: ${mixed.join(", ")}.`,

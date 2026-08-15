@@ -483,7 +483,7 @@
     },
     {
       "name": "ReviewedDeliverySessionModule",
-      "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned git delivery inspect, pull-request draft, prepare, and single-use execute, stale-inspect suppression, plan invalidation, and selected-path admission behind one snapshot-and-command interface while ChangesPanel retains chrome, DeliveryRouteDispatchModule retains host git authority, and Tenkai remains the owner of release delivery."
+      "description": "A deep renderer-side Aldunis Code module that concentrates Code-owned git delivery inspect with validated bounded change counts and truncation, pull-request draft, prepare, and single-use execute, stale-inspect suppression, plan invalidation, and selected-path admission behind one snapshot-and-command interface while ChangesPanel retains chrome, DeliveryRouteDispatchModule retains host git authority, and Tenkai remains the owner of release delivery."
     },
     {
       "name": "ReviewedForkSessionModule",
@@ -527,7 +527,7 @@
     },
     {
       "name": "DeliveryRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, streamed Git delivery status with a 256-path staged and unstaged projection, exact counts, explicit truncation, bounded records, stderr, deadlines, termination, and child cleanup, fail-closed complete staged-set commit review, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
     },
     {
       "name": "BranchPrStatusPollingCoordinator",
@@ -3022,6 +3022,12 @@
       "confidence": 1.0
     },
     {
+      "subject": "DeliveryRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1185",
+      "locator": "server/delivery.ts#readDeliveryStatus; server/delivery.ts#inspectDelivery; server/delivery.ts#DeliveryBroker",
+      "confidence": 1.0
+    },
+    {
       "subject": "BranchPrStatusPollingCoordinator",
       "source": "Aldunis Code Issues Sannrox/aldunis-code#785 and #972",
       "locator": "src/lib/branch-pr-status.ts; src/features/code/workbench.tsx; server/delivery-routes.ts; server/branch-pr.ts",
@@ -3289,6 +3295,12 @@
       "subject": "ReviewedDeliverySessionModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#944",
       "locator": "src/features/changes/delivery-session.ts#ReviewedDeliverySessionModule; src/features/changes/changes-panel.tsx#ChangesPanel",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ReviewedDeliverySessionModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1185",
+      "locator": "src/features/changes/delivery-session.ts#isDeliveryContext",
       "confidence": 1.0
     },
     {
