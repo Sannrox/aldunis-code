@@ -946,7 +946,13 @@ export async function committedArtifactTreeEntries(
       retained += bounded.length;
     }
     return Buffer.concat(chunks).toString("utf8").trim();
-  })();
+  })().then(
+    (text) => ({ text, error: null }),
+    (error: unknown) => ({
+      text: "",
+      error: error instanceof Error ? error : new Error("Git artifact stderr drain failed."),
+    }),
+  );
   try {
     const chunks: Buffer[] = [];
     let retained = 0;
@@ -959,9 +965,14 @@ export async function committedArtifactTreeEntries(
       retained += chunk.length;
     }
     const outcome = await exit;
-    const errorText = await stderr;
-    if (timedOut || outcome.error || outcome.code !== 0) {
-      throw new Error(errorText || outcome.error?.message || "Git artifact tree process failed.");
+    const stderrOutcome = await stderr;
+    if (timedOut || outcome.error || stderrOutcome.error || outcome.code !== 0) {
+      throw new Error(
+        stderrOutcome.text ||
+          outcome.error?.message ||
+          stderrOutcome.error?.message ||
+          "Git artifact tree process failed.",
+      );
     }
     return parseCommittedArtifactTreeEntries(Buffer.concat(chunks, retained));
   } catch (error) {
