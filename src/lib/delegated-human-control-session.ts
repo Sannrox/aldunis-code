@@ -6,6 +6,7 @@ import type {
   ThreadStatus,
 } from "../types";
 import { delegatedConversationAncestorIds } from "./delegated-conversation-graph";
+import { hostFetch } from "./host-fetch";
 
 export interface DelegatedHumanControlSessionSnapshot {
   selectedChildId: string;
@@ -57,7 +58,7 @@ export class DelegatedHumanControlSessionModule {
     private readonly parentThreadId: string,
     adapters: DelegatedHumanControlSessionAdapters,
   ) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
     this.refresh = adapters.refresh;
   }
 

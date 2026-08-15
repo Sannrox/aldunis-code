@@ -1,4 +1,5 @@
 import type { InteractionMode } from "../types";
+import { hostFetch } from "./host-fetch";
 
 export interface MailboxTransfer {
   id: string;
@@ -95,7 +96,7 @@ export class ConversationMailboxSessionModule {
   private readonly request: typeof fetch;
 
   constructor(adapters: { request?: typeof fetch } = {}) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
   }
 
   async send(body: MailboxSendBody): Promise<MailboxTransfer> {

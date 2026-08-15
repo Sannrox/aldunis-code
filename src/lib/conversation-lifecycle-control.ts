@@ -1,4 +1,5 @@
 import type { ConversationSummary } from "../types";
+import { hostFetch } from "./host-fetch";
 
 export interface ConversationPaneSelection {
   primaryId: string | null;
@@ -46,7 +47,7 @@ export function bulkReleaseFailureMessage(
 export class ConversationLifecycleControl {
   constructor(
     private readonly refresh: () => Promise<unknown>,
-    private readonly request: LifecycleFetch = fetch,
+    private readonly request: LifecycleFetch = hostFetch,
   ) {}
 
   async pin(threadId: string, pinned: boolean): Promise<void> {

@@ -8,6 +8,7 @@ import type {
   WorkspaceMode,
 } from "../types";
 import type { ConversationRunAction } from "./conversation-run";
+import { hostFetch } from "./host-fetch";
 
 export type ConversationTurnFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -74,7 +75,7 @@ export class ConversationTurnSessionModule {
   private readonly now: () => string;
 
   constructor(adapters: ConversationTurnSessionAdapters = {}) {
-    this.request = adapters.request ?? fetch;
+    this.request = adapters.request ?? hostFetch;
     this.now = adapters.now ?? (() => new Date().toISOString());
   }
 
