@@ -2,6 +2,7 @@ import { readPreferencesResponse, type Preferences } from "../preferences";
 import type { ClaudeProfile, HostCapabilities, RepositoryMetadata, ThreadMetadata } from "../types";
 import type { SavedProject } from "../features/dialogs/repository-dialog";
 import { readProductAvailabilityResponse, type ProductAvailability } from "./product-availability";
+import { isRepositoryResponse } from "./worktree-lifecycle";
 
 interface JsonResponse {
   ok: boolean;
@@ -100,11 +101,21 @@ export class ApplicationShellBootstrapModule {
           this.capabilities.managed ? { repositoryId: target } : { path: target },
         ),
       });
-      const body = (await response.json()) as RepositoryMetadata | { error?: string };
+      const body = await response.json();
       if (!response.ok) {
-        throw new Error("error" in body ? body.error : "Repository discovery failed.");
+        throw new Error(
+          typeof body === "object" &&
+            body !== null &&
+            "error" in body &&
+            typeof body.error === "string"
+            ? body.error
+            : "Repository discovery failed.",
+        );
       }
-      const repository = body as RepositoryMetadata;
+      if (!isRepositoryResponse(body) || !body.projectId) {
+        throw new Error("Repository discovery returned an invalid response.");
+      }
+      const repository: RepositoryMetadata = { ...body, projectId: body.projectId };
       if (!this.isCurrent(generation)) return null;
       projection.repository(repository);
       if (!this.capabilities.managed) this.adapters.writeLastRepositoryRoot(repository.root);

@@ -80,17 +80,35 @@ function isRemovalPlan(body: unknown): body is WorktreeRemovalPlan {
 
 type RepositoryResponse = Omit<RepositoryMetadata, "projectId"> & { projectId?: string };
 
-function isRepositoryResponse(body: unknown): body is RepositoryResponse {
+export function isRepositoryResponse(body: unknown): body is RepositoryResponse {
+  if (typeof body !== "object" || body === null) return false;
+  const record = body as Record<string, unknown>;
+  const localBranchesValid =
+    !("localBranches" in record) ||
+    (Array.isArray(record.localBranches) &&
+      record.localBranches.every((branch) => typeof branch === "string"));
+  const hasBranchCount = "localBranchCount" in record;
+  const hasTruncation = "localBranchesTruncated" in record;
+  const branchProjectionValid =
+    hasBranchCount === hasTruncation &&
+    (!hasBranchCount ||
+      (Number.isSafeInteger(record.localBranchCount) &&
+        (record.localBranchCount as number) >= 0 &&
+        typeof record.localBranchesTruncated === "boolean" &&
+        Array.isArray(record.localBranches) &&
+        (record.localBranchCount as number) >= record.localBranches.length &&
+        record.localBranchesTruncated ===
+          (record.localBranchCount as number) > record.localBranches.length));
   return Boolean(
-    typeof body === "object" &&
-    body !== null &&
     hasStringFields(body, ["name", "root", "selectedWorktree"]) &&
     (!("projectId" in body) || typeof body.projectId === "string") &&
     "defaultBranch" in body &&
     (body.defaultBranch === null || typeof body.defaultBranch === "string") &&
     "selectedWorktree" in body &&
     "worktrees" in body &&
-    Array.isArray(body.worktrees),
+    Array.isArray(body.worktrees) &&
+    localBranchesValid &&
+    branchProjectionValid,
   );
 }
 

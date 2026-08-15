@@ -117,3 +117,30 @@ test("worktree lifecycle preserves server errors and rejects malformed successes
     /Removal failed\./,
   );
 });
+
+test("worktree lifecycle validates bounded local branch projection metadata", async () => {
+  const validProjection = {
+    ...repository,
+    localBranches: ["main", "topic"],
+    localBranchCount: 50_000,
+    localBranchesTruncated: true,
+  };
+  const valid = createWorktreeLifecycle(async () => response(validProjection));
+  assert.deepEqual(
+    await valid.refreshRepository({ path: "/repo" }, "Refresh failed."),
+    validProjection,
+  );
+
+  for (const malformed of [
+    { ...validProjection, localBranchCount: 1 },
+    { ...validProjection, localBranchCount: 2, localBranchesTruncated: true },
+    { ...validProjection, localBranchCount: 50_000, localBranchesTruncated: undefined },
+    { ...validProjection, localBranches: ["main", 42] },
+  ]) {
+    const lifecycle = createWorktreeLifecycle(async () => response(malformed));
+    await assert.rejects(
+      lifecycle.refreshRepository({ path: "/repo" }, "Refresh failed."),
+      /Refresh failed\./,
+    );
+  }
+});

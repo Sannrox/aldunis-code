@@ -31,6 +31,10 @@ export interface RepositoryMetadata {
   defaultBranch: string | null;
   /** Local branch names available as worktree creation bases. */
   localBranches?: string[];
+  /** Exact number of local branches, including suggestions omitted from localBranches. */
+  localBranchCount?: number;
+  /** Whether localBranches is a bounded suggestion projection. */
+  localBranchesTruncated?: boolean;
   managedRepositoryId?: string;
   selectedWorktree: string;
   worktrees: Array<{

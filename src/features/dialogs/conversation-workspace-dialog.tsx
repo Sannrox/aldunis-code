@@ -4,6 +4,7 @@ import { Button } from "../../components/ui";
 import { defaultWorktreeBase, worktreeBaseBranchOptions } from "../../lib/worktree-base";
 import { worktreeLifecycle } from "../../lib/worktree-lifecycle";
 import { OverlayDialog } from "./overlay-dialog";
+import { BranchSuggestionInput } from "./branch-suggestion-input";
 
 export const CURRENT_WORKSPACE_RECOVERY_COPY = {
   label: "Use current workspace",
@@ -122,39 +123,21 @@ export function ConversationWorkspaceDialog({
         {!plan ? (
           <form onSubmit={(event) => void preview(event)}>
             <label htmlFor="conversation-workspace-base">Start from</label>
-            {baseOptions.length > 0 ? (
-              <select
-                id="conversation-workspace-base"
-                value={baseOptions.includes(base) ? base : baseOptions[0]}
-                onChange={(event) => {
-                  setBase(event.target.value);
-                  setPlan(null);
-                  setDirtyRepository(false);
-                }}
-                disabled={busy}
-                data-dialog-initial-focus
-              >
-                {baseOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                    {option === repository.defaultBranch ? " (default)" : ""}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                id="conversation-workspace-base"
-                value={base}
-                onChange={(event) => {
-                  setBase(event.target.value);
-                  setPlan(null);
-                  setDirtyRepository(false);
-                }}
-                placeholder="main"
-                disabled={busy}
-                data-dialog-initial-focus
-              />
-            )}
+            <BranchSuggestionInput
+              id="conversation-workspace-base"
+              value={base}
+              options={baseOptions}
+              defaultBranch={repository.defaultBranch}
+              branchCount={repository.localBranchCount}
+              truncated={repository.localBranchesTruncated}
+              onChange={(value) => {
+                setBase(value);
+                setPlan(null);
+                setDirtyRepository(false);
+              }}
+              disabled={busy}
+              initialFocus
+            />
             {!canCreate && (
               <p role="alert">
                 Choose a starting branch. Open a repository with at least one local branch, or type

@@ -6,8 +6,11 @@
 export interface WorktreeBaseSource {
   defaultBranch?: string | null;
   localBranches?: readonly string[] | null;
+  localBranchesTruncated?: boolean;
   worktrees?: ReadonlyArray<{ branch?: string | null }>;
 }
+
+export const MAX_WORKTREE_BASE_SUGGESTIONS = 256;
 
 function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set([...values].map((value) => value.trim()).filter(Boolean))].sort(
@@ -17,12 +20,19 @@ function uniqueSorted(values: Iterable<string>): string[] {
 
 /** Local branch names the operator can start a new worktree from. */
 export function worktreeBaseBranchOptions(source: WorktreeBaseSource): string[] {
-  const names: string[] = [];
-  for (const branch of source.localBranches ?? []) names.push(branch);
+  const activeBranches: string[] = [];
   for (const worktree of source.worktrees ?? []) {
-    if (worktree.branch) names.push(worktree.branch);
+    if (worktree.branch) activeBranches.push(worktree.branch);
   }
-  if (source.defaultBranch) names.push(source.defaultBranch);
+  const names = source.defaultBranch ? [source.defaultBranch.trim()] : [];
+  for (const branch of uniqueSorted(activeBranches)) {
+    if (!names.includes(branch) && names.length < MAX_WORKTREE_BASE_SUGGESTIONS) names.push(branch);
+  }
+  for (const branch of uniqueSorted(source.localBranches ?? [])) {
+    if (!names.includes(branch) && names.length < MAX_WORKTREE_BASE_SUGGESTIONS) {
+      names.push(branch);
+    }
+  }
   return uniqueSorted(names);
 }
 
