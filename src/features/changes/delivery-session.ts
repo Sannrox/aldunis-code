@@ -35,8 +35,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isDeliveryContext(value: unknown): value is DeliveryContext {
-  if (!isRecord(value) || !Array.isArray(value.remotes)) return false;
-  return typeof value.repository === "string" && typeof value.worktree === "string";
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.remotes) ||
+    !Array.isArray(value.staged) ||
+    !Array.isArray(value.unstaged)
+  ) {
+    return false;
+  }
+  return (
+    typeof value.repository === "string" &&
+    typeof value.worktree === "string" &&
+    Number.isSafeInteger(value.stagedCount) &&
+    Number.isSafeInteger(value.unstagedCount) &&
+    Number.isSafeInteger(value.changedCount) &&
+    typeof value.truncated === "boolean"
+  );
 }
 
 function isDeliveryPlan(value: unknown): value is DeliveryPlan {
