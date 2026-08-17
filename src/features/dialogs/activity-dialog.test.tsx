@@ -171,8 +171,8 @@ test("settledAt alone does not bury a live operator block", () => {
     filterActivity(items, "attention").map(({ id }) => id),
     ["approval", "input"],
   );
-  assert.deepEqual(selectActivityRows(items, "attention").rows.map(({ id }) => id), [
-    "approval",
-    "input",
-  ]);
+  assert.deepEqual(
+    selectActivityRows(items, "attention").rows.map(({ id }) => id),
+    ["approval", "input"],
+  );
 });
