@@ -18,15 +18,18 @@ export const ACTIVITY_FILTERS: ActivityFilter[] = [
   "idle",
 ];
 
+function isLiveOperatorBlock(status: ThreadStatus | undefined): boolean {
+  return status === "pending_approval" || status === "awaiting_input";
+}
+
 export function activityBucket(conversation: ConversationSummary): ActivityBucket {
-  // Settle is the operator's done signal. A last-turn failure must not keep the
-  // row in Attention after the sidebar has already moved it to Settled.
-  if (conversation.settledAt) return "completed";
   const status = conversation.status ?? "idle";
-  if (status === "pending_approval" || status === "awaiting_input" || status === "failed") {
-    return "attention";
-  }
+  // Live approval/input stay in Attention even when startTurn left settledAt
+  // on the thread. Only settled+failed (or truly done) belong in Completed.
+  if (isLiveOperatorBlock(status)) return "attention";
   if (status === "running") return "running";
+  if (conversation.settledAt) return "completed";
+  if (status === "failed") return "attention";
   if (status === "completed") return "completed";
   return "idle";
 }
@@ -80,12 +83,11 @@ export function activityStatusLabel(
   status: ThreadStatus | undefined,
   settledAt?: string | null,
 ): string {
+  if (isLiveOperatorBlock(status)) {
+    return status === "pending_approval" ? "Approval needed" : "Input needed";
+  }
   if (settledAt || status === "completed") return "Completed";
   switch (status) {
-    case "pending_approval":
-      return "Approval needed";
-    case "awaiting_input":
-      return "Input needed";
     case "running":
       return "Running";
     case "failed":
@@ -96,12 +98,11 @@ export function activityStatusLabel(
 }
 
 export function activityNextActionLabel(conversation: ConversationSummary): string {
+  if (isLiveOperatorBlock(conversation.status)) {
+    return conversation.status === "pending_approval" ? "Resolve approval" : "Answer input";
+  }
   if (conversation.settledAt) return "Review outcome";
   switch (conversation.status) {
-    case "pending_approval":
-      return "Resolve approval";
-    case "awaiting_input":
-      return "Answer input";
     case "running":
       return "Monitor run";
     case "failed":

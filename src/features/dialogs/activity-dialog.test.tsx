@@ -147,3 +147,32 @@ test("settled failed conversations leave Attention and match the Completed label
     ["open-failed"],
   );
 });
+
+test("settledAt alone does not bury a live operator block", () => {
+  const settledApproval = conversation("approval", "pending_approval", "2026-08-04T13:00:00.000Z");
+  const settledInput = conversation("input", "awaiting_input", "2026-08-04T13:10:00.000Z");
+  const settledFailed = conversation("failed", "failed", "2026-08-04T13:20:00.000Z");
+  const items = [settledApproval, settledInput, settledFailed];
+
+  assert.equal(activityBucket(settledApproval), "attention");
+  assert.equal(activityBucket(settledInput), "attention");
+  assert.equal(activityBucket(settledFailed), "completed");
+  assert.equal(
+    activityStatusLabel(settledApproval.status, settledApproval.settledAt),
+    "Approval needed",
+  );
+  assert.equal(activityStatusLabel(settledInput.status, settledInput.settledAt), "Input needed");
+  assert.equal(activityStatusLabel(settledFailed.status, settledFailed.settledAt), "Completed");
+  assert.equal(activityNextActionLabel(settledApproval), "Resolve approval");
+  assert.equal(activityNextActionLabel(settledInput), "Answer input");
+  assert.equal(activityNextActionLabel(settledFailed), "Review outcome");
+  assert.deepEqual(activityCounts(items), { attention: 2, running: 0, completed: 1, idle: 0 });
+  assert.deepEqual(
+    filterActivity(items, "attention").map(({ id }) => id),
+    ["approval", "input"],
+  );
+  assert.deepEqual(
+    selectActivityRows(items, "attention").rows.map(({ id }) => id),
+    ["approval", "input"],
+  );
+});
