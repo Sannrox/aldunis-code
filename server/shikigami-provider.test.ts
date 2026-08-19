@@ -165,14 +165,27 @@ test("normalizeShikigamiEvent maps harness events", () => {
     summary: "done",
   });
   assert.equal(finished.at(-1)?.kind, "turn_completed");
+  assert.deepEqual(normalizeShikigamiEvent({ type: "status", status: "starting" }), []);
+  assert.deepEqual(
+    normalizeShikigamiEvent({
+      type: "message",
+      level: "info",
+      text: "workspace /workspaces/sekai-chisei",
+    }),
+    [],
+  );
   assert.deepEqual(normalizeShikigamiEvent({ type: "future_event_type" }), []);
 });
 
 test("parseShikigamiStderrLine ignores non-event output", () => {
   assert.equal(parseShikigamiStderrLine("noise"), null);
-  assert.deepEqual(parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'), [
-    { kind: "assistant_text", text: "status: running" },
-  ]);
+  assert.deepEqual(parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'), []);
+  assert.deepEqual(
+    parseShikigamiStderrLine(
+      '[shikigami] {"type":"message","level":"info","text":"project_rules AGENTS.md digest=abc"}',
+    ),
+    [],
+  );
 });
 
 test("buildShikigamiConfig encodes mode tool allow-lists and pre_tool gate", () => {
