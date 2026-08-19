@@ -179,7 +179,10 @@ test("normalizeShikigamiEvent maps harness events", () => {
 
 test("parseShikigamiStderrLine ignores non-event output", () => {
   assert.equal(parseShikigamiStderrLine("noise"), null);
-  assert.deepEqual(parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'), []);
+  assert.deepEqual(
+    parseShikigamiStderrLine('[shikigami] {"type":"status","status":"running"}'),
+    [],
+  );
   assert.deepEqual(
     parseShikigamiStderrLine(
       '[shikigami] {"type":"message","level":"info","text":"project_rules AGENTS.md digest=abc"}',
