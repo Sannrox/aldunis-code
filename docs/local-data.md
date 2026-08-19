@@ -178,8 +178,8 @@ context.
   deleted only when you remove the variable or profile—not when you clear a
   masked field.
 - **Chisei credentials** come from `ALDUNIS_CHISEI_TOKEN` in the host
-  environment. They are never persisted in project history or returned to the
-  browser.
+  environment, or `SEKAI_TOKEN` when that Chisei token is unset. They are never
+  persisted in project history or returned to the browser.
 
 ## What never to commit
 

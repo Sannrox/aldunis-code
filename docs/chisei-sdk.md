@@ -36,9 +36,13 @@ projection reads rather than the SDK's core-loop workflow helpers. The SDK
 still owns gRPC transport construction, bearer metadata, principal/namespace
 metadata, deadlines, cancellation/error normalization, and the contract root.
 The host adds only the allowlisted projection mapping and bounded validation.
+The client target is `ALDUNIS_CHISEI_ENDPOINT`, or hosted
+`ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT` when that explicit endpoint is
+unset.
 
 The host sends the fixed server-owned principal `aldunis-code`, the persisted
-project namespace, and the server-side `ALDUNIS_CHISEI_TOKEN`. It deliberately
+project namespace, and the server-side `ALDUNIS_CHISEI_TOKEN`, or `SEKAI_TOKEN`
+when that Chisei token is unset. It deliberately
 does not send `x-sekai-capability` for these direct read RPCs: that metadata
 would turn a read into a catalog-attributed invocation rather than preserve the
 existing projection contract. Operation receipt reads carry the queried
@@ -52,7 +56,7 @@ operation ID as SDK correlation metadata and request data.
 | Action detail | `sekai.GetActionInstance` + `sekai.ListActionEffects` | effects are joined only to the selected Action and operation | identity, effect bounds, denied Action short-circuit |
 | Operation receipt | `chisei.GetOperationReceipt` | complete/missing surfaces/event count only | operation correlation and raw receipt redaction |
 | Observation readback | `chisei.GetSampleObservation` | digest/state/timestamps only | namespace/request identity and explicit absence |
-| Transport boundary | SDK `GrpcTransport` | loopback HTTP or HTTPS only; credentials remain host-side | endpoint validation and vendored proto-load smoke test |
+| Transport boundary | SDK `GrpcTransport` | loopback HTTP, HTTPS, or operator-opted in-cluster HTTP via `SEKAI_ALLOW_PLAINTEXT=1`; credentials remain host-side | endpoint validation and vendored proto-load smoke test |
 
 Live authenticated gRPC/provider verification is not part of the deterministic
 suite; it requires a configured Chisei service and credentials. The host
