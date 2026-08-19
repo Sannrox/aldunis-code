@@ -268,9 +268,9 @@ export function normalizeShikigamiEvent(
     throw new ProviderProtocolError("Shikigami emitted a malformed event.");
   }
   if (event.type === "status") {
-    return typeof event.status === "string"
-      ? [{ kind: "assistant_text", text: `status: ${event.status}` }]
-      : [];
+    // Live harness phase only. Do not persist as assistant text; run_finished
+    // summary is the durable operator-visible outcome.
+    return [];
   }
   if (event.type === "tool_start") {
     const name = typeof event.name === "string" ? event.name : "tool";
@@ -298,10 +298,10 @@ export function normalizeShikigamiEvent(
     return [];
   }
   if (event.type === "message") {
-    // Operator-facing harness messages only (not model body).
-    const text = typeof event.text === "string" ? event.text.trim() : "";
-    const level = typeof event.level === "string" ? event.level : "info";
-    return text ? [{ kind: "assistant_text", text: `[${level}] ${text}` }] : [];
+    // Operator-facing harness diagnostics (project_rules digest, workspace
+    // path, info/debug). They are not model speech and must not land in the
+    // durable transcript. Failures use run_finished.
+    return [];
   }
   if (event.type === "run_finished") {
     const runId =
