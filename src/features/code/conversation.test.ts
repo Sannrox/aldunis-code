@@ -124,6 +124,10 @@ test("restored terminal state becomes graph-safe provider evidence", () => {
   });
   assert.deepEqual(restoredTurnTerminalEvent("cancelled", null), { kind: "cancelled" });
   assert.deepEqual(restoredTurnTerminalEvent("interrupted", null), { kind: "cancelled" });
+  assert.deepEqual(restoredTurnTerminalEvent("failed", null), {
+    kind: "failed",
+    message: "The run ended without a detailed error.",
+  });
   assert.equal(restoredTurnTerminalEvent("running", null), null);
 });
 
