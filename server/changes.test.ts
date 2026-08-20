@@ -282,6 +282,59 @@ test("edited unstaged renames remain reviewable", async () => {
   assert.match(diff.patch ?? "", /^\+changed$/m);
 });
 
+test("unstaged rename snapshots batch Git index work with NUL-safe paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-batched-renames-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const originals = Array.from({ length: 16 }, (_, index) => `original-${index}.txt`);
+  await Promise.all(originals.map((path, index) => writeFile(join(root, path), `line ${index}\n`)));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "rename fixtures"]);
+  const renamed = originals.map((path, index) => ({
+    path,
+    renamed: index === 0 ? "renamed-with\nnewline.txt" : `renamed-${index}.txt`,
+  }));
+  await Promise.all(
+    renamed.map((entry) => rename(join(root, entry.path), join(root, entry.renamed))),
+  );
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFiles(root);
+    for (const entry of renamed) {
+      const change = changes.find((candidate) => candidate.path === entry.renamed);
+      assert.equal(change?.state, "renamed");
+      assert.equal(change?.previousPath, entry.path);
+    }
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
+  assert.equal(
+    starts.filter(
+      (event) => event.argv?.includes("update-index") && event.argv?.includes("--stdin"),
+    ).length,
+    1,
+  );
+  assert.equal(
+    starts.filter(
+      (event) => event.argv?.includes("update-index") && event.argv?.includes("--index-info"),
+    ).length,
+    1,
+  );
+});
+
 test("edited renames into ignored runtime paths stay hidden", async () => {
   const root = await fixture();
   await writeFile(join(root, ".gitignore"), "/data/\n");

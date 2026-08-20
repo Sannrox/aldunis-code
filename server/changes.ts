@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import type { Stats } from "node:fs";
-import { copyFile, lstat, mkdir, mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import { checkpointDiff, RepositoryError, type CheckpointFile } from "./repository.ts";
 import { isComposerAttachmentPath, isLocalRuntimePath } from "./local-runtime.ts";
@@ -19,6 +30,10 @@ const CHANGED_FILE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_RENAME_CANDIDATES = 128;
 const MAX_STATUS_RECORD_BYTES = 64 * 1024;
 const MAX_STATUS_STDERR_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_GIT_STDOUT_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_GIT_STDERR_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_ATTRIBUTE_BYTES = MAX_RENAME_CANDIDATES * 2 * (MAX_STATUS_RECORD_BYTES + 64);
+const SNAPSHOT_GIT_TIMEOUT_MS = 10_000;
 const HIDDEN_REVIEW_PATHSPECS = [
   ":(glob)aldunis-code-composer-images/**",
   ":(icase,glob)**/*.db",
@@ -147,6 +162,112 @@ function gitWithEnvironment(
   });
 }
 
+type SnapshotGitResult = {
+  stdout: Buffer;
+};
+
+async function snapshotGitInput(
+  worktree: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  input: Buffer,
+  signal?: AbortSignal,
+  command = "git",
+  timeoutMs = SNAPSHOT_GIT_TIMEOUT_MS,
+  maximumStdout = MAX_SNAPSHOT_GIT_STDOUT_BYTES,
+): Promise<SnapshotGitResult> {
+  signal?.throwIfAborted();
+  const child = spawn(command, ["-C", worktree, ...args], {
+    env: environment,
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let timedOut = false;
+  let aborted = false;
+  const terminate = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    terminate();
+  }, timeoutMs);
+  timer.unref();
+  const abort = () => {
+    aborted = true;
+    terminate();
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  const exit = new Promise<{ code: number | null; error: Error | null }>((resolveExit) => {
+    child.once("error", (error) => resolveExit({ code: null, error }));
+    child.once("close", (code) => resolveExit({ code, error: null }));
+  });
+  const collect = async (stream: NodeJS.ReadableStream, maximum: number): Promise<Buffer> => {
+    const chunks: Buffer[] = [];
+    let retained = 0;
+    for await (const rawChunk of stream) {
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      if (retained + chunk.length > maximum) throw new Error("Git output exceeds its limit.");
+      chunks.push(chunk);
+      retained += chunk.length;
+    }
+    return Buffer.concat(chunks, retained);
+  };
+  const settle = <T>(promise: Promise<T>) =>
+    promise.then(
+      (value) => ({ value, error: null }),
+      (error: unknown) => {
+        terminate();
+        return {
+          value: null,
+          error: error instanceof Error ? error : new Error("Git stream failed."),
+        };
+      },
+    );
+  const stdout = settle(collect(child.stdout, maximumStdout));
+  const stderr = settle(collect(child.stderr, MAX_SNAPSHOT_GIT_STDERR_BYTES));
+  const write = settle(
+    (async () => {
+      child.stdin.end(input);
+      await finished(child.stdin);
+    })(),
+  );
+  try {
+    const [outcome, stdoutOutcome, stderrOutcome, writeOutcome] = await Promise.all([
+      exit,
+      stdout,
+      stderr,
+      write,
+    ]);
+    if (aborted) signal?.throwIfAborted();
+    if (
+      timedOut ||
+      outcome.error ||
+      stdoutOutcome.error ||
+      stderrOutcome.error ||
+      writeOutcome.error ||
+      outcome.code !== 0
+    ) {
+      throw new Error(
+        stderrOutcome.value?.toString("utf8").trim() ||
+          outcome.error?.message ||
+          stdoutOutcome.error?.message ||
+          stderrOutcome.error?.message ||
+          writeOutcome.error?.message ||
+          "Git snapshot process failed.",
+      );
+    }
+    return { stdout: stdoutOutcome.value ?? Buffer.alloc(0) };
+  } catch {
+    terminate();
+    await exit;
+    signal?.throwIfAborted();
+    throw new RepositoryError("The worktree could not be snapshotted for change review.", 409);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
 type WorktreeSnapshot = {
   temporary: string;
   environment: NodeJS.ProcessEnv;
@@ -207,35 +328,57 @@ async function createWorktreeSnapshot(
     }
     await copyFile(sourceIndex, indexPath);
     signal?.throwIfAborted();
-    for (const path of removePaths) {
-      signal?.throwIfAborted();
-      await gitWithEnvironment(
+    if (removePaths.length > 0) {
+      await snapshotGitInput(
         worktree,
-        ["update-index", "--force-remove", "--", path],
+        ["update-index", "--force-remove", "-z", "--stdin"],
         environment,
-        undefined,
+        Buffer.from(`${removePaths.join("\0")}\0`),
         signal,
       );
     }
-    for (const path of addPaths) {
+    const additions: Array<{ mode: "100644" | "100755"; path: string; temporaryPath: string }> = [];
+    for (const [index, path] of addPaths.entries()) {
       signal?.throwIfAborted();
+      const content = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
+      signal?.throwIfAborted();
+      if (!content) continue;
       const details = await lstat(resolve(worktree, path));
       signal?.throwIfAborted();
       if (!details.isFile() || details.size > MAX_DIFF_BYTES) continue;
-      const object = await gitWithEnvironment(
+      const temporaryPath = join(temporary, `snapshot-blob-${index.toString().padStart(3, "0")}`);
+      await writeFile(temporaryPath, content, { flag: "wx", mode: 0o600 });
+      additions.push({
+        mode: details.mode & 0o111 ? "100755" : "100644",
+        path,
+        temporaryPath,
+      });
+    }
+    if (additions.length > 0) {
+      const objects = await snapshotGitInput(
         worktree,
-        ["hash-object", "-w", "--no-filters", "--", path],
+        ["hash-object", "-w", "--no-filters", "--stdin-paths"],
         environment,
-        MAX_DIFF_BYTES * 2,
+        Buffer.from(`${additions.map((entry) => entry.temporaryPath).join("\n")}\n`),
         signal,
       );
-      signal?.throwIfAborted();
-      const mode = details.mode & 0o111 ? "100755" : "100644";
-      await gitWithEnvironment(
+      const objectIds = objects.stdout.toString("ascii").trimEnd().split("\n");
+      if (
+        objectIds.length !== additions.length ||
+        objectIds.some((objectId) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(objectId))
+      ) {
+        throw new RepositoryError("The worktree could not be snapshotted for change review.", 409);
+      }
+      const indexRecords = Buffer.from(
+        additions
+          .map((entry, index) => `${entry.mode} ${objectIds[index]}\t${entry.path}\0`)
+          .join(""),
+      );
+      await snapshotGitInput(
         worktree,
-        ["update-index", "--add", "--cacheinfo", `${mode},${object.stdout.trim()},${path}`],
+        ["update-index", "--add", "-z", "--index-info"],
         environment,
-        undefined,
+        indexRecords,
         signal,
       );
     }
@@ -337,29 +480,58 @@ type ChangeEntry = {
   nonRenderable?: boolean;
 };
 
+async function pathsWithoutGitConversion(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Set<string>> {
+  if (paths.length === 0) return new Set();
+  signal?.throwIfAborted();
+  try {
+    const result = await snapshotGitInput(
+      worktree,
+      ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding"],
+      process.env,
+      Buffer.from(`${paths.join("\0")}\0`),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      MAX_SNAPSHOT_ATTRIBUTE_BYTES,
+    );
+    const fields = result.stdout.toString("utf8").split("\0");
+    if (fields.at(-1) === "") fields.pop();
+    if (fields.length !== paths.length * 6) return new Set();
+    const accepted = new Set<string>();
+    for (let index = 0; index < paths.length; index += 1) {
+      const offset = index * 6;
+      const path = paths[index];
+      const filter = fields.slice(offset, offset + 3);
+      const encoding = fields.slice(offset + 3, offset + 6);
+      if (
+        filter[0] !== path ||
+        filter[1] !== "filter" ||
+        encoding[0] !== path ||
+        encoding[1] !== "working-tree-encoding"
+      ) {
+        return new Set();
+      }
+      if ([filter[2], encoding[2]].every((value) => value === "unspecified" || value === "unset")) {
+        accepted.add(path);
+      }
+    }
+    return accepted;
+  } catch {
+    signal?.throwIfAborted();
+    return new Set();
+  }
+}
+
 async function hasGitConversion(
   worktree: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  signal?.throwIfAborted();
-  try {
-    const result = await git(
-      worktree,
-      ["check-attr", "-z", "filter", "working-tree-encoding", "--", path],
-      undefined,
-      signal,
-    );
-    const fields = result.stdout.split("\0");
-    for (let index = 1; index < fields.length; index += 3) {
-      const value = fields[index + 1];
-      if (value && value !== "unspecified" && value !== "unset") return true;
-    }
-    return false;
-  } catch {
-    signal?.throwIfAborted();
-    return true;
-  }
+  return !(await pathsWithoutGitConversion(worktree, [path], signal)).has(path);
 }
 
 async function listIgnoredRuntimePaths(worktree: string, signal?: AbortSignal): Promise<string[]> {
@@ -399,26 +571,21 @@ async function boundedSnapshotPaths(
   limit = MAX_RENAME_CANDIDATES,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const candidates: string[] = [];
+  const regularFiles: string[] = [];
   for (const path of [...new Set(paths)]) {
     signal?.throwIfAborted();
-    if (candidates.length >= limit) break;
+    if (regularFiles.length >= limit) break;
     try {
       const details = await lstat(resolve(worktree, path));
       signal?.throwIfAborted();
-      if (
-        details.isFile() &&
-        details.size <= MAX_DIFF_BYTES &&
-        !(await hasGitConversion(worktree, path, signal))
-      ) {
-        candidates.push(path);
-      }
+      if (details.isFile() && details.size <= MAX_DIFF_BYTES) regularFiles.push(path);
     } catch {
       signal?.throwIfAborted();
       // The worktree may change between status and snapshot preparation.
     }
   }
-  return candidates;
+  const accepted = await pathsWithoutGitConversion(worktree, regularFiles, signal);
+  return regularFiles.filter((path) => accepted.has(path));
 }
 
 async function pairExactRenames(
