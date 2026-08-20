@@ -527,7 +527,7 @@
     },
     {
       "name": "DeliveryRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, streamed Git delivery status with a 256-path staged and unstaged projection, exact counts, explicit truncation, bounded records, stderr, deadlines, termination, and child cleanup, fail-closed complete staged-set commit review, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, streamed Git delivery status with a 256-path staged and unstaged projection, exact counts, explicit truncation, bounded records, stderr, deadlines, termination, and child cleanup, constant-process bounded regular-file hashing for stage-plan state bindings with compatible deleted, nested-repository, and newline-path fallbacks, fail-closed complete staged-set commit review, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
     },
     {
       "name": "BranchPrStatusPollingCoordinator",
@@ -3061,6 +3061,12 @@
       "subject": "DeliveryRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1185",
       "locator": "server/delivery.ts#readDeliveryStatus; server/delivery.ts#inspectDelivery; server/delivery.ts#DeliveryBroker",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DeliveryRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1206",
+      "locator": "server/delivery.ts#batchRegularPathHashes; server/delivery.ts#fingerprint; server/delivery.test.ts",
       "confidence": 1.0
     },
     {

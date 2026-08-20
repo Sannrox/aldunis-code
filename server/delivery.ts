@@ -1,5 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { lstat } from "node:fs/promises";
+import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import { MAX_PENDING_APPROVAL_PLANS, retainBoundedPendingPlan } from "./pending-plan-retention.ts";
 import { RepositoryError } from "./repository.ts";
@@ -262,6 +264,82 @@ async function mixedStagedPaths(worktree: string, staged: string[]): Promise<str
   return [...mixed];
 }
 
+async function batchRegularPathHashes(
+  worktree: string,
+  paths: string[],
+): Promise<Map<string, string>> {
+  const regular: string[] = [];
+  for (const path of paths) {
+    if (path.includes("\n") || path.includes("\r")) continue;
+    try {
+      if ((await lstat(`${worktree}/${path}`)).isFile()) regular.push(path);
+    } catch {
+      // Deleted and nested-repository paths retain the existing fallback below.
+    }
+  }
+  if (regular.length === 0) return new Map();
+  const child = spawn("git", ["-C", worktree, "hash-object", "--stdin-paths"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_LITERAL_PATHSPECS: "1",
+      GIT_TERMINAL_PROMPT: "0",
+    },
+  });
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, DELIVERY_STATUS_TIMEOUT_MS);
+  timeout.unref?.();
+  const collect = async (stream: NodeJS.ReadableStream, maximum: number): Promise<Buffer> => {
+    const chunks: Buffer[] = [];
+    let length = 0;
+    for await (const raw of stream) {
+      const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      if (length + chunk.length > maximum) {
+        child.kill("SIGKILL");
+        throw new Error("Git output exceeded its limit.");
+      }
+      chunks.push(chunk);
+      length += chunk.length;
+    }
+    return Buffer.concat(chunks, length);
+  };
+  const exit = new Promise<{ code: number | null; error: Error | null }>((resolveExit) => {
+    child.once("error", (error) => resolveExit({ code: null, error }));
+    child.once("close", (code) => resolveExit({ code, error: null }));
+  });
+  const stdout = collect(child.stdout, regular.length * 65);
+  const stderr = collect(child.stderr, MAX_DELIVERY_STATUS_STDERR_BYTES);
+  const write = (async () => {
+    child.stdin.end(`${regular.join("\n")}\n`);
+    await finished(child.stdin);
+  })();
+  try {
+    const [completion, output, diagnostic] = await Promise.all([exit, stdout, stderr, write]).then(
+      ([completion, output, diagnostic]) => [completion, output, diagnostic] as const,
+    );
+    if (timedOut || completion.error || completion.code !== 0) {
+      throw new Error(diagnostic.toString("utf8"));
+    }
+    const hashes = output.toString("ascii").trimEnd().split("\n");
+    if (
+      hashes.length !== regular.length ||
+      hashes.some((hash) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(hash))
+    ) {
+      throw new Error("Git returned invalid hashes.");
+    }
+    return new Map(regular.map((path, index) => [path, hashes[index]!]));
+  } catch {
+    child.kill("SIGKILL");
+    await exit;
+    throw new RepositoryError("Selected file fingerprints could not be inspected.", 409);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function fingerprint(
   worktree: string,
   action: DeliveryAction,
@@ -275,9 +353,13 @@ async function fingerprint(
     if (paths.some((path) => !changed.has(path))) {
       throw new RepositoryError("Only currently changed files can be staged.", 409);
     }
+    const batchedHashes = await batchRegularPathHashes(worktree, paths);
     const hashes: string[] = [];
     for (const path of paths) {
-      const object = await git(worktree, ["hash-object", "--", path]).catch(() => null);
+      const batched = batchedHashes.get(path);
+      const object = batched
+        ? { stdout: batched }
+        : await git(worktree, ["hash-object", "--", path]).catch(() => null);
       const gitlink = object
         ? null
         : await git(worktree, ["-C", path, "rev-parse", "HEAD"]).catch(() => null);
