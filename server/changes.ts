@@ -28,6 +28,7 @@ export const MAX_DIFF_BYTES = 256 * 1024;
 export const MAX_CHANGED_FILES = 256;
 const CHANGED_FILE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_RENAME_CANDIDATES = 128;
+const MAX_NUMSTAT_PATHS_PER_BATCH = 128;
 const MAX_STATUS_RECORD_BYTES = 64 * 1024;
 const MAX_STATUS_STDERR_BYTES = 64 * 1024;
 const MAX_SNAPSHOT_GIT_STDOUT_BYTES = 64 * 1024;
@@ -930,6 +931,58 @@ function parseNumstat(output: string): [number | null, number | null] {
   return [additions, deletions];
 }
 
+type TrackedNumstat = { binary: boolean; additions: number; deletions: number };
+
+async function batchTrackedNumstats(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, TrackedNumstat>> {
+  const stats = new Map<string, TrackedNumstat>();
+  const unique = [...new Set(paths)];
+  for (let offset = 0; offset < unique.length; offset += MAX_NUMSTAT_PATHS_PER_BATCH) {
+    const batch = unique.slice(offset, offset + MAX_NUMSTAT_PATHS_PER_BATCH);
+    const result = await snapshotGitInput(
+      worktree,
+      ["diff", "--no-textconv", "--numstat", "-z", "--no-renames", "HEAD", "--", ...batch],
+      { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+      Buffer.alloc(0),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      batch.reduce((maximum, path) => maximum + Buffer.byteLength(path) + 48, 0),
+    );
+    const records = result.stdout.toString("utf8").split("\0");
+    if (records.at(-1) === "") records.pop();
+    for (const record of records) {
+      const firstTab = record.indexOf("\t");
+      const secondTab = record.indexOf("\t", firstTab + 1);
+      if (firstTab < 1 || secondTab < firstTab + 2) {
+        throw new RepositoryError("Git returned invalid changed-file statistics.", 409);
+      }
+      const added = record.slice(0, firstTab);
+      const deleted = record.slice(firstTab + 1, secondTab);
+      const path = safeRelativePath(worktree, record.slice(secondTab + 1));
+      if (added === "-" && deleted === "-") {
+        stats.set(path, { binary: true, additions: 0, deletions: 0 });
+        continue;
+      }
+      const additions = Number(added);
+      const deletions = Number(deleted);
+      if (
+        !Number.isSafeInteger(additions) ||
+        additions < 0 ||
+        !Number.isSafeInteger(deletions) ||
+        deletions < 0
+      ) {
+        throw new RepositoryError("Git returned invalid changed-file statistics.", 409);
+      }
+      stats.set(path, { binary: false, additions, deletions });
+    }
+  }
+  return stats;
+}
+
 async function counts(
   worktree: string,
   path: string,
@@ -1257,20 +1310,37 @@ async function inspectChangedFiles(
     const committedSizes = new Map(
       [...committedMetadata].map(([path, metadata]) => [path, metadata.size]),
     );
+    const oversizedEntries = new Map<ChangeEntry, boolean>();
+    for (const entry of projectedEntries) {
+      oversizedEntries.set(
+        entry,
+        await isOversized(
+          worktree,
+          entry.path,
+          entry.initial === "deleted",
+          entry.previousPath,
+          entry.code === "??",
+          committedSizes,
+          signal,
+        ),
+      );
+    }
+    const trackedNumstats = await batchTrackedNumstats(
+      worktree,
+      projectedEntries
+        .filter(
+          (entry) =>
+            !oversizedEntries.get(entry) && entry.code !== "??" && entry.previousPath === null,
+        )
+        .map((entry) => entry.path),
+      signal,
+    );
     const changes: ChangedFile[] = [];
     for (const entry of projectedEntries) {
       signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
-      let oversized = await isOversized(
-        worktree,
-        path,
-        initial === "deleted",
-        previousPath,
-        code === "??",
-        committedSizes,
-        signal,
-      );
+      let oversized = oversizedEntries.get(entry) ?? false;
       let untrackedContent: Buffer | null | undefined;
       if (!oversized && code === "??" && !entry.symlink && !entry.nonRenderable) {
         untrackedContent = await readBoundedChangedFile(
@@ -1280,26 +1350,33 @@ async function inspectChangedFiles(
         );
         if (untrackedContent === null) oversized = true;
       }
+      const trackedNumstat =
+        code !== "??" && previousPath === null ? trackedNumstats.get(path) : undefined;
       const binary =
         !oversized &&
         (entry.symlink ||
           entry.nonRenderable ||
+          trackedNumstat?.binary ||
           (untrackedContent
             ? untrackedContent.subarray(0, 8_000).includes(0)
-            : await isBinary(worktree, path, false, signal)));
+            : trackedNumstat
+              ? false
+              : await isBinary(worktree, path, false, signal)));
       const [additions, deletions] =
         oversized || binary
           ? [null, null]
-          : untrackedContent && !previousPath
-            ? [contentLines(untrackedContent.toString("utf8")).length, 0]
-            : await counts(
-                worktree,
-                path,
-                code === "??",
-                previousPath,
-                snapshot?.environment ?? null,
-                signal,
-              );
+          : trackedNumstat
+            ? [trackedNumstat.additions, trackedNumstat.deletions]
+            : untrackedContent && !previousPath
+              ? [contentLines(untrackedContent.toString("utf8")).length, 0]
+              : await counts(
+                  worktree,
+                  path,
+                  code === "??",
+                  previousPath,
+                  snapshot?.environment ?? null,
+                  signal,
+                );
       changes.push({
         path,
         previousPath,
