@@ -475,7 +475,7 @@
     },
     {
       "name": "ChangedFileReviewRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing with a 256-entry interactive projection and explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing with a 256-entry interactive projection and explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, and disposable rename snapshots that admit at most 128 candidates and batch bounded, timeout-constrained Git attribute, object, and index work through NUL-safe repository-path protocols, alongside canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping without changing repository or approval authority."
     },
     {
       "name": "ChangedFileReviewSessionModule",
@@ -1669,6 +1669,12 @@
       "subject": "ChangedFileReviewRouteDispatchModule",
       "source": "Aldunis Code Issue #1165 bounded changed-file review inventory",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1165; server/changes.ts#listChangedFilesPage; server/review-routes.ts#handleReviewRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1195",
+      "locator": "server/changes.ts#createWorktreeSnapshot; server/changes.ts#boundedSnapshotPaths; server/changes.test.ts",
       "confidence": 1.0
     },
     {
