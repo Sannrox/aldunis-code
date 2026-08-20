@@ -416,8 +416,9 @@ async function withWorktreeSnapshot<T>(
   callback: (environment: NodeJS.ProcessEnv) => Promise<T>,
   removePaths: string[] = [],
   addPaths: string[] = [],
+  signal?: AbortSignal,
 ): Promise<T> {
-  const snapshot = await createWorktreeSnapshot(worktree, removePaths, addPaths);
+  const snapshot = await createWorktreeSnapshot(worktree, removePaths, addPaths, signal);
   try {
     return await callback(snapshot.environment);
   } finally {
@@ -1421,9 +1422,11 @@ export async function readFileDiff(
   worktree: string,
   requestedPath: string,
   changedFiles?: readonly ChangedFile[],
+  signal?: AbortSignal,
 ): Promise<FileDiff> {
+  signal?.throwIfAborted();
   const path = safeRelativePath(worktree, requestedPath);
-  const change = (changedFiles ?? (await listChangedFiles(worktree))).find(
+  const change = (changedFiles ?? (await listChangedFilesPage(worktree, signal)).files).find(
     (item) => item.path === path,
   );
   if (!change) throw new RepositoryError("The selected file is no longer changed.", 404);
@@ -1457,11 +1460,13 @@ export async function readFileDiff(
           ],
           environment,
           MAX_DIFF_BYTES * 2,
+          signal,
         );
         return result.stdout || null;
       },
       [change.previousPath!],
       [path],
+      signal,
     );
     if (!patch) {
       throw new RepositoryError("The selected rename changed before its diff could be read.", 409);
@@ -1469,7 +1474,7 @@ export async function readFileDiff(
     return finalizeDiff(change, patch, null);
   }
   if (change.state === "added") {
-    const bytes = await readBoundedChangedFile(resolve(worktree, path));
+    const bytes = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
     if (!bytes) {
       throw new RepositoryError("The selected file changed before its diff could be read.", 409);
     }
@@ -1491,6 +1496,7 @@ export async function readFileDiff(
     worktree,
     ["diff", "--no-ext-diff", "--no-textconv", "--unified=3", "HEAD", "--", path],
     MAX_DIFF_BYTES * 2,
+    signal,
   );
   return finalizeDiff(
     change,

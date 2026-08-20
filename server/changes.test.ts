@@ -35,6 +35,31 @@ test("bounded changed-file reads accept the limit and reject overflow", async ()
   assert.equal(await readBoundedChangedFile(path), null);
 });
 
+test("single-file diff generation observes cancellation after admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-cancel-diff-"));
+  await writeFile(join(root, "added.txt"), "content\n");
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () =>
+      readFileDiff(
+        root,
+        "added.txt",
+        [
+          {
+            path: "added.txt",
+            previousPath: null,
+            state: "added",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+        controller.signal,
+      ),
+    (error: unknown) => (error as Error).name === "AbortError",
+  );
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "aldunis-code-changes-"));
   const git = (...args: string[]) => execFileAsync("git", ["-C", root, ...args]);
@@ -136,6 +161,8 @@ test("interactive changed-file inventories bound and report overflow", async () 
   assert.equal(page.truncated, true);
   assert.equal(page.files[0]?.path, "corpus/file-0000.txt");
   assert.equal(page.files.at(-1)?.path, "corpus/file-0255.txt");
+  assert.equal((await readFileDiff(root, "corpus/file-0000.txt")).path, "corpus/file-0000.txt");
+  await assert.rejects(() => readFileDiff(root, "corpus/file-0257.txt"), /no longer changed/);
 });
 
 test("hidden runtime entries do not consume the interactive review page", async () => {
