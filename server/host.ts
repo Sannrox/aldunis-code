@@ -905,6 +905,18 @@ export class StaticAssetAdmission {
   }
 }
 
+function writeStaticNotFound(response: ServerResponse): void {
+  response.writeHead(404, {
+    "content-type": "text/plain; charset=utf-8",
+    "x-content-type-options": "nosniff",
+  });
+  response.end("Not found");
+}
+
+function isHashedStaticAssetPath(pathname: string): boolean {
+  return pathname === "/assets" || pathname.startsWith("/assets/");
+}
+
 export async function serveStatic(
   request: IncomingMessage,
   response: ServerResponse,
@@ -915,26 +927,29 @@ export async function serveStatic(
   const requested = rawPath === "/" ? "index.html" : rawPath.slice(1);
   const safePath = normalize(requested).replace(/^(\.\.(\/|\\|$))+/, "");
   let filePath = join(dist, safePath);
+  const refuseSpaFallback = isHashedStaticAssetPath(rawPath);
   try {
-    if (!(await stat(filePath)).isFile()) filePath = join(dist, "index.html");
+    if (!(await stat(filePath)).isFile()) {
+      if (refuseSpaFallback) {
+        writeStaticNotFound(response);
+        return;
+      }
+      filePath = join(dist, "index.html");
+    }
   } catch {
+    if (refuseSpaFallback) {
+      writeStaticNotFound(response);
+      return;
+    }
     filePath = join(dist, "index.html");
   }
   try {
     if (!(await stat(filePath)).isFile()) {
-      response.writeHead(404, {
-        "content-type": "text/plain; charset=utf-8",
-        "x-content-type-options": "nosniff",
-      });
-      response.end("Not found");
+      writeStaticNotFound(response);
       return;
     }
   } catch {
-    response.writeHead(404, {
-      "content-type": "text/plain; charset=utf-8",
-      "x-content-type-options": "nosniff",
-    });
-    response.end("Not found");
+    writeStaticNotFound(response);
     return;
   }
   const releaseAdmission = admission.tryAcquire();
