@@ -121,8 +121,7 @@ function configuredEndpoint(env: NodeJS.ProcessEnv): {
   secure: boolean;
   loopback: boolean;
 } {
-  const raw =
-    env.ALDUNIS_CHISEI_ENDPOINT?.trim() || env[CHISEI_GOVERNANCE_ENDPOINT_ENV]?.trim();
+  const raw = env.ALDUNIS_CHISEI_ENDPOINT?.trim() || env[CHISEI_GOVERNANCE_ENDPOINT_ENV]?.trim();
   if (!raw) {
     throw new ChiseiClientError("Chisei is not configured.", 503, "unconfigured");
   }
@@ -336,8 +335,7 @@ export class ChiseiProjectionClient {
   ): Promise<Record<string, unknown>> {
     signal?.throwIfAborted();
     const endpoint = configuredEndpoint(this.env);
-    const token =
-      this.env.ALDUNIS_CHISEI_TOKEN?.trim() || this.env.SEKAI_TOKEN?.trim();
+    const token = this.env.ALDUNIS_CHISEI_TOKEN?.trim() || this.env.SEKAI_TOKEN?.trim();
     const allowPlaintext = this.env.SEKAI_ALLOW_PLAINTEXT?.trim() === "1";
     const allowInsecureRemote = !endpoint.secure && !endpoint.loopback && allowPlaintext;
     if (!endpoint.secure && !endpoint.loopback && !allowPlaintext) {

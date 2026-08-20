@@ -10,10 +10,7 @@ export const DEFAULT_PRODUCT_AVAILABILITY: ProductAvailability = {
   tenkai: false,
 };
 
-export function isProductAvailable(
-  product: Product,
-  availability: ProductAvailability,
-): boolean {
+export function isProductAvailable(product: Product, availability: ProductAvailability): boolean {
   return availability[product] === true;
 }
 
