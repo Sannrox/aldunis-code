@@ -84,11 +84,11 @@ The brand product switcher lists **Code**, **Sekai**, **Chisei**, and
 **Tenkai**. Code is always available. The other planes stay visible but
 **disabled** (“Not configured”) until an endpoint is set:
 
-| Plane  | Environment variable      |
-| ------ | ------------------------- |
-| Sekai  | `ALDUNIS_SEKAI_ENDPOINT`  |
-| Chisei | `ALDUNIS_CHISEI_ENDPOINT` |
-| Tenkai | `ALDUNIS_TENKAI_ENDPOINT` |
+| Plane  | Environment variable                                                                 |
+| ------ | ------------------------------------------------------------------------------------ |
+| Sekai  | `ALDUNIS_SEKAI_ENDPOINT`                                                             |
+| Chisei | `ALDUNIS_CHISEI_ENDPOINT`, or hosted `ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT` |
+| Tenkai | `ALDUNIS_TENKAI_ENDPOINT`                                                            |
 
 Non-empty values enable selection. The host reports availability via
 `POST /api/products/availability`. Cross-product screens must consume
@@ -105,8 +105,10 @@ export ALDUNIS_CHISEI_TOKEN=…
 ```
 
 Chisei connections require HTTPS unless the endpoint is a literal loopback
-address (`127.0.0.1` or `[::1]`); the host rejects every insecure remote
-endpoint before creating a client.
+address (`127.0.0.1` or `[::1]`) or the host sets `SEKAI_ALLOW_PLAINTEXT=1`
+for an in-cluster official Chisei. The host rejects every other insecure
+remote endpoint before creating a client. When `ALDUNIS_CHISEI_TOKEN` is
+unset, the host reuses `SEKAI_TOKEN`.
 
 After opening Code on loopback, switch to Chisei and bind each local project to
 its authorized namespace. Remote workbench clients cannot create or change

@@ -88,6 +88,19 @@ test("vendored SDK loads the pinned minimal Chisei read contract", async () => {
   client.close();
 });
 
+test("vendored SDK rejects in-cluster HTTP unless allowInsecureRemote is set", async () => {
+  const protoRoot = fileURLToPath(new URL("../contracts/", import.meta.url));
+  await assert.rejects(
+    () =>
+      SekaiChiseiClient.connect({
+        target: "http://chisei:50051",
+        principal: "aldunis-code",
+        protoRoot,
+      }),
+    /insecure gRPC is restricted to loopback/,
+  );
+});
+
 test("ChiseiProjectionClient uses the server-owned SDK context and bounded Action projection", async () => {
   let config: ChiseiSdkFactoryConfig | undefined;
   let call: { request: Record<string, unknown>; options: FixtureOptions } | undefined;
@@ -124,6 +137,7 @@ test("ChiseiProjectionClient uses the server-owned SDK context and bounded Actio
     principal: "aldunis-code",
     namespace: "team/project",
     protoRoot: config?.protoRoot,
+    allowInsecureRemote: false,
   });
   assert.ok(config?.protoRoot.endsWith("/contracts/"));
   assert.deepEqual(call?.request, {
@@ -185,6 +199,78 @@ test("ChiseiProjectionClient rejects non-loopback HTTP without a bearer token", 
   await assert.rejects(
     () => client.listActions("project-1", "team/project"),
     (error: unknown) => error instanceof ChiseiClientError && error.kind === "unconfigured",
+  );
+  assert.equal(factoryCalled, false);
+});
+
+test("ChiseiProjectionClient uses the managed governance endpoint and SEKAI_TOKEN for in-cluster Chisei", async () => {
+  let config: ChiseiSdkFactoryConfig | undefined;
+  const client = new ChiseiProjectionClient(
+    {
+      ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT: "http://chisei:50051",
+      SEKAI_TOKEN: "worker-token",
+      SEKAI_ALLOW_PLAINTEXT: "1",
+    },
+    fixtureFactory(
+      {
+        "sekai.ListActionInstances": () => ({ instances: [action] }),
+      },
+      (received) => {
+        config = received;
+      },
+    ),
+  );
+  const result = await client.listActions("project-1", "team/project");
+  assert.equal(result.state, "live");
+  assert.equal(config?.target, "http://chisei:50051");
+  assert.equal(config?.token, "worker-token");
+  assert.equal(config?.allowInsecureRemote, true);
+});
+
+test("ChiseiProjectionClient prefers explicit Chisei endpoint and token over hosted fallbacks", async () => {
+  let config: ChiseiSdkFactoryConfig | undefined;
+  const client = new ChiseiProjectionClient(
+    {
+      ALDUNIS_CHISEI_ENDPOINT: "https://chisei.example:50051",
+      ALDUNIS_CHISEI_TOKEN: "chisei-token",
+      ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT: "http://chisei:50051",
+      SEKAI_TOKEN: "worker-token",
+      SEKAI_ALLOW_PLAINTEXT: "1",
+    },
+    fixtureFactory(
+      {
+        "sekai.ListActionInstances": () => ({ instances: [action] }),
+      },
+      (received) => {
+        config = received;
+      },
+    ),
+  );
+  const result = await client.listActions("project-1", "team/project");
+  assert.equal(result.state, "live");
+  assert.equal(config?.target, "https://chisei.example:50051");
+  assert.equal(config?.token, "chisei-token");
+  assert.equal(config?.allowInsecureRemote, false);
+});
+
+test("ChiseiProjectionClient still rejects hosted HTTP without SEKAI_ALLOW_PLAINTEXT", async () => {
+  let factoryCalled = false;
+  const client = new ChiseiProjectionClient(
+    {
+      ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT: "http://chisei:50051",
+      SEKAI_TOKEN: "worker-token",
+    },
+    async () => {
+      factoryCalled = true;
+      return fixtureClient({});
+    },
+  );
+  await assert.rejects(
+    () => client.listActions("project-1", "team/project"),
+    (error: unknown) =>
+      error instanceof ChiseiClientError &&
+      error.kind === "unconfigured" &&
+      /require HTTPS/.test(error.message),
   );
   assert.equal(factoryCalled, false);
 });

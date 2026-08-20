@@ -14,6 +14,9 @@ export const PRODUCT_ENDPOINT_ENV: Record<Exclude<ProductId, "code">, string> = 
   tenkai: "ALDUNIS_TENKAI_ENDPOINT",
 };
 
+/** Hosted Shikigami governance endpoint also enables the Chisei plane. */
+export const CHISEI_GOVERNANCE_ENDPOINT_ENV = "ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT";
+
 function endpointConfigured(name: string, env: NodeJS.ProcessEnv): boolean {
   const value = env[name];
   return typeof value === "string" && value.trim().length > 0;
@@ -29,7 +32,9 @@ export function resolveProductAvailability(
   return {
     code: true,
     sekai: endpointConfigured(PRODUCT_ENDPOINT_ENV.sekai, env),
-    chisei: endpointConfigured(PRODUCT_ENDPOINT_ENV.chisei, env),
+    chisei:
+      endpointConfigured(PRODUCT_ENDPOINT_ENV.chisei, env) ||
+      endpointConfigured(CHISEI_GOVERNANCE_ENDPOINT_ENV, env),
     tenkai: endpointConfigured(PRODUCT_ENDPOINT_ENV.tenkai, env),
   };
 }

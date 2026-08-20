@@ -4,6 +4,7 @@ import {
   DEFAULT_PRODUCT_AVAILABILITY,
   isProductAvailable,
   readProductAvailabilityResponse,
+  resolveChiseiInspectAction,
 } from "./product-availability";
 
 test("default availability only enables Code", () => {
@@ -11,6 +12,20 @@ test("default availability only enables Code", () => {
   assert.equal(isProductAvailable("sekai", DEFAULT_PRODUCT_AVAILABILITY), false);
   assert.equal(isProductAvailable("chisei", DEFAULT_PRODUCT_AVAILABILITY), false);
   assert.equal(isProductAvailable("tenkai", DEFAULT_PRODUCT_AVAILABILITY), false);
+});
+
+test("Inspect in Chisei stays on Code when the Chisei plane is disabled", () => {
+  assert.equal(resolveChiseiInspectAction(undefined), "explain-unavailable");
+  assert.equal(resolveChiseiInspectAction(DEFAULT_PRODUCT_AVAILABILITY), "explain-unavailable");
+  assert.equal(
+    resolveChiseiInspectAction({
+      code: true,
+      sekai: false,
+      chisei: true,
+      tenkai: false,
+    }),
+    "open-product",
+  );
 });
 
 test("availability response rejects incomplete payloads and forces Code on", () => {

@@ -74,4 +74,8 @@ export ALDUNIS_CHISEI_ENDPOINT=…
 export ALDUNIS_TENKAI_ENDPOINT=…
 ```
 
+Hosted Code can also enable Chisei from
+`ALDUNIS_MANAGED_SHIKIGAMI_GOVERNANCE_ENDPOINT`. **Inspect in Chisei** stays on
+Code and explains the missing endpoint when the plane is still disabled.
+
 Restart the host after changing env.

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { SdkError, SekaiChiseiClient } from "@sannrox/sekai-chisei-sdk";
+import { CHISEI_GOVERNANCE_ENDPOINT_ENV } from "./products.ts";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const MAX_ACTIONS = 50;
@@ -100,6 +101,7 @@ export interface ChiseiSdkFactoryConfig {
   principal: string;
   namespace: string;
   protoRoot: string;
+  allowInsecureRemote?: boolean;
 }
 
 export type ChiseiSdkFactory = (config: ChiseiSdkFactoryConfig) => Promise<ChiseiSdkClient>;
@@ -119,7 +121,7 @@ function configuredEndpoint(env: NodeJS.ProcessEnv): {
   secure: boolean;
   loopback: boolean;
 } {
-  const raw = env.ALDUNIS_CHISEI_ENDPOINT?.trim();
+  const raw = env.ALDUNIS_CHISEI_ENDPOINT?.trim() || env[CHISEI_GOVERNANCE_ENDPOINT_ENV]?.trim();
   if (!raw) {
     throw new ChiseiClientError("Chisei is not configured.", 503, "unconfigured");
   }
@@ -156,6 +158,7 @@ const defaultSdkFactory: ChiseiSdkFactory = async (config) =>
     namespace: config.namespace,
     defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
     protoRoot: config.protoRoot,
+    allowInsecureRemote: config.allowInsecureRemote,
   });
 
 function responseField(
@@ -332,8 +335,10 @@ export class ChiseiProjectionClient {
   ): Promise<Record<string, unknown>> {
     signal?.throwIfAborted();
     const endpoint = configuredEndpoint(this.env);
-    const token = this.env.ALDUNIS_CHISEI_TOKEN?.trim();
-    if (!endpoint.secure && !endpoint.loopback) {
+    const token = this.env.ALDUNIS_CHISEI_TOKEN?.trim() || this.env.SEKAI_TOKEN?.trim();
+    const allowPlaintext = this.env.SEKAI_ALLOW_PLAINTEXT?.trim() === "1";
+    const allowInsecureRemote = !endpoint.secure && !endpoint.loopback && allowPlaintext;
+    if (!endpoint.secure && !endpoint.loopback && !allowPlaintext) {
       throw new ChiseiClientError(
         "Chisei connections require HTTPS outside loopback.",
         503,
@@ -348,6 +353,7 @@ export class ChiseiProjectionClient {
         principal: CHISEI_PRINCIPAL,
         namespace: context.namespace,
         protoRoot: CHISEI_PROTO_ROOT,
+        allowInsecureRemote,
       });
       signal?.throwIfAborted();
       const response = await client.raw.unary<Record<string, unknown>>(service, method, request, {

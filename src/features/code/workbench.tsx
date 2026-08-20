@@ -33,7 +33,7 @@ import { PaneConversation } from "./pane-conversation";
 import { MissingConversation } from "./missing-conversation";
 import { branchFromWorktree } from "./conversation-list";
 import { isQuietDelegatedChild, summarizeDelegatedOutcomes } from "./delegated-outcomes";
-import { Button, CloseButton, WorkbenchDialog } from "../../components/ui";
+import { Banner, Button, CloseButton, WorkbenchDialog } from "../../components/ui";
 import { providerListLabel } from "../../lib/provider-readiness";
 import {
   DEFAULT_MOBILE_SIDEBAR_OPEN,
@@ -81,6 +81,7 @@ import {
   loadBranchPrLookupResults,
   uniqueWorktreeRoots,
 } from "../../lib/branch-pr-status";
+import { resolveChiseiInspectAction } from "../../lib/product-availability";
 
 const DomainPage = React.lazy(async () => ({
   default: (await import("../shell/domain-page")).DomainPage,
@@ -697,8 +698,10 @@ export function CodeWorkbench({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [toggleSidebar]);
   const [chiseiCorrelationId, setChiseiCorrelationId] = useState<string | null>(null);
+  const [chiseiInspectUnavailable, setChiseiInspectUnavailable] = useState(false);
   useEffect(() => {
     setChiseiCorrelationId(null);
+    setChiseiInspectUnavailable(false);
   }, [repository?.projectId]);
   const previousProduct = useRef(product);
   useEffect(() => {
@@ -717,11 +720,16 @@ export function CodeWorkbench({
         ?.correlationId;
       if (typeof correlationId !== "string") return;
       setChiseiCorrelationId(correlationId);
+      if (resolveChiseiInspectAction(productAvailability) === "explain-unavailable") {
+        setChiseiInspectUnavailable(true);
+        return;
+      }
+      setChiseiInspectUnavailable(false);
       onProductChange("chisei");
     };
     window.addEventListener("aldunis:inspect-chisei-operation", inspect);
     return () => window.removeEventListener("aldunis:inspect-chisei-operation", inspect);
-  }, [onProductChange]);
+  }, [onProductChange, productAvailability]);
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(() => {
     if (typeof window === "undefined") return "all";
     try {
@@ -1439,6 +1447,11 @@ export function CodeWorkbench({
         data-sidebar-state={sidebarOpen ? "expanded" : "collapsed"}
         aria-hidden="true"
       />
+      {chiseiInspectUnavailable ? (
+        <Banner variant="warning">
+          Inspect in Chisei needs a configured Chisei endpoint on this host.
+        </Banner>
+      ) : null}
       <CodeSidebar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={toggleSidebar}

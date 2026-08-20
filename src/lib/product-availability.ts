@@ -10,11 +10,19 @@ export const DEFAULT_PRODUCT_AVAILABILITY: ProductAvailability = {
   tenkai: false,
 };
 
-export function isProductAvailable(
-  product: Product,
-  availability: ProductAvailability,
-): boolean {
+export function isProductAvailable(product: Product, availability: ProductAvailability): boolean {
   return availability[product] === true;
+}
+
+export type ChiseiInspectAction = "open-product" | "explain-unavailable";
+
+/** Inspect in Chisei opens the plane only when the host has configured it. */
+export function resolveChiseiInspectAction(
+  availability: ProductAvailability | undefined,
+): ChiseiInspectAction {
+  return isProductAvailable("chisei", availability ?? DEFAULT_PRODUCT_AVAILABILITY)
+    ? "open-product"
+    : "explain-unavailable";
 }
 
 export function readProductAvailabilityResponse(value: unknown): ProductAvailability | null {
