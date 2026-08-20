@@ -503,6 +503,25 @@ test("long line-delimited additions cannot suppress unrelated committed sizes", 
   assert.equal(changes.find((change) => change.path === added)?.state, "added");
 });
 
+test("tracked statistics remain available when snapshot Git ignores stdin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-numstat-stdin-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await writeFile(join(root, "tracked.txt"), "before\n");
+  await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "tracked fixture"]);
+  await writeFile(join(root, "tracked.txt"), "after\n");
+
+  const listings = await Promise.all(Array.from({ length: 24 }, () => listChangedFiles(root)));
+  for (const changes of listings) {
+    const tracked = changes.find((change) => change.path === "tracked.txt");
+    assert.equal(tracked?.state, "modified");
+    assert.equal(tracked?.additions, 1);
+    assert.equal(tracked?.deletions, 1);
+  }
+});
+
 test("symlink renames remain non-renderable", async () => {
   const root = await fixture();
   await writeFile(join(root, "symlink-target.txt"), "target\n");
