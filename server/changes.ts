@@ -178,10 +178,14 @@ async function snapshotGitInput(
   maximumStdout = MAX_SNAPSHOT_GIT_STDOUT_BYTES,
 ): Promise<SnapshotGitResult> {
   signal?.throwIfAborted();
+  // Git diff --numstat and other inspection commands do not consume stdin.
+  // Writing even an empty buffer after the child closes the unused pipe
+  // surfaces EPIPE and fail-closes the review snapshot.
+  const consumeStdin = input.byteLength > 0;
   const child = spawn(command, ["-C", worktree, ...args], {
     env: environment,
     shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: [consumeStdin ? "pipe" : "ignore", "pipe", "pipe"],
   });
   let timedOut = false;
   let aborted = false;
@@ -227,10 +231,14 @@ async function snapshotGitInput(
   const stdout = settle(collect(child.stdout, maximumStdout));
   const stderr = settle(collect(child.stderr, MAX_SNAPSHOT_GIT_STDERR_BYTES));
   const write = settle(
-    (async () => {
-      child.stdin.end(input);
-      await finished(child.stdin);
-    })(),
+    consumeStdin
+      ? (async () => {
+          const stdin = child.stdin;
+          if (!stdin) throw new Error("Git snapshot stdin is unavailable.");
+          stdin.end(input);
+          await finished(stdin);
+        })()
+      : Promise.resolve(),
   );
   try {
     const [outcome, stdoutOutcome, stderrOutcome, writeOutcome] = await Promise.all([
