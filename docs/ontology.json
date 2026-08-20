@@ -475,7 +475,7 @@
     },
     {
       "name": "ChangedFileReviewRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing with a 256-entry interactive projection and explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping behind one internal dispatch interface without changing repository or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing and single-file diff admission through the same 256-entry interactive projection with explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, batched committed-object size inspection and NUL-safe tracked numstat classification for the bounded projection, unused snapshot-stdin ignore so Git children that do not consume input cannot fail the review snapshot, bounded exact rename matching that batches committed-object metadata, conversion attributes, and candidate object identities for at most 128 sources and candidates, and disposable rename snapshots that batch bounded, timeout-constrained Git attribute, object, and index work through NUL-safe repository-path protocols, alongside canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping without changing repository or approval authority."
     },
     {
       "name": "ChangedFileReviewSessionModule",
@@ -527,7 +527,7 @@
     },
     {
       "name": "DeliveryRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, streamed Git delivery status with a 256-path staged and unstaged projection, exact counts, explicit truncation, bounded records, stderr, deadlines, termination, and child cleanup, fail-closed complete staged-set commit review, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
+      "description": "A deep server-side Aldunis Code module that concentrates source-control and capability-linked release delivery route recognition, request validation, host-mode admission, canonical worktree selection, streamed Git delivery status with a 256-path staged and unstaged projection, exact counts, explicit truncation, bounded records, stderr, deadlines, termination, and child cleanup, constant-process bounded regular-file hashing for stage-plan state bindings with compatible deleted, nested-repository, and newline-path fallbacks, fail-closed complete staged-set commit review, request-lifetime-cancelled pull-request and release-inspection projection, bounded pull-request concurrency, release-project correlation, broker invocation, and response mapping behind one internal dispatch interface without changing Code, Chisei, or Tenkai authority."
     },
     {
       "name": "BranchPrStatusPollingCoordinator",
@@ -1669,6 +1669,36 @@
       "subject": "ChangedFileReviewRouteDispatchModule",
       "source": "Aldunis Code Issue #1165 bounded changed-file review inventory",
       "locator": "https://github.com/Sannrox/aldunis-code/issues/1165; server/changes.ts#listChangedFilesPage; server/review-routes.ts#handleReviewRoute",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1195",
+      "locator": "server/changes.ts#createWorktreeSnapshot; server/changes.ts#boundedSnapshotPaths; server/changes.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1208",
+      "locator": "server/changes.ts#pairExactRenames; server/changes.ts#pathsWithoutGitConversion; server/changes.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1210",
+      "locator": "server/changes.ts#committedObjectMetadata; server/changes.ts#isOversized; server/changes.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1212",
+      "locator": "server/changes.ts#snapshotGitInput; server/changes.ts#batchTrackedNumstats; server/changes.ts#inspectChangedFiles; server/changes.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1214",
+      "locator": "server/changes.ts#readFileDiff; server/review-routes.ts#handleReviewRoute; server/review-routes.test.ts",
       "confidence": 1.0
     },
     {
@@ -3055,6 +3085,12 @@
       "subject": "DeliveryRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1185",
       "locator": "server/delivery.ts#readDeliveryStatus; server/delivery.ts#inspectDelivery; server/delivery.ts#DeliveryBroker",
+      "confidence": 1.0
+    },
+    {
+      "subject": "DeliveryRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1206",
+      "locator": "server/delivery.ts#batchRegularPathHashes; server/delivery.ts#fingerprint; server/delivery.test.ts",
       "confidence": 1.0
     },
     {

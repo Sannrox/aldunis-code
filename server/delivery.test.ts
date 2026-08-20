@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -193,6 +193,53 @@ test("stage plans treat Git pathspec magic as a literal filename", async () => {
   assert.match(status, /^A {2}:\(glob\)\*\*$/m);
   assert.match(status, /^ M reviewed\.txt$/m);
   assert.match(status, /^ M unrelated\.txt$/m);
+});
+
+test("stage plans batch regular-file fingerprints beyond the review projection", async () => {
+  const { root, git } = await fixture();
+  const paths = Array.from(
+    { length: MAX_DELIVERY_CHANGED_PATHS + 44 },
+    (_, index) => `batch-${index}.txt`,
+  );
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "before\n")));
+  await git("add", ".");
+  await git("commit", "-qm", "batch fixtures");
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "after\n")));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-delivery-trace-"));
+  const trace = join(traceRoot, "events.json");
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    await new DeliveryBroker().plan(root, root, "stage", { paths });
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
+  assert.equal(
+    starts.filter(
+      (event) => event.argv?.includes("hash-object") && !event.argv?.includes("--stdin-paths"),
+    ).length,
+    0,
+  );
+});
+
+test("stage fingerprints preserve newline paths and reject later content changes", async () => {
+  const { root, git } = await fixture();
+  const path = "reviewed-with\nnewline.txt";
+  await writeFile(join(root, path), "before\n");
+  await git("add", "--", path);
+  await git("commit", "-qm", "newline fixture");
+  await writeFile(join(root, path), "after\n");
+  const broker = new DeliveryBroker();
+  const plan = await broker.plan(root, root, "stage", { paths: [path] });
+  await writeFile(join(root, path), "changed after review\n");
+  await assert.rejects(() => broker.execute(plan.id, root, root), /state or destination changed/);
 });
 
 test("commit plans require staged changes and execute the reviewed message", async () => {

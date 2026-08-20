@@ -20,6 +20,7 @@ interface ReviewChangesAdapter {
     worktree: string,
     path: string,
     changedFiles?: readonly ChangedFile[],
+    signal?: AbortSignal,
   ) => Promise<FileDiff>;
 }
 
@@ -139,8 +140,13 @@ export async function handleReviewRoute(
     ) {
       throw new RepositoryError("A repository, worktree, and changed file are required.");
     }
-    const selected = await selectWorktree(body.root, body.worktree);
-    sendJson(response, 200, await changes.readFileDiff(selected.worktree, body.path));
+    await withRequestCancellation(request, response, async (signal) => {
+      const selected = await selectWorktree(body.root, body.worktree);
+      signal.throwIfAborted();
+      const diff = await changes.readFileDiff(selected.worktree, body.path, undefined, signal);
+      signal.throwIfAborted();
+      sendJson(response, 200, diff);
+    });
     return true;
   }
 

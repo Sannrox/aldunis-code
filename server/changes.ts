@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import type { Stats } from "node:fs";
-import { copyFile, lstat, mkdir, mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import { checkpointDiff, RepositoryError, type CheckpointFile } from "./repository.ts";
 import { isComposerAttachmentPath, isLocalRuntimePath } from "./local-runtime.ts";
@@ -17,8 +28,13 @@ export const MAX_DIFF_BYTES = 256 * 1024;
 export const MAX_CHANGED_FILES = 256;
 const CHANGED_FILE_READ_BUFFER_BYTES = 64 * 1024;
 const MAX_RENAME_CANDIDATES = 128;
+const MAX_NUMSTAT_PATHS_PER_BATCH = 128;
 const MAX_STATUS_RECORD_BYTES = 64 * 1024;
 const MAX_STATUS_STDERR_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_GIT_STDOUT_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_GIT_STDERR_BYTES = 64 * 1024;
+const MAX_SNAPSHOT_ATTRIBUTE_BYTES = MAX_RENAME_CANDIDATES * 2 * (MAX_STATUS_RECORD_BYTES + 64);
+const SNAPSHOT_GIT_TIMEOUT_MS = 10_000;
 const HIDDEN_REVIEW_PATHSPECS = [
   ":(glob)aldunis-code-composer-images/**",
   ":(icase,glob)**/*.db",
@@ -147,6 +163,120 @@ function gitWithEnvironment(
   });
 }
 
+type SnapshotGitResult = {
+  stdout: Buffer;
+};
+
+async function snapshotGitInput(
+  worktree: string,
+  args: string[],
+  environment: NodeJS.ProcessEnv,
+  input: Buffer,
+  signal?: AbortSignal,
+  command = "git",
+  timeoutMs = SNAPSHOT_GIT_TIMEOUT_MS,
+  maximumStdout = MAX_SNAPSHOT_GIT_STDOUT_BYTES,
+): Promise<SnapshotGitResult> {
+  signal?.throwIfAborted();
+  // Git diff --numstat and other inspection commands do not consume stdin.
+  // Writing even an empty buffer after the child closes the unused pipe
+  // surfaces EPIPE and fail-closes the review snapshot.
+  const consumeStdin = input.byteLength > 0;
+  const child = spawn(command, ["-C", worktree, ...args], {
+    env: environment,
+    shell: false,
+    stdio: [consumeStdin ? "pipe" : "ignore", "pipe", "pipe"],
+  });
+  let timedOut = false;
+  let aborted = false;
+  const terminate = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    terminate();
+  }, timeoutMs);
+  timer.unref();
+  const abort = () => {
+    aborted = true;
+    terminate();
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  const exit = new Promise<{ code: number | null; error: Error | null }>((resolveExit) => {
+    child.once("error", (error) => resolveExit({ code: null, error }));
+    child.once("close", (code) => resolveExit({ code, error: null }));
+  });
+  const collect = async (stream: NodeJS.ReadableStream, maximum: number): Promise<Buffer> => {
+    const chunks: Buffer[] = [];
+    let retained = 0;
+    for await (const rawChunk of stream) {
+      const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+      if (retained + chunk.length > maximum) throw new Error("Git output exceeds its limit.");
+      chunks.push(chunk);
+      retained += chunk.length;
+    }
+    return Buffer.concat(chunks, retained);
+  };
+  const settle = <T>(promise: Promise<T>) =>
+    promise.then(
+      (value) => ({ value, error: null }),
+      (error: unknown) => {
+        terminate();
+        return {
+          value: null,
+          error: error instanceof Error ? error : new Error("Git stream failed."),
+        };
+      },
+    );
+  const stdout = settle(collect(child.stdout, maximumStdout));
+  const stderr = settle(collect(child.stderr, MAX_SNAPSHOT_GIT_STDERR_BYTES));
+  const write = settle(
+    consumeStdin
+      ? (async () => {
+          const stdin = child.stdin;
+          if (!stdin) throw new Error("Git snapshot stdin is unavailable.");
+          stdin.end(input);
+          await finished(stdin);
+        })()
+      : Promise.resolve(),
+  );
+  try {
+    const [outcome, stdoutOutcome, stderrOutcome, writeOutcome] = await Promise.all([
+      exit,
+      stdout,
+      stderr,
+      write,
+    ]);
+    if (aborted) signal?.throwIfAborted();
+    if (
+      timedOut ||
+      outcome.error ||
+      stdoutOutcome.error ||
+      stderrOutcome.error ||
+      writeOutcome.error ||
+      outcome.code !== 0
+    ) {
+      throw new Error(
+        stderrOutcome.value?.toString("utf8").trim() ||
+          outcome.error?.message ||
+          stdoutOutcome.error?.message ||
+          stderrOutcome.error?.message ||
+          writeOutcome.error?.message ||
+          "Git snapshot process failed.",
+      );
+    }
+    return { stdout: stdoutOutcome.value ?? Buffer.alloc(0) };
+  } catch {
+    terminate();
+    await exit;
+    signal?.throwIfAborted();
+    throw new RepositoryError("The worktree could not be snapshotted for change review.", 409);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
+
 type WorktreeSnapshot = {
   temporary: string;
   environment: NodeJS.ProcessEnv;
@@ -207,35 +337,57 @@ async function createWorktreeSnapshot(
     }
     await copyFile(sourceIndex, indexPath);
     signal?.throwIfAborted();
-    for (const path of removePaths) {
-      signal?.throwIfAborted();
-      await gitWithEnvironment(
+    if (removePaths.length > 0) {
+      await snapshotGitInput(
         worktree,
-        ["update-index", "--force-remove", "--", path],
+        ["update-index", "--force-remove", "-z", "--stdin"],
         environment,
-        undefined,
+        Buffer.from(`${removePaths.join("\0")}\0`),
         signal,
       );
     }
-    for (const path of addPaths) {
+    const additions: Array<{ mode: "100644" | "100755"; path: string; temporaryPath: string }> = [];
+    for (const [index, path] of addPaths.entries()) {
       signal?.throwIfAborted();
+      const content = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
+      signal?.throwIfAborted();
+      if (!content) continue;
       const details = await lstat(resolve(worktree, path));
       signal?.throwIfAborted();
       if (!details.isFile() || details.size > MAX_DIFF_BYTES) continue;
-      const object = await gitWithEnvironment(
+      const temporaryPath = join(temporary, `snapshot-blob-${index.toString().padStart(3, "0")}`);
+      await writeFile(temporaryPath, content, { flag: "wx", mode: 0o600 });
+      additions.push({
+        mode: details.mode & 0o111 ? "100755" : "100644",
+        path,
+        temporaryPath,
+      });
+    }
+    if (additions.length > 0) {
+      const objects = await snapshotGitInput(
         worktree,
-        ["hash-object", "-w", "--no-filters", "--", path],
+        ["hash-object", "-w", "--no-filters", "--stdin-paths"],
         environment,
-        MAX_DIFF_BYTES * 2,
+        Buffer.from(`${additions.map((entry) => entry.temporaryPath).join("\n")}\n`),
         signal,
       );
-      signal?.throwIfAborted();
-      const mode = details.mode & 0o111 ? "100755" : "100644";
-      await gitWithEnvironment(
+      const objectIds = objects.stdout.toString("ascii").trimEnd().split("\n");
+      if (
+        objectIds.length !== additions.length ||
+        objectIds.some((objectId) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(objectId))
+      ) {
+        throw new RepositoryError("The worktree could not be snapshotted for change review.", 409);
+      }
+      const indexRecords = Buffer.from(
+        additions
+          .map((entry, index) => `${entry.mode} ${objectIds[index]}\t${entry.path}\0`)
+          .join(""),
+      );
+      await snapshotGitInput(
         worktree,
-        ["update-index", "--add", "--cacheinfo", `${mode},${object.stdout.trim()},${path}`],
+        ["update-index", "--add", "-z", "--index-info"],
         environment,
-        undefined,
+        indexRecords,
         signal,
       );
     }
@@ -264,8 +416,9 @@ async function withWorktreeSnapshot<T>(
   callback: (environment: NodeJS.ProcessEnv) => Promise<T>,
   removePaths: string[] = [],
   addPaths: string[] = [],
+  signal?: AbortSignal,
 ): Promise<T> {
-  const snapshot = await createWorktreeSnapshot(worktree, removePaths, addPaths);
+  const snapshot = await createWorktreeSnapshot(worktree, removePaths, addPaths, signal);
   try {
     return await callback(snapshot.environment);
   } finally {
@@ -298,6 +451,7 @@ async function isOversized(
   deleted: boolean,
   previousPath: string | null,
   untracked: boolean,
+  committedSizes: ReadonlyMap<string, number>,
   signal?: AbortSignal,
 ): Promise<boolean> {
   signal?.throwIfAborted();
@@ -312,20 +466,71 @@ async function isOversized(
     }
   }
   if (!untracked || previousPath) {
-    try {
-      const result = await git(
-        worktree,
-        ["cat-file", "-s", `HEAD:${previousPath ?? path}`],
-        undefined,
-        signal,
-      );
-      size = Math.max(size, Number(result.stdout.trim()) || 0);
-    } catch {
-      signal?.throwIfAborted();
-      // The status may change between discovery and inspection.
-    }
+    size = Math.max(size, committedSizes.get(previousPath ?? path) ?? 0);
   }
   return size > MAX_DIFF_BYTES;
+}
+
+type CommittedObjectMetadata = { objectId: string; size: number };
+
+async function committedObjectMetadata(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, CommittedObjectMetadata>> {
+  const unique = [...new Set(paths)];
+  if (unique.length === 0) return new Map();
+  try {
+    const result = await snapshotGitInput(
+      worktree,
+      ["cat-file", "--batch-check", "-Z"],
+      process.env,
+      Buffer.from(`${unique.map((path) => `HEAD:${path}`).join("\0")}\0`),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      unique.reduce((maximum, path) => maximum + Buffer.byteLength(`HEAD:${path}`) + 96, 0),
+    );
+    const records = result.stdout.toString("ascii").split("\0");
+    if (records.at(-1) === "") records.pop();
+    if (records.length !== unique.length) throw new Error("Git returned incomplete metadata.");
+    const metadata = new Map<string, CommittedObjectMetadata>();
+    for (const [index, record] of records.entries()) {
+      const match = /^([0-9a-f]{40}|[0-9a-f]{64}) blob (\d+)$/.exec(record);
+      if (!match) continue;
+      const size = Number(match[2]);
+      if (!Number.isSafeInteger(size) || size < 0) continue;
+      metadata.set(unique[index]!, { objectId: match[1]!, size });
+    }
+    return metadata;
+  } catch {
+    signal?.throwIfAborted();
+    // Git before 2.41 does not support NUL-delimited batch output. Preserve
+    // exact path handling and prior best-effort behavior on those installations.
+    const metadata = new Map<string, CommittedObjectMetadata>();
+    for (const path of unique) {
+      signal?.throwIfAborted();
+      try {
+        const object = (
+          await git(worktree, ["rev-parse", `HEAD:${path}`], undefined, signal)
+        ).stdout.trim();
+        const size = Number(
+          (await git(worktree, ["cat-file", "-s", object], undefined, signal)).stdout.trim(),
+        );
+        if (
+          /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(object) &&
+          Number.isSafeInteger(size) &&
+          size >= 0
+        ) {
+          metadata.set(path, { objectId: object, size });
+        }
+      } catch {
+        signal?.throwIfAborted();
+        // The worktree may change between status and metadata inspection.
+      }
+    }
+    return metadata;
+  }
 }
 
 type ChangeEntry = {
@@ -337,29 +542,58 @@ type ChangeEntry = {
   nonRenderable?: boolean;
 };
 
+async function pathsWithoutGitConversion(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Set<string>> {
+  if (paths.length === 0) return new Set();
+  signal?.throwIfAborted();
+  try {
+    const result = await snapshotGitInput(
+      worktree,
+      ["check-attr", "-z", "--stdin", "filter", "working-tree-encoding"],
+      process.env,
+      Buffer.from(`${paths.join("\0")}\0`),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      MAX_SNAPSHOT_ATTRIBUTE_BYTES,
+    );
+    const fields = result.stdout.toString("utf8").split("\0");
+    if (fields.at(-1) === "") fields.pop();
+    if (fields.length !== paths.length * 6) return new Set();
+    const accepted = new Set<string>();
+    for (let index = 0; index < paths.length; index += 1) {
+      const offset = index * 6;
+      const path = paths[index];
+      const filter = fields.slice(offset, offset + 3);
+      const encoding = fields.slice(offset + 3, offset + 6);
+      if (
+        filter[0] !== path ||
+        filter[1] !== "filter" ||
+        encoding[0] !== path ||
+        encoding[1] !== "working-tree-encoding"
+      ) {
+        return new Set();
+      }
+      if ([filter[2], encoding[2]].every((value) => value === "unspecified" || value === "unset")) {
+        accepted.add(path);
+      }
+    }
+    return accepted;
+  } catch {
+    signal?.throwIfAborted();
+    return new Set();
+  }
+}
+
 async function hasGitConversion(
   worktree: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  signal?.throwIfAborted();
-  try {
-    const result = await git(
-      worktree,
-      ["check-attr", "-z", "filter", "working-tree-encoding", "--", path],
-      undefined,
-      signal,
-    );
-    const fields = result.stdout.split("\0");
-    for (let index = 1; index < fields.length; index += 3) {
-      const value = fields[index + 1];
-      if (value && value !== "unspecified" && value !== "unset") return true;
-    }
-    return false;
-  } catch {
-    signal?.throwIfAborted();
-    return true;
-  }
+  return !(await pathsWithoutGitConversion(worktree, [path], signal)).has(path);
 }
 
 async function listIgnoredRuntimePaths(worktree: string, signal?: AbortSignal): Promise<string[]> {
@@ -399,26 +633,21 @@ async function boundedSnapshotPaths(
   limit = MAX_RENAME_CANDIDATES,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const candidates: string[] = [];
+  const regularFiles: string[] = [];
   for (const path of [...new Set(paths)]) {
     signal?.throwIfAborted();
-    if (candidates.length >= limit) break;
+    if (regularFiles.length >= limit) break;
     try {
       const details = await lstat(resolve(worktree, path));
       signal?.throwIfAborted();
-      if (
-        details.isFile() &&
-        details.size <= MAX_DIFF_BYTES &&
-        !(await hasGitConversion(worktree, path, signal))
-      ) {
-        candidates.push(path);
-      }
+      if (details.isFile() && details.size <= MAX_DIFF_BYTES) regularFiles.push(path);
     } catch {
       signal?.throwIfAborted();
       // The worktree may change between status and snapshot preparation.
     }
   }
-  return candidates;
+  const accepted = await pathsWithoutGitConversion(worktree, regularFiles, signal);
+  return regularFiles.filter((path) => accepted.has(path));
 }
 
 async function pairExactRenames(
@@ -433,40 +662,78 @@ async function pairExactRenames(
   const candidates = entries
     .filter((entry) => entry.code === "??" && candidatePredicate(entry))
     .slice(0, MAX_RENAME_CANDIDATES);
-  const sourceObjects = new Map<string, string>();
-  for (const entry of deleted.slice(0, MAX_RENAME_CANDIDATES)) {
-    signal?.throwIfAborted();
-    try {
-      const size = Number(
-        (
-          await git(worktree, ["cat-file", "-s", `HEAD:${entry.path}`], undefined, signal)
-        ).stdout.trim(),
-      );
-      if (size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path, signal)) continue;
-      const object = await git(worktree, ["rev-parse", `HEAD:${entry.path}`], undefined, signal);
-      sourceObjects.set(entry.path, object.stdout.trim());
-    } catch {
-      signal?.throwIfAborted();
-      // The worktree may change between status and rename matching.
-    }
-  }
+  const sources = deleted.slice(0, MAX_RENAME_CANDIDATES);
+  const regularCandidates: ChangeEntry[] = [];
   for (const entry of candidates) {
     signal?.throwIfAborted();
     try {
       const details = await lstat(resolve(worktree, entry.path));
       signal?.throwIfAborted();
-      if (!details.isFile() || details.size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path, signal)) continue;
-      const object = await git(
+      if (details.isFile() && details.size <= MAX_EXACT_RENAME_BYTES) regularCandidates.push(entry);
+    } catch {
+      signal?.throwIfAborted();
+      // The worktree may change between status and rename matching.
+    }
+  }
+  const conversionSafe = await pathsWithoutGitConversion(
+    worktree,
+    [...sources.map((entry) => entry.path), ...regularCandidates.map((entry) => entry.path)],
+    signal,
+  );
+  const sourceObjects = new Map<string, string[]>();
+  const admittedSources = sources.filter((entry) => conversionSafe.has(entry.path));
+  const metadata = await committedObjectMetadata(
+    worktree,
+    admittedSources.map((entry) => entry.path),
+    signal,
+  );
+  for (const entry of admittedSources) {
+    const source = metadata.get(entry.path);
+    if (!source || source.size > MAX_EXACT_RENAME_BYTES) continue;
+    const paths = sourceObjects.get(source.objectId) ?? [];
+    paths.push(entry.path);
+    sourceObjects.set(source.objectId, paths);
+  }
+  const safeCandidates = regularCandidates.filter(
+    (entry) => conversionSafe.has(entry.path) && !/[\r\n]/.test(entry.path),
+  );
+  const candidateObjects = new Map<string, string>();
+  try {
+    if (safeCandidates.length > 0) {
+      const objects = await snapshotGitInput(
         worktree,
-        ["hash-object", "--no-filters", "--", entry.path],
-        undefined,
+        ["hash-object", "--no-filters", "--stdin-paths"],
+        process.env,
+        Buffer.from(`${safeCandidates.map((entry) => entry.path).join("\n")}\n`),
         signal,
+        "git",
+        SNAPSHOT_GIT_TIMEOUT_MS,
+        safeCandidates.length * 65,
       );
-      const previousPath = [...sourceObjects.entries()].find(
-        ([, sourceObject]) => sourceObject === object.stdout.trim(),
-      )?.[0];
+      const objectIds = objects.stdout.toString("ascii").trimEnd().split("\n");
+      if (
+        objectIds.length === safeCandidates.length &&
+        objectIds.every((objectId) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(objectId))
+      ) {
+        safeCandidates.forEach((entry, index) =>
+          candidateObjects.set(entry.path, objectIds[index]!),
+        );
+      }
+    }
+  } catch {
+    signal?.throwIfAborted();
+    // The worktree may change between status and rename matching.
+  }
+  for (const entry of regularCandidates) {
+    signal?.throwIfAborted();
+    try {
+      if (!conversionSafe.has(entry.path)) continue;
+      const objectId =
+        candidateObjects.get(entry.path) ??
+        (
+          await git(worktree, ["hash-object", "--no-filters", "--", entry.path], undefined, signal)
+        ).stdout.trim();
+      const previousPath = sourceObjects.get(objectId)?.shift();
       if (!previousPath) continue;
       entry.initial = "renamed";
       entry.previousPath = previousPath;
@@ -475,7 +742,7 @@ async function pairExactRenames(
         (candidate) => candidate.initial === "deleted" && candidate.path === previousPath,
       );
       if (deletedEntry) entries.splice(entries.indexOf(deletedEntry), 1);
-      sourceObjects.delete(previousPath);
+      if (sourceObjects.get(objectId)?.length === 0) sourceObjects.delete(objectId);
     } catch {
       signal?.throwIfAborted();
       // The worktree may change between status and rename matching.
@@ -671,6 +938,58 @@ function parseNumstat(output: string): [number | null, number | null] {
     deletions += deletedCount;
   }
   return [additions, deletions];
+}
+
+type TrackedNumstat = { binary: boolean; additions: number; deletions: number };
+
+async function batchTrackedNumstats(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, TrackedNumstat>> {
+  const stats = new Map<string, TrackedNumstat>();
+  const unique = [...new Set(paths)];
+  for (let offset = 0; offset < unique.length; offset += MAX_NUMSTAT_PATHS_PER_BATCH) {
+    const batch = unique.slice(offset, offset + MAX_NUMSTAT_PATHS_PER_BATCH);
+    const result = await snapshotGitInput(
+      worktree,
+      ["diff", "--no-textconv", "--numstat", "-z", "--no-renames", "HEAD", "--", ...batch],
+      { ...process.env, GIT_LITERAL_PATHSPECS: "1" },
+      Buffer.alloc(0),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      batch.reduce((maximum, path) => maximum + Buffer.byteLength(path) + 48, 0),
+    );
+    const records = result.stdout.toString("utf8").split("\0");
+    if (records.at(-1) === "") records.pop();
+    for (const record of records) {
+      const firstTab = record.indexOf("\t");
+      const secondTab = record.indexOf("\t", firstTab + 1);
+      if (firstTab < 1 || secondTab < firstTab + 2) {
+        throw new RepositoryError("Git returned invalid changed-file statistics.", 409);
+      }
+      const added = record.slice(0, firstTab);
+      const deleted = record.slice(firstTab + 1, secondTab);
+      const path = safeRelativePath(worktree, record.slice(secondTab + 1));
+      if (added === "-" && deleted === "-") {
+        stats.set(path, { binary: true, additions: 0, deletions: 0 });
+        continue;
+      }
+      const additions = Number(added);
+      const deletions = Number(deleted);
+      if (
+        !Number.isSafeInteger(additions) ||
+        additions < 0 ||
+        !Number.isSafeInteger(deletions) ||
+        deletions < 0
+      ) {
+        throw new RepositoryError("Git returned invalid changed-file statistics.", 409);
+      }
+      stats.set(path, { binary: false, additions, deletions });
+    }
+  }
+  return stats;
 }
 
 async function counts(
@@ -989,19 +1308,48 @@ async function inspectChangedFiles(
         !(entry.code === "??" && entry.initial === "added" && isHiddenReviewPath(entry.path)),
     );
     if (visibleEntries.length > maximumEntries) truncated = true;
+    const projectedEntries = visibleEntries.slice(0, maximumEntries);
+    const committedMetadata = await committedObjectMetadata(
+      worktree,
+      projectedEntries
+        .filter((entry) => entry.initial !== "added")
+        .map((entry) => entry.previousPath ?? entry.path),
+      signal,
+    );
+    const committedSizes = new Map(
+      [...committedMetadata].map(([path, metadata]) => [path, metadata.size]),
+    );
+    const oversizedEntries = new Map<ChangeEntry, boolean>();
+    for (const entry of projectedEntries) {
+      oversizedEntries.set(
+        entry,
+        await isOversized(
+          worktree,
+          entry.path,
+          entry.initial === "deleted",
+          entry.previousPath,
+          entry.code === "??",
+          committedSizes,
+          signal,
+        ),
+      );
+    }
+    const trackedNumstats = await batchTrackedNumstats(
+      worktree,
+      projectedEntries
+        .filter(
+          (entry) =>
+            !oversizedEntries.get(entry) && entry.code !== "??" && entry.previousPath === null,
+        )
+        .map((entry) => entry.path),
+      signal,
+    );
     const changes: ChangedFile[] = [];
-    for (const entry of visibleEntries.slice(0, maximumEntries)) {
+    for (const entry of projectedEntries) {
       signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
-      let oversized = await isOversized(
-        worktree,
-        path,
-        initial === "deleted",
-        previousPath,
-        code === "??",
-        signal,
-      );
+      let oversized = oversizedEntries.get(entry) ?? false;
       let untrackedContent: Buffer | null | undefined;
       if (!oversized && code === "??" && !entry.symlink && !entry.nonRenderable) {
         untrackedContent = await readBoundedChangedFile(
@@ -1011,26 +1359,33 @@ async function inspectChangedFiles(
         );
         if (untrackedContent === null) oversized = true;
       }
+      const trackedNumstat =
+        code !== "??" && previousPath === null ? trackedNumstats.get(path) : undefined;
       const binary =
         !oversized &&
         (entry.symlink ||
           entry.nonRenderable ||
+          trackedNumstat?.binary ||
           (untrackedContent
             ? untrackedContent.subarray(0, 8_000).includes(0)
-            : await isBinary(worktree, path, false, signal)));
+            : trackedNumstat
+              ? false
+              : await isBinary(worktree, path, false, signal)));
       const [additions, deletions] =
         oversized || binary
           ? [null, null]
-          : untrackedContent && !previousPath
-            ? [contentLines(untrackedContent.toString("utf8")).length, 0]
-            : await counts(
-                worktree,
-                path,
-                code === "??",
-                previousPath,
-                snapshot?.environment ?? null,
-                signal,
-              );
+          : trackedNumstat
+            ? [trackedNumstat.additions, trackedNumstat.deletions]
+            : untrackedContent && !previousPath
+              ? [contentLines(untrackedContent.toString("utf8")).length, 0]
+              : await counts(
+                  worktree,
+                  path,
+                  code === "??",
+                  previousPath,
+                  snapshot?.environment ?? null,
+                  signal,
+                );
       changes.push({
         path,
         previousPath,
@@ -1067,9 +1422,11 @@ export async function readFileDiff(
   worktree: string,
   requestedPath: string,
   changedFiles?: readonly ChangedFile[],
+  signal?: AbortSignal,
 ): Promise<FileDiff> {
+  signal?.throwIfAborted();
   const path = safeRelativePath(worktree, requestedPath);
-  const change = (changedFiles ?? (await listChangedFiles(worktree))).find(
+  const change = (changedFiles ?? (await listChangedFilesPage(worktree, signal)).files).find(
     (item) => item.path === path,
   );
   if (!change) throw new RepositoryError("The selected file is no longer changed.", 404);
@@ -1103,11 +1460,13 @@ export async function readFileDiff(
           ],
           environment,
           MAX_DIFF_BYTES * 2,
+          signal,
         );
         return result.stdout || null;
       },
       [change.previousPath!],
       [path],
+      signal,
     );
     if (!patch) {
       throw new RepositoryError("The selected rename changed before its diff could be read.", 409);
@@ -1115,7 +1474,7 @@ export async function readFileDiff(
     return finalizeDiff(change, patch, null);
   }
   if (change.state === "added") {
-    const bytes = await readBoundedChangedFile(resolve(worktree, path));
+    const bytes = await readBoundedChangedFile(resolve(worktree, path), MAX_DIFF_BYTES, signal);
     if (!bytes) {
       throw new RepositoryError("The selected file changed before its diff could be read.", 409);
     }
@@ -1137,6 +1496,7 @@ export async function readFileDiff(
     worktree,
     ["diff", "--no-ext-diff", "--no-textconv", "--unified=3", "HEAD", "--", path],
     MAX_DIFF_BYTES * 2,
+    signal,
   );
   return finalizeDiff(
     change,

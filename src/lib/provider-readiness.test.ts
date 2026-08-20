@@ -9,6 +9,7 @@ import {
   DEFAULT_NEW_CONVERSATION_PROVIDER,
   parseProviderFailure,
   providerConfigurationVerifiedAfterFailure,
+  isGenericProviderFailure,
   providerFailureRecovery,
   providerFailureNeedsConfiguration,
   providerTextReportsAuthenticationFailure,
@@ -555,6 +556,17 @@ test("provider failure recovery changes only after configuration is verified", (
     message: "Claude stopped · review the error above before retrying",
     showSettings: false,
   });
+  assert.deepEqual(providerFailureRecovery("Shikigami", false, false, { detailedError: false }), {
+    message: "Shikigami stopped · the run ended without a detailed error",
+    showSettings: false,
+  });
+});
+
+test("generic provider failure copy does not invent a missing error", () => {
+  assert.equal(isGenericProviderFailure("Provider failed."), true);
+  assert.equal(isGenericProviderFailure("Shikigami failed.", "Shikigami"), true);
+  assert.equal(isGenericProviderFailure("The run ended without a detailed error."), true);
+  assert.equal(isGenericProviderFailure("need operator input", "Shikigami"), false);
 });
 
 test("authentication recovery requires a successful probe newer than the failed turn", () => {

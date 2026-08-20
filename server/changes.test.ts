@@ -35,6 +35,31 @@ test("bounded changed-file reads accept the limit and reject overflow", async ()
   assert.equal(await readBoundedChangedFile(path), null);
 });
 
+test("single-file diff generation observes cancellation after admission", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-cancel-diff-"));
+  await writeFile(join(root, "added.txt"), "content\n");
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () =>
+      readFileDiff(
+        root,
+        "added.txt",
+        [
+          {
+            path: "added.txt",
+            previousPath: null,
+            state: "added",
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+        controller.signal,
+      ),
+    (error: unknown) => (error as Error).name === "AbortError",
+  );
+});
+
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "aldunis-code-changes-"));
   const git = (...args: string[]) => execFileAsync("git", ["-C", root, ...args]);
@@ -136,6 +161,8 @@ test("interactive changed-file inventories bound and report overflow", async () 
   assert.equal(page.truncated, true);
   assert.equal(page.files[0]?.path, "corpus/file-0000.txt");
   assert.equal(page.files.at(-1)?.path, "corpus/file-0255.txt");
+  assert.equal((await readFileDiff(root, "corpus/file-0000.txt")).path, "corpus/file-0000.txt");
+  await assert.rejects(() => readFileDiff(root, "corpus/file-0257.txt"), /no longer changed/);
 });
 
 test("hidden runtime entries do not consume the interactive review page", async () => {
@@ -282,6 +309,151 @@ test("edited unstaged renames remain reviewable", async () => {
   assert.match(diff.patch ?? "", /^\+changed$/m);
 });
 
+test("unstaged rename snapshots batch Git index work with NUL-safe paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-batched-renames-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const originals = Array.from({ length: 16 }, (_, index) => `original-${index}.txt`);
+  await Promise.all(originals.map((path, index) => writeFile(join(root, path), `line ${index}\n`)));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "rename fixtures"]);
+  const renamed = originals.map((path, index) => ({
+    path,
+    renamed: index === 0 ? "renamed-with\nnewline.txt" : `renamed-${index}.txt`,
+  }));
+  await Promise.all(
+    renamed.map((entry) => rename(join(root, entry.path), join(root, entry.renamed))),
+  );
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFiles(root);
+    for (const entry of renamed) {
+      const change = changes.find((candidate) => candidate.path === entry.renamed);
+      assert.equal(change?.state, "renamed");
+      assert.equal(change?.previousPath, entry.path);
+    }
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 2);
+  assert.equal(
+    starts.filter(
+      (event) => event.argv?.includes("update-index") && event.argv?.includes("--stdin"),
+    ).length,
+    1,
+  );
+  assert.equal(
+    starts.filter(
+      (event) => event.argv?.includes("update-index") && event.argv?.includes("--index-info"),
+    ).length,
+    1,
+  );
+});
+
+test("exact runtime rename matching batches Git metadata and object work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-exact-runtime-renames-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const paths = Array.from({ length: 32 }, (_, index) => `tracked-${index}.db`);
+  await Promise.all(paths.map((path, index) => writeFile(join(root, path), `content ${index}\n`)));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "runtime rename fixtures"]);
+  await mkdir(join(root, "data"));
+  await Promise.all(
+    paths.map((path, index) => rename(join(root, path), join(root, "data", `renamed-${index}.db`))),
+  );
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFiles(root);
+    assert.equal(changes.filter((change) => change.previousPath !== null).length, paths.length);
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--batch-check")).length, 2);
+  assert.equal(
+    starts.filter((event) => event.argv?.includes("cat-file") && event.argv?.includes("-s")).length,
+    0,
+  );
+  assert.equal(starts.filter((event) => event.argv?.includes("check-attr")).length, 1);
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
+});
+
+test("tracked changed-file statistics use bounded Git batches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-tracked-numstat-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const paths = [
+    ...Array.from({ length: 61 }, (_, index) => `tracked-${index}.txt`),
+    "tracked-with-a-tab\t.txt",
+    "tracked-with-a-newline\n.txt",
+    ":(top)**",
+  ];
+  const oversizedPath = "oversized-tracked.txt";
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "before\n")));
+  await writeFile(join(root, oversizedPath), Buffer.alloc(MAX_DIFF_BYTES + 1, 65));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "tracked fixtures"]);
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "after\nnext\n")));
+  await writeFile(join(root, oversizedPath), Buffer.alloc(MAX_DIFF_BYTES + 2, 66));
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFilesPage(root);
+    assert.equal(changes.files.length, paths.length + 1);
+    assert.equal(changes.truncated, false);
+    for (const path of paths) {
+      const change = changes.files.find((candidate) => candidate.path === path);
+      assert.equal(change?.state, "modified");
+      assert.equal(change?.additions, 2);
+      assert.equal(change?.deletions, 1);
+    }
+    assert.equal(
+      changes.files.find((candidate) => candidate.path === oversizedPath)?.state,
+      "oversized",
+    );
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--numstat")).length, 1);
+  assert.equal(
+    starts.some((event) => event.argv?.includes("--numstat") && event.argv.includes(oversizedPath)),
+    false,
+  );
+});
+
 test("edited renames into ignored runtime paths stay hidden", async () => {
   const root = await fixture();
   await writeFile(join(root, ".gitignore"), "/data/\n");
@@ -338,6 +510,43 @@ test("oversized ordinary renames keep their previous path", async () => {
   assert.equal(renamed?.previousPath, "tracked-large.txt");
   assert.equal(renamed?.additions, null);
   assert.equal(renamed?.deletions, null);
+});
+
+test("long line-delimited additions cannot suppress unrelated committed sizes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-committed-sizes-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await writeFile(join(root, "large.txt"), Buffer.alloc(MAX_DIFF_BYTES + 1, 65));
+  await execFileAsync("git", ["-C", root, "add", "large.txt"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "large fixture"]);
+  await rm(join(root, "large.txt"));
+  const added = `${"a".repeat(200)}\nmissing-in-head.txt`;
+  await writeFile(join(root, added), "added\n");
+  await execFileAsync("git", ["-C", root, "add", "--", added]);
+
+  const changes = await listChangedFiles(root);
+  assert.equal(changes.find((change) => change.path === "large.txt")?.state, "oversized");
+  assert.equal(changes.find((change) => change.path === added)?.state, "added");
+});
+
+test("tracked statistics remain available when snapshot Git ignores stdin", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-numstat-stdin-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await writeFile(join(root, "tracked.txt"), "before\n");
+  await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "tracked fixture"]);
+  await writeFile(join(root, "tracked.txt"), "after\n");
+
+  const listings = await Promise.all(Array.from({ length: 24 }, () => listChangedFiles(root)));
+  for (const changes of listings) {
+    const tracked = changes.find((change) => change.path === "tracked.txt");
+    assert.equal(tracked?.state, "modified");
+    assert.equal(tracked?.additions, 1);
+    assert.equal(tracked?.deletions, 1);
+  }
 });
 
 test("symlink renames remain non-renderable", async () => {
