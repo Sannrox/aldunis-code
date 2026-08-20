@@ -115,6 +115,48 @@ test("changed-file listing cancels disconnected requests and releases listeners"
   assert.equal(output.listenerCount("close"), 0);
 });
 
+test("single-file diff inspection cancels disconnected requests and releases listeners", async () => {
+  const input = Object.assign(new EventEmitter(), {
+    aborted: false,
+  }) as unknown as IncomingMessage;
+  const output = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+  }) as unknown as ServerResponse;
+  let started = false;
+  const handling = handleReviewRoute(
+    "/api/changes/diff",
+    input,
+    output,
+    context({
+      readJson: async () => ({ root: "/repo", worktree: "/repo/wt", path: "src/main.ts" }),
+      selectWorktree: async () => ({ root: "/repo", worktree: "/repo/wt" }),
+      changes: {
+        listChangedFiles: unused,
+        listChangedFilesPage: unused,
+        readFileDiff: async (
+          _worktree: string,
+          _path: string,
+          _inventory: unknown,
+          signal: AbortSignal,
+        ) => {
+          started = true;
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+          throw new Error("unreachable");
+        },
+      },
+    }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(started, true);
+  output.emit("close");
+  await assert.rejects(handling, (error: unknown) => (error as Error).name === "AbortError");
+  assert.equal(input.listenerCount("aborted"), 0);
+  assert.equal(output.listenerCount("close"), 0);
+});
+
 test("review route module rejects annotation creation after the diff identity changes", async () => {
   const projection = {
     projects: [{ id: "project-1", root: "/repo" }],
