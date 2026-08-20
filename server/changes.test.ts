@@ -320,7 +320,7 @@ test("unstaged rename snapshots batch Git index work with NUL-safe paths", async
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
     .filter((event) => event.event === "start");
-  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 2);
   assert.equal(
     starts.filter(
       (event) => event.argv?.includes("update-index") && event.argv?.includes("--stdin"),
@@ -333,6 +333,41 @@ test("unstaged rename snapshots batch Git index work with NUL-safe paths", async
     ).length,
     1,
   );
+});
+
+test("exact runtime rename matching batches Git metadata and object work", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-exact-runtime-renames-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const paths = Array.from({ length: 32 }, (_, index) => `tracked-${index}.db`);
+  await Promise.all(paths.map((path, index) => writeFile(join(root, path), `content ${index}\n`)));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "runtime rename fixtures"]);
+  await mkdir(join(root, "data"));
+  await Promise.all(
+    paths.map((path, index) => rename(join(root, path), join(root, "data", `renamed-${index}.db`))),
+  );
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFiles(root);
+    assert.equal(changes.filter((change) => change.previousPath !== null).length, paths.length);
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--batch-check")).length, 1);
+  assert.equal(starts.filter((event) => event.argv?.includes("check-attr")).length, 1);
+  assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
 });
 
 test("edited renames into ignored runtime paths stay hidden", async () => {
