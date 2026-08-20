@@ -83,10 +83,7 @@ export function isGenericProviderFailure(summary: string, providerName?: string)
   if (!trimmed) return true;
   if (/^(provider failed\.?)$/i.test(trimmed)) return true;
   if (/^the run ended without a detailed error\.?$/i.test(trimmed)) return true;
-  if (
-    providerName &&
-    new RegExp(`^${escapeRegExp(providerName)} failed\\.?$`, "i").test(trimmed)
-  ) {
+  if (providerName && new RegExp(`^${escapeRegExp(providerName)} failed\\.?$`, "i").test(trimmed)) {
     return true;
   }
   return false;
