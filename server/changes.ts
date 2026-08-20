@@ -441,6 +441,7 @@ async function isOversized(
   deleted: boolean,
   previousPath: string | null,
   untracked: boolean,
+  committedSizes: ReadonlyMap<string, number>,
   signal?: AbortSignal,
 ): Promise<boolean> {
   signal?.throwIfAborted();
@@ -455,20 +456,71 @@ async function isOversized(
     }
   }
   if (!untracked || previousPath) {
-    try {
-      const result = await git(
-        worktree,
-        ["cat-file", "-s", `HEAD:${previousPath ?? path}`],
-        undefined,
-        signal,
-      );
-      size = Math.max(size, Number(result.stdout.trim()) || 0);
-    } catch {
-      signal?.throwIfAborted();
-      // The status may change between discovery and inspection.
-    }
+    size = Math.max(size, committedSizes.get(previousPath ?? path) ?? 0);
   }
   return size > MAX_DIFF_BYTES;
+}
+
+type CommittedObjectMetadata = { objectId: string; size: number };
+
+async function committedObjectMetadata(
+  worktree: string,
+  paths: string[],
+  signal?: AbortSignal,
+): Promise<Map<string, CommittedObjectMetadata>> {
+  const unique = [...new Set(paths)];
+  if (unique.length === 0) return new Map();
+  try {
+    const result = await snapshotGitInput(
+      worktree,
+      ["cat-file", "--batch-check", "-Z"],
+      process.env,
+      Buffer.from(`${unique.map((path) => `HEAD:${path}`).join("\0")}\0`),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      unique.reduce((maximum, path) => maximum + Buffer.byteLength(`HEAD:${path}`) + 96, 0),
+    );
+    const records = result.stdout.toString("ascii").split("\0");
+    if (records.at(-1) === "") records.pop();
+    if (records.length !== unique.length) throw new Error("Git returned incomplete metadata.");
+    const metadata = new Map<string, CommittedObjectMetadata>();
+    for (const [index, record] of records.entries()) {
+      const match = /^([0-9a-f]{40}|[0-9a-f]{64}) blob (\d+)$/.exec(record);
+      if (!match) continue;
+      const size = Number(match[2]);
+      if (!Number.isSafeInteger(size) || size < 0) continue;
+      metadata.set(unique[index]!, { objectId: match[1]!, size });
+    }
+    return metadata;
+  } catch {
+    signal?.throwIfAborted();
+    // Git before 2.41 does not support NUL-delimited batch output. Preserve
+    // exact path handling and prior best-effort behavior on those installations.
+    const metadata = new Map<string, CommittedObjectMetadata>();
+    for (const path of unique) {
+      signal?.throwIfAborted();
+      try {
+        const object = (
+          await git(worktree, ["rev-parse", `HEAD:${path}`], undefined, signal)
+        ).stdout.trim();
+        const size = Number(
+          (await git(worktree, ["cat-file", "-s", object], undefined, signal)).stdout.trim(),
+        );
+        if (
+          /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(object) &&
+          Number.isSafeInteger(size) &&
+          size >= 0
+        ) {
+          metadata.set(path, { objectId: object, size });
+        }
+      } catch {
+        signal?.throwIfAborted();
+        // The worktree may change between status and metadata inspection.
+      }
+    }
+    return metadata;
+  }
 }
 
 type ChangeEntry = {
@@ -619,31 +671,18 @@ async function pairExactRenames(
     signal,
   );
   const sourceObjects = new Map<string, string[]>();
-  try {
-    const admittedSources = sources.filter((entry) => conversionSafe.has(entry.path));
-    const metadata = await snapshotGitInput(
-      worktree,
-      ["cat-file", "--batch-check", "-z"],
-      process.env,
-      Buffer.from(`${admittedSources.map((entry) => `HEAD:${entry.path}`).join("\0")}\0`),
-      signal,
-      "git",
-      SNAPSHOT_GIT_TIMEOUT_MS,
-      admittedSources.length * 96,
-    );
-    const records = metadata.stdout.toString("ascii").trimEnd().split("\n");
-    if (records.length === admittedSources.length) {
-      for (const [index, record] of records.entries()) {
-        const match = /^([0-9a-f]{40}|[0-9a-f]{64}) blob (\d+)$/.exec(record);
-        if (!match || Number(match[2]) > MAX_EXACT_RENAME_BYTES) continue;
-        const paths = sourceObjects.get(match[1]) ?? [];
-        paths.push(admittedSources[index]!.path);
-        sourceObjects.set(match[1], paths);
-      }
-    }
-  } catch {
-    signal?.throwIfAborted();
-    // The worktree may change between status and rename matching.
+  const admittedSources = sources.filter((entry) => conversionSafe.has(entry.path));
+  const metadata = await committedObjectMetadata(
+    worktree,
+    admittedSources.map((entry) => entry.path),
+    signal,
+  );
+  for (const entry of admittedSources) {
+    const source = metadata.get(entry.path);
+    if (!source || source.size > MAX_EXACT_RENAME_BYTES) continue;
+    const paths = sourceObjects.get(source.objectId) ?? [];
+    paths.push(entry.path);
+    sourceObjects.set(source.objectId, paths);
   }
   const safeCandidates = regularCandidates.filter(
     (entry) => conversionSafe.has(entry.path) && !/[\r\n]/.test(entry.path),
@@ -1207,8 +1246,19 @@ async function inspectChangedFiles(
         !(entry.code === "??" && entry.initial === "added" && isHiddenReviewPath(entry.path)),
     );
     if (visibleEntries.length > maximumEntries) truncated = true;
+    const projectedEntries = visibleEntries.slice(0, maximumEntries);
+    const committedMetadata = await committedObjectMetadata(
+      worktree,
+      projectedEntries
+        .filter((entry) => entry.initial !== "added")
+        .map((entry) => entry.previousPath ?? entry.path),
+      signal,
+    );
+    const committedSizes = new Map(
+      [...committedMetadata].map(([path, metadata]) => [path, metadata.size]),
+    );
     const changes: ChangedFile[] = [];
-    for (const entry of visibleEntries.slice(0, maximumEntries)) {
+    for (const entry of projectedEntries) {
       signal?.throwIfAborted();
       const { code, path, previousPath, initial } = entry;
       if (code === "??" && initial === "added" && isHiddenReviewPath(path)) continue;
@@ -1218,6 +1268,7 @@ async function inspectChangedFiles(
         initial === "deleted",
         previousPath,
         code === "??",
+        committedSizes,
         signal,
       );
       let untrackedContent: Buffer | null | undefined;
