@@ -475,7 +475,7 @@
     },
     {
       "name": "ChangedFileReviewRouteDispatchModule",
-      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing with a 256-entry interactive projection and explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, bounded exact rename matching that batches committed-object metadata, conversion attributes, and candidate object identities for at most 128 sources and candidates, and disposable rename snapshots that batch bounded, timeout-constrained Git attribute, object, and index work through NUL-safe repository-path protocols, alongside canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping without changing repository or approval authority."
+      "description": "A deep server-side Aldunis Code module that concentrates changed-file review route recognition, request-lifetime-cancelled change listing with a 256-entry interactive projection and explicit truncation, descriptor-pinned untracked-file reads within the 256 KiB review ceiling, batched committed-object size inspection for the bounded projection, bounded exact rename matching that batches committed-object metadata, conversion attributes, and candidate object identities for at most 128 sources and candidates, and disposable rename snapshots that batch bounded, timeout-constrained Git attribute, object, and index work through NUL-safe repository-path protocols, alongside canonical worktree and conversation scope, current diff identity, file review and annotation validation, annotation projection, persistence ordering, and response mapping without changing repository or approval authority."
     },
     {
       "name": "ChangedFileReviewSessionModule",
@@ -1681,6 +1681,12 @@
       "subject": "ChangedFileReviewRouteDispatchModule",
       "source": "Aldunis Code Issue Sannrox/aldunis-code#1208",
       "locator": "server/changes.ts#pairExactRenames; server/changes.ts#pathsWithoutGitConversion; server/changes.test.ts",
+      "confidence": 1.0
+    },
+    {
+      "subject": "ChangedFileReviewRouteDispatchModule",
+      "source": "Aldunis Code Issue Sannrox/aldunis-code#1210",
+      "locator": "server/changes.ts#committedObjectMetadata; server/changes.ts#isOversized; server/changes.test.ts",
       "confidence": 1.0
     },
     {

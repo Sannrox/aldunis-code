@@ -365,7 +365,11 @@ test("exact runtime rename matching batches Git metadata and object work", async
     .filter(Boolean)
     .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
     .filter((event) => event.event === "start");
-  assert.equal(starts.filter((event) => event.argv?.includes("--batch-check")).length, 1);
+  assert.equal(starts.filter((event) => event.argv?.includes("--batch-check")).length, 2);
+  assert.equal(
+    starts.filter((event) => event.argv?.includes("cat-file") && event.argv?.includes("-s")).length,
+    0,
+  );
   assert.equal(starts.filter((event) => event.argv?.includes("check-attr")).length, 1);
   assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
 });
@@ -426,6 +430,24 @@ test("oversized ordinary renames keep their previous path", async () => {
   assert.equal(renamed?.previousPath, "tracked-large.txt");
   assert.equal(renamed?.additions, null);
   assert.equal(renamed?.deletions, null);
+});
+
+test("long line-delimited additions cannot suppress unrelated committed sizes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-committed-sizes-"));
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  await writeFile(join(root, "large.txt"), Buffer.alloc(MAX_DIFF_BYTES + 1, 65));
+  await execFileAsync("git", ["-C", root, "add", "large.txt"]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "large fixture"]);
+  await rm(join(root, "large.txt"));
+  const added = `${"a".repeat(200)}\nmissing-in-head.txt`;
+  await writeFile(join(root, added), "added\n");
+  await execFileAsync("git", ["-C", root, "add", "--", added]);
+
+  const changes = await listChangedFiles(root);
+  assert.equal(changes.find((change) => change.path === "large.txt")?.state, "oversized");
+  assert.equal(changes.find((change) => change.path === added)?.state, "added");
 });
 
 test("symlink renames remain non-renderable", async () => {
