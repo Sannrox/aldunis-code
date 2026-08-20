@@ -259,3 +259,39 @@ test("missing static assets return 404 without crashing the host", async () => {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("missing hashed assets return 404 when the SPA index exists", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "aldunis-host-hashed-missing-"));
+  const dist = join(directory, "dist");
+  const state = new LocalStateStore(join(directory, "state"));
+  await mkdir(join(dist, "assets"), { recursive: true });
+  await writeFile(join(dist, "index.html"), "<!doctype html>spa");
+  await writeFile(join(dist, "assets", "index-current.js"), "current bundle");
+
+  const server = createLocalHost({ dist, state });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const document = await fetch(`${origin}/settings`);
+    assert.equal(document.status, 200);
+    assert.match(document.headers.get("content-type") ?? "", /text\/html/);
+    assert.equal(await document.text(), "<!doctype html>spa");
+
+    const current = await fetch(`${origin}/assets/index-current.js`);
+    assert.equal(current.status, 200);
+    assert.match(current.headers.get("content-type") ?? "", /text\/javascript/);
+    assert.equal(await current.text(), "current bundle");
+
+    const stale = await fetch(`${origin}/assets/worktree-dialog-DWX_l6Pp.js`);
+    assert.equal(stale.status, 404);
+    assert.match(stale.headers.get("content-type") ?? "", /text\/plain/);
+    assert.equal(await stale.text(), "Not found");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await rm(directory, { recursive: true, force: true });
+  }
+});
