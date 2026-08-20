@@ -600,40 +600,91 @@ async function pairExactRenames(
   const candidates = entries
     .filter((entry) => entry.code === "??" && candidatePredicate(entry))
     .slice(0, MAX_RENAME_CANDIDATES);
-  const sourceObjects = new Map<string, string>();
-  for (const entry of deleted.slice(0, MAX_RENAME_CANDIDATES)) {
-    signal?.throwIfAborted();
-    try {
-      const size = Number(
-        (
-          await git(worktree, ["cat-file", "-s", `HEAD:${entry.path}`], undefined, signal)
-        ).stdout.trim(),
-      );
-      if (size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path, signal)) continue;
-      const object = await git(worktree, ["rev-parse", `HEAD:${entry.path}`], undefined, signal);
-      sourceObjects.set(entry.path, object.stdout.trim());
-    } catch {
-      signal?.throwIfAborted();
-      // The worktree may change between status and rename matching.
-    }
-  }
+  const sources = deleted.slice(0, MAX_RENAME_CANDIDATES);
+  const regularCandidates: ChangeEntry[] = [];
   for (const entry of candidates) {
     signal?.throwIfAborted();
     try {
       const details = await lstat(resolve(worktree, entry.path));
       signal?.throwIfAborted();
-      if (!details.isFile() || details.size > MAX_EXACT_RENAME_BYTES) continue;
-      if (await hasGitConversion(worktree, entry.path, signal)) continue;
-      const object = await git(
+      if (details.isFile() && details.size <= MAX_EXACT_RENAME_BYTES) regularCandidates.push(entry);
+    } catch {
+      signal?.throwIfAborted();
+      // The worktree may change between status and rename matching.
+    }
+  }
+  const conversionSafe = await pathsWithoutGitConversion(
+    worktree,
+    [...sources.map((entry) => entry.path), ...regularCandidates.map((entry) => entry.path)],
+    signal,
+  );
+  const sourceObjects = new Map<string, string[]>();
+  try {
+    const admittedSources = sources.filter((entry) => conversionSafe.has(entry.path));
+    const metadata = await snapshotGitInput(
+      worktree,
+      ["cat-file", "--batch-check", "-z"],
+      process.env,
+      Buffer.from(`${admittedSources.map((entry) => `HEAD:${entry.path}`).join("\0")}\0`),
+      signal,
+      "git",
+      SNAPSHOT_GIT_TIMEOUT_MS,
+      admittedSources.length * 96,
+    );
+    const records = metadata.stdout.toString("ascii").trimEnd().split("\n");
+    if (records.length === admittedSources.length) {
+      for (const [index, record] of records.entries()) {
+        const match = /^([0-9a-f]{40}|[0-9a-f]{64}) blob (\d+)$/.exec(record);
+        if (!match || Number(match[2]) > MAX_EXACT_RENAME_BYTES) continue;
+        const paths = sourceObjects.get(match[1]) ?? [];
+        paths.push(admittedSources[index]!.path);
+        sourceObjects.set(match[1], paths);
+      }
+    }
+  } catch {
+    signal?.throwIfAborted();
+    // The worktree may change between status and rename matching.
+  }
+  const safeCandidates = regularCandidates.filter(
+    (entry) => conversionSafe.has(entry.path) && !/[\r\n]/.test(entry.path),
+  );
+  const candidateObjects = new Map<string, string>();
+  try {
+    if (safeCandidates.length > 0) {
+      const objects = await snapshotGitInput(
         worktree,
-        ["hash-object", "--no-filters", "--", entry.path],
-        undefined,
+        ["hash-object", "--no-filters", "--stdin-paths"],
+        process.env,
+        Buffer.from(`${safeCandidates.map((entry) => entry.path).join("\n")}\n`),
         signal,
+        "git",
+        SNAPSHOT_GIT_TIMEOUT_MS,
+        safeCandidates.length * 65,
       );
-      const previousPath = [...sourceObjects.entries()].find(
-        ([, sourceObject]) => sourceObject === object.stdout.trim(),
-      )?.[0];
+      const objectIds = objects.stdout.toString("ascii").trimEnd().split("\n");
+      if (
+        objectIds.length === safeCandidates.length &&
+        objectIds.every((objectId) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(objectId))
+      ) {
+        safeCandidates.forEach((entry, index) =>
+          candidateObjects.set(entry.path, objectIds[index]!),
+        );
+      }
+    }
+  } catch {
+    signal?.throwIfAborted();
+    // The worktree may change between status and rename matching.
+  }
+  for (const entry of regularCandidates) {
+    signal?.throwIfAborted();
+    try {
+      if (!conversionSafe.has(entry.path)) continue;
+      const objectId =
+        candidateObjects.get(entry.path) ??
+        (
+          await git(worktree, ["hash-object", "--no-filters", "--", entry.path], undefined, signal)
+        ).stdout.trim();
+      const previousPath = sourceObjects.get(objectId)?.shift();
       if (!previousPath) continue;
       entry.initial = "renamed";
       entry.previousPath = previousPath;
@@ -642,7 +693,7 @@ async function pairExactRenames(
         (candidate) => candidate.initial === "deleted" && candidate.path === previousPath,
       );
       if (deletedEntry) entries.splice(entries.indexOf(deletedEntry), 1);
-      sourceObjects.delete(previousPath);
+      if (sourceObjects.get(objectId)?.length === 0) sourceObjects.delete(objectId);
     } catch {
       signal?.throwIfAborted();
       // The worktree may change between status and rename matching.
