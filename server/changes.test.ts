@@ -374,6 +374,59 @@ test("exact runtime rename matching batches Git metadata and object work", async
   assert.equal(starts.filter((event) => event.argv?.includes("--stdin-paths")).length, 1);
 });
 
+test("tracked changed-file statistics use bounded Git batches", async () => {
+  const root = await mkdtemp(join(tmpdir(), "aldunis-code-tracked-numstat-"));
+  const traceRoot = await mkdtemp(join(tmpdir(), "aldunis-code-git-trace-"));
+  const trace = join(traceRoot, "events.json");
+  await execFileAsync("git", ["-C", root, "init", "-q"]);
+  await execFileAsync("git", ["-C", root, "config", "user.email", "test@example.invalid"]);
+  await execFileAsync("git", ["-C", root, "config", "user.name", "Aldunis Test"]);
+  const paths = [
+    ...Array.from({ length: 61 }, (_, index) => `tracked-${index}.txt`),
+    "tracked-with-a-tab\t.txt",
+    "tracked-with-a-newline\n.txt",
+    ":(top)**",
+  ];
+  const oversizedPath = "oversized-tracked.txt";
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "before\n")));
+  await writeFile(join(root, oversizedPath), Buffer.alloc(MAX_DIFF_BYTES + 1, 65));
+  await execFileAsync("git", ["-C", root, "add", "."]);
+  await execFileAsync("git", ["-C", root, "commit", "-qm", "tracked fixtures"]);
+  await Promise.all(paths.map((path) => writeFile(join(root, path), "after\nnext\n")));
+  await writeFile(join(root, oversizedPath), Buffer.alloc(MAX_DIFF_BYTES + 2, 66));
+
+  const previousTrace = process.env.GIT_TRACE2_EVENT;
+  process.env.GIT_TRACE2_EVENT = trace;
+  try {
+    const changes = await listChangedFilesPage(root);
+    assert.equal(changes.files.length, paths.length + 1);
+    assert.equal(changes.truncated, false);
+    for (const path of paths) {
+      const change = changes.files.find((candidate) => candidate.path === path);
+      assert.equal(change?.state, "modified");
+      assert.equal(change?.additions, 2);
+      assert.equal(change?.deletions, 1);
+    }
+    assert.equal(
+      changes.files.find((candidate) => candidate.path === oversizedPath)?.state,
+      "oversized",
+    );
+  } finally {
+    if (previousTrace === undefined) delete process.env.GIT_TRACE2_EVENT;
+    else process.env.GIT_TRACE2_EVENT = previousTrace;
+  }
+  const starts = (await readFile(trace, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event?: string; argv?: string[] })
+    .filter((event) => event.event === "start");
+  assert.equal(starts.filter((event) => event.argv?.includes("--numstat")).length, 1);
+  assert.equal(
+    starts.some((event) => event.argv?.includes("--numstat") && event.argv.includes(oversizedPath)),
+    false,
+  );
+});
+
 test("edited renames into ignored runtime paths stay hidden", async () => {
   const root = await fixture();
   await writeFile(join(root, ".gitignore"), "/data/\n");
