@@ -49,6 +49,7 @@ import {
   providerModelOptions,
   providerReasoningEfforts,
   providerConfigurationVerifiedAfterFailure,
+  isGenericProviderFailure,
   providerFailureRecovery,
   providerFailureNeedsConfiguration,
   providerTextReportsAuthenticationFailure,
@@ -2334,6 +2335,12 @@ export function Conversation({
     providerLabel,
     failureNeedsConfiguration,
     configurationVerifiedAfterFailure,
+    {
+      // Only claim an error exists above when the alert has non-generic text.
+      detailedError: Boolean(
+        failureView && !isGenericProviderFailure(failureView.summary, providerName),
+      ),
+    },
   );
   const accessLabel =
     mode === "ask" ? "Read-only" : mode === "plan" ? "Plan only" : "Worktree write";

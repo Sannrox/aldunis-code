@@ -77,15 +77,31 @@ export function providerConfigurationVerifiedAfterFailure(
   );
 }
 
+/** True when the only visible failure copy is a generic provider terminal. */
+export function isGenericProviderFailure(summary: string, providerName?: string): boolean {
+  const trimmed = summary.trim();
+  if (!trimmed) return true;
+  if (/^(provider failed\.?)$/i.test(trimmed)) return true;
+  if (/^the run ended without a detailed error\.?$/i.test(trimmed)) return true;
+  if (providerName && new RegExp(`^${escapeRegExp(providerName)} failed\\.?$`, "i").test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
 /** Keep historical authentication failures aligned with current provider readiness. */
 export function providerFailureRecovery(
   providerLabel: string,
   needsConfiguration: boolean,
   configurationVerified: boolean,
+  options: { detailedError?: boolean } = {},
 ): { message: string; showSettings: boolean } {
   if (!needsConfiguration) {
     return {
-      message: `${providerLabel} stopped · review the error above before retrying`,
+      message:
+        options.detailedError === false
+          ? `${providerLabel} stopped · the run ended without a detailed error`
+          : `${providerLabel} stopped · review the error above before retrying`,
       showSettings: false,
     };
   }

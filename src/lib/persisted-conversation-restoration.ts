@@ -346,7 +346,9 @@ export function restoredTurnTerminalEvent(
     case "completed":
       return { kind: "turn_completed", sessionId: sessionId ?? "restored", costUsd: null };
     case "failed":
-      return { kind: "failed", message: "Provider failed." };
+      // Used only when no provider_failed activity exists. A stored activity
+      // message already becomes the failed event and skips this terminal.
+      return { kind: "failed", message: "The run ended without a detailed error." };
     case "interrupted":
     case "cancelled":
       return { kind: "cancelled" };
