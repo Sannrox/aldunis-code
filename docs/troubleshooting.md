@@ -59,8 +59,10 @@ an absolute binary path in Settings → Provider profiles.
 
 Invalid on-disk JSON recovers to safe defaults with a visible recovered flag.
 Intact history records with forked sequence metadata are repaired automatically
-at startup. Stop extra host processes if state repeatedly reports that it is
-busy.
+at startup. A leftover `host-writer.lock` from a crashed host on the same machine is
+reclaimed when the recorded holder is gone. Untouched locks from another host
+still expire after 30 seconds. Stop extra host processes if state repeatedly
+reports that it is busy.
 Do not delete the state directory unless you intend to lose local history.
 See [local-data.md](local-data.md).
 
