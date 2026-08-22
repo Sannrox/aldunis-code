@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { open, mkdir, rename, rm, stat, type FileHandle } from "node:fs/promises";
-import { homedir } from "node:os";
+import {
+  open,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
+import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
-import { lock } from "proper-lockfile";
 import {
   appendAssistantTextChunkWithWhitespaceState,
   joinAssistantTextChunks,
@@ -48,6 +56,20 @@ export const MAX_THREADS_PER_PROJECT = 200;
 export const MAX_EVENT_HISTORY_WRITE_BUFFER_BYTES = 256 * 1024;
 /** Fail-closed ceiling for one JSONL event record (line body, excluding newline). */
 export const MAX_EVENT_ENVELOPE_BYTES = 8 * 1024 * 1024;
+export const HOST_WRITER_TARGET = "host-writer";
+export const HOST_WRITER_LOCK = "host-writer.lock";
+export const HOST_WRITER_LEASE_IDENTITY = "lease.json";
+const WRITER_LEASE_IDENTITY_GRACE_MS = 100;
+const WRITER_LEASE_STALE_MS = 30_000;
+const WRITER_LEASE_UPDATE_MS = 10_000;
+const MAX_WRITER_LEASE_IDENTITY_BYTES = 1024;
+
+interface WriterLeaseIdentity {
+  pid: number;
+  hostname: string;
+  createdAt: string;
+  starttime?: string | null;
+}
 
 export interface LocalStateStoreOptions {
   /**
@@ -2142,6 +2164,129 @@ export function defaultStateDirectory(): string {
   return join(stateHome, "aldunis-code");
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function readLinuxStarttime(pid: number): Promise<string | null> {
+  try {
+    const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
+    const closeParen = processStat.lastIndexOf(")");
+    if (closeParen < 0) return null;
+    return processStat.slice(closeParen + 2).split(" ")[19] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parseWriterLeaseIdentity(raw: string): WriterLeaseIdentity | null {
+  if (raw.length > MAX_WRITER_LEASE_IDENTITY_BYTES) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<WriterLeaseIdentity>;
+    if (!Number.isInteger(parsed.pid) || parsed.pid <= 0) return null;
+    if (typeof parsed.hostname !== "string" || parsed.hostname.length === 0) return null;
+    if (typeof parsed.createdAt !== "string" || parsed.createdAt.length === 0) return null;
+    return {
+      pid: parsed.pid,
+      hostname: parsed.hostname,
+      createdAt: parsed.createdAt,
+      starttime: typeof parsed.starttime === "string" ? parsed.starttime : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readWriterLeaseIdentityFrom(path: string): Promise<WriterLeaseIdentity | null> {
+  try {
+    return parseWriterLeaseIdentity(await readFile(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function statWriterLock(directory: string) {
+  try {
+    return await stat(join(directory, HOST_WRITER_LOCK));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function readWriterLeaseIdentity(
+  directory: string,
+  lockStat: Awaited<ReturnType<typeof stat>>,
+): Promise<WriterLeaseIdentity | null> {
+  const lockPath = join(directory, HOST_WRITER_LOCK);
+  if (lockStat.isFile()) return readWriterLeaseIdentityFrom(lockPath);
+  if (lockStat.isDirectory()) {
+    return readWriterLeaseIdentityFrom(join(lockPath, HOST_WRITER_LEASE_IDENTITY));
+  }
+  return null;
+}
+
+async function writerLeaseHolderState(
+  identity: WriterLeaseIdentity,
+): Promise<"alive" | "dead" | "unknown"> {
+  if (identity.hostname !== hostname()) return "unknown";
+  try {
+    process.kill(identity.pid, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "unknown";
+  }
+  if (identity.starttime) {
+    const current = await readLinuxStarttime(identity.pid);
+    if (current && current !== identity.starttime) return "dead";
+  }
+  return "alive";
+}
+
+async function reclaimOrphanedWriterLock(directory: string): Promise<boolean> {
+  const lockPath = join(directory, HOST_WRITER_LOCK);
+  let lockStat = await statWriterLock(directory);
+  if (!lockStat) return false;
+  let identity = await readWriterLeaseIdentity(directory, lockStat);
+  if (!identity) {
+    await delay(WRITER_LEASE_IDENTITY_GRACE_MS);
+    lockStat = await statWriterLock(directory);
+    if (!lockStat) return false;
+    identity = await readWriterLeaseIdentity(directory, lockStat);
+  }
+  const holder = identity ? await writerLeaseHolderState(identity) : null;
+  const stale = Date.now() - lockStat.mtimeMs >= WRITER_LEASE_STALE_MS;
+  if (holder === "alive" && identity?.starttime) return false;
+  if (holder !== "dead" && !stale) return false;
+  const quarantine = join(directory, `${HOST_WRITER_LOCK}.reclaim-${randomUUID()}`);
+  try {
+    await rename(lockPath, quarantine);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    const quarantined = await stat(quarantine);
+    if (quarantined.dev !== lockStat.dev || quarantined.ino !== lockStat.ino) {
+      try {
+        await rename(quarantine, lockPath);
+      } catch {
+        throw new LocalStateError(
+          "The local-state writer lock changed while it was being reclaimed.",
+        );
+      }
+      return false;
+    }
+    await rm(quarantine, { recursive: true, force: true });
+    return true;
+  } catch (error) {
+    if (error instanceof LocalStateError) throw error;
+    await rename(quarantine, lockPath).catch(() => undefined);
+    throw error;
+  }
+}
+
 export class LocalStateStore {
   readonly #eventPath: string;
   readonly #options: LocalStateStoreOptions;
@@ -2377,21 +2522,81 @@ export class LocalStateStore {
 
   async acquireWriterLease(): Promise<() => Promise<void>> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await writeFile(join(this.directory, HOST_WRITER_TARGET), "", { mode: 0o600 }).catch(
+      () => undefined,
+    );
+    return this.#lockWriter({ allowReclaim: true });
+  }
+
+  async #lockWriter(options: { allowReclaim: boolean }): Promise<() => Promise<void>> {
+    const lockPath = join(this.directory, HOST_WRITER_LOCK);
+    const openExclusive = () => open(lockPath, "wx", 0o600);
+    let handle: FileHandle;
     try {
-      return await lock(join(this.directory, "host-writer"), {
-        realpath: false,
-        stale: 30_000,
-        update: 10_000,
-      });
+      handle = await openExclusive();
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ELOCKED") {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "EISDIR") throw error;
+      if (!options.allowReclaim || !(await reclaimOrphanedWriterLock(this.directory))) {
         throw new LocalStateError(
           "Another Aldunis Code host is already using this local state directory.",
           503,
         );
       }
+      try {
+        handle = await openExclusive();
+      } catch (retryError) {
+        const retryCode = (retryError as NodeJS.ErrnoException).code;
+        if (retryCode === "EEXIST" || retryCode === "EISDIR") {
+          throw new LocalStateError(
+            "Another Aldunis Code host is already using this local state directory.",
+            503,
+          );
+        }
+        throw retryError;
+      }
+    }
+    try {
+      const identity: WriterLeaseIdentity = {
+        pid: process.pid,
+        hostname: hostname(),
+        createdAt: new Date().toISOString(),
+        starttime: await readLinuxStarttime(process.pid),
+      };
+      await handle.writeFile(`${JSON.stringify(identity)}\n`);
+      await handle.sync();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      await rm(lockPath, { force: true }).catch(() => undefined);
       throw error;
     }
+    const acquired = await handle.stat();
+    const heartbeat = setInterval(() => {
+      const now = new Date();
+      void handle.utimes(now, now).catch(() => undefined);
+    }, WRITER_LEASE_UPDATE_MS);
+    heartbeat.unref();
+    return async () => {
+      clearInterval(heartbeat);
+      try {
+        const current = await statWriterLock(this.directory);
+        if (!current || current.dev !== acquired.dev || current.ino !== acquired.ino) return;
+        const quarantine = join(this.directory, `${HOST_WRITER_LOCK}.release-${randomUUID()}`);
+        try {
+          await rename(lockPath, quarantine);
+        } catch {
+          return;
+        }
+        const quarantined = await stat(quarantine).catch(() => null);
+        if (!quarantined || quarantined.dev !== acquired.dev || quarantined.ino !== acquired.ino) {
+          await rename(quarantine, lockPath).catch(() => undefined);
+          return;
+        }
+        await rm(quarantine, { force: true });
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
+    };
   }
 
   async #ensureLoaded(): Promise<void> {

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   coalesceConsecutiveAssistantMessages,
+  HOST_WRITER_LOCK,
+  HOST_WRITER_TARGET,
   isolateProjectionCollections,
   LocalStateError,
   LocalStateStore,
@@ -1122,6 +1124,120 @@ test("one host holds the local history writer lease until release", async () => 
   await release();
   const releaseRestarted = await new LocalStateStore(directory).acquireWriterLease();
   await releaseRestarted();
+});
+
+async function leftoverWriterLock(
+  directory: string,
+  identity?: { pid: number; hostname: string },
+  ageMs = 0,
+): Promise<void> {
+  await writeFile(join(directory, HOST_WRITER_TARGET), "");
+  const lockPath = join(directory, HOST_WRITER_LOCK);
+  if (identity) {
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        pid: identity.pid,
+        hostname: identity.hostname,
+        createdAt: new Date().toISOString(),
+      })}\n`,
+    );
+  } else {
+    await mkdir(lockPath);
+  }
+  if (ageMs > 0) {
+    const aged = new Date(Date.now() - ageMs);
+    await utimes(lockPath, aged, aged);
+  }
+}
+
+test("startup reclaims a leftover host-writer lock after the lockfile stale window", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, undefined, 35_000);
+  const release = await store.acquireWriterLease();
+  await assert.rejects(
+    () => new LocalStateStore(directory).acquireWriterLease(),
+    /already using this local state directory/,
+  );
+  await release();
+});
+
+test("startup keeps a recent identity-less host-writer lock", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory);
+  await assert.rejects(
+    () => store.acquireWriterLease(),
+    /already using this local state directory/,
+  );
+});
+
+test("startup reclaims a host-writer lock whose recorded holder is gone", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: 2_147_483_647, hostname: hostname() });
+  const release = await store.acquireWriterLease();
+  await release();
+});
+
+test("startup reclaims a host-writer lock whose recorded holder looks alive after the stale window", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: process.pid, hostname: hostname() }, 35_000);
+  const release = await store.acquireWriterLease();
+  await release();
+});
+
+test("startup keeps a host-writer lock whose recorded holder is still alive", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: process.pid, hostname: hostname() });
+  await assert.rejects(
+    () => store.acquireWriterLease(),
+    /already using this local state directory/,
+  );
+});
+
+test("startup keeps a recent host-writer lock recorded for another hostname", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: process.pid, hostname: "previous-container" });
+  await assert.rejects(
+    () => store.acquireWriterLease(),
+    /already using this local state directory/,
+  );
+});
+
+test("startup keeps a host-writer lock when leftover identity names a different lock", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: 2_147_483_647, hostname: hostname() });
+  await rm(join(directory, HOST_WRITER_LOCK), { force: true });
+  await writeFile(join(directory, HOST_WRITER_LOCK), "");
+  await assert.rejects(
+    () => store.acquireWriterLease(),
+    /already using this local state directory/,
+  );
+});
+
+test("startup keeps another-hostname host-writer lock until the lockfile stale window", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: process.pid, hostname: "previous-container" }, 15_000);
+  await assert.rejects(
+    () => store.acquireWriterLease(),
+    /already using this local state directory/,
+  );
+});
+
+test("release does not remove a replacement host-writer lock", async () => {
+  const { directory, store } = await fixtureStore();
+  const release = await store.acquireWriterLease();
+  const lockPath = join(directory, HOST_WRITER_LOCK);
+  await rm(lockPath, { force: true });
+  await writeFile(lockPath, "keep");
+  await release();
+  assert.equal(await readFile(lockPath, "utf8"), "keep");
+});
+
+test("startup reclaims another-hostname host-writer lock after the lockfile stale window", async () => {
+  const { directory, store } = await fixtureStore();
+  await leftoverWriterLock(directory, { pid: process.pid, hostname: "previous-container" }, 35_000);
+  const release = await store.acquireWriterLease();
+  await release();
 });
 
 test("intact forked history is renumbered in physical append order", async () => {

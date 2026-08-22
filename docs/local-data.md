@@ -27,17 +27,18 @@ a 16-byte fail-closed read. Operators may remove
 
 Typical contents (names may evolve; do not commit these files):
 
-| File / area                  | Purpose                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| `events.v1.jsonl`            | Append-only conversation and autonomy history log (at most 8 MiB per JSONL event record)   |
-| `preferences.v1.json`        | At most 16 KiB of schema-owned theme, density, worktree, shortcut, and display preferences |
-| `automations.v1.json`        | Scheduled automations                                                                      |
-| `release-deliveries.v1.json` | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references  |
-| `remote-auth.v1.json`        | At most 1 MiB of bounded pairing grants and proof-key remote-session metadata              |
-| `worktrees.v1.json`          | At most 16 MiB of live ownership plus the newest 256 removed-worktree records              |
-| Profile / secret store       | At most 24 MiB each of provider metadata and Aldunis-owned environment secrets             |
-| Provider adapter metadata    | Installed declarative adapters                                                             |
-| Shikigami run dirs           | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related)             |
+| File / area                        | Purpose                                                                                                                                                                                                                                                                     |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host-writer` / `host-writer.lock` | Single-host writer lease. The lock is an exclusive file that stores the holder identity. Startup reclaims it when the recorded same-host holder is gone, or when an unknown leftover file or legacy lock directory is older than 30 seconds. A second live host is refused. |
+| `events.v1.jsonl`                  | Append-only conversation and autonomy history log (at most 8 MiB per JSONL event record)                                                                                                                                                                                    |
+| `preferences.v1.json`              | At most 16 KiB of schema-owned theme, density, worktree, shortcut, and display preferences                                                                                                                                                                                  |
+| `automations.v1.json`              | Scheduled automations                                                                                                                                                                                                                                                       |
+| `release-deliveries.v1.json`       | At most 16 MiB of candidate/build digests and opaque Chisei/Tenkai correlation references                                                                                                                                                                                   |
+| `remote-auth.v1.json`              | At most 1 MiB of bounded pairing grants and proof-key remote-session metadata                                                                                                                                                                                               |
+| `worktrees.v1.json`                | At most 16 MiB of live ownership plus the newest 256 removed-worktree records                                                                                                                                                                                               |
+| Profile / secret store             | At most 24 MiB each of provider metadata and Aldunis-owned environment secrets                                                                                                                                                                                              |
+| Provider adapter metadata          | Installed declarative adapters                                                                                                                                                                                                                                              |
+| Shikigami run dirs                 | Per-conversation harness state under `~/.aldunis-code/shikigami` (and related)                                                                                                                                                                                              |
 
 File modes are restricted (owner-only where applicable). History mutations are
 locked across local host processes. If an older concurrent-host race left intact
