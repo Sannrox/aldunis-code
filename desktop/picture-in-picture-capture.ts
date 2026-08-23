@@ -18,19 +18,19 @@ export interface PictureInPictureCaptureTimer {
 }
 
 export interface PictureInPictureCaptureTimers {
-  setInterval(callback: () => void, delay: number): PictureInPictureCaptureTimer;
-  clearInterval(handle: PictureInPictureCaptureTimer): void;
+  setTimeout(callback: () => void, delay: number): PictureInPictureCaptureTimer;
+  clearTimeout(handle: PictureInPictureCaptureTimer): void;
 }
 
 const nodeCaptureTimers: PictureInPictureCaptureTimers = {
-  setInterval: (callback, delay) => setInterval(callback, delay),
-  clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+  setTimeout: (callback, delay) => setTimeout(callback, delay),
+  clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
 };
 
 /**
  * Run the expensive capture/encode/send pipeline only while the PiP window can
- * display its frames. Window lifecycle events remove the interval rather than
- * leaving a high-frequency no-op wakeup behind.
+ * display its frames. Each frame schedules the next only after capture settles,
+ * leaving the configured cadence as a quiet period between expensive frames.
  */
 export function startPictureInPictureCapture(
   window: PictureInPictureCaptureWindow,
@@ -44,9 +44,17 @@ export function startPictureInPictureCapture(
 
   const observable = () => !window.isDestroyed() && window.isVisible() && !window.isMinimized();
   const pause = () => {
-    if (timer) timers.clearInterval(timer);
+    if (timer) timers.clearTimeout(timer);
     timer = null;
     captureAfterFlight = false;
+  };
+  const schedule = () => {
+    if (timer || disposed || !observable()) return;
+    timer = timers.setTimeout(() => {
+      timer = null;
+      void tick();
+    }, PICTURE_IN_PICTURE_CAPTURE_INTERVAL_MS);
+    timer.unref();
   };
   const tick = async () => {
     if (disposed || !observable()) return;
@@ -57,11 +65,15 @@ export function startPictureInPictureCapture(
     inFlight = true;
     try {
       await capture();
+    } catch {
+      // A transient capture failure must not stop subsequent visible frames.
     } finally {
       inFlight = false;
       if (captureAfterFlight && !disposed && observable()) {
         captureAfterFlight = false;
         void tick();
+      } else {
+        schedule();
       }
     }
   };
@@ -69,8 +81,6 @@ export function startPictureInPictureCapture(
     pause();
     if (disposed || !observable()) return;
     void tick();
-    timer = timers.setInterval(() => void tick(), PICTURE_IN_PICTURE_CAPTURE_INTERVAL_MS);
-    timer.unref();
   };
   const dispose = () => {
     if (disposed) return;
