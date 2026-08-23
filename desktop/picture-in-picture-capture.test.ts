@@ -77,7 +77,7 @@ interface FakeTimer extends PictureInPictureCaptureTimer {
 class FakeTimers implements PictureInPictureCaptureTimers {
   timers = new Set<FakeTimer>();
 
-  setInterval(callback: () => void, delay: number): FakeTimer {
+  setTimeout(callback: () => void, delay: number): FakeTimer {
     const timer: FakeTimer = {
       callback,
       delay,
@@ -90,12 +90,15 @@ class FakeTimers implements PictureInPictureCaptureTimers {
     return timer;
   }
 
-  clearInterval(handle: PictureInPictureCaptureTimer): void {
+  clearTimeout(handle: PictureInPictureCaptureTimer): void {
     this.timers.delete(handle as FakeTimer);
   }
 
   tick(): void {
-    for (const timer of [...this.timers]) timer.callback();
+    for (const timer of [...this.timers]) {
+      this.timers.delete(timer);
+      timer.callback();
+    }
   }
 }
 
@@ -181,4 +184,64 @@ test("PiP capture serializes slow frames and stops permanently when closed", asy
     [...window.listeners.values()].every((listeners) => listeners.size === 0),
     true,
   );
+});
+
+test("PiP capture waits a full cadence after each slow frame settles", async () => {
+  const window = new FakeWindow();
+  const timers = new FakeTimers();
+  const releases: Array<() => void> = [];
+  let captures = 0;
+  const stop = startPictureInPictureCapture(
+    window,
+    () => {
+      captures += 1;
+      return new Promise<void>((resolve) => releases.push(resolve));
+    },
+    timers,
+  );
+
+  assert.equal(captures, 1);
+  assert.equal(timers.timers.size, 0);
+
+  releases.shift()?.();
+  await settle();
+  assert.equal(captures, 1);
+  assert.equal(timers.timers.size, 1);
+
+  timers.tick();
+  assert.equal(captures, 2);
+  assert.equal(timers.timers.size, 0);
+
+  releases.shift()?.();
+  await settle();
+  assert.equal(captures, 2);
+  assert.equal(timers.timers.size, 1);
+
+  stop();
+  assert.equal(timers.timers.size, 0);
+});
+
+test("PiP capture continues after a failed frame", async () => {
+  const window = new FakeWindow();
+  const timers = new FakeTimers();
+  let captures = 0;
+  const stop = startPictureInPictureCapture(
+    window,
+    async () => {
+      captures += 1;
+      if (captures === 1) throw new Error("capture failed");
+    },
+    timers,
+  );
+
+  await settle();
+  assert.equal(captures, 1);
+  assert.equal(timers.timers.size, 1);
+
+  timers.tick();
+  await settle();
+  assert.equal(captures, 2);
+  assert.equal(timers.timers.size, 1);
+
+  stop();
 });
