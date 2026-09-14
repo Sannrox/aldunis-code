@@ -49,6 +49,17 @@ GitHub Issues are the backlog. Use exactly one status label:
 with one PR and one observable outcome. Cross-repository dependencies use
 fully qualified references.
 
+Each delivered Issue is one lane: one claim branch `<type>/<issue>` on GitHub,
+one worktree at `.worktrees/issue-<issue>` (or a dedicated clone on another
+machine), one Pull Request, one owner. Claims live on GitHub because lanes run
+on several machines; claim with
+`.agents/skills/deliver-ready-issue/scripts/issue-lane.sh claim <issue>` before
+implementing. Agents never switch, reset, or stash the primary checkout;
+inspect `git status -sb` and `git worktree list` before Git or GitHub work and
+preserve other lanes. The "Parallel delivery lanes" section of
+[docs/work-lifecycle.md](docs/work-lifecycle.md) defines claims, the lane
+limit, collision surfaces, and serialized Git mutations.
+
 Keep commits narrow and use short imperative subjects, preferably in
 Conventional Commit form, such as `feat(ui): add local usage dashboard`,
 `fix(provider): preserve approval state`, or `docs: explain the worktree
@@ -75,7 +86,8 @@ Prefer publishing PR branch tips with GitHub-signed commits so GitHub shows
 When merging PRs, prefer **squash** (`gh pr merge --squash --delete-branch`) so
 the land commit on `main` is also GitHub-signed/Verified and history stays
 linear. Avoid GitHub **rebase** merges when Verified history matters. Delete
-merged branches. Branches created by agents use the `codex/` prefix.
+merged branches. Branches created by agents use the `codex/` prefix as a
+legacy convention; delivery lanes use `<type>/<issue>`.
 
 ## Documentation map
 

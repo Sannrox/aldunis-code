@@ -16,6 +16,9 @@ knowledge.db
 # Local ontology and provider control-plane runtime state.
 /data/
 
+# Delivery lane worktrees (docs/work-lifecycle.md, "Parallel delivery lanes")
+/.worktrees/
+
 # The pinned Chisei SDK is vendored as built runtime output.
 !vendor/sekai-chisei-sdk/dist/
 !vendor/sekai-chisei-sdk/dist/**
