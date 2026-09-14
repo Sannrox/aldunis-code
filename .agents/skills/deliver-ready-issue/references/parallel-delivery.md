@@ -37,6 +37,7 @@ stalled lane. It is not an orchestration-only role.
    implementation Pull Requests plus claim branches without one. Do not count
    assigned or planned work as a running lane, and do not start a lane for an
    Issue whose check says `claimed`.
+
 3. Reject candidate pairs that touch the same collision surface: local
    persistence and worktrees, provider adapters, tool-approval UX, or
    authenticated Sekai, Tenkai, or Aldunis contracts. Run such Issues in
@@ -153,8 +154,8 @@ Lane brief
 
 Keep one ledger for the run and return it with the final report:
 
-| Issue | Branch | Machine / checkout | Base SHA | Owner | State | PR | Evidence | Blockers | Cleanup |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Issue | Branch | Machine / checkout | Base SHA | Owner | State | PR  | Evidence | Blockers | Cleanup |
+| ----- | ------ | ------------------ | -------- | ----- | ----- | --- | -------- | -------- | ------- |
 
 States are `claimed`, `implementing`, `verified`, `published`, `landed`,
 `blocked`, `released`, and `handed over`. Report verified outcomes with links,

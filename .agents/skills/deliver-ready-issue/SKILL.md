@@ -36,6 +36,7 @@ inspects, claims, and releases a lane deterministically.
    Issue: continue only when the user directs the takeover, and preserve the
    existing branch, Pull Request, and evidence first. Never work around a lost
    claim race with a differently named branch.
+
 3. Inspect `git status -sb` and `git worktree list`. Preserve every unrelated
    change, branch, worktree, and running process. Never switch, reset, stash,
    or clean the primary checkout or another lane's worktree. Claim the Issue
@@ -50,6 +51,7 @@ inspects, claims, and releases a lane deterministically.
 
    Do all further work inside that worktree. Exit code 3 from `claim` means
    another machine won the race: stop and report.
+
 4. Use `assess-code-impact`; translate acceptance evidence into UI, provider,
    permission, local-data, contract, packaging, security, and recovery duties.
 5. Implement one outcome within Aldunis Code's authority. Keep provider
@@ -74,11 +76,11 @@ inspects, claims, and releases a lane deterministically.
      `scripts/gh-verified-push.sh --branch <type>/<issue> --sync-local`
    - Confirm `verification.verified=true` and hosted blob content matches local
      `HEAD`.
-   Open the Pull Request as a draft with the first published commit, then mark
-   it ready (`gh pr ready`) when verification and review are complete. The PR
-   closes the Issue and records exact verification evidence, autoreview
-   outcome, skipped checks, and the lane brief (agent, machine, base SHA,
-   authority ceiling).
+     Open the Pull Request as a draft with the first published commit, then mark
+     it ready (`gh pr ready`) when verification and review are complete. The PR
+     closes the Issue and records exact verification evidence, autoreview
+     outcome, skipped checks, and the lane brief (agent, machine, base SHA,
+     authority ceiling).
 9. When the user authorizes land: re-publish review fixes with
    `scripts/gh-verified-push.sh`, then prefer
    `gh pr merge --squash --delete-branch` (do not use GitHub rebase-merge when
@@ -115,11 +117,11 @@ fi
 
 Then run the matching mode:
 
-| Work state | Command |
-| --- | --- |
-| Uncommitted local edits | `"$AUTOREVIEW" --mode local` |
-| Committed branch / open PR | Resolve PR base (`gh pr view --json baseRefName`), then `"$AUTOREVIEW" --mode branch --base origin/<base>` (default `origin/main`) |
-| Already on clean `main` after land | `"$AUTOREVIEW" --mode commit --commit HEAD` |
+| Work state                         | Command                                                                                                                            |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Uncommitted local edits            | `"$AUTOREVIEW" --mode local`                                                                                                       |
+| Committed branch / open PR         | Resolve PR base (`gh pr view --json baseRefName`), then `"$AUTOREVIEW" --mode branch --base origin/<base>` (default `origin/main`) |
+| Already on clean `main` after land | `"$AUTOREVIEW" --mode commit --commit HEAD`                                                                                        |
 
 Default engine is Codex. Do not skip autoreview because UI stress, unit tests,
 or self-review already ran — those are complementary, not substitutes. Treat
