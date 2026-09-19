@@ -110,19 +110,23 @@ authenticated Sekai, Tenkai, or Aldunis contracts. Lanes that would both
 change one of these surfaces run in sequence, not in parallel.
 
 A lane publishes its first Verified commit to the claim branch as a draft Pull
-Request that closes the Issue and carries the lane brief: agent, machine, base
-SHA, and authority ceiling. It marks the Pull Request ready when verification
-and review are complete. Immediately before publishing, the lane fetches and
-confirms that the default branch is an ancestor of its head; it refreshes onto
-`main` only for a conflict, a failing gate, an explicit request, or a sibling
-landing on a shared surface, not merely because `main` advanced.
+Request that closes the Issue and may list public lane fields only: claim
+branch, repo-relative worktree (for example `.worktrees/issue-N` — never an
+absolute path), base SHA, published SHA, and authority ceiling. Never hostname,
+FQDN, home path, LAN or employer network name, or other private environment
+inventory. It marks the Pull Request ready when verification and review are
+complete. Immediately before publishing, the lane fetches and confirms that the
+default branch is an ancestor of its head; it refreshes onto `main` only for a
+conflict, a failing gate, an explicit request, or a sibling landing on a shared
+surface, not merely because `main` advanced.
 
 Landing is sequential. After each merge, fetch, re-list open `status:ready`
 Issues, and let the remaining lanes recheck `mergeable` against the new `main`.
 A failed or timed-out merge response may still have merged; reconcile the
 remote state before retrying.
 
-The lead of a parallel run keeps a ledger per lane: Issue, branch, machine and
-checkout, base SHA, owner, state, Pull Request, evidence, blockers, and
-cleanup. Report verified outcomes, not launched work. The executable lead
-procedure is `.agents/skills/deliver-ready-issue/references/parallel-delivery.md`.
+The lead of a parallel run keeps a ledger per lane: Issue, branch, base SHA,
+owner, state, Pull Request, evidence, blockers, and cleanup. Keep hostnames and
+absolute checkout paths in the session with the maintainer, never on GitHub.
+Report verified outcomes, not launched work. The executable lead procedure is
+`.agents/skills/deliver-ready-issue/references/parallel-delivery.md`.

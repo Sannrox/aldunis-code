@@ -92,6 +92,8 @@ missing, invalid, or stale.
    avoid rebase-merge when Verified history matters.
 5. Do not commit credentials, provider transcripts, customer code, unredacted
    logs, local databases, or runtime state directories.
+6. Do not put hostnames, home paths, absolute worktree paths, or other private
+   environment details in public pull request or issue text.
 
 A pull request should be ready for review: focused commits, no unrelated
 formatting churn, updated docs when behavior changes, and tests that cover the

@@ -28,7 +28,13 @@ body:
     id: boundaries
     attributes:
       label: Boundaries and dependencies
-      description: Name provider, filesystem, Sekai Chisei, Tenkai, or Aldunis dependencies and non-goals.
+      description: Name provider, filesystem, Sekai Chisei, Tenkai, or Aldunis dependencies and non-goals. Do not include hostnames, home paths, or other private environment details.
     validations:
       required: true
-
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I omitted hostnames, home paths, and other private environment details.
+          required: true

@@ -32,6 +32,9 @@ Read [docs/architecture.md](docs/architecture.md) and
 - Keep the application loopback-only by default.
 - Never commit credentials, provider transcripts, customer code, repository
   contents, unredacted logs, local databases, or generated runtime state.
+- Never put hostnames, FQDNs, home directories, absolute worktree paths, LAN
+  or employer network names, or other private environment inventory on public
+  Issues, Pull Requests, comments, or commit messages.
 - Treat repository paths, source text, prompts, tool inputs, tool outputs, and
   diffs as sensitive local data.
 - Require explicit, scoped approval for mutating provider tools. Do not hide
@@ -54,9 +57,13 @@ one worktree at `.worktrees/issue-<issue>` (or a dedicated clone on another
 machine), one Pull Request, one owner. Claims live on GitHub because lanes run
 on several machines; claim with
 `.agents/skills/deliver-ready-issue/scripts/issue-lane.sh claim <issue>` before
-implementing. Agents never switch, reset, or stash the primary checkout;
-inspect `git status -sb` and `git worktree list` before Git or GitHub work and
-preserve other lanes. The "Parallel delivery lanes" section of
+implementing. On public GitHub, a delivery or lane brief may list only the
+claim branch, a repo-relative worktree (for example `.worktrees/issue-N` —
+never an absolute path), the base SHA, and the published SHA. Keep absolute
+paths and machine or host names in the private agent session. Agents never
+switch, reset, or stash the primary checkout; inspect `git status -sb` and
+`git worktree list` before Git or GitHub work and preserve other lanes. The
+"Parallel delivery lanes" section of
 [docs/work-lifecycle.md](docs/work-lifecycle.md) defines claims, the lane
 limit, collision surfaces, and serialized Git mutations.
 
