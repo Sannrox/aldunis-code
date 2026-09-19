@@ -1,5 +1,8 @@
 ## Outcome
 
+<!-- Observable behavior, not a file list. Do not include hostnames, home
+paths, absolute worktree paths, or other private environment details. -->
+
 Describe the observable change and link the Issue with `Closes #N`.
 
 ## Verification
@@ -24,6 +27,7 @@ Replace with the checks actually run. Explain any skipped check.
 ## Safety
 
 - [ ] No credentials, provider transcripts, customer code, private repository
-      content, unredacted logs, local databases, or runtime state are included.
+      content, unredacted logs, local databases, runtime state, hostnames, home
+      paths, or absolute worktree paths are included.
 - [ ] The change preserves the loopback default and explicit approval boundary,
       or the PR links the accepted decision that changes them.

@@ -79,8 +79,10 @@ inspects, claims, and releases a lane deterministically.
      Open the Pull Request as a draft with the first published commit, then mark
      it ready (`gh pr ready`) when verification and review are complete. The PR
      closes the Issue and records exact verification evidence, autoreview
-     outcome, skipped checks, and the lane brief (agent, machine, base SHA,
-     authority ceiling).
+     outcome, skipped checks, and public lane fields only: claim branch, base
+     SHA, published SHA, authority ceiling. Never hostname, FQDN, home path,
+     absolute worktree path, LAN or employer network name, or other environment
+     inventory.
 9. When the user authorizes land: re-publish review fixes with
    `scripts/gh-verified-push.sh`, then prefer
    `gh pr merge --squash --delete-branch` (do not use GitHub rebase-merge when
@@ -134,11 +136,12 @@ rather than inventing a substitute review.
 
 ## Output
 
-Report the Issue, claim branch, worktree, base SHA, commit, PR, outcome,
-verification commands, autoreview command and result, blockers, and remaining
-uncertainty. This skill does not authorize merging, releases, publishing
-packages, or changing another repository unless the user explicitly raises the
-authority ceiling to land.
+Report to the maintainer in the session (not on GitHub): the Issue, claim
+branch, local worktree path if useful privately, base SHA, commit, PR,
+outcome, verification commands, autoreview command and result, blockers, and
+remaining uncertainty. This skill does not authorize merging, releases,
+publishing packages, or changing another repository unless the user explicitly
+raises the authority ceiling to land.
 
 ## Boundaries
 
@@ -148,3 +151,6 @@ authority ceiling to land.
   branch you do not own.
 - Never work around a lost claim race with a differently named branch, a
   forced ref update, or by removing another lane's assignment.
+- Never put hostnames, FQDNs, home directories, absolute worktree paths, LAN
+  or employer network names, or other private environment inventory on public
+  Issues, Pull Requests, comments, or commit messages.

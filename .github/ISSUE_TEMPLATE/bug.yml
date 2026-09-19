@@ -7,7 +7,8 @@ body:
     attributes:
       value: |
         Do not include credentials, private source code, provider transcripts,
-        customer data, or unredacted logs. Report security vulnerabilities
+        customer data, unredacted logs, hostnames, home paths, or other
+        private environment details. Report security vulnerabilities
         through a private GitHub security advisory instead.
   - type: textarea
     id: behavior
@@ -48,6 +49,7 @@ body:
     id: platform
     attributes:
       label: Operating system
+      description: OS family and version only. No hostnames, home paths, or absolute paths.
       placeholder: macOS 15.5, Ubuntu 24.04, Windows 11
     validations:
       required: true
@@ -61,7 +63,7 @@ body:
     attributes:
       label: Safety check
       options:
-        - label: I removed secrets, private repository content, provider transcripts, and identifying paths.
+        - label: I removed secrets, private repository content, provider transcripts, hostnames, and home paths.
           required: true
         - label: This is not a security vulnerability.
           required: true
